@@ -17,4 +17,10 @@ public final class ManualReviewEngineFactory implements ReviewEngineFactory {
     public ReviewEngine forManualVerdict(boolean pass, String note) {
         return new ManualReviewEngine(blobStore, pass, note);
     }
+
+    @Override
+    public ReviewEngine forPrism() {
+        // P1 has no live engine wired in.
+        return null;
+    }
 }

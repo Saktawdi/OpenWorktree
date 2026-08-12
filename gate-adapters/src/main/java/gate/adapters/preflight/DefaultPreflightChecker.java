@@ -43,11 +43,18 @@ public final class DefaultPreflightChecker implements PreflightChecker {
     private final GateConfig config;
     private final GitCli git;
     private final HookInstaller hookInstaller;
+    private final ProcessRunner processRunner;
 
     public DefaultPreflightChecker(GateConfig config, GitCli git, HookInstaller hookInstaller) {
+        this(config, git, hookInstaller, null);
+    }
+
+    public DefaultPreflightChecker(GateConfig config, GitCli git, HookInstaller hookInstaller,
+                                   ProcessRunner processRunner) {
         this.config = config;
         this.git = git;
         this.hookInstaller = hookInstaller;
+        this.processRunner = processRunner;
     }
 
     @Override
@@ -322,15 +329,52 @@ public final class DefaultPreflightChecker implements PreflightChecker {
         }
     }
 
+    /**
+     * F5 + N4: the engine binary must be runnable and its flag surface must still expose what the
+     * adapter needs. prism 0.5.0 has no {@code --version} flag; {@code prism version} is the probe
+     * (doc/p2-schema-核对.md §2 deviation 2). The {@code review commit --help} output is checked for
+     * the exact flags the adapter builds its argv with, so a flag drift across versions becomes a
+     * startup failure (exit 22) rather than a runtime exit 2 that looks like a transient reject.
+     */
     private Check checkEngineBinary() {
         GateConfig.EngineConfig engine = config.engine();
-        ProcessRunner.ProcRun run = git.run(config.gateHome(), Map.of(), "--version");
-        // Placeholder shape: in P2 this invokes the engine binary itself with --version and
-        // `review commit --help` to verify the flag surface (N4). It is unreachable in P1 because
-        // engineConfigured() is false, and is written here so the two-tier structure is explicit.
-        return run.ok()
-                ? Check.pass("engine.binary", "engine " + engine.cmd() + " check deferred to P2", Tier.ENGINE)
-                : Check.fail("engine.binary", "cannot execute git to probe engine environment", Tier.ENGINE);
+        if (processRunner == null) {
+            return Check.fail("engine.binary",
+                    "no ProcessRunner wired into preflight — engine checks cannot run", Tier.ENGINE);
+        }
+        java.time.Duration probeTimeout = java.time.Duration.ofSeconds(15);
+        String binary = engine.cmd();
+
+        ProcessRunner.ProcRun version = processRunner.run(
+                java.util.List.of(binary, "version"), null, java.util.Map.of(), probeTimeout);
+        if (version.timedOut() || version.exitCode() != 0) {
+            return Check.fail("engine.binary",
+                    "cannot execute `" + binary + " version` (exit=" + version.exitCode()
+                            + ", timedOut=" + version.timedOut() + "): " + version.stderrFirstLine()
+                            + " (F5: engine binary missing or not runnable)",
+                    Tier.ENGINE);
+        }
+
+        ProcessRunner.ProcRun help = processRunner.run(
+                java.util.List.of(binary, "review", "commit", "--help"),
+                null, java.util.Map.of(), probeTimeout);
+        String helpText = help.stdout() + "\n" + help.stderr();
+        java.util.List<String> requiredFlags = java.util.List.of(
+                "--parent", "--provider", "--model", "--format", "--fail-on");
+        java.util.List<String> missing = new ArrayList<>();
+        for (String flag : requiredFlags) {
+            if (!helpText.contains(flag)) {
+                missing.add(flag);
+            }
+        }
+        if (!missing.isEmpty()) {
+            return Check.fail("engine.binary",
+                    "prism `review commit --help` is missing flags " + missing
+                            + " (N4: argv drift would cause runtime exit 2); upgrade or realign the adapter",
+                    Tier.ENGINE);
+        }
+        return Check.pass("engine.binary",
+                "prism version=" + version.stdout().trim() + "; required flags present", Tier.ENGINE);
     }
 
     private static Map<String, String> identityEnv() {

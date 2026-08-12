@@ -88,7 +88,10 @@ public final class GateHarness implements AutoCloseable {
     private final ApprovalStore approvalStore;
     private final HookInstaller hookInstaller;
     private final TicketRepository tickets;
+    private final PresubmitRepository presubmits;
     private final PublishIntentRepository intents;
+    private final ReviewResultRepository reviewResults;
+    private final BlobStore blobStore;
     private final HashChainAuditLog auditLog;
     private final Clock clock;
     private final ObjectId baseCommit;
@@ -138,9 +141,10 @@ public final class GateHarness implements AutoCloseable {
         this.hookInstaller = new FileHookInstaller();
         this.topologyInitializer = new GitCliTopologyInitializer(git, hookInstaller,
                 config.targetRefWhitelist(), gateHome.resolve("tmp"));
-        this.preflightChecker = new DefaultPreflightChecker(config, git, hookInstaller);
+        this.preflightChecker = new DefaultPreflightChecker(config, git, hookInstaller, processRunner);
 
         BlobStore blobStore = new FsBlobStore(config.blobRoot());
+        this.blobStore = blobStore;
         this.auditLog = new HashChainAuditLog(config.auditPath());
         LockManager lockManager = new FileChannelLockManager(config.locksDir());
         ReviewEngineFactory reviewEngineFactory = new ManualReviewEngineFactory(blobStore);
@@ -154,7 +158,9 @@ public final class GateHarness implements AutoCloseable {
 
         this.tickets = new JdbcTicketRepository(jdbc);
         PresubmitRepository presubmits = new JdbcPresubmitRepository(jdbc);
+        this.presubmits = presubmits;
         ReviewResultRepository reviewResults = new JdbcReviewResultRepository(jdbc);
+        this.reviewResults = reviewResults;
         this.intents = new JdbcPublishIntentRepository(jdbc, config.authRepo());
         ProviderRepository providers = new JdbcProviderRepository(jdbc);
         this.clock = new SystemClock();
@@ -250,6 +256,18 @@ public final class GateHarness implements AutoCloseable {
 
     public PublishIntentRepository intents() {
         return intents;
+    }
+
+    public PresubmitRepository presubmits() {
+        return presubmits;
+    }
+
+    public ReviewResultRepository reviewResults() {
+        return reviewResults;
+    }
+
+    public BlobStore blobStore() {
+        return blobStore;
     }
 
     public HashChainAuditLog auditLog() {

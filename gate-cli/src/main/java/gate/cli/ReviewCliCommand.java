@@ -8,13 +8,18 @@ import java.util.Map;
 import picocli.CommandLine;
 
 /**
- * {@code gate review}: record a human verdict for a presubmit round.
+ * {@code gate review}: run a review round.
  *
- * <p>P1 has no LLM engine; the verdict is supplied here but still flows through the ordinary
- * {@code ReviewEngine} contract and is turned into a decision only by {@code GatePolicy}. A REJECT
- * exits 10 (feed findings back), matching §8.3.
+ * <p>Two shapes:
+ * <ul>
+ *   <li>with an engine configured (P2): {@code gate review --ticket T} runs prism and GatePolicy
+ *       derives the verdict from the evidence;</li>
+ *   <li>without an engine (P1, or A6's blocker-branch path): {@code gate review --ticket T --pass|--reject --note ...}
+ *       records a manual verdict.</li>
+ * </ul>
+ * A REJECT exits 10 (feed findings back), a NEEDS_HUMAN exits 13, matching §8.3.
  */
-@CommandLine.Command(name = "review", description = "Record a manual verdict for a presubmit round")
+@CommandLine.Command(name = "review", description = "Run a review round for a presubmit")
 final class ReviewCliCommand extends BaseCommand {
 
     @CommandLine.Option(names = "--ticket", required = true, description = "Ticket number")
@@ -23,14 +28,14 @@ final class ReviewCliCommand extends BaseCommand {
     @CommandLine.Option(names = "--round", description = "Round (default: latest)")
     Integer round;
 
-    @CommandLine.ArgGroup(multiplicity = "1")
+    @CommandLine.ArgGroup(multiplicity = "0..1")
     Verdict verdict;
 
     static final class Verdict {
-        @CommandLine.Option(names = "--pass", description = "Approve this round")
+        @CommandLine.Option(names = "--pass", description = "Approve this round (manual mode)")
         boolean pass;
 
-        @CommandLine.Option(names = "--reject", description = "Reject this round (requires --note)")
+        @CommandLine.Option(names = "--reject", description = "Reject this round (manual mode, requires --note)")
         boolean reject;
     }
 
@@ -40,8 +45,21 @@ final class ReviewCliCommand extends BaseCommand {
     @Override
     public void run() {
         GateComponents c = components();
-        boolean pass = verdict.pass;
-        ReviewResult r = c.gateService().review(new ReviewCommand(ticketNo, round, pass, note));
+        boolean engineMode = c.config().engineConfigured();
+        ReviewCommand cmd;
+        if (engineMode) {
+            // prism produces the evidence; no human verdict is carried.
+            cmd = ReviewCommand.forEngine(ticketNo, round);
+        } else {
+            boolean pass = verdict != null && verdict.pass;
+            boolean reject = verdict != null && verdict.reject;
+            if (!pass && !reject) {
+                throw new GateException(GateErrorCode.USAGE,
+                        "no engine configured: provide --pass or --reject (or configure engine.cmd in gate.toml)");
+            }
+            cmd = new ReviewCommand(ticketNo, round, pass, note);
+        }
+        ReviewResult r = c.gateService().review(cmd);
         JsonOut.emit(System.out, "review", Map.of(
                 "ticket_no", r.ticketNo(),
                 "review_round", r.reviewRound(),

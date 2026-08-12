@@ -8,6 +8,7 @@ import gate.adapters.audit.HashChainAuditLog;
 import gate.adapters.blob.FsBlobStore;
 import gate.adapters.clock.SystemClock;
 import gate.adapters.config.TomlGateConfigLoader;
+import gate.adapters.engine.GateReviewEngineFactory;
 import gate.adapters.engine.ManualReviewEngineFactory;
 import gate.adapters.git.GitCli;
 import gate.adapters.git.GitCliPublisher;
@@ -70,10 +71,16 @@ public final class GateComponents {
     private final ProviderRepository providerRepository;
     private final TicketRepository ticketRepository;
     private final Clock clock;
+    private final java.nio.file.Path envFile;
 
     public GateComponents(GateConfig config, String gitExecutable) {
+        this(config, gitExecutable, defaultEnvFile());
+    }
+
+    public GateComponents(GateConfig config, String gitExecutable, java.nio.file.Path envFile) {
         this.config = config;
         this.clock = new SystemClock();
+        this.envFile = envFile;
 
         ProcessRunner processRunner = new ProcessRunnerImpl(config.gateHome().resolve("proc"));
         GitCli git = new GitCli(processRunner, gitExecutable, Duration.ofSeconds(120));
@@ -85,13 +92,11 @@ public final class GateComponents {
         HookInstaller hookInstaller = new FileHookInstaller();
         this.topologyInitializer = new GitCliTopologyInitializer(git, hookInstaller,
                 config.targetRefWhitelist(), config.gateHome().resolve("tmp"));
-        this.preflightChecker = new DefaultPreflightChecker(config, git, hookInstaller);
+        this.preflightChecker = new DefaultPreflightChecker(config, git, hookInstaller, processRunner);
 
         BlobStore blobStore = new FsBlobStore(config.blobRoot());
         AuditLog auditLog = new HashChainAuditLog(config.auditPath());
         LockManager lockManager = new FileChannelLockManager(config.locksDir());
-        ReviewEngineFactory reviewEngineFactory = new ManualReviewEngineFactory(blobStore);
-        GatePolicy gatePolicy = new GatePolicy();
 
         DataSource dataSource = SqliteDataSourceFactory.create(config.dbPath());
         SqliteDataSourceFactory.migrate(dataSource);
@@ -106,6 +111,11 @@ public final class GateComponents {
         PublishIntentRepository intents = new JdbcPublishIntentRepository(jdbc, config.authRepo());
         this.providerRepository = new JdbcProviderRepository(jdbc);
 
+        ReviewEngineFactory reviewEngineFactory = config.engineConfigured()
+                ? new GateReviewEngineFactory(blobStore, config, processRunner, providerRepository, envFile)
+                : new ManualReviewEngineFactory(blobStore);
+        GatePolicy gatePolicy = new GatePolicy();
+
         this.gateService = new GateServiceImpl(config, snapshotCapture, commitPublisher, refObserver,
                 approvalStore, reviewEngineFactory, gatePolicy, tickets, presubmits, reviewResults, intents,
                 blobStore, auditLog, lockManager, txRunner, clock);
@@ -114,12 +124,30 @@ public final class GateComponents {
     /**
      * Loads config, builds the graph, and seeds the {@code manual} provider so the human verdict can
      * satisfy {@code review_result.provider_id} without weakening the NOT NULL constraint.
+     *
+     * <p>{@code .env} is resolved relative to {@code gate.toml}'s directory (the project root), not the
+     * working directory: a caller may invoke {@code gate} from anywhere, and the secrets file must stay
+     * anchored to the project.
      */
     public static GateComponents fromConfig(Path tomlPath, String gitExecutable) {
         GateConfig config = new TomlGateConfigLoader().load(tomlPath);
-        GateComponents components = new GateComponents(config, gitExecutable);
+        Path envFile = tomlPath.toAbsolutePath().getParent().resolve(".env");
+        GateComponents components = new GateComponents(config, gitExecutable, envFile);
         components.seedManualProvider();
         return components;
+    }
+
+    /** The {@code .env} path this graph reads provider secrets from (exposed for CLI subcommands). */
+    public Path envFile() {
+        return envFile;
+    }
+
+    /**
+     * Default {@code .env} location: {@code .env} in the current working directory's root. Used only
+     * when the path cannot be derived from a config file (e.g. tests).
+     */
+    static Path defaultEnvFile() {
+        return java.nio.file.Paths.get(".env").toAbsolutePath();
     }
 
     private void seedManualProvider() {

@@ -13,7 +13,7 @@ import java.util.Map;
  * over-engineering. This handles objects, arrays, strings (with the escapes the codec produces),
  * integers, booleans and null — nothing more.
  */
-final class MiniJson {
+public final class MiniJson {
 
     private final String s;
     private int i;
@@ -22,7 +22,7 @@ final class MiniJson {
         this.s = s;
     }
 
-    static Object parse(String text) {
+    public static Object parse(String text) {
         MiniJson p = new MiniJson(text);
         p.skipWs();
         Object value = p.readValue();

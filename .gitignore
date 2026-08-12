@@ -4,6 +4,11 @@ target/
 # OhMyOpenCode agent state
 .omo/
 
+# Secrets — never commit
+.env
+.env.*
+!.env.example
+
 # IDE
 .idea/
 *.iml

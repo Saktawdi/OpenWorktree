@@ -196,7 +196,14 @@ public final class GateServiceImpl implements GateService {
         ObjectId dangling = commitPublisher.buildCommit(scratchIntent);
         commitPublisher.pinGateRef(clone, ticket.ticketNo(), row.reviewRound(), dangling);
 
-        ReviewEngine engine = reviewEngineFactory.forManualVerdict(command.humanPass(), command.note());
+        ReviewEngine engine = config.engineConfigured()
+                ? reviewEngineFactory.forPrism()
+                : reviewEngineFactory.forManualVerdict(command.humanPass(), command.note());
+        if (engine == null) {
+            // engineConfigured() was true but the factory returned no engine — fail-closed.
+            throw new GateException(GateErrorCode.GATE_ERROR_CONFIG,
+                    "engine is configured but no prism engine could be built (check provider/.env)");
+        }
         // Contract: review() never throws. Any failure is already an EngineFailure value.
         ReviewEvidence evidence = engine.review(new ReviewEngine.ReviewRequest(
                 clone, ticket.ticketNo(), row.reviewRound(), snapshot, dangling));

@@ -151,9 +151,9 @@ prism review commit                                                # EXIT=2  usa
 |---|---|---|
 | `0` | 无达阈 findings | `EngineReport`，交 `GatePolicy` |
 | `1` | 有达 `--fail-on` 阈值的 findings | `EngineReport`（因我们固定 `--fail-on none`，**此码在本项目不应出现**；出现即视为配置漂移 → reject） |
-| `2` | usage error（参数错） | `EngineFailure(CRASH)` → 闸门 `20`。**这是 adapter 自己拼错 argv**，应在启动 preflight 用 `--help` 校验 flag 存在 |
+| `2` | usage error（参数错 / flag 漂移） | `EngineFailure(CRASH)` → 闸门 `22`（运维修，勿重试）。**这是 adapter 拼错 argv 或 prism 版本 flag 漂移**，重试无意义。preflight 已用 `--help` 校验 flag 面（N4），运行期仍出现 exit 2 = preflight 后 argv/版本被改动 → 属配置漂移，非可重试的 20 |
 | `3` | provider auth/config | `EngineFailure(CRASH)` → 闸门 `22`（运维修，勿重试） |
-| `4` | **runtime：git 失败 / IO / provider 网络 / schema** | `EngineFailure(CRASH)` → 闸门 `20`。**无法从退出码区分"git 坏了"与"LLM 不可达"**，adapter 必须解析 stderr 首行归类，且**归类失败一律 reject** |
+| `4` | **runtime：git 失败 / IO / provider 网络 / schema** | `EngineFailure(CRASH)` → 闸门 `20`（可重试；含 provider 网络抖动）。**无法从退出码区分"git 坏了"与"LLM 不可达"**，adapter 必须解析 stderr 首行归类，且**归类失败一律 reject** |
 
 `4` 的混合性质意味着：**不能靠退出码实现"provider 不可达就重试、git 坏了就别重试"**。P2 的 adapter 要么解析 stderr（脆），要么统一按 `20`（可重试但对该 ref 视同拒）。**建议后者**——fail-closed 优先于重试精度。
 
