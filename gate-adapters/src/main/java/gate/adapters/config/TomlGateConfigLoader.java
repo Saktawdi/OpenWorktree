@@ -1,0 +1,216 @@
+package gate.adapters.config;
+
+import gate.domain.config.GateConfig;
+import gate.domain.error.GateErrorCode;
+import gate.domain.error.GateException;
+import gate.domain.policy.Policy;
+import gate.domain.publish.CommitIdentity;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * Loads {@code gate.toml} into a {@link GateConfig} (架构落地执行文档 §10.1).
+ *
+ * <p>fail-closed applies to configuration too: this is a deliberately small, dependency-free parser
+ * for the flat subset the gate uses (top-level {@code key = value} plus a small set of known nested
+ * keys via dotted names), and <b>every key it does not recognise refuses startup</b>. A permissive
+ * parser that ignored unknown keys would silently swallow a typo like {@code deny_deltes = true} and
+ * run with the wrong policy.
+ *
+ * <p>Only three scalar shapes are supported — quoted string, integer, boolean — and a bracketed list
+ * of quoted strings. That is exactly what the config surface needs; anything richer is out of scope
+ * for P1 and would be an unused attack surface.
+ */
+public final class TomlGateConfigLoader {
+
+    private static final java.util.Set<String> KNOWN_KEYS = java.util.Set.of(
+            "schema_version", "project", "auth_repo", "clones_root", "target_ref_whitelist",
+            "gate_home", "approvals_dir", "db_path", "blob_root", "audit_path", "locks_dir", "index_dir",
+            "gate_identity.name", "gate_identity.email", "gate_identity.date",
+            "policy.strictness", "policy.require_coverage", "policy.max_diff_bytes", "policy.max_diff_lines",
+            "engine.cmd", "engine.args", "engine.timeout_seconds", "engine.provider_id", "engine.model");
+
+    public GateConfig load(Path tomlPath) {
+        String text;
+        try {
+            text = Files.readString(tomlPath, StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            throw new GateException(GateErrorCode.GATE_ERROR_CONFIG, "cannot read gate.toml at " + tomlPath, e);
+        }
+        Map<String, String> scalars = new LinkedHashMap<>();
+        Map<String, List<String>> lists = new LinkedHashMap<>();
+        parse(text, tomlPath, scalars, lists);
+        assertNoUnknownKeys(scalars.keySet(), lists.keySet(), tomlPath);
+        return build(scalars, lists, tomlPath);
+    }
+
+    private void parse(String text, Path tomlPath, Map<String, String> scalars, Map<String, List<String>> lists) {
+        String section = "";
+        int lineNo = 0;
+        for (String rawLine : text.split("\n", -1)) {
+            lineNo++;
+            String line = stripComment(rawLine).trim();
+            if (line.isEmpty()) {
+                continue;
+            }
+            if (line.startsWith("[") && line.endsWith("]")) {
+                section = line.substring(1, line.length() - 1).trim();
+                continue;
+            }
+            int eq = line.indexOf('=');
+            if (eq < 0) {
+                throw configError(tomlPath, lineNo, "expected key = value, got: " + line);
+            }
+            String key = line.substring(0, eq).trim();
+            String value = line.substring(eq + 1).trim();
+            String fullKey = section.isEmpty() ? key : section + "." + key;
+            if (value.startsWith("[")) {
+                lists.put(fullKey, parseList(value, tomlPath, lineNo));
+            } else {
+                scalars.put(fullKey, parseScalar(value, tomlPath, lineNo));
+            }
+        }
+    }
+
+    /** Strips a {@code #} comment that is not inside a quoted string. */
+    private static String stripComment(String line) {
+        boolean inQuote = false;
+        for (int i = 0; i < line.length(); i++) {
+            char c = line.charAt(i);
+            if (c == '"') {
+                inQuote = !inQuote;
+            } else if (c == '#' && !inQuote) {
+                return line.substring(0, i);
+            }
+        }
+        return line;
+    }
+
+    private static String parseScalar(String value, Path tomlPath, int lineNo) {
+        if (value.startsWith("\"") && value.endsWith("\"") && value.length() >= 2) {
+            return value.substring(1, value.length() - 1);
+        }
+        if (value.equals("true") || value.equals("false")) {
+            return value;
+        }
+        if (value.matches("-?\\d+")) {
+            return value;
+        }
+        throw configError(tomlPath, lineNo, "unsupported value (only quoted string, integer, boolean): " + value);
+    }
+
+    private static List<String> parseList(String value, Path tomlPath, int lineNo) {
+        if (!value.endsWith("]")) {
+            throw configError(tomlPath, lineNo, "list must be on a single line and end with ']': " + value);
+        }
+        String inner = value.substring(1, value.length() - 1).trim();
+        List<String> out = new ArrayList<>();
+        if (inner.isEmpty()) {
+            return out;
+        }
+        for (String element : inner.split(",")) {
+            String e = element.trim();
+            if (!(e.startsWith("\"") && e.endsWith("\"") && e.length() >= 2)) {
+                throw configError(tomlPath, lineNo, "list elements must be quoted strings: " + e);
+            }
+            out.add(e.substring(1, e.length() - 1));
+        }
+        return out;
+    }
+
+    private void assertNoUnknownKeys(java.util.Set<String> scalarKeys, java.util.Set<String> listKeys, Path tomlPath) {
+        List<String> unknown = new ArrayList<>();
+        for (String key : scalarKeys) {
+            if (!KNOWN_KEYS.contains(key)) {
+                unknown.add(key);
+            }
+        }
+        for (String key : listKeys) {
+            if (!KNOWN_KEYS.contains(key)) {
+                unknown.add(key);
+            }
+        }
+        if (!unknown.isEmpty()) {
+            throw new GateException(GateErrorCode.GATE_ERROR_CONFIG,
+                    "gate.toml has unknown keys (fail-closed: a typo must not be silently ignored): " + unknown
+                            + " in " + tomlPath);
+        }
+    }
+
+    private GateConfig build(Map<String, String> scalars, Map<String, List<String>> lists, Path tomlPath) {
+        int schemaVersion = intValue(scalars, "schema_version", tomlPath);
+        String project = required(scalars, "project", tomlPath);
+        Path gateHome = pathValue(scalars, "gate_home", tomlPath);
+        Path authRepo = pathValueOr(scalars, "auth_repo", gateHome.resolveSibling("auth.git"));
+        Path clonesRoot = pathValueOr(scalars, "clones_root", gateHome.resolveSibling("clones"));
+        List<String> whitelist = lists.getOrDefault("target_ref_whitelist", List.of("refs/heads/main"));
+
+        Path approvals = pathValueOr(scalars, "approvals_dir", gateHome.resolve("approvals"));
+        Path db = pathValueOr(scalars, "db_path", gateHome.resolve("gate.db"));
+        Path blobRoot = pathValueOr(scalars, "blob_root", gateHome.resolve("blobs"));
+        Path audit = pathValueOr(scalars, "audit_path", gateHome.resolve("audit.jsonl"));
+        Path locks = pathValueOr(scalars, "locks_dir", gateHome.resolve("locks"));
+        Path index = pathValueOr(scalars, "index_dir", gateHome.resolve("idx"));
+
+        CommitIdentity identity = new CommitIdentity(
+                scalars.getOrDefault("gate_identity.name", "gate"),
+                scalars.getOrDefault("gate_identity.email", "gate@localhost"),
+                scalars.getOrDefault("gate_identity.date", "1700000000 +0000"));
+
+        Policy.Strictness strictness = Policy.Strictness.valueOf(
+                scalars.getOrDefault("policy.strictness", "BLOCKER_ONLY"));
+        boolean requireCoverage = Boolean.parseBoolean(scalars.getOrDefault("policy.require_coverage", "true"));
+        long maxBytes = longValueOr(scalars, "policy.max_diff_bytes", 2_000_000L);
+        long maxLines = longValueOr(scalars, "policy.max_diff_lines", 20_000L);
+        Policy policy = new Policy(strictness, requireCoverage, maxBytes, maxLines);
+
+        GateConfig.EngineConfig engine = null;
+        if (scalars.containsKey("engine.cmd")) {
+            engine = new GateConfig.EngineConfig(
+                    scalars.get("engine.cmd"),
+                    lists.getOrDefault("engine.args", List.of()),
+                    longValueOr(scalars, "engine.timeout_seconds", 120L),
+                    scalars.get("engine.provider_id"),
+                    scalars.get("engine.model"));
+        }
+
+        return new GateConfig(schemaVersion, project, authRepo, clonesRoot, whitelist, gateHome,
+                approvals, db, blobRoot, audit, locks, index, identity, policy, engine);
+    }
+
+    private static String required(Map<String, String> scalars, String key, Path tomlPath) {
+        String v = scalars.get(key);
+        if (v == null || v.isBlank()) {
+            throw new GateException(GateErrorCode.GATE_ERROR_CONFIG, "gate.toml missing required key: " + key + " in " + tomlPath);
+        }
+        return v;
+    }
+
+    private static int intValue(Map<String, String> scalars, String key, Path tomlPath) {
+        return Integer.parseInt(required(scalars, key, tomlPath));
+    }
+
+    private static long longValueOr(Map<String, String> scalars, String key, long fallback) {
+        String v = scalars.get(key);
+        return v == null ? fallback : Long.parseLong(v);
+    }
+
+    private static Path pathValue(Map<String, String> scalars, String key, Path tomlPath) {
+        return Path.of(required(scalars, key, tomlPath)).toAbsolutePath().normalize();
+    }
+
+    private static Path pathValueOr(Map<String, String> scalars, String key, Path fallback) {
+        String v = scalars.get(key);
+        return (v == null ? fallback : Path.of(v)).toAbsolutePath().normalize();
+    }
+
+    private static GateException configError(Path tomlPath, int lineNo, String message) {
+        return new GateException(GateErrorCode.GATE_ERROR_CONFIG, tomlPath + ":" + lineNo + ": " + message);
+    }
+}

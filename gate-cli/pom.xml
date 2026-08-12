@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  gate-cli: the only executable jar (Spring Boot repackage), and the only place that
+  knows about exit codes (§8.3) and output formatting.
+
+  It also hosts the whole test tree (§11.1): fixture / bypass / capture / recovery / arch.
+  Reason: those tests need every adapter plus real git on the classpath, and ArchUnit needs
+  all gate.* classes visible at once.
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>gate</groupId>
+    <artifactId>gate-parent</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+  </parent>
+  <artifactId>gate-cli</artifactId>
+  <name>gate-cli</name>
+
+  <dependencies>
+    <dependency>
+      <groupId>gate</groupId>
+      <artifactId>gate-domain</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>gate</groupId>
+      <artifactId>gate-ports</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>gate</groupId>
+      <artifactId>gate-application</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>gate</groupId>
+      <artifactId>gate-adapters</artifactId>
+    </dependency>
+
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter</artifactId>
+      <exclusions>
+        <!-- no web, no tomcat: WebApplicationType.NONE (§4.4) -->
+        <exclusion>
+          <groupId>org.springframework.boot</groupId>
+          <artifactId>spring-boot-starter-logging</artifactId>
+        </exclusion>
+      </exclusions>
+    </dependency>
+    <dependency>
+      <groupId>org.slf4j</groupId>
+      <artifactId>slf4j-simple</artifactId>
+      <scope>runtime</scope>
+    </dependency>
+    <dependency>
+      <groupId>info.picocli</groupId>
+      <artifactId>picocli-spring-boot-starter</artifactId>
+    </dependency>
+
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>com.tngtech.archunit</groupId>
+      <artifactId>archunit-junit5</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <finalName>gate</finalName>
+    <plugins>
+      <plugin>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-maven-plugin</artifactId>
+        <executions>
+          <execution>
+            <goals>
+              <goal>repackage</goal>
+            </goals>
+          </execution>
+        </executions>
+        <configuration>
+          <mainClass>gate.cli.GateApp</mainClass>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+</project>
