@@ -13,6 +13,7 @@ target/
 .idea/
 *.iml
 .vscode/
+.zcode/
 
 # OS
 Thumbs.db
