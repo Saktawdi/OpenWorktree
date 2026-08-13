@@ -1,6 +1,11 @@
 # Build output
 target/
 
+# Archival / test output — build artifacts dumps
+doc/test_output/
+doc/归档/
+.archive/
+
 # OhMyOpenCode agent state
 .omo/
 
