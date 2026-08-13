@@ -78,9 +78,11 @@ class CostExtractionTest {
                 false, rawRef, 0, java.time.Duration.ZERO);
 
         // Use the real PrismReviewEngine just for extractCost — its review() is irrelevant here.
+        // acceptDegraded irrelevant to extractCost; pass true to keep the call site forward-compatible
+        // (this engine instance never runs `review()`, so the flag has no observable effect).
         PrismReviewEngine engine = new PrismReviewEngine(
                 new FakeRunner(), blobStore, "prism", java.time.Duration.ofSeconds(60),
-                "newapi", "DeepSeek-V4", "https://newapi.sakta.top/v1", "fake-key", "0.5.0");
+                "newapi", "DeepSeek-V4", "https://newapi.sakta.top/v1", "fake-key", "0.5.0", true);
 
         java.util.Optional<CostHint> costOpt = engine.extractCost(evidence);
         assertTrue(costOpt.isPresent(), "prism engine should extract cost hint");
@@ -104,9 +106,11 @@ class CostExtractionTest {
         ReviewEvidence evidence = new EngineReport(desc, "tree", List.of(), java.util.Set.of(),
                 false, rawRef, 0, java.time.Duration.ZERO);
 
+        // acceptDegraded irrelevant to extractCost; pass true to keep the call site forward-compatible
+        // (this engine instance never runs `review()`, so the flag has no observable effect).
         PrismReviewEngine engine = new PrismReviewEngine(
                 new FakeRunner(), blobStore, "prism", java.time.Duration.ofSeconds(60),
-                "newapi", "DeepSeek-V4", "https://newapi.sakta.top/v1", "fake-key", "0.5.0");
+                "newapi", "DeepSeek-V4", "https://newapi.sakta.top/v1", "fake-key", "0.5.0", true);
 
         java.util.Optional<CostHint> costOpt = engine.extractCost(evidence);
         assertTrue(costOpt.isPresent(), "should return EMPTY rather than throwing");
@@ -126,9 +130,11 @@ class CostExtractionTest {
         ReviewEvidence evidence = new EngineReport(desc, "tree", List.of(), java.util.Set.of(),
                 false, rawRef, 0, java.time.Duration.ZERO);
 
+        // acceptDegraded irrelevant to extractCost; pass true to keep the call site forward-compatible
+        // (this engine instance never runs `review()`, so the flag has no observable effect).
         PrismReviewEngine engine = new PrismReviewEngine(
                 new FakeRunner(), blobStore, "prism", java.time.Duration.ofSeconds(60),
-                "newapi", "DeepSeek-V4", "https://newapi.sakta.top/v1", "fake-key", "0.5.0");
+                "newapi", "DeepSeek-V4", "https://newapi.sakta.top/v1", "fake-key", "0.5.0", true);
 
         java.util.Optional<CostHint> costOpt = engine.extractCost(evidence);
         assertTrue(costOpt.isPresent());
@@ -143,9 +149,10 @@ class CostExtractionTest {
         ReviewEvidence failure = new gate.domain.review.EngineFailure(desc,
                 gate.domain.review.EngineFailure.FailureKind.CRASH, "test crash", -1);
 
+        // acceptDegraded irrelevant to extractCost; see prism_engine_extracts_timing for rationale.
         PrismReviewEngine engine = new PrismReviewEngine(
                 new FakeRunner(), harness.blobStore(), "prism", java.time.Duration.ofSeconds(60),
-                "newapi", "DeepSeek-V4", "https://newapi.sakta.top/v1", "fake-key", "0.5.0");
+                "newapi", "DeepSeek-V4", "https://newapi.sakta.top/v1", "fake-key", "0.5.0", true);
 
         java.util.Optional<CostHint> costOpt = engine.extractCost(failure);
         assertTrue(costOpt.isPresent());

@@ -52,10 +52,12 @@ class PrismReviewEngineTest {
         temp = Files.createTempDirectory("prism-test-");
         blobStore = new FsBlobStore(temp.resolve("blobs"));
         runner = new FakeRunner();
+        // acceptDegraded=false keeps the fail-closed default: N6 degraded flag stays true,
+        // and GatePolicy still rejects a degraded report (production behaviour).
         engine = new PrismReviewEngine(runner, blobStore,
                 "prism", Duration.ofSeconds(5),
                 "newapi", "test-model",
-                "https://newapi.sakta.top/v1", "fake-key", "prism 0.5.0");
+                "https://newapi.sakta.top/v1", "fake-key", "prism 0.5.0", false);
         request = sampleRequest();
     }
 
