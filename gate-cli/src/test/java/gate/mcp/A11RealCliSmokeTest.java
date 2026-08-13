@@ -216,7 +216,16 @@ class A11RealCliSmokeTest {
                 + "locks_dir = " + qp(cfg.locksDir()) + "\n"
                 + "index_dir = " + qp(cfg.indexDir()) + "\n"
                 + "gate_identity.name = " + q(cfg.gateIdentity().name()) + "\n"
-                + "gate_identity.email = " + q(cfg.gateIdentity().email()) + "\n";
+                + "gate_identity.email = " + q(cfg.gateIdentity().email()) + "\n"
+                // Emit every policy key the loader knows, so this smoke fixture fails closed at the
+                // config layer if TomlGateConfigLoader's known-keys set drifts from the writer here.
+                // engine_accept_degraded mirrors Policy.defaults() (false) — A11 uses the manual
+                // engine, so the flag has no observable effect; it is here for completeness.
+                + "policy.strictness = " + cfg.policy().strictness() + "\n"
+                + "policy.require_coverage = " + cfg.policy().requireCoverage() + "\n"
+                + "policy.max_diff_bytes = " + cfg.policy().maxDiffBytes() + "\n"
+                + "policy.max_diff_lines = " + cfg.policy().maxDiffLines() + "\n"
+                + "policy.engine_accept_degraded = " + cfg.policy().engineAcceptDegraded() + "\n";
         Files.writeString(toml, content, StandardCharsets.UTF_8);
         return toml;
     }
