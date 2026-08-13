@@ -69,7 +69,8 @@ public final class GateReviewEngineFactory implements ReviewEngineFactory {
                 processRunner, blobStore,
                 engine.cmd(), Duration.ofSeconds(engine.timeoutSeconds()),
                 engine.providerId(), engine.model(),
-                provider.baseUrl(), apiKey, version);
+                provider.baseUrl(), apiKey, version,
+                config.policy().engineAcceptDegraded());
     }
 
     /**

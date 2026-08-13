@@ -88,11 +88,13 @@ public final class PrismReviewEngine implements ReviewEngine {
     private final String baseUrl;        // provider.base_url, e.g. https://newapi.sakta.top/v1
     private final String apiKey;         // from .env, never logged, never in argv
     private final String engineVersion;  // resolved by the factory via `prism version` (see §2 deviation 2)
+    private final boolean acceptDegraded; // H1 data-collection escape hatch — false means fail-closed rejection
 
     public PrismReviewEngine(ProcessRunner processRunner, BlobStore blobStore,
                              String prismBinary, Duration timeout,
                              String providerId, String modelName,
-                             String baseUrl, String apiKey, String engineVersion) {
+                             String baseUrl, String apiKey, String engineVersion,
+                             boolean acceptDegraded) {
         this.processRunner = processRunner;
         this.blobStore = blobStore;
         this.prismBinary = prismBinary;
@@ -102,6 +104,7 @@ public final class PrismReviewEngine implements ReviewEngine {
         this.baseUrl = baseUrl;
         this.apiKey = apiKey;
         this.engineVersion = engineVersion == null ? "unknown" : engineVersion;
+        this.acceptDegraded = acceptDegraded;
     }
 
     @Override
@@ -252,7 +255,7 @@ public final class PrismReviewEngine implements ReviewEngine {
 
         // N6: prism has no "files reviewed" field. Use the full input changedPaths and degrade.
         Set<String> covered = new LinkedHashSet<>(request.snapshot().changedPaths());
-        boolean degraded = true;
+        boolean degraded = !acceptDegraded;
 
         List<Finding> findings = new ArrayList<>();
         boolean unknownSeverity = false;

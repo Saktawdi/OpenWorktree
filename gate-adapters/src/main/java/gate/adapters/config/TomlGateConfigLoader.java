@@ -34,6 +34,7 @@ public final class TomlGateConfigLoader {
             "gate_home", "approvals_dir", "db_path", "blob_root", "audit_path", "locks_dir", "index_dir",
             "gate_identity.name", "gate_identity.email", "gate_identity.date",
             "policy.strictness", "policy.require_coverage", "policy.max_diff_bytes", "policy.max_diff_lines",
+            "policy.engine_accept_degraded",
             "engine.cmd", "engine.args", "engine.timeout_seconds", "engine.provider_id", "engine.model");
 
     public GateConfig load(Path tomlPath) {
@@ -168,7 +169,8 @@ public final class TomlGateConfigLoader {
         boolean requireCoverage = Boolean.parseBoolean(scalars.getOrDefault("policy.require_coverage", "true"));
         long maxBytes = longValueOr(scalars, "policy.max_diff_bytes", 2_000_000L);
         long maxLines = longValueOr(scalars, "policy.max_diff_lines", 20_000L);
-        Policy policy = new Policy(strictness, requireCoverage, maxBytes, maxLines);
+        boolean engineAcceptDegraded = Boolean.parseBoolean(scalars.getOrDefault("policy.engine_accept_degraded", "false"));
+        Policy policy = new Policy(strictness, requireCoverage, maxBytes, maxLines, engineAcceptDegraded);
 
         GateConfig.EngineConfig engine = null;
         if (scalars.containsKey("engine.cmd")) {
