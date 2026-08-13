@@ -154,7 +154,7 @@
 
 **诚实降级**（执行文档 §4 P4 硬约束）：prism JSON 无 usage/token 字段（`doc/p2-schema-核对.md` §3 确认），token source 标记为 `unavailable`，成本占比降级为 NaN，仅凭一次通过率判定。`CostExtractionTest` 覆盖三种 token source（`engine_json` / `gateway_usage` / `unavailable`）与降级路径。
 
-H1 判定**设计为可证伪**——verdict 不被调整或样本过滤以让 H1 "看起来成立"。当前样本数不足 20，emit `INSUFFICIENT_SAMPLES`，需收集 ≥20 个真实工单样本后方可判定。
+H1 判定**设计为可证伪**——verdict 不被调整或样本过滤以让 H1 "看起来成立"。首次真实数据收集已完成（20 个工单样本，见 `h1-stage-report.md`）：classification=PARTIAL、first-pass=45%、metric_basis=degraded；cost ratio 因 prism JSON 无 usage 字段保持 NaN，成本侧判定仍待 precise token 数据。
 
 ---
 
@@ -211,7 +211,7 @@ H1 判定**设计为可证伪**——verdict 不被调整或样本过滤以让 H
 | 1 | S3 失败（无可用引擎） | **不触发**。prism 可用 |
 | 2 | S4 失败且 notes 路线也不可行 | **不触发**。push-option 路径端到端通 |
 | 3 | B1–B19 有任一无法 REJECT | **不触发**。18 条全 REJECT + B14 结构性不可能 + B13 残余风险记录 |
-| 4 | H1 证伪 | **待数据**。判定机制就绪，样本不足 20，未触发证伪 |
+| 4 | H1 证伪 | **不触发**。H1 阶段报告（`h1-stage-report.md`）：classification=PARTIAL——first-pass 45% 未到 REFUTED 的 40% 下限，cost ratio 因 degraded basis 为 NaN 无法判定，未证伪 |
 | 5 | 竞品已完整覆盖三条自建理由 | **不触发**。定性为"参考 agent-mesh，从零自建" |
 
 ---
@@ -249,7 +249,7 @@ Fat jar：`gate-cli/target/gate.jar`（27MB，Spring Boot repackage）。
 
 | # | 项 | 状态 | 后续 |
 |---|---|---|---|
-| 1 | H1 判定 | 机制就绪，样本不足 20 | 收集 ≥20 个真实工单样本后运行 `gate metrics verdict` |
+| 1 | H1 判定 | ✅ **已完成**（见 `h1-stage-report.md`）：20 个真实工单样本，classification=PARTIAL，first-pass=45%，degraded basis | 后续：升级 prism 支持 token usage → precise basis 判定 |
 | 2 | prism 真实 JSON 核对 | `doc/p2-schema-核对.md` 已完成 | P2 首日已核对 Finding 模型与 `coveredPaths` |
 | 3 | HTTP 传输（§10.4） | 不做（N7：stdio 优先） | 若未来多 agent 共用一个常驻 server，按 §10.4 实现 |
 | 4 | 真实 Claude Code 接入 | A11 真实子进程冒烟已证明 MCP stdio 端点可消费 | 编排层按 spike-结论 §3.3 的 `claude mcp add` 或 `--mcp-config` 注入 |
