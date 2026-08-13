@@ -49,7 +49,7 @@ public final class GatePolicy {
                             List.of("evidence tree=" + report.treeHash(),
                                     "snapshot tree=" + snapshot.treeHash().hex()));
                 }
-                if (report.degraded()) {
+                if (report.degraded() && !policy.engineAcceptDegraded()) {
                     return Decision.rejectFailure(EngineFailure.FailureKind.CRASH,
                             "engine adapter reported degraded normalisation");
                 }
