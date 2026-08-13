@@ -19,7 +19,22 @@ public record Ticket(
         String reviewerModel,
         TicketStage stage,
         Instant createdAt,
-        Instant updatedAt) {
+        Instant updatedAt,
+        // P4 cost telemetry (nullable — usually NULL because this project does not spawn the agent)
+        Long execTokenTotal,
+        String execTokenSource) {
+
+    /**
+     * Backward-compatible constructor for callers that don't have P4 cost data (P1/P2 paths).
+     * Passes null for both cost fields.
+     */
+    public Ticket(String ticketNo, String title, String targetRef, String clonePath,
+                  String executorProviderId, String executorModel,
+                  String reviewerProviderId, String reviewerModel,
+                  TicketStage stage, Instant createdAt, Instant updatedAt) {
+        this(ticketNo, title, targetRef, clonePath, executorProviderId, executorModel,
+                reviewerProviderId, reviewerModel, stage, createdAt, updatedAt, null, null);
+    }
 
     public Ticket {
         if (ticketNo == null || ticketNo.isBlank()) {
@@ -35,6 +50,7 @@ public record Ticket(
 
     public Ticket withStage(TicketStage newStage, Instant now) {
         return new Ticket(ticketNo, title, targetRef, clonePath, executorProviderId, executorModel,
-                reviewerProviderId, reviewerModel, newStage, createdAt, now);
+                reviewerProviderId, reviewerModel, newStage, createdAt, now,
+                execTokenTotal, execTokenSource);
     }
 }

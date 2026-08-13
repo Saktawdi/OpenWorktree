@@ -34,4 +34,10 @@ public interface PresubmitRepository {
     Optional<PresubmitRow> find(String ticketNo, int round);
 
     Optional<PresubmitRow> findLatest(String ticketNo);
+
+    /** All presubmit rows for a ticket, ordered by round ascending (P4 metrics export). */
+    java.util.List<PresubmitRow> findAllByTicket(String ticketNo);
+
+    /** Look up a presubmit by its row id (P4 metrics — needed to map review_result → ticket). */
+    Optional<PresubmitRow> findById(long id);
 }

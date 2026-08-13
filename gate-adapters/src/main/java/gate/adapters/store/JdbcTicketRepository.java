@@ -30,7 +30,9 @@ public final class JdbcTicketRepository implements TicketRepository {
             rs.getString("reviewer_model"),
             TicketStage.valueOf(rs.getString("stage")),
             Instant.parse(rs.getString("created_at")),
-            Instant.parse(rs.getString("updated_at")));
+            Instant.parse(rs.getString("updated_at")),
+            getNullableLong(rs, "exec_token_total"),
+            rs.getString("exec_token_source"));
 
     @Override
     public void insert(Ticket ticket) {
@@ -38,13 +40,15 @@ public final class JdbcTicketRepository implements TicketRepository {
                 INSERT INTO ticket(ticket_no, title, target_ref, clone_path,
                                    executor_provider_id, executor_model,
                                    reviewer_provider_id, reviewer_model,
-                                   stage, created_at, updated_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?)
+                                   stage, created_at, updated_at,
+                                   exec_token_total, exec_token_source)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 ticket.ticketNo(), ticket.title(), ticket.targetRef(), ticket.clonePath(),
                 ticket.executorProviderId(), ticket.executorModel(),
                 ticket.reviewerProviderId(), ticket.reviewerModel(),
-                ticket.stage().name(), ticket.createdAt().toString(), ticket.updatedAt().toString());
+                ticket.stage().name(), ticket.createdAt().toString(), ticket.updatedAt().toString(),
+                ticket.execTokenTotal(), ticket.execTokenSource());
     }
 
     @Override
@@ -70,5 +74,14 @@ public final class JdbcTicketRepository implements TicketRepository {
     @Override
     public List<Ticket> findAll() {
         return jdbc.query("SELECT * FROM ticket ORDER BY ticket_no", MAPPER);
+    }
+
+    private static Long getNullableLong(ResultSet rs, String column) {
+        try {
+            long val = rs.getLong(column);
+            return rs.wasNull() ? null : val;
+        } catch (Exception e) {
+            return null;
+        }
     }
 }

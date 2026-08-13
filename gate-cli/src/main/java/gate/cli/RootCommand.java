@@ -6,8 +6,8 @@ import picocli.CommandLine;
 @CommandLine.Command(
         name = "gate",
         mixinStandardHelpOptions = true,
-        version = "gate 0.3.0 (P3)",
-        description = "Local git commit gate — P3 (MCP stdio server + two-domain credentials).",
+        version = "gate 0.4.0 (P4)",
+        description = "Local git commit gate — P4 (cost telemetry + H1 verdict).",
         subcommands = {
                 InitCommand.class,
                 PreflightCommand.class,
@@ -18,7 +18,8 @@ import picocli.CommandLine;
                 ReconcileCliCommand.class,
                 StatusCliCommand.class,
                 ProviderCommand.class,
-                McpCommand.class
+                McpCommand.class,
+                MetricsCommand.class
         })
 final class RootCommand implements Runnable {
 

@@ -4,10 +4,12 @@ import gate.domain.blob.BlobRef;
 import gate.domain.review.EngineDescriptor;
 import gate.domain.review.EngineFailure;
 import gate.domain.review.EngineReport;
+import gate.domain.review.EvidenceVisitor;
 import gate.domain.review.Finding;
 import gate.domain.review.ReviewEvidence;
 import gate.domain.review.Severity;
 import gate.ports.BlobStore;
+import gate.ports.CostHint;
 import gate.ports.ProcessRunner;
 import gate.ports.ReviewEngine;
 import gate.adapters.engine.PrismJson.PrismFinding;
@@ -105,6 +107,37 @@ public final class PrismReviewEngine implements ReviewEngine {
     @Override
     public EngineDescriptor describe() {
         return new EngineDescriptor(ENGINE_ID, engineVersion, argvFingerprint(), providerId, modelName);
+    }
+
+    /**
+     * P4 cost telemetry: extracts {@code timing.totalMs}/{@code llmMs} from prism's JSON output.
+     * prism does NOT expose usage/token fields (confirmed in doc/p2-schema-核对.md §3), so the
+     * token source is always {@code "unavailable"} and token counts are null. The timing data
+     * provides the degraded basis for the H1 verdict (review_round + diff_size + wall-clock).
+     *
+     * <p>This is bypass data — it never affects the verdict or blocks publish. If parsing fails, it
+     * returns {@link CostHint#EMPTY} (no telemetry) rather than throwing.
+     */
+    @Override
+    public java.util.Optional<CostHint> extractCost(ReviewEvidence evidence) {
+        return evidence.accept(new EvidenceVisitor<java.util.Optional<CostHint>>() {
+            @Override
+            public java.util.Optional<CostHint> visit(EngineReport report) {
+                try {
+                    byte[] raw = blobStore.get(report.rawOutput());
+                    String json = new String(raw, java.nio.charset.StandardCharsets.UTF_8);
+                    PrismOutput out = PrismJson.parse(json);
+                    return java.util.Optional.of(CostHint.timingOnly(out.totalMs, out.llmMs));
+                } catch (Exception e) {
+                    return java.util.Optional.of(CostHint.EMPTY);
+                }
+            }
+
+            @Override
+            public java.util.Optional<CostHint> visit(EngineFailure failure) {
+                return java.util.Optional.of(CostHint.EMPTY);
+            }
+        });
     }
 
     /**

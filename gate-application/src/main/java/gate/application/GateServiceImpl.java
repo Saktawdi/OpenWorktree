@@ -255,9 +255,28 @@ public final class GateServiceImpl implements GateService {
             case REJECT -> TicketStage.REJECTED;
             case REQUIRES_HUMAN -> TicketStage.NEEDS_HUMAN;
         };
+
+        // P4 cost telemetry: bypass data — extracted from the engine's evidence, never affects the
+        // verdict, never blocks publish (执行文档 §4 P4). A failure here yields an empty record
+        // and the review proceeds normally; the metric basis is marked 'degraded'.
+        String diffText = snapshot.diff();
+        gate.ports.ReviewResultRepository.CostRecord cost;
+        try {
+            gate.ports.CostHint hint = engine.extractCost(evidence).orElse(gate.ports.CostHint.EMPTY);
+            long diffBytesVal = diffText.getBytes(java.nio.charset.StandardCharsets.UTF_8).length;
+            long diffLinesVal = diffText.chars().filter(c -> c == '\n').count();
+            cost = new gate.ports.ReviewResultRepository.CostRecord(
+                    hint.promptTokens(), hint.completionTokens(), hint.totalTokens(), hint.tokenSource(),
+                    hint.reviewWallMs(), hint.llmWallMs(),
+                    diffBytesVal, diffLinesVal);
+        } catch (Exception e) {
+            cost = gate.ports.ReviewResultRepository.CostRecord.EMPTY;
+        }
+
+        final gate.ports.ReviewResultRepository.CostRecord costFinal = cost;
         tx.inTransaction(() -> {
             reviewResults.insert(presubmitId, descriptor, decision.verdict(), findingsBlob, coveredOk, degraded,
-                    rawBlob, clock.now());
+                    rawBlob, clock.now(), costFinal);
             tickets.updateStage(ticket.ticketNo(), nextStage, clock.now());
             return null;
         });

@@ -5,6 +5,7 @@ import gate.domain.review.ReviewEvidence;
 import gate.domain.snapshot.Snapshot;
 import gate.domain.git.ObjectId;
 import gate.domain.git.RepoRef;
+import java.util.Optional;
 
 /**
  * Review engine port (架构落地执行文档 §5.3).
@@ -22,6 +23,22 @@ public interface ReviewEngine {
     EngineDescriptor describe();
 
     ReviewEvidence review(ReviewRequest request);
+
+    /**
+     * Extracts cost telemetry from the engine's raw output (P4 bypass data — never affects the
+     * verdict or blocks publish, 执行文档 §4 P4).
+     *
+     * <p>Default returns {@link CostHint#EMPTY} (e.g. the manual review engine has no timing/token
+     * data). The prism adapter overrides this to parse {@code timing.totalMs}/{@code llmMs} from its
+     * JSON output. This is a <b>default method</b> so adding it changes no existing call site and
+     * does not alter the {@link #review} contract.
+     *
+     * @param evidence the evidence produced by {@link #review} (carries the raw output blob ref)
+     * @return the cost hint; {@link Optional#empty()} if the engine cannot extract cost data.
+     */
+    default Optional<CostHint> extractCost(ReviewEvidence evidence) {
+        return Optional.empty();
+    }
 
     /**
      * @param danglingCommit the commit built from the snapshot tree, pinned by a gate ref. Engines

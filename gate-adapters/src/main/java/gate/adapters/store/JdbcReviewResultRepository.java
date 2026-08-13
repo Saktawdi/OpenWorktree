@@ -18,6 +18,11 @@ import org.springframework.jdbc.core.RowMapper;
  * satisfies it via the seeded {@code manual} provider row rather than by relaxing the constraint —
  * a manual review is simply a degenerate engine, which is exactly what the "adding a second engine
  * costs zero core changes" design promised.
+ *
+ * <p>P4 adds cost telemetry columns (prompt/completion/total tokens, token source, review/LLM
+ * wall-clock, diff bytes/lines). The cost data is <b>bypass</b> — the legacy {@code insert} (without
+ * cost) writes NULLs for all cost columns, and the new {@code insert} overload writes the provided
+ * {@link CostRecord}. A failure to record cost never blocks publish (执行文档 §4 P4).
  */
 public final class JdbcReviewResultRepository implements ReviewResultRepository {
 
@@ -41,7 +46,15 @@ public final class JdbcReviewResultRepository implements ReviewResultRepository 
             rs.getInt("covered_ok") == 1,
             rs.getInt("degraded") == 1,
             rs.getString("raw_blob"),
-            Instant.parse(rs.getString("created_at")));
+            Instant.parse(rs.getString("created_at")),
+            getNullableLong(rs, "prompt_tokens"),
+            getNullableLong(rs, "completion_tokens"),
+            getNullableLong(rs, "total_tokens"),
+            rs.getString("token_source"),
+            getNullableLong(rs, "review_wall_ms"),
+            getNullableLong(rs, "llm_wall_ms"),
+            getNullableLong(rs, "diff_bytes"),
+            getNullableLong(rs, "diff_lines"));
 
     @Override
     public ReviewResultRow insert(
@@ -53,14 +66,32 @@ public final class JdbcReviewResultRepository implements ReviewResultRepository 
             boolean degraded,
             BlobRef raw,
             Instant now) {
+        return insert(presubmitId, engine, verdict, findings, coveredOk, degraded, raw, now, CostRecord.EMPTY);
+    }
+
+    @Override
+    public ReviewResultRow insert(
+            long presubmitId,
+            EngineDescriptor engine,
+            Decision.Verdict verdict,
+            BlobRef findings,
+            boolean coveredOk,
+            boolean degraded,
+            BlobRef raw,
+            Instant now,
+            CostRecord cost) {
         jdbc.update("""
                 INSERT INTO review_result(presubmit_id, engine_id, engine_version, provider_id, model_name,
-                                          verdict, findings_blob, covered_ok, degraded, raw_blob, created_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?)
+                                          verdict, findings_blob, covered_ok, degraded, raw_blob, created_at,
+                                          prompt_tokens, completion_tokens, total_tokens, token_source,
+                                          review_wall_ms, llm_wall_ms, diff_bytes, diff_lines)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 presubmitId, engine.engineId(), engine.engineVersion(), engine.providerId(), engine.modelName(),
                 verdict.name(), findings.relPath(), coveredOk ? 1 : 0, degraded ? 1 : 0, raw.relPath(),
-                now.toString());
+                now.toString(),
+                cost.promptTokens(), cost.completionTokens(), cost.totalTokens(), cost.tokenSource(),
+                cost.reviewWallMs(), cost.llmWallMs(), cost.diffBytes(), cost.diffLines());
         return findLatestForPresubmit(presubmitId).orElseThrow(
                 () -> new IllegalStateException("review_result row vanished right after insert"));
     }
@@ -70,5 +101,19 @@ public final class JdbcReviewResultRepository implements ReviewResultRepository 
         List<ReviewResultRow> rows = jdbc.query(
                 "SELECT * FROM review_result WHERE presubmit_id = ? ORDER BY id DESC LIMIT 1", MAPPER, presubmitId);
         return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
+    }
+
+    @Override
+    public List<ReviewResultRow> findAllForMetrics() {
+        return jdbc.query("SELECT * FROM review_result ORDER BY id ASC", MAPPER);
+    }
+
+    private static Long getNullableLong(ResultSet rs, String column) {
+        try {
+            long val = rs.getLong(column);
+            return rs.wasNull() ? null : val;
+        } catch (Exception e) {
+            return null;
+        }
     }
 }

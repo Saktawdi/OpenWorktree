@@ -191,10 +191,14 @@ final class PrismJson {
     static final class PrismOutput {
         final List<PrismFinding> findings;
         final String version;
+        final Long totalMs;  // timing.totalMs (P4 cost telemetry)
+        final Long llmMs;    // timing.llmMs (P4 cost telemetry)
 
-        PrismOutput(List<PrismFinding> findings, String version) {
+        PrismOutput(List<PrismFinding> findings, String version, Long totalMs, Long llmMs) {
             this.findings = findings;
             this.version = version;
+            this.totalMs = totalMs;
+            this.llmMs = llmMs;
         }
     }
 
@@ -257,7 +261,26 @@ final class PrismJson {
         }
         Object versionRaw = obj.get("version");
         String version = versionRaw == null ? null : String.valueOf(versionRaw);
-        return new PrismOutput(findings, version);
+        Long totalMs = extractTimingMs(obj, "totalMs");
+        Long llmMs = extractTimingMs(obj, "llmMs");
+        return new PrismOutput(findings, version, totalMs, llmMs);
+    }
+
+    /**
+     * Extracts a millisecond field from prism's {@code timing} object (P4 cost telemetry).
+     * Returns null if timing or the field is absent — the caller treats null as "unavailable".
+     */
+    @SuppressWarnings("unchecked")
+    private static Long extractTimingMs(Map<String, Object> obj, String key) {
+        Object timingRaw = obj.get("timing");
+        if (!(timingRaw instanceof Map<?, ?>)) {
+            return null;
+        }
+        Object val = ((Map<String, Object>) timingRaw).get(key);
+        if (val instanceof Number n) {
+            return n.longValue();
+        }
+        return null;
     }
 
     @SuppressWarnings("unchecked")

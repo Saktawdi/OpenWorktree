@@ -71,4 +71,17 @@ public final class JdbcPresubmitRepository implements PresubmitRepository {
                 "SELECT * FROM presubmit WHERE ticket_no = ? ORDER BY review_round DESC LIMIT 1", MAPPER, ticketNo);
         return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
     }
+
+    @Override
+    public List<PresubmitRow> findAllByTicket(String ticketNo) {
+        return jdbc.query(
+                "SELECT * FROM presubmit WHERE ticket_no = ? ORDER BY review_round ASC", MAPPER, ticketNo);
+    }
+
+    @Override
+    public Optional<PresubmitRow> findById(long id) {
+        List<PresubmitRow> rows = jdbc.query(
+                "SELECT * FROM presubmit WHERE id = ?", MAPPER, id);
+        return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
+    }
 }
