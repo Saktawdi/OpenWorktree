@@ -410,8 +410,8 @@ claude mcp remove gate-spike -s local     # → Removed MCP server gate-spike fr
 | 项 | 决定 |
 |---|---|
 | **D7（MCP vs 文件协议）** | **MCP**。两个 CLI 均可注入，判据满足，文件协议不做 |
-| P3 形态 | 优先 **stdio** MCP server（本次实测形态），而非 HTTP。stdio 天然只对被 spawn 的子进程可见，**不开监听端口**——比架构文档 §10 的"bind 127.0.0.1 + token"更小的攻击面 |
-| 若必须 HTTP | 才需要 §10 的全套：bind 127.0.0.1 + token + 校验 `Origin`/`Host`。**stdio 优先意味着这套可以先不写** |
+| P3 形态 | 优先 **stdio** MCP server（本次实测形态），而非 HTTP。stdio 天然只对被 spawn 的子进程可见，**不开监听端口**——比架构文档 §10.4 的"bind 127.0.0.1 + token"更小的攻击面 |
+| 若必须 HTTP | 才需要 §10.4 的全套：bind 127.0.0.1 + token + 校验 `Origin`/`Host`。**stdio 优先意味着这套可以先不写** |
 | 权限域（§11.3） | 用 CLI 侧 `--allowedTools` **叠加** server 侧域检查。**server 侧是权威**——CLI flag 属于 §1.3 承认的"agent 可控配置"，不能作为唯一防线。`review_run` / `publish` 绝不进 agent 域 |
 | 隔离 | claude 用 `--mcp-config <file> --strict-mcp-config`；opencode 用项目级 `opencode.json`。二者都**不污染用户全局配置**，且可由编排层逐工单生成 |
 | 优先级 | **P3，非阻断**。闸门正确性完全不依赖此结论——照架构文档 §13 第 2 条 |
@@ -456,7 +456,7 @@ claude mcp remove gate-spike -s local     # → Removed MCP server gate-spike fr
 | N4 | 启动时用 `prism review commit --help` 校验 flag 面存在，防 argv 漂移变成运行期 exit `2` | §1.4 |
 | N5 | prism exit `4` 是混合桶（git 失败 / provider 网络 / IO / schema），统一按闸门 `20` 处理，**不做退出码级重试分流** | §1.4 |
 | N6 | prism JSON 若无"实际审了哪些文件"字段，`coveredPaths` 必须置为输入 changedPaths 且 `degraded=true` | §1.3 |
-| N7 | MCP 优先 stdio 而非 HTTP，可省掉 §10 的 bind/Origin/Host 全套 | §3.3 |
+| N7 | MCP 优先 stdio 而非 HTTP，可省掉 §10.4 的 bind/Origin/Host 全套 | §3.3 |
 
 ### 4.4 未完成项与批复（2026-08-11 拍板）
 

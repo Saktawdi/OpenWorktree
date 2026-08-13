@@ -19,6 +19,7 @@ import gate.adapters.hook.FileHookInstaller;
 import gate.adapters.lock.FileChannelLockManager;
 import gate.adapters.preflight.DefaultPreflightChecker;
 import gate.adapters.process.ProcessRunnerImpl;
+import gate.adapters.store.JdbcCredentialRepository;
 import gate.adapters.store.JdbcPresubmitRepository;
 import gate.adapters.store.JdbcProviderRepository;
 import gate.adapters.store.JdbcPublishIntentRepository;
@@ -33,6 +34,7 @@ import gate.ports.AuditLog;
 import gate.ports.BlobStore;
 import gate.ports.Clock;
 import gate.ports.CommitPublisher;
+import gate.ports.CredentialRepository;
 import gate.ports.DbTransactionRunner;
 import gate.ports.HookInstaller;
 import gate.ports.LockManager;
@@ -70,6 +72,10 @@ public final class GateComponents {
     private final PreflightChecker preflightChecker;
     private final ProviderRepository providerRepository;
     private final TicketRepository ticketRepository;
+    private final PresubmitRepository presubmitRepository;
+    private final ReviewResultRepository reviewResultRepository;
+    private final BlobStore blobStore;
+    private final CredentialRepository credentials;
     private final Clock clock;
     private final java.nio.file.Path envFile;
 
@@ -107,9 +113,13 @@ public final class GateComponents {
         TicketRepository tickets = new JdbcTicketRepository(jdbc);
         this.ticketRepository = tickets;
         PresubmitRepository presubmits = new JdbcPresubmitRepository(jdbc);
+        this.presubmitRepository = presubmits;
         ReviewResultRepository reviewResults = new JdbcReviewResultRepository(jdbc);
+        this.reviewResultRepository = reviewResults;
         PublishIntentRepository intents = new JdbcPublishIntentRepository(jdbc, config.authRepo());
+        this.blobStore = blobStore;
         this.providerRepository = new JdbcProviderRepository(jdbc);
+        this.credentials = new JdbcCredentialRepository(jdbc);
 
         ReviewEngineFactory reviewEngineFactory = config.engineConfigured()
                 ? new GateReviewEngineFactory(blobStore, config, processRunner, providerRepository, envFile)
@@ -183,5 +193,21 @@ public final class GateComponents {
 
     public Clock clock() {
         return clock;
+    }
+
+    public PresubmitRepository presubmitRepository() {
+        return presubmitRepository;
+    }
+
+    public ReviewResultRepository reviewResultRepository() {
+        return reviewResultRepository;
+    }
+
+    public BlobStore blobStore() {
+        return blobStore;
+    }
+
+    public CredentialRepository credentials() {
+        return credentials;
     }
 }

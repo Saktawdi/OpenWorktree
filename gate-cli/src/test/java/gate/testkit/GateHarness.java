@@ -14,6 +14,7 @@ import gate.adapters.hook.FileHookInstaller;
 import gate.adapters.lock.FileChannelLockManager;
 import gate.adapters.preflight.DefaultPreflightChecker;
 import gate.adapters.process.ProcessRunnerImpl;
+import gate.adapters.store.JdbcCredentialRepository;
 import gate.adapters.store.JdbcPresubmitRepository;
 import gate.adapters.store.JdbcProviderRepository;
 import gate.adapters.store.JdbcPublishIntentRepository;
@@ -96,6 +97,8 @@ public final class GateHarness implements AutoCloseable {
     private final Clock clock;
     private final ObjectId baseCommit;
     private final String gitExe;
+    private final JdbcCredentialRepository credentials;
+    private final ProviderRepository providers;
 
     public GateHarness() {
         this("git");
@@ -163,7 +166,9 @@ public final class GateHarness implements AutoCloseable {
         this.reviewResults = reviewResults;
         this.intents = new JdbcPublishIntentRepository(jdbc, config.authRepo());
         ProviderRepository providers = new JdbcProviderRepository(jdbc);
+        this.providers = providers;
         this.clock = new SystemClock();
+        this.credentials = new JdbcCredentialRepository(jdbc);
 
         // Seed the manual provider so review_result.provider_id (NOT NULL) is satisfied.
         providers.upsert(new ProviderRepository.ProviderRow(
@@ -268,6 +273,14 @@ public final class GateHarness implements AutoCloseable {
 
     public BlobStore blobStore() {
         return blobStore;
+    }
+
+    public JdbcCredentialRepository credentials() {
+        return credentials;
+    }
+
+    public ProviderRepository providerRepository() {
+        return providers;
     }
 
     public HashChainAuditLog auditLog() {
