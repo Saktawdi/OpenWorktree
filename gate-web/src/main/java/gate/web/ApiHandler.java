@@ -80,6 +80,7 @@ final class ApiHandler implements HttpHandler {
             Http.json(exchange, status, Json.error(e.code().code(), e.code().name(), e.getMessage(), null));
         } catch (Exception e) {
             // fail-closed: never leak a stack trace to the response body (§4.4).
+            e.printStackTrace(System.err); // diagnostic only; not part of the HTTP body
             status = 500;
             Http.json(exchange, 500, Json.error(GateErrorCode.INTERNAL.code(),
                     "INTERNAL", "internal error", null));

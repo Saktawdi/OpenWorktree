@@ -15,11 +15,17 @@ import gate.domain.error.GateException;
 import gate.domain.git.RepoRef;
 import gate.domain.ticket.Ticket;
 import gate.domain.ticket.TicketStage;
+import gate.domain.session.AgentCli;
+import gate.domain.session.AgentConfig;
+import gate.domain.session.Session;
 import gate.domain.task.GateTask;
+import gate.ports.AgentConfigRepository;
+import gate.ports.AgentSessionPort;
 import gate.ports.BlobStore;
 import gate.ports.PresubmitRepository;
 import gate.ports.ProviderRepository;
 import gate.ports.ReviewResultRepository;
+import gate.ports.SessionRepository;
 import gate.ports.TaskRegistry;
 import gate.ports.TicketRepository;
 import gate.ports.TopologyInitializer;
@@ -55,6 +61,9 @@ final class ApiRoutes {
     private final gate.ports.Clock clock;
     private final TaskRegistry taskRegistry;
     private final TaskRunner taskRunner;
+    private final AgentConfigRepository agentConfigs;
+    private final SessionRepository sessionRepository;
+    private final AgentSessionPort agentSessionPort;
 
     ApiRoutes(WebComponents c) {
         this.gateService = c.gateService();
@@ -69,6 +78,9 @@ final class ApiRoutes {
         this.clock = c.clock();
         this.taskRegistry = c.taskRegistry();
         this.taskRunner = c.taskRunner();
+        this.agentConfigs = c.agentConfigRepository();
+        this.sessionRepository = c.sessionRepository();
+        this.agentSessionPort = c.agentSessionPort();
     }
 
     /** A resolved response: HTTP status + a JSON-serialisable body. */
@@ -137,6 +149,31 @@ final class ApiRoutes {
         }
         if (seg.length == 3 && seg[1].equals("tasks") && method.equals("GET")) {
             return taskDetail(seg[2]);
+        }
+
+        // S3 AgentConfig CRUD + session history (执行文档-后端-web §4.1).
+        if (seg.length == 2 && seg[1].equals("agent-configs")) {
+            if (method.equals("GET")) {
+                return agentConfigList();
+            }
+            if (method.equals("POST")) {
+                return agentConfigCreate(requestBody);
+            }
+        }
+        if (seg.length == 3 && seg[1].equals("agent-configs")) {
+            if (method.equals("GET")) {
+                return agentConfigDetail(seg[2]);
+            }
+            if (method.equals("PUT")) {
+                return agentConfigUpdate(seg[2], requestBody);
+            }
+            if (method.equals("DELETE")) {
+                return agentConfigDelete(seg[2]);
+            }
+        }
+        if (seg.length == 4 && seg[1].equals("agent-configs") && seg[3].equals("sessions")
+                && method.equals("GET")) {
+            return agentConfigSessions(seg[2]);
         }
 
         return new Response(404, null); // ApiHandler renders the NOT_FOUND envelope
@@ -338,6 +375,136 @@ final class ApiRoutes {
         m.put("result_json", t.resultJson());
         m.put("error_json", t.errorJson());
         return m;
+    }
+
+    // --- S3 AgentConfig CRUD ---------------------------------------------------------------------
+
+    private Response agentConfigList() {
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (AgentConfig c : agentConfigs.findAll()) {
+            out.add(agentConfigJson(c));
+        }
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("agent_configs", out);
+        return new Response(200, body);
+    }
+
+    private Response agentConfigDetail(String id) {
+        AgentConfig c = agentConfigs.find(id).orElseThrow(() -> new GateException(
+                GateErrorCode.USAGE, "no such agent config: " + id));
+        return new Response(200, agentConfigJson(c));
+    }
+
+    private Response agentConfigCreate(String requestBody) {
+        AgentConfig c = parseAgentConfig(requestBody, null);
+        if (agentConfigs.find(c.id()).isPresent()) {
+            throw new GateException(GateErrorCode.USAGE, "agent config already exists: " + c.id());
+        }
+        agentConfigs.insert(c, clock.now());
+        return new Response(201, agentConfigJson(c));
+    }
+
+    private Response agentConfigUpdate(String id, String requestBody) {
+        if (agentConfigs.find(id).isEmpty()) {
+            throw new GateException(GateErrorCode.USAGE, "no such agent config: " + id);
+        }
+        AgentConfig c = parseAgentConfig(requestBody, id);
+        agentConfigs.update(c, clock.now());
+        return new Response(200, agentConfigJson(agentConfigs.find(id).orElseThrow()));
+    }
+
+    private Response agentConfigDelete(String id) {
+        if (agentConfigs.find(id).isEmpty()) {
+            throw new GateException(GateErrorCode.USAGE, "no such agent config: " + id);
+        }
+        agentConfigs.delete(id);
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("ok", true);
+        return new Response(200, body);
+    }
+
+    private Response agentConfigSessions(String id) {
+        if (agentConfigs.find(id).isEmpty()) {
+            throw new GateException(GateErrorCode.USAGE, "no such agent config: " + id);
+        }
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Session s : sessionRepository.findByAgentConfig(id)) {
+            out.add(sessionJson(s));
+        }
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("sessions", out);
+        return new Response(200, body);
+    }
+
+    private static Map<String, Object> agentConfigJson(AgentConfig c) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("id", c.id());
+        m.put("name", c.name());
+        m.put("cli", c.cli().name());
+        m.put("provider_id", c.providerId());
+        m.put("model", c.model());
+        m.put("system_prompt", c.systemPrompt());
+        m.put("extra_flags", c.extraFlags());
+        m.put("description", c.description());
+        return m;
+    }
+
+    private static Map<String, Object> sessionJson(Session s) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("id", s.id());
+        m.put("ticket_no", s.ticketNo());
+        m.put("agent_config_id", s.agentConfigId());
+        m.put("cli", s.cli().name());
+        m.put("status", s.status().name());
+        m.put("cli_session_id", s.cliSessionId());
+        m.put("clone_path", s.clonePath());
+        m.put("allocated_port", s.allocatedPort());
+        m.put("started_at", s.startedAt().toString());
+        m.put("finished_at", s.finishedAt() == null ? null : s.finishedAt().toString());
+        if (s.cumulativeUsage() == null) {
+            m.put("cumulative_usage", null);
+        } else {
+            Map<String, Object> u = new LinkedHashMap<>();
+            u.put("prompt_tokens", s.cumulativeUsage().promptTokens());
+            u.put("completion_tokens", s.cumulativeUsage().completionTokens());
+            u.put("total_tokens", s.cumulativeUsage().totalTokens());
+            m.put("cumulative_usage", u);
+        }
+        return m;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static AgentConfig parseAgentConfig(String requestBody, String idOverride) {
+        Map<String, Object> req = parseObject(requestBody);
+        String id = idOverride != null ? idOverride : str(req, "id");
+        if (id == null || id.isBlank()) {
+            throw new GateException(GateErrorCode.USAGE, "agent config id is required");
+        }
+        String name = str(req, "name");
+        if (name == null || name.isBlank()) {
+            throw new GateException(GateErrorCode.USAGE, "agent config name is required");
+        }
+        String cli = str(req, "cli");
+        if (cli == null || cli.isBlank()) {
+            throw new GateException(GateErrorCode.USAGE, "agent config cli is required");
+        }
+        String providerId = str(req, "provider_id");
+        if (providerId == null || providerId.isBlank()) {
+            throw new GateException(GateErrorCode.USAGE, "agent config provider_id is required");
+        }
+        String model = str(req, "model");
+        if (model == null || model.isBlank()) {
+            throw new GateException(GateErrorCode.USAGE, "agent config model is required");
+        }
+        List<String> extraFlags = new ArrayList<>();
+        Object flags = req.get("extra_flags");
+        if (flags instanceof List<?> list) {
+            for (Object o : list) {
+                extraFlags.add(String.valueOf(o));
+            }
+        }
+        return new AgentConfig(id, name, AgentCli.valueOf(cli.toUpperCase(java.util.Locale.ROOT)),
+                providerId, model, str(req, "system_prompt"), extraFlags, str(req, "description"));
     }
 
     // --- reconcile ------------------------------------------------------------------------------

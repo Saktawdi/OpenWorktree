@@ -16,12 +16,15 @@ import gate.adapters.hook.FileHookInstaller;
 import gate.adapters.lock.FileChannelLockManager;
 import gate.adapters.preflight.DefaultPreflightChecker;
 import gate.adapters.process.ProcessRunnerImpl;
+import gate.adapters.session.ClaudeHeadlessAdapter;
+import gate.adapters.store.JdbcAgentConfigRepository;
 import gate.adapters.store.JdbcCredentialRepository;
 import gate.adapters.store.JdbcPresubmitRepository;
 import gate.adapters.store.JdbcProviderRepository;
 import gate.adapters.store.JdbcGateTaskRepository;
 import gate.adapters.store.JdbcPublishIntentRepository;
 import gate.adapters.store.JdbcReviewResultRepository;
+import gate.adapters.store.JdbcSessionRepository;
 import gate.adapters.store.JdbcTicketRepository;
 import gate.adapters.store.SpringDbTransactionRunner;
 import gate.adapters.store.SqliteDataSourceFactory;
@@ -32,6 +35,8 @@ import gate.domain.config.GateConfig;
 import gate.domain.error.GateErrorCode;
 import gate.domain.error.GateException;
 import gate.domain.policy.GatePolicy;
+import gate.ports.AgentConfigRepository;
+import gate.ports.AgentSessionPort;
 import gate.ports.ApprovalStore;
 import gate.ports.AuditLog;
 import gate.ports.BlobStore;
@@ -49,6 +54,7 @@ import gate.ports.PublishIntentRepository;
 import gate.ports.RefObserver;
 import gate.ports.ReviewEngineFactory;
 import gate.ports.ReviewResultRepository;
+import gate.ports.SessionRepository;
 import gate.ports.SnapshotCapture;
 import gate.ports.TaskRegistry;
 import gate.ports.TicketRepository;
@@ -88,6 +94,9 @@ public final class WebComponents {
     private final CredentialRepository credentials;
     private final TaskRegistry taskRegistry;
     private final TaskRunner taskRunner;
+    private final AgentConfigRepository agentConfigRepository;
+    private final SessionRepository sessionRepository;
+    private final AgentSessionPort agentSessionPort;
     private final Clock clock;
     private final Path envFile;
 
@@ -137,6 +146,11 @@ public final class WebComponents {
         gateTasks.failOrphaned(clock.now());
         this.taskRegistry = gateTasks;
 
+        JdbcAgentConfigRepository agentConfigs = new JdbcAgentConfigRepository(jdbc);
+        this.agentConfigRepository = agentConfigs;
+        JdbcSessionRepository sessionRepo = new JdbcSessionRepository(jdbc, blobStore);
+        this.sessionRepository = sessionRepo;
+
         ReviewEngineFactory reviewEngineFactory = config.engineConfigured()
                 ? new GateReviewEngineFactory(blobStore, config, processRunner, providerRepository, envFile)
                 : new ManualReviewEngineFactory(blobStore);
@@ -147,6 +161,8 @@ public final class WebComponents {
                 blobStore, auditLog, lockManager, txRunner, clock);
         this.metricsService = new MetricsService(reviewResults, presubmits, tickets);
         this.taskRunner = new TaskRunner(taskRegistry, gateService, clock);
+        this.agentSessionPort = new ClaudeHeadlessAdapter(processRunner, agentConfigs, sessionRepo,
+                taskRegistry, clock, "claude");
     }
 
     /**
@@ -233,8 +249,23 @@ public final class WebComponents {
         return taskRunner;
     }
 
-    /** Shuts down the async task executor. Idempotent; called by {@link WebServer#close()}. */
+    public AgentConfigRepository agentConfigRepository() {
+        return agentConfigRepository;
+    }
+
+    public SessionRepository sessionRepository() {
+        return sessionRepository;
+    }
+
+    public AgentSessionPort agentSessionPort() {
+        return agentSessionPort;
+    }
+
+    /** Shuts down the async task executor and session adapter. Idempotent; called by {@link WebServer#close()}. */
     public void close() {
         taskRunner.close();
+        if (agentSessionPort instanceof ClaudeHeadlessAdapter claude) {
+            claude.close();
+        }
     }
 }
