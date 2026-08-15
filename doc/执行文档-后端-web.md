@@ -1,6 +1,6 @@
 # Gate Web UI — 后端执行文档
 
-> 状态：执行中（S0/A13、S1/A14 已完成；S2 进行中）
+> 状态：执行中（S0/A13、S1/A14、S2/A15+A16 已完成；S3 进行中）
 > 上游：`doc/归档/done/架构落地执行文档.md`（地基，端口/DDL/锁/ADR-1..9）、`doc/归档/done/执行文档.md`（阶段计划与止损体例）、`doc/归档/done/h1-stage-report.md`（H1 degraded basis）、`doc/立项讨论-v2.md`（§6.2 安全硬要求）
 > 平行：`doc/执行文档-前端-web.md`（消费方）
 > 日期：2026-08-14

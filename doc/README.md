@@ -1,6 +1,6 @@
 # 文档索引 — 本地 Git 提交闸门层
 
-本目录收录本项目的设计与执行文档。**当前进度：P0–P4 全部完成，94 tests green，A1–A12 验收判据全部通过；H1 首次真实数据收集已完成，classification=PARTIAL。本迭代（Web UI + agent 会话编排，S0–S5）：前端已出高保真原型（`doc/prototype/`）与 `gate-web-ui/` 原型实现；后端 `gate-web` 模块 **S0（骨架+认证，A13）与 S1（只读+同步 API，A14）已完成**，gate-web 侧 20 tests green，静态资源已接入 `gate-web-ui` 构建产物。**下一动作：S2 异步闸门（review/publish 任务化 + SSE）。** 执行阶段的文档已归档至 `归档/done/`。**
+本目录收录本项目的设计与执行文档。**当前进度：P0–P4 全部完成，94 tests green，A1–A12 验收判据全部通过；H1 首次真实数据收集已完成，classification=PARTIAL。本迭代（Web UI + agent 会话编排，S0–S5）：前端已出高保真原型（`doc/prototype/`）与 `gate-web-ui/` 原型实现；后端 `gate-web` 模块 **S0（骨架+认证，A13）、S1（只读+同步 API，A14）、S2（异步 review/publish + SSE，A15/A16）已完成**，gate-web 侧 31 tests green，V4 迁移已落地，静态资源已接入 `gate-web-ui` 构建产物。**下一动作：S3 AgentConfig/会话领域与 claude adapter。** 执行阶段的文档已归档至 `归档/done/`。**
 
 阅读顺序（进场人员从上往下）：归档/done/架构落地执行文档 → 归档/done/spike-结论 → 归档/done/执行文档 →（背景）立项讨论 →（本迭代）执行文档-后端-web → 执行文档-前端-web →（原型）x.md。
 
@@ -10,7 +10,7 @@
 |---|---|---|
 | [README.md](README.md) | 本索引 | 生效 |
 | [立项讨论-v2.md](立项讨论-v2.md) | 立项论证：竞品检索、闸门设计、成本假设 H1、MVP 范围。执行文档的上游，仅作背景。文首含「后续进展（2026-08-14）」节，标注 v2 各章在实现阶段的实际结局。 | 草案 v2 + 后续进展补注（背景） |
-| [执行文档-后端-web.md](执行文档-后端-web.md) | **下一迭代（Web UI + agent 会话编排）后端执行文档**：新增模块 `gate-web`、`AgentSessionPort` 端口签名、REST 路由总表（含闭环环节标注）、V4 DDL、工单级串行锁、S0–S5 阶段与验收 A13–A19、ADR-10..14。在 `归档/done/架构落地执行文档.md` 之上追加，不改写既有闸门契约。 | 执行中（S0/A13、S1/A14 已完成，S2 进行中） |
+| [执行文档-后端-web.md](执行文档-后端-web.md) | **下一迭代（Web UI + agent 会话编排）后端执行文档**：新增模块 `gate-web`、`AgentSessionPort` 端口签名、REST 路由总表（含闭环环节标注）、V4 DDL、工单级串行锁、S0–S5 阶段与验收 A13–A19、ADR-10..14。在 `归档/done/架构落地执行文档.md` 之上追加，不改写既有闸门契约。 | 执行中（S0/A13、S1/A14、S2/A15+A16 已完成，S3 进行中） |
 | [执行文档-前端-web.md](执行文档-前端-web.md) | 下一迭代前端执行文档（Vue 3 + TS + Vite SPA），消费后端契约。原型已出（`doc/prototype/`），`gate-web-ui/` 为按原型实现的 Vue 工程（构建产物已接入 gate-web 静态资源）。 | 原型定稿，实现待与后端 S2+ 对齐 |
 | [x.md](x.md) | **前端原型提示词 v2**（OpenDesign）：含页面清单、逐屏规格、关键交互、设计系统与**完整数据模型**。v2 新增「§3.4 设计参考蓝本」——以 Plane（工单详情/多视图）为主参考、Multica（agent 即成员/工作台 shell）为第二参考、Wekan（经典看板交互）为基线，附许可证红线（仅概念借鉴、不抄源码）。出原型用它。 | 生效（v2） |
 | [调研报告-三个开源项目对比.md](调研报告-三个开源项目对比.md) | **开源项目调研**（multica / Plane / Wekan）：许可证（MIT / AGPL-3.0 / 自定义商业条款）与社区活跃度对比（取数 2026-08-14），及 gate-web-ui 前端原型参考建议。`x.md` v2 蓝本依据。 | 生效 |

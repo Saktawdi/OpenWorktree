@@ -21,9 +21,11 @@ import java.util.concurrent.Executors;
 final class WebServer implements AutoCloseable {
 
     private final HttpServer server;
+    private final WebComponents components;
     private final int port;
 
     WebServer(WebComponents components) {
+        this.components = components;
         GateConfig config = components.config();
         GateConfig.WebConfig web = config.web();
         AuthFilter authFilter = new AuthFilter(components.credentials(), web.allowedOrigins());
@@ -52,5 +54,6 @@ final class WebServer implements AutoCloseable {
     @Override
     public void close() {
         server.stop(0);
+        components.close();
     }
 }

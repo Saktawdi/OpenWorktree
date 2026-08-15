@@ -15,10 +15,12 @@ import gate.domain.error.GateException;
 import gate.domain.git.RepoRef;
 import gate.domain.ticket.Ticket;
 import gate.domain.ticket.TicketStage;
+import gate.domain.task.GateTask;
 import gate.ports.BlobStore;
 import gate.ports.PresubmitRepository;
 import gate.ports.ProviderRepository;
 import gate.ports.ReviewResultRepository;
+import gate.ports.TaskRegistry;
 import gate.ports.TicketRepository;
 import gate.ports.TopologyInitializer;
 import java.nio.charset.StandardCharsets;
@@ -51,6 +53,8 @@ final class ApiRoutes {
     private final ProviderRepository providers;
     private final GateConfig config;
     private final gate.ports.Clock clock;
+    private final TaskRegistry taskRegistry;
+    private final TaskRunner taskRunner;
 
     ApiRoutes(WebComponents c) {
         this.gateService = c.gateService();
@@ -63,6 +67,8 @@ final class ApiRoutes {
         this.providers = c.providerRepository();
         this.config = c.config();
         this.clock = c.clock();
+        this.taskRegistry = c.taskRegistry();
+        this.taskRunner = c.taskRunner();
     }
 
     /** A resolved response: HTTP status + a JSON-serialisable body. */
@@ -118,6 +124,19 @@ final class ApiRoutes {
         if (seg.length == 6 && seg[1].equals("tickets") && seg[3].equals("presubmit")
                 && seg[5].equals("diff") && method.equals("GET")) {
             return presubmitDiff(seg[2], seg[4]);
+        }
+
+        // S2 async gate operations (§4.1, §4.3): 202 + task id, SSE follows on /api/tasks/{id}/events.
+        if (seg.length == 4 && seg[1].equals("tickets") && seg[3].equals("review")
+                && method.equals("POST")) {
+            return review(seg[2], requestBody);
+        }
+        if (seg.length == 4 && seg[1].equals("tickets") && seg[3].equals("publish")
+                && method.equals("POST")) {
+            return publish(seg[2], requestBody);
+        }
+        if (seg.length == 3 && seg[1].equals("tasks") && method.equals("GET")) {
+            return taskDetail(seg[2]);
         }
 
         return new Response(404, null); // ApiHandler renders the NOT_FOUND envelope
@@ -266,6 +285,59 @@ final class ApiRoutes {
         body.put("degraded", reviewRow.degraded());
         body.put("findings", new String(findingsBytes, StandardCharsets.UTF_8));
         return new Response(200, body);
+    }
+
+    // --- S2 async tasks: review / publish / task detail ------------------------------------------
+
+    private Response review(String ticketNo, String requestBody) {
+        Map<String, Object> req = parseObject(requestBody);
+        Integer round = null;
+        if (req.containsKey("round") && req.get("round") != null) {
+            round = Integer.parseInt(req.get("round").toString());
+        }
+        boolean humanPass = req.containsKey("human_pass")
+                && Boolean.parseBoolean(req.get("human_pass").toString());
+        String note = str(req, "note");
+        if (!config.engineConfigured() && !req.containsKey("human_pass")) {
+            throw new GateException(GateErrorCode.USAGE,
+                    "no engine configured: review requires body.human_pass (or configure engine.cmd in gate.toml)");
+        }
+        String taskId = taskRunner.submitReview(ticketNo, round, humanPass, note);
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("task_id", taskId);
+        return new Response(202, body);
+    }
+
+    private Response publish(String ticketNo, String requestBody) {
+        Map<String, Object> req = parseObject(requestBody);
+        Integer round = null;
+        if (req.containsKey("round") && req.get("round") != null) {
+            round = Integer.parseInt(req.get("round").toString());
+        }
+        String taskId = taskRunner.submitPublish(ticketNo, round);
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("task_id", taskId);
+        return new Response(202, body);
+    }
+
+    private Response taskDetail(String id) {
+        GateTask t = taskRegistry.find(id).orElseThrow(() -> new GateException(
+                GateErrorCode.USAGE, "no such task: " + id));
+        return new Response(200, taskJson(t));
+    }
+
+    private static Map<String, Object> taskJson(GateTask t) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("id", t.id());
+        m.put("type", t.type());
+        m.put("ticket_no", t.ticketNo());
+        m.put("session_id", t.sessionId());
+        m.put("status", t.status().name());
+        m.put("started_at", t.startedAt().toString());
+        m.put("finished_at", t.finishedAt() == null ? null : t.finishedAt().toString());
+        m.put("result_json", t.resultJson());
+        m.put("error_json", t.errorJson());
+        return m;
     }
 
     // --- reconcile ------------------------------------------------------------------------------

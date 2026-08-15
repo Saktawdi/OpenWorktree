@@ -23,11 +23,13 @@ final class ApiHandler implements HttpHandler {
     private final CredentialRepository credentials;
     private final AuthFilter authFilter;
     private final ApiRoutes routes;
+    private final SseHandler sseHandler;
 
     ApiHandler(WebComponents components, AuthFilter authFilter) {
         this.credentials = components.credentials();
         this.authFilter = authFilter;
         this.routes = new ApiRoutes(components);
+        this.sseHandler = new SseHandler(components.taskRegistry());
     }
 
     @Override
@@ -54,6 +56,15 @@ final class ApiHandler implements HttpHandler {
                 return;
             }
 
+            // SSE endpoints do not read a request body and do not use the normal JSON envelope.
+            if (sse) {
+                String taskId = sseTaskId(path);
+                if (taskId != null) {
+                    status = sseHandler.handle(exchange, taskId);
+                    return;
+                }
+            }
+
             String requestBody = Http.readBodyString(exchange);
             ApiRoutes.Response res = routes.route(method, path, requestBody);
             if (res.body() == null) {
@@ -76,6 +87,17 @@ final class ApiHandler implements HttpHandler {
             System.err.println("gate-web: " + Http.accessLine(exchange, status));
             exchange.close();
         }
+    }
+
+    /** Extracts a task id from {@code /api/tasks/{id}/events}, or null if the path is not task SSE. */
+    private static String sseTaskId(String path) {
+        String prefix = "/api/tasks/";
+        String suffix = "/events";
+        if (!path.startsWith(prefix) || !path.endsWith(suffix)) {
+            return null;
+        }
+        String id = path.substring(prefix.length(), path.length() - suffix.length());
+        return id.isEmpty() ? null : id;
     }
 
     private int health(HttpExchange exchange) throws IOException {

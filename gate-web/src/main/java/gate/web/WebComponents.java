@@ -19,6 +19,7 @@ import gate.adapters.process.ProcessRunnerImpl;
 import gate.adapters.store.JdbcCredentialRepository;
 import gate.adapters.store.JdbcPresubmitRepository;
 import gate.adapters.store.JdbcProviderRepository;
+import gate.adapters.store.JdbcGateTaskRepository;
 import gate.adapters.store.JdbcPublishIntentRepository;
 import gate.adapters.store.JdbcReviewResultRepository;
 import gate.adapters.store.JdbcTicketRepository;
@@ -49,6 +50,7 @@ import gate.ports.RefObserver;
 import gate.ports.ReviewEngineFactory;
 import gate.ports.ReviewResultRepository;
 import gate.ports.SnapshotCapture;
+import gate.ports.TaskRegistry;
 import gate.ports.TicketRepository;
 import gate.ports.TopologyInitializer;
 import java.nio.file.Path;
@@ -84,6 +86,8 @@ public final class WebComponents {
     private final PublishIntentRepository publishIntentRepository;
     private final BlobStore blobStore;
     private final CredentialRepository credentials;
+    private final TaskRegistry taskRegistry;
+    private final TaskRunner taskRunner;
     private final Clock clock;
     private final Path envFile;
 
@@ -129,6 +133,9 @@ public final class WebComponents {
         this.blobStore = blobStore;
         this.providerRepository = new JdbcProviderRepository(jdbc);
         this.credentials = new JdbcCredentialRepository(jdbc);
+        JdbcGateTaskRepository gateTasks = new JdbcGateTaskRepository(jdbc, clock);
+        gateTasks.failOrphaned(clock.now());
+        this.taskRegistry = gateTasks;
 
         ReviewEngineFactory reviewEngineFactory = config.engineConfigured()
                 ? new GateReviewEngineFactory(blobStore, config, processRunner, providerRepository, envFile)
@@ -139,6 +146,7 @@ public final class WebComponents {
                 approvalStore, reviewEngineFactory, gatePolicy, tickets, presubmits, reviewResults, intents,
                 blobStore, auditLog, lockManager, txRunner, clock);
         this.metricsService = new MetricsService(reviewResults, presubmits, tickets);
+        this.taskRunner = new TaskRunner(taskRegistry, gateService, clock);
     }
 
     /**
@@ -215,5 +223,18 @@ public final class WebComponents {
 
     public Path envFile() {
         return envFile;
+    }
+
+    public TaskRegistry taskRegistry() {
+        return taskRegistry;
+    }
+
+    public TaskRunner taskRunner() {
+        return taskRunner;
+    }
+
+    /** Shuts down the async task executor. Idempotent; called by {@link WebServer#close()}. */
+    public void close() {
+        taskRunner.close();
     }
 }
