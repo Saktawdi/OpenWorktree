@@ -27,6 +27,7 @@ import gate.ports.ProviderRepository;
 import gate.ports.ReviewResultRepository;
 import gate.ports.SessionRepository;
 import gate.ports.TaskRegistry;
+import gate.ports.TicketLockManager;
 import gate.ports.TicketRepository;
 import gate.ports.TopologyInitializer;
 import java.nio.charset.StandardCharsets;
@@ -64,6 +65,7 @@ final class ApiRoutes {
     private final AgentConfigRepository agentConfigs;
     private final SessionRepository sessionRepository;
     private final AgentSessionPort agentSessionPort;
+    private final TicketLockManager ticketLockManager;
 
     ApiRoutes(WebComponents c) {
         this.gateService = c.gateService();
@@ -81,6 +83,7 @@ final class ApiRoutes {
         this.agentConfigs = c.agentConfigRepository();
         this.sessionRepository = c.sessionRepository();
         this.agentSessionPort = c.agentSessionPort();
+        this.ticketLockManager = c.ticketLockManager();
     }
 
     /** A resolved response: HTTP status + a JSON-serialisable body. */
@@ -174,6 +177,31 @@ final class ApiRoutes {
         if (seg.length == 4 && seg[1].equals("agent-configs") && seg[3].equals("sessions")
                 && method.equals("GET")) {
             return agentConfigSessions(seg[2]);
+        }
+
+        // S4 session routes (执行文档-后端-web §4.1 会话路由约定).
+        if (seg.length == 4 && seg[1].equals("tickets") && seg[3].equals("sessions")) {
+            if (method.equals("GET")) {
+                return ticketSessions(seg[2]);
+            }
+            if (method.equals("POST")) {
+                return sessionCreate(seg[2], requestBody);
+            }
+        }
+        if (seg.length == 3 && seg[1].equals("sessions") && method.equals("GET")) {
+            return sessionDetail(seg[2]);
+        }
+        if (seg.length == 4 && seg[1].equals("sessions") && seg[3].equals("messages")) {
+            if (method.equals("GET")) {
+                return sessionHistory(seg[2]);
+            }
+            if (method.equals("POST")) {
+                return sessionSend(seg[2], requestBody);
+            }
+        }
+        if (seg.length == 4 && seg[1].equals("sessions") && seg[3].equals("abort")
+                && method.equals("POST")) {
+            return sessionAbort(seg[2]);
         }
 
         return new Response(404, null); // ApiHandler renders the NOT_FOUND envelope
@@ -275,6 +303,18 @@ final class ApiRoutes {
     // --- presubmit (synchronous) ----------------------------------------------------------------
 
     private Response presubmit(String ticketNo) {
+        try (AutoCloseable ignored = ticketLockManager.tryAcquire(ticketNo).orElseThrow(() ->
+                new GateException(GateErrorCode.REJECT_PRECONDITION,
+                        "session in progress on this clone; presubmit refused while a session is active"))) {
+            return presubmitLocked(ticketNo);
+        } catch (GateException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new GateException(GateErrorCode.GATE_ERROR_IO, "presubmit lock failed", e);
+        }
+    }
+
+    private Response presubmitLocked(String ticketNo) {
         PresubmitResult r = gateService.presubmit(new PresubmitCommand(ticketNo));
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("ticket_no", r.ticketNo());
@@ -505,6 +545,112 @@ final class ApiRoutes {
         }
         return new AgentConfig(id, name, AgentCli.valueOf(cli.toUpperCase(java.util.Locale.ROOT)),
                 providerId, model, str(req, "system_prompt"), extraFlags, str(req, "description"));
+    }
+
+    // --- S4 session routes -----------------------------------------------------------------------
+
+    private Response ticketSessions(String ticketNo) {
+        if (tickets.find(ticketNo).isEmpty()) {
+            throw new GateException(GateErrorCode.USAGE, "no such ticket: " + ticketNo);
+        }
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Session s : sessionRepository.findByTicket(ticketNo)) {
+            out.add(sessionJson(s));
+        }
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("sessions", out);
+        return new Response(200, body);
+    }
+
+    private Response sessionCreate(String ticketNo, String requestBody) {
+        gate.domain.ticket.Ticket ticket = tickets.find(ticketNo).orElseThrow(() ->
+                new GateException(GateErrorCode.USAGE, "no such ticket: " + ticketNo));
+        Map<String, Object> req = parseObject(requestBody);
+        String agentConfigId = str(req, "agent_config_id");
+        if (agentConfigId == null || agentConfigId.isBlank()) {
+            throw new GateException(GateErrorCode.USAGE, "agent_config_id is required");
+        }
+        String initialPrompt = str(req, "initial_prompt");
+        if (initialPrompt == null) {
+            initialPrompt = "";
+        }
+        Session s = agentSessionPort.start(new AgentSessionPort.StartRequest(
+                ticketNo, agentConfigId, ticket.clonePath(), ticket.targetRef(),
+                initialPrompt, Map.of()));
+        return new Response(201, sessionJson(s));
+    }
+
+    private Response sessionDetail(String sessionId) {
+        Session s = sessionRepository.find(sessionId).orElseThrow(() -> new GateException(
+                GateErrorCode.USAGE, "no such session: " + sessionId));
+        return new Response(200, sessionJson(s));
+    }
+
+    private Response sessionHistory(String sessionId) {
+        if (sessionRepository.find(sessionId).isEmpty()) {
+            throw new GateException(GateErrorCode.USAGE, "no such session: " + sessionId);
+        }
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (gate.domain.session.SessionMessage m : sessionRepository.findMessages(sessionId)) {
+            out.add(sessionMessageJson(m));
+        }
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("messages", out);
+        return new Response(200, body);
+    }
+
+    private Response sessionSend(String sessionId, String requestBody) {
+        if (sessionRepository.find(sessionId).isEmpty()) {
+            throw new GateException(GateErrorCode.USAGE, "no such session: " + sessionId);
+        }
+        Map<String, Object> req = parseObject(requestBody);
+        String message = str(req, "message");
+        if (message == null || message.isBlank()) {
+            throw new GateException(GateErrorCode.USAGE, "message is required");
+        }
+        String taskId = agentSessionPort.sendMessage(new AgentSessionPort.SendRequest(sessionId, message, true));
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("task_id", taskId);
+        return new Response(202, body);
+    }
+
+    private Response sessionAbort(String sessionId) {
+        if (sessionRepository.find(sessionId).isEmpty()) {
+            throw new GateException(GateErrorCode.USAGE, "no such session: " + sessionId);
+        }
+        agentSessionPort.abort(sessionId);
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("ok", true);
+        return new Response(200, body);
+    }
+
+    private static Map<String, Object> sessionMessageJson(gate.domain.session.SessionMessage m) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("id", m.id());
+        out.put("session_id", m.sessionId());
+        out.put("role", m.role().name());
+        out.put("content", m.content());
+        List<Map<String, Object>> calls = new ArrayList<>();
+        for (gate.domain.session.ToolCall tc : m.toolCalls()) {
+            Map<String, Object> cm = new LinkedHashMap<>();
+            cm.put("name", tc.name());
+            cm.put("arguments_json", tc.argumentsJson());
+            cm.put("result_json", tc.resultJson());
+            calls.add(cm);
+        }
+        out.put("tool_calls", calls);
+        if (m.usage() == null) {
+            out.put("usage", null);
+        } else {
+            Map<String, Object> u = new LinkedHashMap<>();
+            u.put("prompt_tokens", m.usage().promptTokens());
+            u.put("completion_tokens", m.usage().completionTokens());
+            u.put("total_tokens", m.usage().totalTokens());
+            out.put("usage", u);
+        }
+        out.put("degraded", m.degraded());
+        out.put("timestamp", m.timestamp().toString());
+        return out;
     }
 
     // --- reconcile ------------------------------------------------------------------------------

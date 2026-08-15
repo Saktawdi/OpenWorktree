@@ -5,11 +5,13 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import gate.adapters.clock.SystemClock;
+import gate.adapters.lock.FileChannelTicketLockManager;
 import gate.adapters.process.ProcessRunnerImpl;
 import gate.adapters.session.ClaudeHeadlessAdapter;
 import gate.adapters.store.JdbcAgentConfigRepository;
 import gate.adapters.store.JdbcGateTaskRepository;
 import gate.adapters.store.JdbcSessionRepository;
+import gate.adapters.store.JdbcTicketRepository;
 import gate.adapters.store.SqliteDataSourceFactory;
 import gate.domain.session.AgentCli;
 import gate.domain.session.AgentConfig;
@@ -42,10 +44,12 @@ class ClaudeHeadlessAdapterTest {
     private JdbcTemplate jdbc;
     private JdbcAgentConfigRepository agentConfigs;
     private SessionRepository sessions;
+    private JdbcTicketRepository ticketRepository;
     private JdbcGateTaskRepository tasks;
     private Clock clock;
     private ProcessRunnerImpl processRunner;
     private BlobStore blobs;
+    private FileChannelTicketLockManager ticketLocks;
 
     @BeforeEach
     void setUp() throws Exception {
@@ -58,11 +62,13 @@ class ClaudeHeadlessAdapterTest {
                 new ProviderRepository.ProviderRow("manual", "manual", "local://manual", "none", "manual", now),
                 now);
         agentConfigs = new JdbcAgentConfigRepository(jdbc);
+        ticketRepository = new JdbcTicketRepository(jdbc);
         blobs = new gate.adapters.blob.FsBlobStore(root.resolve("blobs"));
         sessions = new JdbcSessionRepository(jdbc, blobs);
         tasks = new JdbcGateTaskRepository(jdbc, new SystemClock());
         clock = new SystemClock();
         processRunner = new ProcessRunnerImpl(root.resolve("proc"));
+        ticketLocks = new FileChannelTicketLockManager(root.resolve("locks"));
     }
 
     @AfterEach
@@ -88,7 +94,7 @@ class ClaudeHeadlessAdapterTest {
         insertTicket("T-1");
 
         ClaudeHeadlessAdapter adapter = new ClaudeHeadlessAdapter(processRunner, agentConfigs,
-                sessions, tasks, clock, "cmd.exe", List.of("/c", script.toString()));
+                sessions, ticketRepository, tasks, ticketLocks, clock, "cmd.exe", List.of("/c", script.toString()));
         AgentSessionPort.StartRequest request = new AgentSessionPort.StartRequest(
                 "T-1", "claude-test", clone.toString(), "refs/heads/main",
                 "please work", Map.of("GATE_DOMAIN_TOKEN", "tok"));
@@ -121,7 +127,7 @@ class ClaudeHeadlessAdapterTest {
         insertTicket("T-2");
 
         ClaudeHeadlessAdapter adapter = new ClaudeHeadlessAdapter(processRunner, agentConfigs,
-                sessions, tasks, clock, "cmd.exe", List.of("/c", script.toString()));
+                sessions, ticketRepository, tasks, ticketLocks, clock, "cmd.exe", List.of("/c", script.toString()));
         Session session = adapter.start(new AgentSessionPort.StartRequest(
                 "T-2", "claude-bad", clone.toString(), "refs/heads/main", "hi", Map.of()));
 

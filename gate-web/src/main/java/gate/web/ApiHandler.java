@@ -24,12 +24,15 @@ final class ApiHandler implements HttpHandler {
     private final AuthFilter authFilter;
     private final ApiRoutes routes;
     private final SseHandler sseHandler;
+    private final SessionSseHandler sessionSseHandler;
 
     ApiHandler(WebComponents components, AuthFilter authFilter) {
         this.credentials = components.credentials();
         this.authFilter = authFilter;
         this.routes = new ApiRoutes(components);
         this.sseHandler = new SseHandler(components.taskRegistry());
+        this.sessionSseHandler = new SessionSseHandler(components.agentSessionPort(),
+                components.sessionRepository());
     }
 
     @Override
@@ -63,6 +66,11 @@ final class ApiHandler implements HttpHandler {
                     status = sseHandler.handle(exchange, taskId);
                     return;
                 }
+                String sessionId = sseSessionId(path);
+                if (sessionId != null) {
+                    status = sessionSseHandler.handle(exchange, sessionId);
+                    return;
+                }
             }
 
             String requestBody = Http.readBodyString(exchange);
@@ -80,7 +88,6 @@ final class ApiHandler implements HttpHandler {
             Http.json(exchange, status, Json.error(e.code().code(), e.code().name(), e.getMessage(), null));
         } catch (Exception e) {
             // fail-closed: never leak a stack trace to the response body (§4.4).
-            e.printStackTrace(System.err); // diagnostic only; not part of the HTTP body
             status = 500;
             Http.json(exchange, 500, Json.error(GateErrorCode.INTERNAL.code(),
                     "INTERNAL", "internal error", null));
@@ -93,6 +100,17 @@ final class ApiHandler implements HttpHandler {
     /** Extracts a task id from {@code /api/tasks/{id}/events}, or null if the path is not task SSE. */
     private static String sseTaskId(String path) {
         String prefix = "/api/tasks/";
+        String suffix = "/events";
+        if (!path.startsWith(prefix) || !path.endsWith(suffix)) {
+            return null;
+        }
+        String id = path.substring(prefix.length(), path.length() - suffix.length());
+        return id.isEmpty() ? null : id;
+    }
+
+    /** Extracts a session id from {@code /api/sessions/{sid}/events}, or null if not a session SSE. */
+    private static String sseSessionId(String path) {
+        String prefix = "/api/sessions/";
         String suffix = "/events";
         if (!path.startsWith(prefix) || !path.endsWith(suffix)) {
             return null;

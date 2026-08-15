@@ -15,6 +15,9 @@ public interface TicketRepository {
 
     void updateStage(String ticketNo, TicketStage stage, Instant now);
 
+    /** Writes cumulative agent-cli token usage back to a ticket (执行文档-后端-web §5.7). */
+    void updateExecTokens(String ticketNo, long totalTokens, String source, Instant now);
+
     List<Ticket> findByStage(TicketStage stage);
 
     List<Ticket> findAll();

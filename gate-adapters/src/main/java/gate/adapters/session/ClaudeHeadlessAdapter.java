@@ -18,6 +18,8 @@ import gate.ports.Clock;
 import gate.ports.ProcessRunner;
 import gate.ports.SessionRepository;
 import gate.ports.TaskRegistry;
+import gate.ports.TicketLockManager;
+import gate.ports.TicketRepository;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -45,7 +47,9 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
     private final ProcessRunner processRunner;
     private final AgentConfigRepository agentConfigs;
     private final SessionRepository sessions;
+    private final TicketRepository tickets;
     private final TaskRegistry tasks;
+    private final TicketLockManager ticketLocks;
     private final Clock clock;
     private final String claudeExecutable;
     private final List<String> claudePrefix;
@@ -54,10 +58,12 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
     public ClaudeHeadlessAdapter(ProcessRunner processRunner,
                                  AgentConfigRepository agentConfigs,
                                  SessionRepository sessions,
+                                 TicketRepository tickets,
                                  TaskRegistry tasks,
+                                 TicketLockManager ticketLocks,
                                  Clock clock,
                                  String claudeExecutable) {
-        this(processRunner, agentConfigs, sessions, tasks, clock, claudeExecutable, List.of());
+        this(processRunner, agentConfigs, sessions, tickets, tasks, ticketLocks, clock, claudeExecutable, List.of());
     }
 
     /**
@@ -67,14 +73,18 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
     public ClaudeHeadlessAdapter(ProcessRunner processRunner,
                                  AgentConfigRepository agentConfigs,
                                  SessionRepository sessions,
+                                 TicketRepository tickets,
                                  TaskRegistry tasks,
+                                 TicketLockManager ticketLocks,
                                  Clock clock,
                                  String claudeExecutable,
                                  List<String> claudePrefix) {
         this.processRunner = processRunner;
         this.agentConfigs = agentConfigs;
         this.sessions = sessions;
+        this.tickets = tickets;
         this.tasks = tasks;
+        this.ticketLocks = ticketLocks;
         this.clock = clock;
         this.claudeExecutable = claudeExecutable;
         this.claudePrefix = claudePrefix == null ? List.of() : List.copyOf(claudePrefix);
@@ -87,6 +97,17 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
 
     @Override
     public Session start(StartRequest request) {
+        try (AutoCloseable ignored = ticketLocks.acquire(request.ticketNo())) {
+            return startLocked(request);
+        } catch (Exception e) {
+            if (e instanceof RuntimeException re) {
+                throw re;
+            }
+            throw new GateException(GateErrorCode.GATE_ERROR_IO, "session start failed", e);
+        }
+    }
+
+    private Session startLocked(StartRequest request) {
         AgentConfig config = agentConfigs.find(request.agentConfigId())
                 .orElseThrow(() -> new GateException(GateErrorCode.USAGE,
                         "no such agent config: " + request.agentConfigId()));
@@ -110,15 +131,21 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
 
         // Always record the user message; record the assistant message only when something was parsed.
         insertUserMessage(sessionId, request.initialPrompt(), now);
+        Session withUsage = session;
         if (parsed.assistantText != null || parsed.usage != null) {
             insertAssistantMessage(sessionId, parsed.assistantText == null ? "" : parsed.assistantText,
                     parsed.usage, parsed.degraded, now);
+            if (parsed.usage != null) {
+                withUsage = withUsage.withCumulativeUsage(parsed.usage);
+                sessions.update(withUsage);
+                writeback(withUsage);
+            }
         }
         if (!run.ok() && parsed.sessionId == null) {
             insertErrorMessage(sessionId, run.stderrFirstLine(), now);
-            sessions.update(session.withStatus(SessionStatus.ABORTED).withFinishedAt(now));
+            sessions.update(withUsage.withStatus(SessionStatus.ABORTED).withFinishedAt(now));
         }
-        return sessions.find(sessionId).orElse(session);
+        return sessions.find(sessionId).orElse(withUsage);
     }
 
     @Override
@@ -136,6 +163,7 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
         sessions.find(sessionId).ifPresent(s -> {
             Session aborted = s.withStatus(SessionStatus.ABORTED).withFinishedAt(clock.now());
             sessions.update(aborted);
+            writeback(aborted);
         });
     }
 
@@ -162,7 +190,7 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
     // -------------------------------------------------------------------------------------------
 
     private void runSend(GateTask task, Session session, String message, boolean resume) {
-        try {
+        try (AutoCloseable ignored = ticketLocks.acquire(session.ticketNo())) {
             AgentConfig config = agentConfigs.find(session.agentConfigId()).orElseThrow();
             Path clone = Path.of(session.clonePath());
             Path contextDir = clone.resolve(".git").resolve("gate-context");
@@ -189,10 +217,22 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
                 updated = updated.withCliSessionId(parsed.sessionId);
             }
             sessions.update(updated);
+            writeback(updated);
             tasks.update(success(task, "{\"session_id\":\"" + (parsed.sessionId == null ? "" : parsed.sessionId)
                     + "\",\"message_count\":" + sessions.findMessages(session.id()).size() + "}"));
         } catch (Throwable e) {
             tasks.update(fail(task, e));
+        }
+    }
+
+    private void writeback(Session session) {
+        try {
+            SessionUsage usage = session.cumulativeUsage();
+            if (usage != null && usage.totalTokens() != null) {
+                tickets.updateExecTokens(session.ticketNo(), usage.totalTokens(), "agent_cli", clock.now());
+            }
+        } catch (Exception ignored) {
+            // Bypass-only (执行文档-后端-web §5.7): cost writeback must never fail the session task.
         }
     }
 

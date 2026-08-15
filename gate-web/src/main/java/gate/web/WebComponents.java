@@ -14,6 +14,7 @@ import gate.adapters.git.GitCliSnapshot;
 import gate.adapters.git.GitCliTopologyInitializer;
 import gate.adapters.hook.FileHookInstaller;
 import gate.adapters.lock.FileChannelLockManager;
+import gate.adapters.lock.FileChannelTicketLockManager;
 import gate.adapters.preflight.DefaultPreflightChecker;
 import gate.adapters.process.ProcessRunnerImpl;
 import gate.adapters.session.ClaudeHeadlessAdapter;
@@ -57,6 +58,7 @@ import gate.ports.ReviewResultRepository;
 import gate.ports.SessionRepository;
 import gate.ports.SnapshotCapture;
 import gate.ports.TaskRegistry;
+import gate.ports.TicketLockManager;
 import gate.ports.TicketRepository;
 import gate.ports.TopologyInitializer;
 import java.nio.file.Path;
@@ -97,10 +99,15 @@ public final class WebComponents {
     private final AgentConfigRepository agentConfigRepository;
     private final SessionRepository sessionRepository;
     private final AgentSessionPort agentSessionPort;
+    private final TicketLockManager ticketLockManager;
     private final Clock clock;
     private final Path envFile;
 
     public WebComponents(GateConfig config, String gitExecutable, Path envFile) {
+        this(config, gitExecutable, envFile, null);
+    }
+
+    WebComponents(GateConfig config, String gitExecutable, Path envFile, AgentSessionPort sessionPortOverride) {
         if (!config.webConfigured()) {
             throw new GateException(GateErrorCode.GATE_ERROR_CONFIG,
                     "gate-web requires a [web] section in gate.toml (执行文档-后端-web §8.1); none was found");
@@ -124,6 +131,7 @@ public final class WebComponents {
         BlobStore blobStore = new FsBlobStore(config.blobRoot());
         AuditLog auditLog = new HashChainAuditLog(config.auditPath());
         LockManager lockManager = new FileChannelLockManager(config.locksDir());
+        this.ticketLockManager = new FileChannelTicketLockManager(config.locksDir().resolve("tickets"));
 
         DataSource dataSource = SqliteDataSourceFactory.create(config.dbPath());
         SqliteDataSourceFactory.migrate(dataSource);
@@ -160,9 +168,11 @@ public final class WebComponents {
                 approvalStore, reviewEngineFactory, gatePolicy, tickets, presubmits, reviewResults, intents,
                 blobStore, auditLog, lockManager, txRunner, clock);
         this.metricsService = new MetricsService(reviewResults, presubmits, tickets);
-        this.taskRunner = new TaskRunner(taskRegistry, gateService, clock);
-        this.agentSessionPort = new ClaudeHeadlessAdapter(processRunner, agentConfigs, sessionRepo,
-                taskRegistry, clock, "claude");
+        this.taskRunner = new TaskRunner(taskRegistry, gateService, clock, ticketLockManager);
+        this.agentSessionPort = sessionPortOverride != null
+                ? sessionPortOverride
+                : new ClaudeHeadlessAdapter(processRunner, agentConfigs, sessionRepo, tickets,
+                        taskRegistry, ticketLockManager, clock, "claude");
     }
 
     /**
@@ -259,6 +269,10 @@ public final class WebComponents {
 
     public AgentSessionPort agentSessionPort() {
         return agentSessionPort;
+    }
+
+    public TicketLockManager ticketLockManager() {
+        return ticketLockManager;
     }
 
     /** Shuts down the async task executor and session adapter. Idempotent; called by {@link WebServer#close()}. */

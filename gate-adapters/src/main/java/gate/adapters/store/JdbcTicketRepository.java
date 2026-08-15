@@ -67,6 +67,17 @@ public final class JdbcTicketRepository implements TicketRepository {
     }
 
     @Override
+    public void updateExecTokens(String ticketNo, long totalTokens, String source, Instant now) {
+        int updated = jdbc.update("""
+                UPDATE ticket SET exec_token_total = ?, exec_token_source = ?, updated_at = ?
+                WHERE ticket_no = ?
+                """, totalTokens, source, now.toString(), ticketNo);
+        if (updated != 1) {
+            throw new IllegalStateException("no such ticket: " + ticketNo);
+        }
+    }
+
+    @Override
     public List<Ticket> findByStage(TicketStage stage) {
         return jdbc.query("SELECT * FROM ticket WHERE stage = ? ORDER BY ticket_no", MAPPER, stage.name());
     }

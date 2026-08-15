@@ -11,6 +11,7 @@ import gate.domain.task.GateTask;
 import gate.domain.task.GateTaskStatus;
 import gate.ports.Clock;
 import gate.ports.TaskRegistry;
+import gate.ports.TicketLockManager;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -31,12 +32,14 @@ final class TaskRunner {
     private final ExecutorService executor;
     private final TaskRegistry tasks;
     private final GateService gateService;
+    private final TicketLockManager ticketLocks;
     private final Clock clock;
 
-    TaskRunner(TaskRegistry tasks, GateService gateService, Clock clock) {
+    TaskRunner(TaskRegistry tasks, GateService gateService, Clock clock, TicketLockManager ticketLocks) {
         this.tasks = tasks;
         this.gateService = gateService;
         this.clock = clock;
+        this.ticketLocks = ticketLocks;
         this.executor = Executors.newSingleThreadExecutor(r -> {
             Thread t = new Thread(r, "gate-task-runner");
             t.setDaemon(true);
@@ -80,7 +83,7 @@ final class TaskRunner {
     }
 
     private void runPublish(GateTask task, String ticketNo, Integer round) {
-        try {
+        try (AutoCloseable ignored = ticketLocks.acquire(ticketNo)) {
             progress(task, 10, "准备发布");
             PublishResult r = gateService.publish(new PublishCommand(ticketNo, round));
             progress(task, 90, "发布成功，正在确认");
