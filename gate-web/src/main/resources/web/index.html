@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Gate 操作台 — 登录</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      display: flex; align-items: center; justify-content: center;
+      min-height: 100vh; margin: 0; background: #0f1115; color: #e6e6e6;
+    }
+    .card {
+      background: #1a1d24; padding: 2rem; border-radius: 12px;
+      box-shadow: 0 8px 30px rgba(0,0,0,.4); width: 340px;
+    }
+    h1 { font-size: 1.25rem; margin: 0 0 1rem; }
+    p { font-size: .85rem; color: #9aa0aa; margin: 0 0 1.25rem; line-height: 1.5; }
+    input {
+      width: 100%; box-sizing: border-box; padding: .6rem .75rem; margin-bottom: .75rem;
+      border: 1px solid #2c313c; border-radius: 8px; background: #0f1115; color: #e6e6e6;
+      font-family: ui-monospace, monospace; font-size: .85rem;
+    }
+    button {
+      width: 100%; padding: .6rem; border: 0; border-radius: 8px;
+      background: #3d7eff; color: #fff; font-weight: 600; cursor: pointer; font-size: .9rem;
+    }
+    button:disabled { opacity: .5; cursor: default; }
+    .msg { margin-top: .75rem; font-size: .8rem; min-height: 1.2em; }
+    .msg.err { color: #ff6b6b; }
+    .msg.ok { color: #4ade80; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Gate 操作台</h1>
+    <p>粘贴启动日志里打印的 <code>GATE_WEB_TOKEN</code>。token 仅存于本机，用于访问 <code>/api/*</code>。</p>
+    <input id="token" type="password" placeholder="GATE_WEB_TOKEN" autocomplete="off" />
+    <button id="login">登录</button>
+    <div id="msg" class="msg"></div>
+  </div>
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const msg = (text, cls) => { const m = $("msg"); m.textContent = text; m.className = "msg " + (cls || ""); };
+    async function verify() {
+      const token = $("token").value.trim();
+      if (!token) { msg("请输入 token", "err"); return; }
+      $("login").disabled = true;
+      try {
+        const res = await fetch("/api/auth/verify", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ token }),
+        });
+        if (res.ok) {
+          localStorage.setItem("gate_token", token);
+          msg("登录成功", "ok");
+        } else {
+          msg("token 无效 (" + res.status + ")", "err");
+        }
+      } catch (e) {
+        msg("请求失败: " + e, "err");
+      } finally {
+        $("login").disabled = false;
+      }
+    }
+    $("login").addEventListener("click", verify);
+    $("token").addEventListener("keydown", (e) => { if (e.key === "Enter") verify(); });
+  </script>
+</body>
+</html>

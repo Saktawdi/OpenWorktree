@@ -1,0 +1,9 @@
+export { default as GButton } from './GButton.vue';
+export { default as GBadge } from './GBadge.vue';
+export { default as GInput } from './GInput.vue';
+export { default as GSelect } from './GSelect.vue';
+export { default as GModal } from './GModal.vue';
+export { default as GCard } from './GCard.vue';
+export { default as GAvatar } from './GAvatar.vue';
+export { default as GTooltip } from './GTooltip.vue';
+export { default as GIcon } from './GIcon.vue';

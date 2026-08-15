@@ -9,6 +9,9 @@ doc/归档/
 # OhMyOpenCode agent state
 .omo/
 
+# Playwright MCP QA artifacts
+.playwright-mcp/
+
 # Secrets — never commit
 .env
 .env.*

@@ -35,7 +35,12 @@ public final class TomlGateConfigLoader {
             "gate_identity.name", "gate_identity.email", "gate_identity.date",
             "policy.strictness", "policy.require_coverage", "policy.max_diff_bytes", "policy.max_diff_lines",
             "policy.engine_accept_degraded",
-            "engine.cmd", "engine.args", "engine.timeout_seconds", "engine.provider_id", "engine.model");
+            "engine.cmd", "engine.args", "engine.timeout_seconds", "engine.provider_id", "engine.model",
+            // 执行文档-后端-web §8.1: web operations console + agent session orchestration.
+            "web.bind", "web.port", "web.allowed_origins", "web.human_token_file",
+            "session.port_range_min", "session.port_range_max", "session.default_cli",
+            "session.default_agent_config",
+            "agent.default_model", "agent.default_provider", "agent.context_template");
 
     public GateConfig load(Path tomlPath) {
         String text;
@@ -146,6 +151,16 @@ public final class TomlGateConfigLoader {
 
     private GateConfig build(Map<String, String> scalars, Map<String, List<String>> lists, Path tomlPath) {
         int schemaVersion = intValue(scalars, "schema_version", tomlPath);
+        // §8.2: refuse an outdated schema with an actionable message rather than a raw IAE. The web
+        // iteration bumped CURRENT_SCHEMA_VERSION from 1 to 2 (added [web]/[session]/[agent]); config
+        // is never silently migrated.
+        if (schemaVersion != GateConfig.CURRENT_SCHEMA_VERSION) {
+            throw new GateException(GateErrorCode.GATE_ERROR_CONFIG,
+                    "gate.toml schema_version=" + schemaVersion + " but this build expects "
+                            + GateConfig.CURRENT_SCHEMA_VERSION + "; add the [web]/[session]/[agent] sections "
+                            + "and bump schema_version to " + GateConfig.CURRENT_SCHEMA_VERSION
+                            + " (执行文档-后端-web §8.2) in " + tomlPath);
+        }
         String project = required(scalars, "project", tomlPath);
         Path gateHome = pathValue(scalars, "gate_home", tomlPath);
         Path authRepo = pathValueOr(scalars, "auth_repo", gateHome.resolveSibling("auth.git"));
@@ -182,8 +197,52 @@ public final class TomlGateConfigLoader {
                     scalars.get("engine.model"));
         }
 
+        // §8.1: [web] / [session] / [agent] blocks. Absent [web] means this config never starts the
+        // HTTP console (CLI/MCP paths); gate-web itself asserts web != null at startup.
+        GateConfig.WebConfig web = null;
+        if (scalars.containsKey("web.bind") || scalars.containsKey("web.port")
+                || scalars.containsKey("web.human_token_file") || lists.containsKey("web.allowed_origins")) {
+            String bind = scalars.getOrDefault("web.bind", "127.0.0.1");
+            int port = (int) longValueOr(scalars, "web.port", 4097L);
+            List<String> origins = lists.getOrDefault("web.allowed_origins", List.of("127.0.0.1", "localhost"));
+            Path tokenFile = resolveUnderGateHome(scalars.get("web.human_token_file"),
+                    gateHome, gateHome.resolve("web-token"));
+            web = new GateConfig.WebConfig(bind, port, origins, tokenFile);
+        }
+
+        GateConfig.SessionConfig session = null;
+        if (scalars.containsKey("session.port_range_min") || scalars.containsKey("session.port_range_max")
+                || scalars.containsKey("session.default_cli") || scalars.containsKey("session.default_agent_config")) {
+            session = new GateConfig.SessionConfig(
+                    (int) longValueOr(scalars, "session.port_range_min", 49152L),
+                    (int) longValueOr(scalars, "session.port_range_max", 65535L),
+                    scalars.getOrDefault("session.default_cli", "claude"),
+                    scalars.get("session.default_agent_config"));
+        }
+
+        GateConfig.AgentConfigDefaults agent = null;
+        if (scalars.containsKey("agent.default_model") || scalars.containsKey("agent.default_provider")
+                || scalars.containsKey("agent.context_template")) {
+            Path template = scalars.containsKey("agent.context_template")
+                    ? resolveUnderGateHome(scalars.get("agent.context_template"), gateHome, null)
+                    : null;
+            agent = new GateConfig.AgentConfigDefaults(
+                    scalars.get("agent.default_model"),
+                    scalars.get("agent.default_provider"),
+                    template);
+        }
+
         return new GateConfig(schemaVersion, project, authRepo, clonesRoot, whitelist, gateHome,
-                approvals, db, blobRoot, audit, locks, index, identity, policy, engine);
+                approvals, db, blobRoot, audit, locks, index, identity, policy, engine, web, session, agent);
+    }
+
+    /** Resolves a config path relative to {@code gateHome} when not absolute; empty/null uses fallback. */
+    private static Path resolveUnderGateHome(String value, Path gateHome, Path fallback) {
+        if (value == null || value.isBlank()) {
+            return fallback;
+        }
+        Path p = Path.of(value);
+        return (p.isAbsolute() ? p : gateHome.resolve(p)).toAbsolutePath().normalize();
     }
 
     private static String required(Map<String, String> scalars, String key, Path tomlPath) {

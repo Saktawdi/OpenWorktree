@@ -72,7 +72,7 @@ public final class PersistentGate {
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
-        this.config = new GateConfig(1, "a5",
+        this.config = new GateConfig(2, "a5",
                 root.resolve("auth.git"), root.resolve("clones"), List.of("refs/heads/main"),
                 gateHome, gateHome.resolve("approvals"), gateHome.resolve("gate.db"),
                 gateHome.resolve("blobs"), gateHome.resolve("audit.jsonl"), gateHome.resolve("locks"),

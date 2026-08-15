@@ -221,7 +221,7 @@ class A11RealCliSmokeTest {
                 // config layer if TomlGateConfigLoader's known-keys set drifts from the writer here.
                 // engine_accept_degraded mirrors Policy.defaults() (false) — A11 uses the manual
                 // engine, so the flag has no observable effect; it is here for completeness.
-                + "policy.strictness = " + cfg.policy().strictness() + "\n"
+                + "policy.strictness = " + q(cfg.policy().strictness().toString()) + "\n"
                 + "policy.require_coverage = " + cfg.policy().requireCoverage() + "\n"
                 + "policy.max_diff_bytes = " + cfg.policy().maxDiffBytes() + "\n"
                 + "policy.max_diff_lines = " + cfg.policy().maxDiffLines() + "\n"

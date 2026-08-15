@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  gate-web: the Web operations console + agent session orchestration driver adapter
+  (执行文档-后端-web §2). It is a driver adapter on the SAME level as gate-cli and must NOT
+  depend on gate-cli (ArchUnit enforces this, §2.1). It depends on application + adapters +
+  ports + domain, reusing GateService and the existing adapters wholesale.
+
+  HTTP layer: JDK com.sun.net.httpserver (ADR-8 consistency — no second web framework, §2.4).
+  No Spring web. Spring is pulled transitively only for the adapter wiring (JdbcTemplate etc.).
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>gate</groupId>
+    <artifactId>gate-parent</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+  </parent>
+  <artifactId>gate-web</artifactId>
+  <name>gate-web</name>
+
+  <dependencies>
+    <dependency>
+      <groupId>gate</groupId>
+      <artifactId>gate-domain</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>gate</groupId>
+      <artifactId>gate-ports</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>gate</groupId>
+      <artifactId>gate-application</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>gate</groupId>
+      <artifactId>gate-adapters</artifactId>
+    </dependency>
+
+    <!-- Adapter wiring (SqliteDataSourceFactory, JdbcTemplate, TransactionTemplate) needs Spring
+         JDBC on the classpath at runtime; the web layer itself uses none of it directly. -->
+    <dependency>
+      <groupId>org.springframework</groupId>
+      <artifactId>spring-jdbc</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework</groupId>
+      <artifactId>spring-context</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.slf4j</groupId>
+      <artifactId>slf4j-api</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.slf4j</groupId>
+      <artifactId>slf4j-simple</artifactId>
+      <scope>runtime</scope>
+    </dependency>
+
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>com.tngtech.archunit</groupId>
+      <artifactId>archunit-junit5</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+</project>

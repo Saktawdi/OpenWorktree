@@ -1,0 +1,1491 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>GATE 操作台 · 高保真原型</title>
+<style>
+  :root {
+    --bg-canvas: #09090b;
+    --bg-surface: #0f0f12;
+    --bg-hover: #17171b;
+    --border: #1f1f23;
+    --border-strong: #2c2c33;
+    --text-primary: #fafafa;
+    --text-secondary: #a1a1aa;
+    --text-muted: #71717a;
+    --text-disabled: #52525b;
+    --accent: #3b82f6;
+    --accent-hover: #60a5fa;
+    --accent-soft: rgba(59,130,246,.14);
+    --success: #10b981;
+    --success-soft: rgba(16,185,129,.14);
+    --danger: #ef4444;
+    --danger-soft: rgba(239,68,68,.14);
+    --warning: #f59e0b;
+    --warning-soft: rgba(245,158,11,.14);
+    --radius-sm: 6px;
+    --radius-md: 10px;
+    --radius-lg: 12px;
+    --font-sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    --font-mono: "JetBrains Mono", "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --shadow-panel: 0 1px 0 rgba(255,255,255,.03) inset, 0 16px 40px rgba(0,0,0,.35);
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; height: 100%; }
+  body {
+    background: var(--bg-canvas);
+    color: var(--text-primary);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+  }
+
+  button { font: inherit; cursor: pointer; }
+  input, select, textarea { font: inherit; }
+  a { color: inherit; text-decoration: none; }
+
+  ::selection { background: var(--accent-soft); }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-thumb { background: #26262d; border-radius: 999px; border: 2px solid var(--bg-canvas); }
+  ::-webkit-scrollbar-track { background: transparent; }
+
+  .app { display: grid; grid-template-columns: 232px minmax(0,1fr); height: 100vh; }
+
+  /* Sidebar */
+  .sidebar {
+    background: #0b0b0e;
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    padding: 14px 12px;
+  }
+  .brand { display: flex; align-items: center; gap: 10px; padding: 8px 10px 18px; }
+  .brand-mark {
+    width: 28px; height: 28px; border-radius: 8px;
+    background: linear-gradient(135deg, #3b82f6, #1d4ed8);
+    display: grid; place-items: center;
+    font-weight: 800; font-size: 13px; color: white;
+  }
+  .brand-name { font-weight: 700; letter-spacing: -0.01em; }
+  .brand-sub { color: var(--text-muted); font-size: 11px; margin-top: 2px; }
+
+  .nav-section { color: var(--text-disabled); font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; padding: 12px 10px 6px; }
+  .nav-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 10px; margin: 2px 0;
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    font-weight: 500;
+    transition: background .12s, color .12s;
+    border: 0; background: transparent; width: 100%; text-align: left;
+  }
+  .nav-item:hover { background: var(--bg-hover); color: var(--text-primary); }
+  .nav-item.active { background: var(--accent-soft); color: var(--accent-hover); }
+  .nav-item svg { width: 16px; height: 16px; flex: none; opacity: .9; }
+  .nav-item .nav-badge { margin-left: auto; font-size: 11px; color: var(--text-muted); }
+
+  .sidebar-foot { margin-top: auto; border-top: 1px solid var(--border); padding: 14px 6px 4px; color: var(--text-muted); font-size: 12px; }
+  .token-pill {
+    display: flex; align-items: center; gap: 8px; padding: 8px 10px;
+    background: var(--bg-surface); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--success); }
+  .token-pill code { font-family: var(--font-mono); font-size: 11px; color: var(--text-secondary); }
+
+  /* Main */
+  .main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+  .topbar {
+    height: 54px; flex: none;
+    display: flex; align-items: center; gap: 12px;
+    padding: 0 20px;
+    border-bottom: 1px solid var(--border);
+    background: rgba(9,9,11,.86);
+    backdrop-filter: blur(10px);
+  }
+  .topbar-title { font-weight: 650; letter-spacing: -0.01em; }
+  .topbar-context { color: var(--text-muted); font-size: 12px; }
+  .topbar-spacer { flex: 1; }
+  .topbar-action {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 6px 10px; border-radius: var(--radius-sm);
+    border: 1px solid var(--border); background: var(--bg-surface);
+    color: var(--text-secondary); font-size: 12px;
+  }
+  .topbar-action:hover { border-color: var(--border-strong); color: var(--text-primary); }
+  .topbar-token { font-family: var(--font-mono); font-size: 11px; color: var(--text-secondary); background: var(--bg-surface); border: 1px solid var(--border); padding: 4px 8px; border-radius: 999px; }
+
+  .content { flex: 1; overflow: auto; padding: 24px; min-height: 0; }
+  .page { max-width: 1440px; margin: 0 auto; animation: pageIn .18s ease both; }
+  @keyframes pageIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+  /* Generic UI */
+  .panel { background: var(--bg-surface); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow-panel); }
+  .panel-head { display: flex; align-items: center; gap: 12px; padding: 16px 18px; border-bottom: 1px solid var(--border); }
+  .panel-title { font-weight: 650; }
+  .panel-sub { color: var(--text-muted); font-size: 12px; margin-top: 2px; }
+  .panel-body { padding: 18px; }
+
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    min-height: 36px; padding: 0 14px; border-radius: var(--radius-sm);
+    border: 1px solid transparent; font-weight: 600; font-size: 13px;
+    transition: background .12s, border-color .12s, color .12s, transform .12s;
+    white-space: nowrap;
+  }
+  .btn:active { transform: translateY(1px) scale(.99); }
+  .btn:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--accent-soft); }
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn-primary:hover { background: var(--accent-hover); }
+  .btn-secondary { background: var(--bg-surface); color: var(--text-primary); border-color: var(--border-strong); }
+  .btn-secondary:hover { border-color: var(--text-disabled); }
+  .btn-ghost { background: transparent; color: var(--text-secondary); border-color: transparent; }
+  .btn-ghost:hover { color: var(--text-primary); background: var(--bg-hover); }
+  .btn-danger { background: var(--danger); color: #fff; }
+  .btn-success { background: var(--success); color: #04231a; }
+  .btn-sm { min-height: 30px; padding: 0 10px; font-size: 12px; }
+  .btn:disabled { opacity: .45; cursor: not-allowed; transform: none; }
+
+  .badge { display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px; border-radius: 999px; font-size: 11px; font-weight: 650; line-height: 1.4; }
+  .badge-success { background: var(--success-soft); color: #34d399; }
+  .badge-warning { background: var(--warning-soft); color: #fbbf24; }
+  .badge-danger { background: var(--danger-soft); color: #f87171; }
+  .badge-neutral { background: #18181c; color: var(--text-secondary); border: 1px solid var(--border); }
+  .badge-accent { background: var(--accent-soft); color: var(--accent-hover); }
+
+  .mono { font-family: var(--font-mono); }
+  .muted { color: var(--text-muted); }
+  .small { font-size: 12px; }
+  .hash { font-family: var(--font-mono); font-size: 12px; color: var(--text-secondary); background: #0c0c10; border: 1px solid var(--border); padding: 3px 7px; border-radius: 6px; }
+  .hash-copy { cursor: pointer; border: 0; background: transparent; color: var(--text-muted); padding: 2px; }
+  .hash-copy:hover { color: var(--text-primary); }
+
+  .stat-row { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 12px; margin-bottom: 20px; }
+  .stat { padding: 16px 18px; }
+  .stat-value { font-size: 28px; font-weight: 750; letter-spacing: -0.03em; }
+  .stat-label { color: var(--text-muted); font-size: 12px; margin-top: 4px; }
+  .stat-mono { font-family: var(--font-mono); font-size: 18px; }
+
+  .grid-2 { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 16px; }
+  .grid-3 { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 16px; }
+  .grid-4 { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 12px; }
+  .stack { display: grid; gap: 12px; }
+
+  .field { display: grid; gap: 6px; }
+  .field label { font-size: 13px; font-weight: 600; color: var(--text-secondary); }
+  .field input, .field select, .field textarea {
+    width: 100%; min-height: 38px; padding: 8px 12px;
+    background: #0b0b0f; border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
+    color: var(--text-primary); font-size: 13px;
+  }
+  .field input:focus, .field select:focus, .field textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  .field .help { color: var(--text-muted); font-size: 12px; }
+
+  .table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .table th { text-align: left; color: var(--text-muted); font-weight: 600; font-size: 12px; padding: 8px 12px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  .table td { padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  .table tr:hover td { background: rgba(255,255,255,.015); }
+
+  /* Login */
+  .login-wrap { min-height: 100vh; display: grid; place-items: center; padding: 24px; background: radial-gradient(1200px 600px at 70% -10%, rgba(59,130,246,.12), transparent 60%), var(--bg-canvas); }
+  .login-card { width: 380px; padding: 28px; }
+  .login-logo { width: 44px; height: 44px; border-radius: 12px; background: linear-gradient(135deg, #3b82f6, #1d4ed8); display: grid; place-items: center; font-weight: 800; font-size: 18px; color: white; margin-bottom: 18px; }
+  .login-title { font-size: 22px; font-weight: 750; letter-spacing: -0.02em; }
+  .login-sub { color: var(--text-muted); font-size: 13px; margin: 6px 0 20px; }
+  .login-error { color: var(--danger); font-size: 13px; margin-top: 8px; min-height: 18px; }
+
+  /* Project board */
+  .project-card { display: flex; align-items: center; gap: 18px; padding: 20px; }
+  .project-icon { width: 44px; height: 44px; border-radius: 12px; background: #111116; border: 1px solid var(--border); display: grid; place-items: center; font-weight: 800; color: var(--accent-hover); }
+  .project-meta { flex: 1; min-width: 0; }
+  .project-name { font-weight: 700; font-size: 16px; }
+  .project-path { font-family: var(--font-mono); font-size: 12px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .project-stats { display: flex; gap: 20px; color: var(--text-secondary); font-size: 12px; }
+
+  /* Kanban */
+  .kanban-toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+  .view-toggle { display: inline-flex; padding: 3px; background: var(--bg-surface); border: 1px solid var(--border); border-radius: 8px; }
+  .view-toggle button { border: 0; background: transparent; color: var(--text-muted); padding: 5px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; }
+  .view-toggle button.active { background: #1c1c22; color: var(--text-primary); }
+  .kanban { display: grid; grid-template-columns: repeat(8, minmax(180px, 1fr)); gap: 10px; overflow-x: auto; padding-bottom: 8px; min-height: 560px; }
+  .kanban-col { min-width: 180px; background: rgba(255,255,255,.015); border: 1px solid var(--border); border-radius: var(--radius-md); display: flex; flex-direction: column; max-height: calc(100vh - 180px); }
+  .kanban-col-head { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--border); font-size: 12px; font-weight: 650; color: var(--text-secondary); }
+  .kanban-col-head .count { margin-left: auto; background: #1b1b21; color: var(--text-muted); border-radius: 999px; padding: 1px 7px; font-size: 11px; }
+  .kanban-cards { flex: 1; padding: 8px; display: flex; flex-direction: column; gap: 8px; overflow-y: auto; min-height: 80px; }
+  .kanban-col.drag-over { outline: 2px dashed var(--accent); outline-offset: -2px; background: var(--accent-soft); }
+  .ticket-card {
+    background: var(--bg-surface); border: 1px solid var(--border); border-radius: var(--radius-md);
+    padding: 12px; cursor: grab; transition: border-color .12s, transform .12s;
+  }
+  .ticket-card:hover { border-color: var(--border-strong); transform: translateY(-1px); }
+  .ticket-card.dragging { opacity: .4; }
+  .ticket-card.rejected { border-color: rgba(239,68,68,.45); background: linear-gradient(180deg, rgba(239,68,68,.06), transparent 50%), var(--bg-surface); }
+  .ticket-no { font-family: var(--font-mono); font-size: 12px; color: var(--accent-hover); font-weight: 650; }
+  .ticket-title { font-size: 13px; font-weight: 600; margin: 6px 0 10px; line-height: 1.4; }
+  .ticket-meta { display: flex; align-items: center; gap: 8px; color: var(--text-muted); font-size: 11px; flex-wrap: wrap; }
+  .ticket-meta .spacer { flex: 1; }
+  .round-badge { background: var(--danger-soft); color: #f87171; border-radius: 999px; padding: 1px 7px; font-size: 11px; font-weight: 650; }
+  .agent-chip { display: inline-flex; align-items: center; gap: 5px; }
+  .agent-avatar { width: 16px; height: 16px; border-radius: 50%; background: #1e293b; color: #93c5fd; font-size: 10px; display: grid; place-items: center; font-weight: 700; }
+
+  /* Detail */
+  .detail-head { display: flex; align-items: center; gap: 14px; margin-bottom: 16px; }
+  .detail-title { font-size: 22px; font-weight: 750; letter-spacing: -0.02em; }
+  .tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--border); margin-bottom: 18px; }
+  .tab { border: 0; background: transparent; color: var(--text-muted); padding: 10px 14px; font-weight: 600; font-size: 13px; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+  .tab.active { color: var(--text-primary); border-bottom-color: var(--accent); }
+  .stage-flow { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; padding: 14px; }
+  .stage-node { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 999px; background: #131318; border: 1px solid var(--border); color: var(--text-muted); font-size: 12px; }
+  .stage-node.active { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-hover); }
+  .stage-node.done { color: #34d399; border-color: rgba(16,185,129,.35); }
+  .stage-arrow { color: var(--text-disabled); }
+  .timeline { display: grid; gap: 0; }
+  .timeline-item { display: grid; grid-template-columns: 120px 80px 1fr; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--border); align-items: start; }
+  .timeline-time { font-family: var(--font-mono); font-size: 12px; color: var(--text-muted); }
+  .timeline-type { font-size: 12px; font-weight: 650; }
+  .timeline-desc { color: var(--text-secondary); font-size: 13px; }
+
+  /* Review */
+  .review-layout { display: grid; grid-template-columns: minmax(0,1fr) 320px; gap: 16px; min-height: 0; }
+  .review-main { min-width: 0; display: flex; flex-direction: column; gap: 14px; }
+  .tree-bar { display: flex; align-items: center; gap: 10px; padding: 12px 16px; flex-wrap: wrap; }
+  .tree-bar .tree-label { font-size: 12px; color: var(--text-muted); font-weight: 600; }
+  .diff-panel { flex: 1; min-height: 420px; }
+  .diff-header { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--border); }
+  .diff-file { font-family: var(--font-mono); font-size: 12px; color: var(--text-secondary); }
+  .diff-body { padding: 12px 14px; font-family: var(--font-mono); font-size: 12px; line-height: 1.7; overflow: auto; }
+  .diff-line { display: grid; grid-template-columns: 40px 40px 1fr; gap: 0; white-space: pre; }
+  .diff-line .ln { color: var(--text-disabled); text-align: right; padding-right: 10px; user-select: none; }
+  .diff-line.add { background: rgba(16,185,129,.08); color: #86efac; }
+  .diff-line.del { background: rgba(239,68,68,.08); color: #fca5a5; }
+  .diff-line.ctx { color: var(--text-secondary); }
+  .findings { display: flex; flex-direction: column; max-height: calc(100vh - 180px); }
+  .finding-group { padding: 12px 14px; border-bottom: 1px solid var(--border); }
+  .finding-group-title { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 650; color: var(--text-secondary); margin-bottom: 10px; }
+  .finding { padding: 9px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); margin-bottom: 8px; background: #0d0d11; cursor: pointer; }
+  .finding:hover { border-color: var(--border-strong); }
+  .finding-loc { font-family: var(--font-mono); font-size: 11px; color: var(--accent-hover); }
+  .finding-msg { font-size: 13px; margin: 4px 0; }
+  .finding-sug { font-size: 12px; color: var(--text-muted); }
+  .review-actions { display: flex; gap: 8px; padding: 14px 16px; border-top: 1px solid var(--border); flex-wrap: wrap; }
+
+  /* Session */
+  .session-layout { display: grid; grid-template-columns: 260px minmax(0,1fr); gap: 16px; height: calc(100vh - 150px); min-height: 480px; }
+  .session-list { display: flex; flex-direction: column; min-height: 0; }
+  .session-list-body { flex: 1; overflow-y: auto; padding: 10px; }
+  .session-item { padding: 10px 12px; border-radius: var(--radius-sm); cursor: pointer; }
+  .session-item:hover { background: var(--bg-hover); }
+  .session-item.active { background: var(--accent-soft); }
+  .session-item-name { font-size: 13px; font-weight: 600; }
+  .session-item-meta { color: var(--text-muted); font-size: 11px; margin-top: 3px; }
+  .chat-panel { display: flex; flex-direction: column; min-height: 0; }
+  .chat-header { padding: 12px 16px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 10px; }
+  .chat-messages { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+  .msg { max-width: 78%; display: grid; gap: 4px; }
+  .msg.user { align-self: flex-end; }
+  .msg.assistant { align-self: flex-start; }
+  .msg-bubble { padding: 10px 14px; border-radius: 12px; font-size: 13px; line-height: 1.55; }
+  .msg.user .msg-bubble { background: var(--accent); color: #fff; border-bottom-right-radius: 4px; }
+  .msg.assistant .msg-bubble { background: #15151a; border: 1px solid var(--border); border-bottom-left-radius: 4px; }
+  .msg.tool .msg-bubble { background: #101016; border: 1px dashed var(--border-strong); font-family: var(--font-mono); font-size: 12px; }
+  .msg.error .msg-bubble { background: var(--danger-soft); border: 1px solid rgba(239,68,68,.3); color: #fca5a5; }
+  .msg-meta { font-size: 11px; color: var(--text-muted); padding: 0 4px; display: flex; gap: 8px; align-items: center; }
+  .msg.user .msg-meta { justify-content: flex-end; }
+  .usage-badge { font-family: var(--font-mono); font-size: 10px; color: var(--warning); background: var(--warning-soft); padding: 2px 6px; border-radius: 999px; }
+  .chat-input { display: flex; gap: 10px; padding: 14px 16px; border-top: 1px solid var(--border); }
+  .chat-input textarea { flex: 1; resize: none; min-height: 42px; max-height: 120px; }
+
+  /* Agents */
+  .agent-card { display: flex; align-items: center; gap: 14px; padding: 16px; }
+  .agent-icon { width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center; font-weight: 800; font-size: 13px; background: #1e1b2e; color: #c4b5fd; }
+  .agent-name { font-weight: 650; }
+  .agent-desc { color: var(--text-muted); font-size: 12px; margin-top: 3px; }
+
+  /* Cost */
+  .cost-summary { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 12px; margin-bottom: 16px; }
+  .h1-card { border-left: 3px solid var(--warning); }
+  .degraded-note { color: var(--warning); font-size: 12px; }
+
+  /* Modal */
+  .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.55); backdrop-filter: blur(4px); display: grid; place-items: center; z-index: 50; padding: 20px; }
+  .modal { width: 480px; max-width: 100%; background: var(--bg-surface); border: 1px solid var(--border-strong); border-radius: var(--radius-lg); box-shadow: var(--shadow-panel); padding: 20px; }
+  .modal-title { font-size: 16px; font-weight: 700; margin-bottom: 16px; }
+  .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
+
+  /* Command palette */
+  .cmd-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.5); backdrop-filter: blur(6px); display: grid; place-items: start center; padding-top: 16vh; z-index: 60; }
+  .cmd-panel { width: 560px; max-width: calc(100vw - 32px); background: var(--bg-surface); border: 1px solid var(--border-strong); border-radius: 14px; box-shadow: 0 30px 80px rgba(0,0,0,.5); overflow: hidden; }
+  .cmd-input { width: 100%; border: 0; background: transparent; padding: 16px 18px; font-size: 15px; color: var(--text-primary); border-bottom: 1px solid var(--border); outline: none; }
+  .cmd-list { max-height: 320px; overflow-y: auto; padding: 8px; }
+  .cmd-item { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 8px; cursor: pointer; }
+  .cmd-item:hover, .cmd-item.active { background: var(--bg-hover); }
+  .cmd-item kbd { margin-left: auto; font-family: var(--font-mono); font-size: 10px; color: var(--text-muted); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; }
+
+  /* Toast */
+  .toast-wrap { position: fixed; right: 20px; bottom: 20px; display: grid; gap: 8px; z-index: 70; }
+  .toast { background: #17171c; border: 1px solid var(--border-strong); color: var(--text-primary); padding: 10px 16px; border-radius: 10px; font-size: 13px; box-shadow: var(--shadow-panel); animation: toastIn .18s ease both; }
+  @keyframes toastIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+
+  /* Skeleton */
+  .skeleton { background: linear-gradient(90deg, #131318 25%, #1a1a21 37%, #131318 63%); background-size: 400% 100%; animation: shimmer 1.2s ease infinite; border-radius: 8px; }
+  @keyframes shimmer { 0% { background-position: 100% 0; } 100% { background-position: 0 0; } }
+
+  /* Progress */
+  .progress { height: 6px; border-radius: 999px; background: #1a1a21; overflow: hidden; }
+  .progress-bar { height: 100%; background: var(--accent); border-radius: 999px; transition: width .25s ease; }
+
+  .empty-state { text-align: center; padding: 42px 20px; color: var(--text-muted); }
+  .empty-state .empty-title { font-size: 15px; font-weight: 650; color: var(--text-secondary); margin-bottom: 6px; }
+
+  .hidden { display: none !important; }
+  .flex { display: flex; }
+  .items-center { align-items: center; }
+  .gap-8 { gap: 8px; }
+  .gap-12 { gap: 12px; }
+  .mt-8 { margin-top: 8px; }
+  .mt-16 { margin-top: 16px; }
+  .mb-16 { margin-bottom: 16px; }
+  .w-full { width: 100%; }
+
+  @media (max-width: 1100px) {
+    .app { grid-template-columns: 200px minmax(0,1fr); }
+    .review-layout, .session-layout { grid-template-columns: 1fr; }
+    .findings { max-height: none; }
+    .kanban { grid-template-columns: repeat(4, minmax(180px, 1fr)); }
+  }
+  @media (max-width: 760px) {
+    .app { grid-template-columns: 1fr; }
+    .sidebar { display: none; }
+    .stat-row, .grid-2, .grid-3, .grid-4, .cost-summary { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<script>
+// ---------------------------------------------------------------------------
+// Prototype state
+// ---------------------------------------------------------------------------
+const DS = {
+  bgCanvas: '#09090b', bgSurface: '#0f0f12', accent: '#3b82f6',
+  success: '#10b981', danger: '#ef4444', warning: '#f59e0b',
+  fontSans: '"IBM Plex Sans", system-ui, "PingFang SC", "Microsoft YaHei", sans-serif',
+  fontMono: '"JetBrains Mono", ui-monospace, Menlo, Consolas, monospace'
+};
+
+let state = {
+  token: localStorage.getItem('gate_token') || '',
+  route: location.hash.replace(/^#/, '') || '/login',
+  kanbanView: 'board',
+  tickets: [
+    { no: 'T-101', title: '修复 pre-receive 中 token 泄露路径', stage: 'DONE', targetRef: 'refs/heads/main', reviewRound: 2, treeHash: '9f3a1c...e2', baseCommit: 'b7d20f...91', execTokenTotal: 12840, execTokenSource: 'agent_cli', agent: 'Claude', updatedAt: '2026-08-14 18:42' },
+    { no: 'T-102', title: '为审批记录增加单次消费语义', stage: 'READY_TO_PUBLISH', targetRef: 'refs/heads/main', reviewRound: 1, treeHash: 'c41d0e...77', baseCommit: 'b7d20f...91', execTokenTotal: 9600, execTokenSource: 'agent_cli', agent: 'Claude', updatedAt: '2026-08-14 17:08' },
+    { no: 'T-103', title: '工单详情页补 activity timeline', stage: 'REJECTED', targetRef: 'refs/heads/main', reviewRound: 3, treeHash: 'aa12be...4f', baseCommit: 'b7d20f...91', execTokenTotal: 15320, execTokenSource: 'agent_cli', agent: 'OpenCode', updatedAt: '2026-08-14 16:20' },
+    { no: 'T-104', title: '审核台 tree_hash 锚定可视化', stage: 'IN_REVIEW', targetRef: 'refs/heads/main', reviewRound: 2, treeHash: '7e9b02...c8', baseCommit: 'b7d20f...91', execTokenTotal: 7210, execTokenSource: 'agent_cli', agent: 'Claude', updatedAt: '2026-08-14 15:44' },
+    { no: 'T-105', title: '会话 usage 回写 H1 成本', stage: 'PRESUBMITTED', targetRef: 'refs/heads/main', reviewRound: 1, treeHash: '12d8af...3b', baseCommit: 'b7d20f...91', execTokenTotal: null, execTokenSource: null, agent: 'Claude', updatedAt: '2026-08-14 14:12' },
+    { no: 'T-106', title: '清理 gate-web 静态资源路径错位', stage: 'IN_PROGRESS', targetRef: 'refs/heads/main', reviewRound: 0, treeHash: null, baseCommit: null, execTokenTotal: 3040, execTokenSource: 'manual', agent: '人工', updatedAt: '2026-08-14 13:26' },
+    { no: 'T-107', title: '补齐 S2 异步任务 SSE', stage: 'PENDING', targetRef: 'refs/heads/main', reviewRound: 0, treeHash: null, baseCommit: null, execTokenTotal: null, execTokenSource: null, agent: 'OpenCode', updatedAt: '2026-08-14 11:05' },
+    { no: 'T-108', title: 'AgentConfig CRUD 原型页', stage: 'CANCELLED', targetRef: 'refs/heads/main', reviewRound: 0, treeHash: null, baseCommit: null, execTokenTotal: 1200, execTokenSource: 'manual', agent: '人工', updatedAt: '2026-08-13 21:18' }
+  ],
+  agents: [
+    { id: 'claude-sonnet-default', name: 'Claude Sonnet', cli: 'CLAUDE', providerId: 'newapi', model: 'claude-3-5-sonnet-20241022', systemPrompt: '你是 gate 的工单执行 agent，只通过 MCP 调闸门工具。', extraFlags: ['--permission-mode', 'acceptEdits'], description: '默认 Claude 执行 agent' },
+    { id: 'opencode-default', name: 'OpenCode Default', cli: 'OPENCODE', providerId: 'newapi', model: 'gpt-5.2-codex', systemPrompt: '在独立 clone 中完成工单任务。', extraFlags: [], description: 'OpenCode serve 执行 agent' }
+  ],
+  sessions: [
+    { id: 'sess-3', ticketNo: 'T-104', agentConfigId: 'claude-sonnet-default', status: 'ACTIVE', messages: [
+      { id: 'm1', role: 'USER', content: '把审核台 tree_hash 可视化补上，重点是顶部锚定条。', usage: null, ts: '15:44' },
+      { id: 'm2', role: 'ASSISTANT', content: '好的，我会在审核台顶部加入 TreeHashBar，展示 tree_hash / base_commit / targetRef，并支持复制。', toolCalls: [{ name: 'edit_file', args: 'src/views/ReviewConsoleView.vue' }], usage: { prompt: 1240, completion: 430, total: 1670 }, ts: '15:44' },
+      { id: 'm3', role: 'TOOL', content: 'edit_file(src/views/ReviewConsoleView.vue) 完成', usage: null, ts: '15:44' }
+    ] },
+    { id: 'sess-2', ticketNo: 'T-104', agentConfigId: 'opencode-default', status: 'CLOSED', messages: [
+      { id: 'n1', role: 'USER', content: '先看下现有审核台结构。', usage: null, ts: '14:02' },
+      { id: 'n2', role: 'ASSISTANT', content: '已读取 ReviewConsoleView.vue，当前没有 TreeHashBar。', usage: { prompt: 800, completion: 120, total: 920 }, ts: '14:02' }
+    ] }
+  ],
+  selectedSession: 'sess-3',
+  tab: 'overview',
+  activeTask: null,
+  cmdOpen: false,
+  modal: null,
+  toast: null
+};
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+const $ = (sel, root = document) => root.querySelector(sel);
+const el = (html) => { const t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstElementChild; };
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const hashShort = (h) => h ? (h.length > 12 ? h.slice(0, 7) + '…' + h.slice(-4) : h) : '—';
+const stageLabel = {
+  PENDING: '待开始', IN_PROGRESS: '进行中', PRESUBMITTED: '已预提审', IN_REVIEW: '审核中',
+  REJECTED: '已驳回', READY_TO_PUBLISH: '可发布', NEEDS_HUMAN: '待人工', DONE: '已完成', CANCELLED: '已取消'
+};
+const stageColor = {
+  PENDING: 'neutral', IN_PROGRESS: 'neutral', PRESUBMITTED: 'accent', IN_REVIEW: 'accent',
+  REJECTED: 'danger', READY_TO_PUBLISH: 'success', NEEDS_HUMAN: 'warning', DONE: 'success', CANCELLED: 'neutral'
+};
+const kanbanColumns = ['PENDING', 'IN_PROGRESS', 'PRESUBMITTED', 'IN_REVIEW', 'READY_TO_PUBLISH', 'NEEDS_HUMAN', 'DONE', 'CANCELLED'];
+const kanbanColumnFor = (stage) => stage === 'REJECTED' ? 'IN_PROGRESS' : stage;
+
+function navigate(path) {
+  location.hash = path;
+}
+
+function setToken(token) {
+  state.token = token;
+  if (token) localStorage.setItem('gate_token', token); else localStorage.removeItem('gate_token');
+  render();
+}
+
+function toast(msg) {
+  const wrap = $('.toast-wrap') || (document.body.appendChild(el('<div class="toast-wrap"></div>')));
+  const node = el(`<div class="toast">${esc(msg)}</div>`);
+  wrap.appendChild(node);
+  setTimeout(() => node.remove(), 2400);
+}
+
+function copyText(text) {
+  if (navigator.clipboard?.writeText) navigator.clipboard.writeText(text).then(() => toast('已复制'));
+  else toast('复制失败');
+}
+
+function ticketByNo(no) { return state.tickets.find(t => t.no === no); }
+function sessionById(id) { return state.sessions.find(s => s.id === id); }
+function agentById(id) { return state.agents.find(a => a.id === id); }
+
+function simulateTask(type, ticketNo, onDone) {
+  const id = 'task-' + Date.now();
+  state.activeTask = { id, type, ticketNo, percent: 0, label: type === 'review' ? 'LLM 审核中' : type === 'publish' ? '正在发布' : 'Agent 处理中' };
+  render();
+  const timer = setInterval(() => {
+    const task = state.activeTask;
+    if (!task) { clearInterval(timer); return; }
+    task.percent = Math.min(100, task.percent + 18 + Math.random() * 22);
+    task.label = task.percent > 80 ? '即将完成…' : task.label;
+    render();
+    if (task.percent >= 100) {
+      clearInterval(timer);
+      state.activeTask = null;
+      onDone && onDone();
+      render();
+    }
+  }, 380);
+}
+
+// ---------------------------------------------------------------------------
+// Page renderers
+// ---------------------------------------------------------------------------
+function render() {
+  const app = $('#app');
+  if (!app) return;
+  const authed = !!state.token;
+  const route = state.route;
+
+  if (!authed || route === '/login') {
+    app.innerHTML = renderLogin();
+    bindLogin();
+    return;
+  }
+
+  let pageHtml = '';
+  if (route === '/') pageHtml = renderProjectBoard();
+  else if (route === '/styleguide') pageHtml = renderStyleGuide();
+  else if (route === '/projects/gate/tickets') pageHtml = renderKanban();
+  else if (route.startsWith('/projects/gate/tickets/') && route.endsWith('/review')) pageHtml = renderReview(route.split('/')[4]);
+  else if (route.startsWith('/projects/gate/tickets/') && route.endsWith('/session')) pageHtml = renderSession(route.split('/')[4]);
+  else if (route.startsWith('/projects/gate/tickets/')) pageHtml = renderDetail(route.split('/')[4]);
+  else if (route === '/projects/gate/agents') pageHtml = renderAgents();
+  else if (route === '/projects/gate/cost') pageHtml = renderCost();
+  else pageHtml = renderProjectBoard();
+
+  app.innerHTML = `
+    <div class="app">
+      ${renderSidebar()}
+      <div class="main">
+        ${renderTopbar()}
+        <div class="content">${pageHtml}</div>
+      </div>
+    </div>
+    ${state.cmdOpen ? renderCmd() : ''}
+    ${state.modal ? renderModal() : ''}
+    <div class="toast-wrap"></div>
+  `;
+  bindGlobal();
+  bindPage();
+}
+
+function renderSidebar() {
+  const route = state.route;
+  const items = [
+    { path: '/', icon: icon('grid'), label: '项目看板', key: 'board' },
+    { path: '/projects/gate/tickets', icon: icon('kanban'), label: '工单看板', key: 'kanban' },
+    { path: '/projects/gate/tickets/T-104/review', icon: icon('shield'), label: '审核台', key: 'review' },
+    { path: '/projects/gate/tickets/T-104/session', icon: icon('chat'), label: 'Agent 会话', key: 'session' },
+    { path: '/projects/gate/cost', icon: icon('chart'), label: '成本面板', key: 'cost' },
+    { path: '/projects/gate/agents', icon: icon('bot'), label: 'Agent 配置', key: 'agents' },
+    { path: '/styleguide', icon: icon('palette'), label: '样式速览', key: 'styleguide' }
+  ];
+  const activeKey = route === '/styleguide' ? 'styleguide' : route.includes('/review') ? 'review' : route.includes('/session') ? 'session' : route.includes('/agents') ? 'agents' : route.includes('/cost') ? 'cost' : route.includes('/tickets') ? 'kanban' : 'board';
+  return `
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">G</div>
+        <div>
+          <div class="brand-name">GATE 操作台</div>
+          <div class="brand-sub">local git gate</div>
+        </div>
+      </div>
+      <div class="nav-section">闸门闭环</div>
+      ${items.map(i => `<button class="nav-item ${activeKey === i.key ? 'active' : ''}" data-nav="${i.path}">${i.icon}<span>${i.label}</span></button>`).join('')}
+      <div class="sidebar-foot">
+        <div class="token-pill"><span class="dot"></span><code>${esc(state.token.slice(0, 10))}…</code></div>
+        <button class="btn btn-ghost btn-sm w-full mt-8" data-logout>退出登录</button>
+      </div>
+    </aside>
+  `;
+}
+
+function renderTopbar() {
+  const ticketNo = state.route.includes('/tickets/') ? state.route.split('/')[4] : '';
+  const ticket = ticketNo ? ticketByNo(ticketNo) : null;
+  return `
+    <header class="topbar">
+      <span class="topbar-title">${esc(pageTitle())}</span>
+      ${ticket ? `<span class="topbar-context">${esc(ticket.no)} · ${esc(ticket.title)}</span>` : ''}
+      <div class="topbar-spacer"></div>
+      <button class="topbar-action" data-cmd>${icon('cmd')} 命令面板</button>
+      <span class="topbar-token">${esc((state.token || '').slice(0, 6))}…</span>
+    </header>
+  `;
+}
+
+function pageTitle() {
+  const r = state.route;
+  if (r === '/') return '项目看板';
+  if (r === '/styleguide') return '样式速览';
+  if (r.includes('/tickets') && r.endsWith('/review')) return '审核台';
+  if (r.includes('/tickets') && r.endsWith('/session')) return 'Agent 会话';
+  if (r.includes('/tickets')) return '工单详情';
+  if (r.includes('/agents')) return 'Agent 配置';
+  if (r.includes('/cost')) return '成本面板';
+  return 'GATE';
+}
+
+function renderLogin() {
+  return `
+    <div class="login-wrap">
+      <div class="panel login-card">
+        <div class="login-logo">G</div>
+        <div class="login-title">GATE 操作台</div>
+        <div class="login-sub">输入启动日志打印的 GATE_WEB_TOKEN</div>
+        <div class="field">
+          <label for="login-token">访问令牌</label>
+          <input id="login-token" type="password" placeholder="粘贴 HUMAN token" autocomplete="off" />
+          <div class="login-error" id="login-error"></div>
+        </div>
+        <button class="btn btn-primary w-full mt-16" id="login-btn">进入操作台</button>
+      </div>
+    </div>
+  `;
+}
+
+function bindLogin() {
+  const input = $('#login-token');
+  const btn = $('#login-btn');
+  const err = $('#login-error');
+  const submit = () => {
+    const v = (input.value || '').trim();
+    if (!v) { err.textContent = '请输入令牌'; return; }
+    if (v.length < 6) { err.textContent = '令牌无效或已撤销'; return; }
+    setToken(v);
+    navigate('/');
+  };
+  btn.addEventListener('click', submit);
+  input.addEventListener('keydown', e => { if (e.key === 'Enter') submit(); });
+}
+
+function renderProjectBoard() {
+  const active = state.tickets.filter(t => ['IN_PROGRESS','PRESUBMITTED','IN_REVIEW','REJECTED','READY_TO_PUBLISH','NEEDS_HUMAN'].includes(t.stage)).length;
+  const review = state.tickets.filter(t => ['IN_REVIEW','READY_TO_PUBLISH','NEEDS_HUMAN'].includes(t.stage)).length;
+  return `
+    <div class="page">
+      <div class="stat-row">
+        <div class="panel stat"><div class="stat-value">${state.tickets.length}</div><div class="stat-label">工单总数</div></div>
+        <div class="panel stat"><div class="stat-value">${active}</div><div class="stat-label">进行中</div></div>
+        <div class="panel stat"><div class="stat-value">${review}</div><div class="stat-label">待审核 / 可发布</div></div>
+        <div class="panel stat"><div class="stat-value stat-mono">${hashShort('b7d20f91a3c8')}</div><div class="stat-label">AUTH TIP</div></div>
+      </div>
+      <div class="panel">
+        <div class="project-card">
+          <div class="project-icon">G</div>
+          <div class="project-meta">
+            <div class="project-name">gate / local-git-ticket-system</div>
+            <div class="project-path">D:\\project\\ai-generate\\local-git-ticket-system\\auth.git</div>
+          </div>
+          <div class="project-stats">
+            <span><span class="badge badge-success">healthy</span></span>
+            <span>${state.tickets.length} tickets</span>
+            <span>128 commits</span>
+          </div>
+          <button class="btn btn-primary btn-sm" data-nav="/projects/gate/tickets">进入工单看板</button>
+        </div>
+      </div>
+      <div class="grid-3 mt-16">
+        <div class="panel">
+          <div class="panel-head"><div><div class="panel-title">闸门闭环</div><div class="panel-sub">建工单 → 预提审 → 审核 → 发布</div></div></div>
+          <div class="panel-body">
+            <div class="stage-flow" style="padding:0">
+              <span class="stage-node done">建工单</span><span class="stage-arrow">→</span>
+              <span class="stage-node done">预提审</span><span class="stage-arrow">→</span>
+              <span class="stage-node active">审核</span><span class="stage-arrow">→</span>
+              <span class="stage-node">发布</span>
+            </div>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><div><div class="panel-title">H1 成本</div><div class="panel-sub">执行侧 token 已开始回写</div></div></div>
+          <div class="panel-body">
+            <div class="cost-summary" style="grid-template-columns:1fr 1fr;margin:0">
+              <div><div class="stat-value" style="font-size:20px">45%</div><div class="stat-label">first-pass rate</div></div>
+              <div><div class="stat-value" style="font-size:20px">0.42</div><div class="stat-label">cost ratio</div></div>
+            </div>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><div><div class="panel-title">快捷入口</div><div class="panel-sub">⌘K 随时唤起</div></div></div>
+          <div class="panel-body stack">
+            <button class="btn btn-secondary" data-nav="/projects/gate/tickets/T-104/review">打开审核台</button>
+            <button class="btn btn-secondary" data-nav="/projects/gate/cost">查看成本面板</button>
+            <button class="btn btn-secondary" data-new-ticket>新建工单</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderKanban() {
+  const view = state.kanbanView;
+  return `
+    <div class="page">
+      <div class="kanban-toolbar">
+        <div class="view-toggle">
+          <button class="${view==='board'?'active':''}" data-view-board>看板</button>
+          <button class="${view==='list'?'active':''}" data-view-list>列表</button>
+        </div>
+        <div class="topbar-spacer"></div>
+        <button class="btn btn-secondary btn-sm" data-new-ticket>${icon('plus')} 新建工单</button>
+      </div>
+      ${view === 'board' ? `
+      <div class="kanban" id="kanban">
+        ${kanbanColumns.map(col => {
+          const cards = state.tickets.filter(t => kanbanColumnFor(t.stage) === col);
+          const colLabel = col === 'IN_PROGRESS' ? '进行中' : stageLabel[col];
+          return `
+            <div class="kanban-col" data-col="${col}">
+              <div class="kanban-col-head"><span>${colLabel}</span><span class="count">${cards.length}</span></div>
+              <div class="kanban-cards">
+                ${cards.length ? cards.map(t => ticketCard(t)).join('') : `<div class="empty-state" style="padding:20px 10px"><div class="small">空列</div></div>`}
+              </div>
+            </div>
+          `;
+        }).join('')}
+      </div>` : `
+      <div class="panel">
+        <div style="overflow:auto">
+          <table class="table">
+            <thead><tr><th>工单</th><th>标题</th><th>阶段</th><th>review_round</th><th>token</th><th>updatedAt</th></tr></thead>
+            <tbody>
+              ${state.tickets.map(t => `
+                <tr data-nav="/projects/gate/tickets/${t.no}" style="cursor:pointer">
+                  <td class="mono">${t.no}</td>
+                  <td>${esc(t.title)}</td>
+                  <td><span class="badge badge-${stageColor[t.stage]}">${stageLabel[t.stage]}</span></td>
+                  <td class="mono">${t.reviewRound || '—'}</td>
+                  <td class="mono">${t.execTokenTotal ?? '—'}</td>
+                  <td class="small muted">${esc(t.updatedAt)}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>`}
+    </div>
+  `;
+}
+
+function ticketCard(t) {
+  const rejected = t.stage === 'REJECTED';
+  const agentName = t.agent || '人工';
+  return `
+    <div class="ticket-card ${rejected ? 'rejected' : ''}" draggable="true" data-ticket="${t.no}" data-nav="/projects/gate/tickets/${t.no}">
+      <div class="flex items-center gap-8">
+        <span class="ticket-no">${esc(t.no)}</span>
+        ${rejected ? `<span class="round-badge">round ${t.reviewRound}</span>` : ''}
+        <span class="spacer"></span>
+        <span class="agent-chip"><span class="agent-avatar">${esc(agentName[0])}</span><span>${esc(agentName)}</span></span>
+      </div>
+      <div class="ticket-title">${esc(t.title)}</div>
+      <div class="ticket-meta">
+        <span>${t.execTokenTotal ? `exec ${t.execTokenTotal}` : 'exec —'}</span>
+        <span>·</span>
+        <span>${t.reviewRound ? `R${t.reviewRound}` : '未审'}</span>
+        <span class="spacer"></span>
+        <span class="mono">${hashShort(t.treeHash)}</span>
+      </div>
+    </div>
+  `;
+}
+
+function renderDetail(no) {
+  const t = ticketByNo(no) || state.tickets[0];
+  const tab = state.tab;
+  return `
+    <div class="page">
+      <div class="detail-head">
+        <button class="btn btn-ghost btn-sm" data-nav="/projects/gate/tickets">← 看板</button>
+        <span class="detail-title">${esc(t.no)}</span>
+        <span class="badge badge-${stageColor[t.stage]}">${stageLabel[t.stage]}</span>
+        ${t.stage === 'REJECTED' ? `<span class="round-badge">round ${t.reviewRound}</span>` : ''}
+        <div class="topbar-spacer"></div>
+        <button class="btn btn-secondary btn-sm" data-nav="/projects/gate/tickets/${t.no}/review">打开审核台</button>
+        <button class="btn btn-secondary btn-sm" data-nav="/projects/gate/tickets/${t.no}/session">打开会话</button>
+      </div>
+      <div class="tabs">
+        <button class="tab ${tab==='overview'?'active':''}" data-tab="overview">概览</button>
+        <button class="tab ${tab==='diff'?'active':''}" data-tab="diff">Diff</button>
+        <button class="tab ${tab==='review'?'active':''}" data-tab="review">审核</button>
+        <button class="tab ${tab==='session'?'active':''}" data-tab="session">会话</button>
+        <button class="tab ${tab==='history'?'active':''}" data-tab="history">历史</button>
+      </div>
+      ${tab === 'overview' ? renderDetailOverview(t) : ''}
+      ${tab === 'diff' ? renderDetailDiff(t) : ''}
+      ${tab === 'review' ? `<div class="panel"><div class="panel-body"><p class="muted">审核台已独立成页，<a class="accent" href="#/projects/gate/tickets/${t.no}/review">前往审核台</a>。</p></div></div>` : ''}
+      ${tab === 'session' ? `<div class="panel"><div class="panel-body"><p class="muted">会话页已独立成页，<a class="accent" href="#/projects/gate/tickets/${t.no}/session">前往会话</a>。</p></div></div>` : ''}
+      ${tab === 'history' ? renderHistory(t) : ''}
+    </div>
+  `;
+}
+
+function renderDetailOverview(t) {
+  const stages = ['PENDING','IN_PROGRESS','PRESUBMITTED','IN_REVIEW','READY_TO_PUBLISH','DONE'];
+  const activeIdx = stages.indexOf(t.stage === 'REJECTED' ? 'IN_PROGRESS' : t.stage);
+  return `
+    <div class="grid-2">
+      <div class="stack">
+        <div class="panel">
+          <div class="panel-head"><div class="panel-title">状态机</div></div>
+          <div class="stage-flow">
+            ${stages.map((s,i) => `<span class="stage-node ${i<activeIdx?'done':i===activeIdx?'active':''}">${stageLabel[s]}</span>${i<stages.length-1?'<span class="stage-arrow">→</span>':''}`).join('')}
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><div class="panel-title">描述</div></div>
+          <div class="panel-body">
+            <p class="muted" style="margin:0">让审核台顶部常驻 tree_hash / base_commit / targetRef，并支持一键复制，确保“审的就是要提交的”。</p>
+          </div>
+        </div>
+      </div>
+      <div class="stack">
+        <div class="panel">
+          <div class="panel-head"><div class="panel-title">Tree 锚点</div></div>
+          <div class="panel-body stack">
+            <div class="field"><label>tree_hash</label><div class="flex gap-8 items-center"><span class="hash">${esc(t.treeHash || '—')}</span><button class="hash-copy" data-copy="${esc(t.treeHash || '')}">${icon('copy')}</button></div></div>
+            <div class="field"><label>base_commit</label><div class="flex gap-8 items-center"><span class="hash">${esc(t.baseCommit || '—')}</span><button class="hash-copy" data-copy="${esc(t.baseCommit || '')}">${icon('copy')}</button></div></div>
+            <div class="field"><label>target_ref</label><div><span class="hash">${esc(t.targetRef)}</span></div></div>
+            <div class="field"><label>token 累计</label><div class="flex gap-8"><span class="badge badge-neutral">exec ${t.execTokenTotal ?? '—'}</span><span class="badge badge-neutral">review 4,820</span></div></div>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><div class="panel-title">执行者</div></div>
+          <div class="panel-body flex items-center gap-12">
+            <span class="agent-avatar" style="width:32px;height:32px;font-size:14px">${esc((t.agent||'人')[0])}</span>
+            <div><div style="font-weight:650">${esc(t.agent || '人工')}</div><div class="small muted">${t.agent === '人工' ? 'manual' : 'agent_cli'}</div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderDetailDiff(t) {
+  return `
+    <div class="panel">
+      <div class="diff-header">
+        <span class="diff-file">src/views/ReviewConsoleView.vue</span>
+        <span class="badge badge-neutral">+12 −4</span>
+        <div class="topbar-spacer"></div>
+        <button class="btn btn-ghost btn-sm">双栏</button>
+        <button class="btn btn-ghost btn-sm">Inline</button>
+      </div>
+      <div class="diff-body">
+        ${diffLines().map(l => `<div class="diff-line ${l.type}"><span class="ln">${l.a || ''}</span><span class="ln">${l.b || ''}</span><span>${esc(l.text)}</span></div>`).join('')}
+      </div>
+    </div>
+  `;
+}
+
+function diffLines() {
+  return [
+    { type: 'ctx', a: '12', b: '12', text: '<template>' },
+    { type: 'ctx', a: '13', b: '13', text: '  <div class="review-console">' },
+    { type: 'add', a: '', b: '14', text: '    <TreeHashBar :tree-hash="treeHash" :base-commit="baseCommit" :target-ref="targetRef" />' },
+    { type: 'ctx', a: '14', b: '15', text: '    <div class="review-grid">' },
+    { type: 'del', a: '15', b: '', text: '      <DiffViewer :diff="diff" />' },
+    { type: 'add', a: '', b: '16', text: '      <DiffViewer :diff="diff" :anchor="treeHash" />' },
+    { type: 'ctx', a: '16', b: '17', text: '      <FindingsList :findings="findings" @jump="jumpToLine" />' },
+    { type: 'ctx', a: '17', b: '18', text: '    </div>' },
+    { type: 'ctx', a: '18', b: '19', text: '  </div>' },
+    { type: 'ctx', a: '19', b: '20', text: '</template>' }
+  ];
+}
+
+function renderHistory(t) {
+  const events = [
+    { time: '2026-08-14 15:44', type: 'REVIEW', desc: `T-${t.no} 第 ${t.reviewRound || 1} 轮审核，verdict=reject，已回喂 agent` },
+    { time: '2026-08-14 15:38', type: 'PRESUBMIT', desc: `tree ${t.treeHash || '—'} 已固化` },
+    { time: '2026-08-14 15:20', type: 'SESSION', desc: 'agent 开始修改 src/views/ReviewConsoleView.vue' },
+    { time: '2026-08-14 14:02', type: 'CREATE', desc: '工单创建，绑定 Claude Sonnet' }
+  ];
+  return `
+    <div class="panel">
+      <div class="panel-head"><div class="panel-title">活动时间线</div></div>
+      <div class="panel-body">
+        <div class="timeline">
+          ${events.map(e => `
+            <div class="timeline-item">
+              <span class="timeline-time">${e.time}</span>
+              <span class="badge badge-${e.type==='REVIEW'?'danger':e.type==='PRESUBMIT'?'accent':e.type==='SESSION'?'warning':'neutral'}">${e.type}</span>
+              <span class="timeline-desc">${e.desc}</span>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderReview(no) {
+  const t = ticketByNo(no) || state.tickets[3];
+  const task = state.activeTask;
+  return `
+    <div class="page review-layout">
+      <div class="review-main">
+        <div class="panel tree-bar">
+          <span class="tree-label">审核锚定</span>
+          <span class="hash">tree ${esc(t.treeHash || '—')}</span>
+          <span class="hash">base ${esc(t.baseCommit || '—')}</span>
+          <span class="hash">target ${esc(t.targetRef)}</span>
+          <button class="hash-copy" data-copy="${esc(t.treeHash || '')}">${icon('copy')}</button>
+          <div class="topbar-spacer"></div>
+          <span class="badge badge-${stageColor[t.stage]}">${stageLabel[t.stage]}</span>
+        </div>
+        <div class="panel diff-panel">
+          <div class="diff-header">
+            <span class="diff-file">src/views/ReviewConsoleView.vue</span>
+            <span class="badge badge-neutral">+12 −4</span>
+            <div class="topbar-spacer"></div>
+            <span class="badge badge-success">covered_ok</span>
+          </div>
+          <div class="diff-body">${diffLines().map(l => `<div class="diff-line ${l.type}"><span class="ln">${l.a || ''}</span><span class="ln">${l.b || ''}</span><span>${esc(l.text)}</span></div>`).join('')}</div>
+        </div>
+        <div class="panel">
+          <div class="review-actions">
+            <button class="btn btn-primary" data-review>${icon('spark')} 一键 LLM 审核</button>
+            <button class="btn btn-success" data-manual-pass>人工通过</button>
+            <button class="btn btn-danger" data-manual-reject>人工驳回</button>
+            <button class="btn btn-secondary" data-feedback>驳回并回喂 agent</button>
+            <div class="topbar-spacer"></div>
+            <button class="btn btn-secondary" data-publish ${t.stage !== 'READY_TO_PUBLISH' ? 'disabled' : ''}>发布</button>
+          </div>
+          ${task ? `
+            <div style="padding:0 16px 16px">
+              <div class="flex items-center gap-12 mb-16"><span class="small muted">${task.label}</span><span class="small mono">${Math.round(task.percent)}%</span></div>
+              <div class="progress"><div class="progress-bar" style="width:${task.percent}%"></div></div>
+            </div>` : ''}
+        </div>
+      </div>
+      <div class="panel findings">
+        <div class="panel-head"><div><div class="panel-title">Findings</div><div class="panel-sub">第 ${t.reviewRound || 1} 轮</div></div></div>
+        <div class="finding-group">
+          <div class="finding-group-title"><span class="badge badge-danger">blocker 2</span></div>
+          <div class="finding" data-line="14"><div class="finding-loc">src/views/ReviewConsoleView.vue:14-18</div><div class="finding-msg">TreeHashBar 未常驻，滚动后丢失锚定</div><div class="finding-sug">建议固定在审核台顶部，不随内容滚动</div></div>
+          <div class="finding" data-line="16"><div class="finding-loc">src/views/ReviewConsoleView.vue:16</div><div class="finding-msg">DiffViewer 未接收 treeHash 作为视觉锚点</div><div class="finding-sug">将 tree_hash 传给 diff 组件并高亮</div></div>
+        </div>
+        <div class="finding-group">
+          <div class="finding-group-title"><span class="badge badge-warning">warning 1</span></div>
+          <div class="finding" data-line="20"><div class="finding-loc">src/views/ReviewConsoleView.vue:20</div><div class="finding-msg">复制按钮缺少 aria-label</div><div class="finding-sug">补充可访问名称</div></div>
+        </div>
+        <div class="finding-group">
+          <div class="finding-group-title"><span class="badge badge-neutral">nit 0</span></div>
+          <div class="empty-state" style="padding:12px"><span class="small">无 nit 级问题</span></div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderSession(no) {
+  const session = sessionById(state.selectedSession) || state.sessions[0];
+  return `
+    <div class="page session-layout">
+      <div class="panel session-list">
+        <div class="panel-head"><div><div class="panel-title">会话</div><div class="panel-sub">${esc(no)}</div></div></div>
+        <div class="session-list-body">
+          ${state.sessions.map(s => `
+            <div class="session-item ${s.id === session.id ? 'active' : ''}" data-session="${s.id}">
+              <div class="session-item-name">${s.id} · ${s.status === 'ACTIVE' ? '实时' : '只读'}</div>
+              <div class="session-item-meta">${esc(agentById(s.agentConfigId)?.name || 'Agent')} · ${s.status}</div>
+            </div>
+          `).join('')}
+          <button class="btn btn-secondary btn-sm w-full mt-8" data-new-session>+ 新建会话</button>
+        </div>
+      </div>
+      <div class="panel chat-panel">
+        <div class="chat-header">
+          <div><div style="font-weight:650">${esc(agentById(session.agentConfigId)?.name || 'Agent')}</div><div class="small muted">${session.id} · ${session.status}</div></div>
+          <div class="topbar-spacer"></div>
+          <span class="usage-badge">total ${session.messages.reduce((n,m)=>n+(m.usage?.total||0),0)}</span>
+          <button class="btn btn-danger btn-sm" data-abort>中止</button>
+        </div>
+        <div class="chat-messages" id="chat-messages">
+          ${session.messages.map(m => renderMessage(m)).join('')}
+        </div>
+        <div class="chat-input">
+          <textarea id="chat-input" placeholder="输入消息，向 agent 下发任务…"></textarea>
+          <button class="btn btn-primary" data-send>发送</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderMessage(m) {
+  const usage = m.usage ? `<span class="usage-badge">${m.usage.prompt}/${m.usage.completion}/${m.usage.total}</span>` : '';
+  return `
+    <div class="msg ${m.role.toLowerCase()}">
+      <div class="msg-bubble">${esc(m.content)}${m.toolCalls?.length ? `<div class="small muted" style="margin-top:6px">${m.toolCalls.map(tc => `${esc(tc.name)}(${esc(tc.args)})`).join('; ')}</div>` : ''}</div>
+      <div class="msg-meta"><span>${m.ts}</span>${usage}</div>
+    </div>
+  `;
+}
+
+function renderAgents() {
+  return `
+    <div class="page">
+      <div class="flex items-center mb-16">
+        <div><div style="font-size:18px;font-weight:700">Agent 配置</div><div class="small muted">会话执行者，与闸门闭环无关</div></div>
+        <div class="topbar-spacer"></div>
+        <button class="btn btn-primary btn-sm" data-new-agent>${icon('plus')} 新建配置</button>
+      </div>
+      <div class="grid-2">
+        ${state.agents.map(a => `
+          <div class="panel agent-card">
+            <div class="agent-icon">${esc(a.cli[0])}</div>
+            <div style="flex:1;min-width:0">
+              <div class="flex items-center gap-8"><span class="agent-name">${esc(a.name)}</span><span class="badge badge-${a.cli==='CLAUDE'?'accent':'neutral'}">${a.cli}</span></div>
+              <div class="small muted mt-8">${esc(a.providerId)} / ${esc(a.model)}</div>
+              <div class="small muted mt-8">${esc(a.description)}</div>
+            </div>
+            <button class="btn btn-ghost btn-sm" data-edit-agent="${a.id}">编辑</button>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+  `;
+}
+
+function renderCost() {
+  return `
+    <div class="page">
+      <div class="cost-summary">
+        <div class="panel stat"><div class="stat-value">45%</div><div class="stat-label">first_pass_rate</div></div>
+        <div class="panel stat h1-card"><div class="stat-value">0.42</div><div class="stat-label">cost_ratio_median</div><div class="degraded-note mt-8">basis: precise_tokens + agent_cli</div></div>
+        <div class="panel stat"><div class="stat-value">PARTIAL</div><div class="stat-label">classification</div></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head">
+          <div><div class="panel-title">按工单聚合</div><div class="panel-sub">exec vs review token 分开展示，不混算</div></div>
+          <div class="topbar-spacer"></div>
+          <button class="btn btn-secondary btn-sm">导出 CSV</button>
+          <button class="btn btn-secondary btn-sm">导出 JSON</button>
+        </div>
+        <div style="overflow:auto">
+          <table class="table">
+            <thead><tr><th>工单</th><th>标题</th><th>阶段</th><th>exec token</th><th>review token</th><th>source</th></tr></thead>
+            <tbody>
+              ${state.tickets.map(t => `
+                <tr>
+                  <td class="mono">${t.no}</td>
+                  <td>${esc(t.title)}</td>
+                  <td><span class="badge badge-${stageColor[t.stage]}">${stageLabel[t.stage]}</span></td>
+                  <td class="mono">${t.execTokenTotal ?? '—'}</td>
+                  <td class="mono">${t.reviewRound ? Math.round((t.reviewRound || 1) * 4820) : '—'}</td>
+                  <td class="small muted">${t.execTokenSource ?? '—'}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderStyleGuide() {
+  return `
+    <div class="page">
+      <div class="mb-16">
+        <div style="font-size:20px;font-weight:750;letter-spacing:-0.02em">组件 / 样式速览</div>
+        <div class="small muted">覆盖 x.md 输出要求 §7.4 的组件与状态清单</div>
+      </div>
+
+      <div class="grid-2 mb-16">
+        <div class="panel">
+          <div class="panel-head"><div class="panel-title">颜色令牌</div></div>
+          <div class="panel-body">
+            <div class="grid-4">
+              ${[
+                ['--bg-canvas', '#09090b', '页面底色'],
+                ['--bg-surface', '#0f0f12', '卡片/面板'],
+                ['--accent', '#3b82f6', '主色'],
+                ['--success', '#10b981', 'pass'],
+                ['--danger', '#ef4444', 'reject'],
+                ['--warning', '#f59e0b', 'requires_human'],
+                ['--text-primary', '#fafafa', '主文本'],
+                ['--text-muted', '#71717a', '弱文本']
+              ].map(([name, val, desc]) => `
+                <div class="panel" style="padding:12px">
+                  <div style="height:34px;border-radius:8px;background:${val};border:1px solid var(--border);margin-bottom:8px"></div>
+                  <div class="mono small">${name}</div>
+                  <div class="small muted">${val} · ${desc}</div>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><div class="panel-title">字体</div></div>
+          <div class="panel-body">
+            <div style="font-size:28px;font-weight:750;letter-spacing:-0.02em">Display / 标题</div>
+            <div style="font-size:16px;font-weight:600;margin-top:10px">Body / 正文用于工单标题、说明与表格</div>
+            <div class="mono small muted" style="margin-top:10px">Mono / tree_hash · base_commit · 工单号 · token 计数</div>
+            <div class="mt-16" style="border-top:1px solid var(--border);padding-top:12px">
+              <div class="small muted">字号阶梯</div>
+              <div class="flex gap-12 items-center mt-8">
+                <span style="font-size:28px">28</span><span style="font-size:22px">22</span><span style="font-size:16px">16</span><span style="font-size:14px">14</span><span style="font-size:12px">12</span><span style="font-size:11px" class="mono">11 mono</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid-2 mb-16">
+        <div class="panel">
+          <div class="panel-head"><div class="panel-title">按钮</div></div>
+          <div class="panel-body stack">
+            <div class="flex gap-8 items-center">
+              <button class="btn btn-primary">主要按钮</button>
+              <button class="btn btn-secondary">次要按钮</button>
+              <button class="btn btn-ghost">幽灵按钮</button>
+              <button class="btn btn-danger">危险</button>
+              <button class="btn btn-success">通过</button>
+              <button class="btn btn-primary" disabled>禁用</button>
+            </div>
+            <div class="flex gap-8 items-center">
+              <button class="btn btn-primary btn-sm">小主按钮</button>
+              <button class="btn btn-secondary btn-sm">小次按钮</button>
+              <button class="btn btn-ghost btn-sm">小幽灵</button>
+            </div>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><div class="panel-title">徽章 / 状态</div></div>
+          <div class="panel-body flex gap-8 flex-wrap">
+            <span class="badge badge-success">pass</span>
+            <span class="badge badge-danger">reject</span>
+            <span class="badge badge-warning">requires_human</span>
+            <span class="badge badge-accent">PRESUBMITTED</span>
+            <span class="badge badge-neutral">PENDING</span>
+            <span class="round-badge">round 2</span>
+            <span class="usage-badge">prompt 1,240 / completion 430 / total 1,670</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid-2 mb-16">
+        <div class="panel">
+          <div class="panel-head"><div class="panel-title">表单</div></div>
+          <div class="panel-body stack">
+            <div class="field"><label>工单标题</label><input placeholder="例如：修复审核台锚定" /><div class="help">辅助说明文本</div></div>
+            <div class="field"><label>目标分支</label><select><option>refs/heads/main</option></select></div>
+            <div class="field"><label>描述</label><textarea rows="2" placeholder="多行文本"></textarea></div>
+            <div class="field"><label>错误示例</label><input value="" style="border-color:var(--danger)" /><div class="small" style="color:var(--danger)">该字段为必填</div></div>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><div class="panel-title">数据卡片 / 指标</div></div>
+          <div class="panel-body">
+            <div class="stat-row" style="grid-template-columns:repeat(2,1fr);margin:0 0 12px">
+              <div class="panel stat"><div class="stat-value">45%</div><div class="stat-label">first_pass_rate</div></div>
+              <div class="panel stat"><div class="stat-value">0.42</div><div class="stat-label">cost_ratio_median</div></div>
+            </div>
+            <div class="ticket-card" style="cursor:default">
+              <div class="flex items-center gap-8"><span class="ticket-no">T-104</span><span class="spacer"></span><span class="agent-chip"><span class="agent-avatar">C</span><span>Claude</span></span></div>
+              <div class="ticket-title">审核台 tree_hash 锚定可视化</div>
+              <div class="ticket-meta"><span>exec 7,210</span><span>·</span><span>R2</span><span class="spacer"></span><span class="mono">7e9b02…</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid-3 mb-16">
+        <div class="panel">
+          <div class="panel-head"><div class="panel-title">加载态</div></div>
+          <div class="panel-body stack">
+            <div class="skeleton" style="height:16px;width:60%"></div>
+            <div class="skeleton" style="height:12px;width:90%"></div>
+            <div class="skeleton" style="height:12px;width:70%"></div>
+            <div class="progress"><div class="progress-bar" style="width:64%"></div></div>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><div class="panel-title">空态</div></div>
+          <div class="panel-body">
+            <div class="empty-state"><div class="empty-title">暂无工单</div><div class="small">点击右上角「新建工单」开始</div></div>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><div class="panel-title">错误态</div></div>
+          <div class="panel-body stack">
+            <div class="msg error"><div class="msg-bubble">令牌无效或已撤销</div><div class="msg-meta"><span>inline error</span></div></div>
+            <div class="login-error">该字段为必填</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head"><div class="panel-title">命令面板 / 快捷键</div></div>
+        <div class="panel-body flex gap-8 items-center flex-wrap">
+          <button class="topbar-action" data-cmd>${icon('cmd')} 打开命令面板</button>
+          <span class="small muted">或按 <kbd style="font-family:var(--font-mono);border:1px solid var(--border);border-radius:4px;padding:1px 6px">Ctrl/⌘ + K</kbd></span>
+          <span class="small muted">支持：新建工单 / 跳转工单号 / 打开审核台 / 会话 / 成本 / Agent 配置</span>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+// ---------------------------------------------------------------------------
+// Modal
+// ---------------------------------------------------------------------------
+function renderModal() {
+  const m = state.modal;
+  if (m.type === 'ticket') {
+    return `
+      <div class="modal-backdrop" data-close-modal>
+        <div class="modal" data-stop>
+          <div class="modal-title">新建工单</div>
+          <div class="stack">
+            <div class="field"><label>工单号</label><input id="m-no" value="T-10${state.tickets.length + 1}" /></div>
+            <div class="field"><label>标题</label><input id="m-title" placeholder="例如：修复审核台锚定" /></div>
+            <div class="field"><label>目标分支</label><select id="m-ref"><option>refs/heads/main</option></select></div>
+            <div class="field"><label>Agent 配置</label><select id="m-agent">${state.agents.map(a => `<option value="${a.id}">${a.name}</option>`).join('')}<option value="">不使用 agent（人工）</option></select></div>
+          </div>
+          <div class="modal-actions"><button class="btn btn-ghost" data-close-modal>取消</button><button class="btn btn-primary" data-confirm-ticket>创建</button></div>
+        </div>
+      </div>
+    `;
+  }
+  if (m.type === 'agent') {
+    const a = m.agent ? { ...m.agent } : { name: '', cli: 'CLAUDE', providerId: 'newapi', model: '', description: '', systemPrompt: '', extraFlags: [] };
+    return `
+      <div class="modal-backdrop" data-close-modal>
+        <div class="modal" data-stop>
+          <div class="modal-title">${m.agent ? '编辑' : '新建'} Agent 配置</div>
+          <div class="stack">
+            <div class="field"><label>名称</label><input id="a-name" value="${esc(a.name)}" /></div>
+            <div class="grid-2">
+              <div class="field"><label>CLI</label><select id="a-cli"><option ${a.cli==='CLAUDE'?'selected':''}>CLAUDE</option><option ${a.cli==='OPENCODE'?'selected':''}>OPENCODE</option></select></div>
+              <div class="field"><label>Provider</label><select id="a-provider"><option>newapi</option><option>manual</option></select></div>
+            </div>
+            <div class="field"><label>Model</label><input id="a-model" value="${esc(a.model)}" placeholder="claude-3-5-sonnet-20241022" /></div>
+            <div class="field"><label>描述</label><input id="a-desc" value="${esc(a.description)}" /></div>
+          </div>
+          <div class="modal-actions"><button class="btn btn-ghost" data-close-modal>取消</button><button class="btn btn-primary" data-confirm-agent>保存</button></div>
+        </div>
+      </div>
+    `;
+  }
+  return '';
+}
+
+// ---------------------------------------------------------------------------
+// Command palette
+// ---------------------------------------------------------------------------
+function renderCmd() {
+  const cmds = [
+    { label: '新建工单', action: 'new-ticket', hint: 'N' },
+    { label: '跳转工单号', action: 'goto-ticket', hint: 'G T' },
+    { label: '打开审核台', action: 'nav:/projects/gate/tickets/T-104/review', hint: 'G R' },
+    { label: '打开会话页', action: 'nav:/projects/gate/tickets/T-104/session', hint: 'G S' },
+    { label: '打开成本面板', action: 'nav:/projects/gate/cost', hint: 'G C' },
+    { label: '打开 Agent 配置', action: 'nav:/projects/gate/agents', hint: 'G A' },
+    { label: '打开样式速览', action: 'nav:/styleguide', hint: 'G Y' }
+  ];
+  return `
+    <div class="cmd-backdrop" data-close-cmd>
+      <div class="cmd-panel" data-stop>
+        <input class="cmd-input" id="cmd-input" placeholder="输入命令或跳转…" autofocus />
+        <div class="cmd-list">
+          ${cmds.map((c,i) => `<div class="cmd-item ${i===0?'active':''}" data-cmd-action="${c.action}"><span>${esc(c.label)}</span><kbd>${c.hint}</kbd></div>`).join('')}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+// ---------------------------------------------------------------------------
+// Icons (small inline SVG set, consistent stroke)
+// ---------------------------------------------------------------------------
+function icon(name) {
+  const paths = {
+    grid: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
+    kanban: '<rect x="3" y="3" width="5" height="18" rx="1"/><rect x="10" y="3" width="5" height="12" rx="1"/><rect x="17" y="3" width="5" height="8" rx="1"/>',
+    shield: '<path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6l7-3z"/>',
+    chat: '<path d="M21 12a8 8 0 0 1-8 8H4l2-3a8 8 0 1 1 15-5z"/>',
+    chart: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
+    bot: '<rect x="4" y="8" width="16" height="12" rx="3"/><path d="M12 8V4m0 0H9m3 0h3M8 13h.01M16 13h.01M9 17c1.5 1 4.5 1 6 0"/>',
+    plus: '<path d="M12 5v14M5 12h14"/>',
+    copy: '<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/>',
+    spark: '<path d="M12 3l1.8 4.8L18 9l-4.2 1.2L12 15l-1.8-4.8L6 9l4.2-1.2L12 3z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8L19 15z"/>',
+    cmd: '<path d="M9 6a3 3 0 1 0-3 3h12a3 3 0 1 0-3-3v12a3 3 0 1 0 3-3H6a3 3 0 1 0 3 3V6z"/>',
+    palette: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4"/><path d="M12 3v5M12 16v5M3 12h5M16 12h5"/>'
+  };
+  const d = paths[name] || paths.grid;
+  return `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
+}
+
+// ---------------------------------------------------------------------------
+// Global bindings
+// ---------------------------------------------------------------------------
+function bindGlobal() {
+  document.querySelectorAll('[data-nav]').forEach(b => {
+    b.addEventListener('click', e => {
+      e.stopPropagation();
+      const path = b.dataset.nav;
+      if (path) navigate(path);
+    });
+  });
+  document.querySelectorAll('[data-copy]').forEach(b => b.addEventListener('click', e => {
+    e.stopPropagation();
+    copyText(b.dataset.copy || '');
+  }));
+  document.querySelector('[data-logout]')?.addEventListener('click', () => setToken(''));
+  document.querySelector('[data-cmd]')?.addEventListener('click', () => { state.cmdOpen = true; render(); setTimeout(() => $('#cmd-input')?.focus(), 0); });
+  document.querySelectorAll('[data-new-ticket]').forEach(b => b.addEventListener('click', () => { state.modal = { type: 'ticket' }; render(); }));
+  document.querySelectorAll('[data-new-agent]').forEach(b => b.addEventListener('click', () => { state.modal = { type: 'agent', agent: null }; render(); }));
+  document.querySelectorAll('[data-edit-agent]').forEach(b => b.addEventListener('click', e => {
+    const id = b.dataset.editAgent;
+    const agent = state.agents.find(a => a.id === id);
+    state.modal = { type: 'agent', agent };
+    render();
+  }));
+  document.querySelectorAll('[data-close-modal]').forEach(b => b.addEventListener('click', () => { state.modal = null; render(); }));
+  document.querySelector('[data-confirm-ticket]')?.addEventListener('click', () => {
+    const no = $('#m-no').value.trim() || 'T-' + (state.tickets.length + 1);
+    const title = $('#m-title').value.trim() || '未命名工单';
+    const ref = $('#m-ref').value;
+    const agentId = $('#m-agent').value;
+    const agent = state.agents.find(a => a.id === agentId);
+    state.tickets.unshift({ no, title, stage: 'IN_PROGRESS', targetRef: ref, reviewRound: 0, treeHash: null, baseCommit: null, execTokenTotal: null, execTokenSource: null, agent: agent?.name || '人工', updatedAt: '刚刚' });
+    state.modal = null;
+    toast(`工单 ${no} 已创建`);
+    render();
+  });
+  document.querySelector('[data-confirm-agent]')?.addEventListener('click', () => {
+    const name = $('#a-name').value.trim();
+    const cli = $('#a-cli').value;
+    const providerId = $('#a-provider').value;
+    const model = $('#a-model').value.trim();
+    const desc = $('#a-desc').value.trim();
+    if (!name || !model) { toast('名称和模型不能为空'); return; }
+    const existing = state.modal.agent;
+    if (existing) {
+      Object.assign(existing, { name, cli, providerId, model, description: desc });
+    } else {
+      state.agents.push({ id: name.toLowerCase().replace(/\s+/g,'-'), name, cli, providerId, model, description: desc, systemPrompt: '', extraFlags: [] });
+    }
+    state.modal = null;
+    toast('Agent 配置已保存');
+    render();
+  });
+  document.querySelector('[data-close-cmd]')?.addEventListener('click', () => { state.cmdOpen = false; render(); });
+  document.querySelectorAll('[data-cmd-action]').forEach(item => {
+    item.addEventListener('click', () => {
+      const action = item.dataset.cmdAction;
+      state.cmdOpen = false;
+      if (action === 'new-ticket') { state.modal = { type: 'ticket' }; render(); }
+      else if (action === 'goto-ticket') { const no = prompt('输入工单号', 'T-104'); if (no) navigate(`/projects/gate/tickets/${no}`); else render(); }
+      else if (action.startsWith('nav:')) navigate(action.slice(4));
+      else render();
+    });
+  });
+}
+
+function bindPage() {
+  // Kanban view toggle
+  document.querySelectorAll('[data-view-board]').forEach(b => b.addEventListener('click', () => { state.kanbanView = 'board'; render(); }));
+  document.querySelectorAll('[data-view-list]').forEach(b => b.addEventListener('click', () => { state.kanbanView = 'list'; render(); }));
+
+  // Kanban drag/drop
+  const kanban = $('#kanban');
+  if (kanban) {
+    let dragNo = null;
+    kanban.addEventListener('dragstart', e => {
+      const card = e.target.closest('.ticket-card');
+      if (!card) return;
+      dragNo = card.dataset.ticket;
+      card.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+    });
+    kanban.addEventListener('dragend', e => {
+      e.target.closest('.ticket-card')?.classList.remove('dragging');
+      document.querySelectorAll('.kanban-col').forEach(c => c.classList.remove('drag-over'));
+    });
+    kanban.querySelectorAll('.kanban-col').forEach(col => {
+      col.addEventListener('dragover', e => { e.preventDefault(); col.classList.add('drag-over'); });
+      col.addEventListener('dragleave', () => col.classList.remove('drag-over'));
+      col.addEventListener('drop', e => {
+        e.preventDefault();
+        col.classList.remove('drag-over');
+        if (!dragNo) return;
+        const t = ticketByNo(dragNo);
+        if (!t) return;
+        const target = col.dataset.col;
+        // REJECTED is not a real drop column in this prototype
+        if (target === 'REJECTED') return;
+        t.stage = target === 'IN_PROGRESS' && t.stage === 'REJECTED' ? 'IN_PROGRESS' : target;
+        t.updatedAt = '刚刚';
+        toast(`${t.no} → ${stageLabel[target]}`);
+        render();
+      });
+    });
+  }
+
+  // Tabs
+  document.querySelectorAll('[data-tab]').forEach(b => b.addEventListener('click', () => {
+    state.tab = b.dataset.tab;
+    render();
+  }));
+
+  // Review actions
+  const reviewBtn = $('[data-review]');
+  reviewBtn?.addEventListener('click', () => {
+    const no = state.route.split('/')[4];
+    const t = ticketByNo(no);
+    simulateTask('review', no, () => {
+      t.stage = 'READY_TO_PUBLISH';
+      t.reviewRound = (t.reviewRound || 0) + 1;
+      toast('审核通过，verdict=pass');
+    });
+  });
+  $('[data-manual-pass]')?.addEventListener('click', () => {
+    const no = state.route.split('/')[4];
+    const t = ticketByNo(no);
+    t.stage = 'READY_TO_PUBLISH';
+    t.reviewRound = (t.reviewRound || 0) + 1;
+    toast('人工通过');
+    render();
+  });
+  $('[data-manual-reject]')?.addEventListener('click', () => {
+    const no = state.route.split('/')[4];
+    const t = ticketByNo(no);
+    t.stage = 'REJECTED';
+    t.reviewRound = (t.reviewRound || 0) + 1;
+    toast('已驳回，回流入进行中');
+    render();
+  });
+  $('[data-feedback]')?.addEventListener('click', () => {
+    toast('已把 findings 回喂给 agent，可在会话页查看');
+  });
+  $('[data-publish]')?.addEventListener('click', () => {
+    const no = state.route.split('/')[4];
+    const t = ticketByNo(no);
+    if (t.stage !== 'READY_TO_PUBLISH') return;
+    simulateTask('publish', no, () => {
+      t.stage = 'DONE';
+      toast('发布成功，权威库 HEAD 已前进');
+    });
+  });
+
+  // Session
+  document.querySelectorAll('[data-session]').forEach(b => b.addEventListener('click', () => {
+    state.selectedSession = b.dataset.session;
+    render();
+  }));
+  $('[data-send]')?.addEventListener('click', sendChatMessage);
+  $('#chat-input')?.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChatMessage(); } });
+  $('[data-abort]')?.addEventListener('click', () => toast('已发送中止请求'));
+  $('[data-new-session]')?.addEventListener('click', () => {
+    const no = state.route.split('/')[4];
+    const id = 'sess-' + (state.sessions.length + 4);
+    state.sessions.unshift({ id, ticketNo: no, agentConfigId: 'claude-sonnet-default', status: 'ACTIVE', messages: [] });
+    state.selectedSession = id;
+    toast('会话已创建');
+    render();
+  });
+
+}
+
+function sendChatMessage() {
+  const input = $('#chat-input');
+  const text = (input.value || '').trim();
+  if (!text) return;
+  const session = sessionById(state.selectedSession);
+  if (!session) return;
+  session.messages.push({ id: 'm' + Date.now(), role: 'USER', content: text, usage: null, ts: new Date().toTimeString().slice(0,5) });
+  input.value = '';
+  render();
+  setTimeout(() => {
+    session.messages.push({ id: 'm' + Date.now(), role: 'ASSISTANT', content: '收到。我会基于当前工单上下文继续处理，并只通过闸门 MCP 工具执行 presubmit。', toolCalls: [{ name: 'read_file', args: 'src/views/ReviewConsoleView.vue' }], usage: { prompt: 1380, completion: 290, total: 1670 }, ts: new Date().toTimeString().slice(0,5) });
+    render();
+    const chat = $('#chat-messages'); if (chat) chat.scrollTop = chat.scrollHeight;
+  }, 900);
+}
+
+let cmdHandlerBound = false;
+function cmdKeyHandler(e) {
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+    e.preventDefault();
+    state.cmdOpen = !state.cmdOpen;
+    render();
+    if (state.cmdOpen) setTimeout(() => $('#cmd-input')?.focus(), 0);
+  }
+  if (e.key === 'Escape') {
+    if (state.cmdOpen) { state.cmdOpen = false; render(); }
+    if (state.modal) { state.modal = null; render(); }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Router
+// ---------------------------------------------------------------------------
+window.addEventListener('hashchange', () => {
+  state.route = location.hash.replace(/^#/, '') || '/';
+  render();
+});
+
+document.addEventListener('keydown', cmdKeyHandler);
+
+// initial
+render();
+</script>
+</body>
+</html>

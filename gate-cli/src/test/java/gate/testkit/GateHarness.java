@@ -119,7 +119,7 @@ public final class GateHarness implements AutoCloseable {
         }
 
         this.config = new GateConfig(
-                1, "test",
+                2, "test",
                 root.resolve("auth.git"),
                 root.resolve("clones"),
                 List.of("refs/heads/main"),

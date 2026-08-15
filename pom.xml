@@ -25,6 +25,7 @@
     <module>gate-application</module>
     <module>gate-adapters</module>
     <module>gate-cli</module>
+    <module>gate-web</module>
   </modules>
 
   <properties>
