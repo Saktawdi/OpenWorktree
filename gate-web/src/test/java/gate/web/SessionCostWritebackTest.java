@@ -102,5 +102,35 @@ class SessionCostWritebackTest {
         assertEquals(15L, after.execTokenTotal().longValue());
         assertEquals("agent_cli", after.execTokenSource());
         assertTrue(after.updatedAt() != null);
+
+        // Seed a review result with review tokens so H1's cost ratio denominator is complete.
+        seedReviewResult(jdbc);
+
+        gate.application.MetricsService metrics = new gate.application.MetricsService(
+                new gate.adapters.store.JdbcReviewResultRepository(jdbc),
+                new gate.adapters.store.JdbcPresubmitRepository(jdbc),
+                ticketRepo);
+        double costRatio = gate.application.MetricsService.computeCostRatioMedian(metrics.export());
+        assertTrue(!Double.isNaN(costRatio),
+                "cost ratio must be non-NaN after agent_cli writeback, got " + costRatio);
+    }
+
+    private static void seedReviewResult(JdbcTemplate jdbc) {
+        String now = Instant.now().toString();
+        jdbc.update("""
+                INSERT INTO presubmit(id, ticket_no, review_round, tree_hash, base_commit, target_ref,
+                                      diff_blob, diff_bytes, diff_sha256, created_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?)
+                """, 1, "COST-1", 1, "a".repeat(40), "b".repeat(40), "refs/heads/main",
+                "blob", 10, "0".repeat(64), now);
+        jdbc.update("""
+                INSERT INTO review_result(id, presubmit_id, engine_id, engine_version, provider_id,
+                                          model_name, verdict, findings_blob, covered_ok, degraded,
+                                          raw_blob, created_at, prompt_tokens, completion_tokens,
+                                          total_tokens, token_source, review_wall_ms, llm_wall_ms,
+                                          diff_bytes, diff_lines)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                """, 1, 1, "manual", "1", "manual", "manual", "PASS", "blob", 1, 0,
+                "blob", now, 2, 3, 5, "engine_json", 100L, 90L, 10L, 1L);
     }
 }

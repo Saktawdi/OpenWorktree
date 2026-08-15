@@ -18,6 +18,9 @@ import gate.adapters.lock.FileChannelTicketLockManager;
 import gate.adapters.preflight.DefaultPreflightChecker;
 import gate.adapters.process.ProcessRunnerImpl;
 import gate.adapters.session.ClaudeHeadlessAdapter;
+import gate.adapters.session.DispatchAgentSessionPort;
+import gate.adapters.session.OpenCodeServeAdapter;
+import gate.adapters.session.PortAllocator;
 import gate.adapters.store.JdbcAgentConfigRepository;
 import gate.adapters.store.JdbcCredentialRepository;
 import gate.adapters.store.JdbcPresubmitRepository;
@@ -99,6 +102,8 @@ public final class WebComponents {
     private final AgentConfigRepository agentConfigRepository;
     private final SessionRepository sessionRepository;
     private final AgentSessionPort agentSessionPort;
+    private final ClaudeHeadlessAdapter claudeAdapter;
+    private final OpenCodeServeAdapter opencodeAdapter;
     private final TicketLockManager ticketLockManager;
     private final Clock clock;
     private final Path envFile;
@@ -157,6 +162,7 @@ public final class WebComponents {
         JdbcAgentConfigRepository agentConfigs = new JdbcAgentConfigRepository(jdbc);
         this.agentConfigRepository = agentConfigs;
         JdbcSessionRepository sessionRepo = new JdbcSessionRepository(jdbc, blobStore);
+        sessionRepo.abortOrphanedActive(clock.now());
         this.sessionRepository = sessionRepo;
 
         ReviewEngineFactory reviewEngineFactory = config.engineConfigured()
@@ -169,10 +175,21 @@ public final class WebComponents {
                 blobStore, auditLog, lockManager, txRunner, clock);
         this.metricsService = new MetricsService(reviewResults, presubmits, tickets);
         this.taskRunner = new TaskRunner(taskRegistry, gateService, clock, ticketLockManager);
-        this.agentSessionPort = sessionPortOverride != null
-                ? sessionPortOverride
-                : new ClaudeHeadlessAdapter(processRunner, agentConfigs, sessionRepo, tickets,
-                        taskRegistry, ticketLockManager, clock, "claude");
+        if (sessionPortOverride != null) {
+            this.claudeAdapter = null;
+            this.opencodeAdapter = null;
+            this.agentSessionPort = sessionPortOverride;
+        } else {
+            int portMin = config.session() == null ? 49152 : config.session().portRangeMin();
+            int portMax = config.session() == null ? 65535 : config.session().portRangeMax();
+            PortAllocator portAllocator = new PortAllocator(portMin, portMax);
+            this.claudeAdapter = new ClaudeHeadlessAdapter(processRunner, agentConfigs, sessionRepo,
+                    tickets, taskRegistry, ticketLockManager, clock, "claude");
+            this.opencodeAdapter = new OpenCodeServeAdapter(processRunner, agentConfigs, sessionRepo,
+                    tickets, taskRegistry, ticketLockManager, clock, portAllocator, "opencode");
+            this.agentSessionPort = new DispatchAgentSessionPort(agentConfigs, sessionRepo,
+                    claudeAdapter, opencodeAdapter);
+        }
     }
 
     /**
@@ -275,11 +292,14 @@ public final class WebComponents {
         return ticketLockManager;
     }
 
-    /** Shuts down the async task executor and session adapter. Idempotent; called by {@link WebServer#close()}. */
+    /** Shuts down the async task executor and session adapters. Idempotent; called by {@link WebServer#close()}. */
     public void close() {
         taskRunner.close();
-        if (agentSessionPort instanceof ClaudeHeadlessAdapter claude) {
-            claude.close();
+        if (claudeAdapter != null) {
+            claudeAdapter.close();
+        }
+        if (opencodeAdapter != null) {
+            opencodeAdapter.close();
         }
     }
 }

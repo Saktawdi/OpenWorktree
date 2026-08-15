@@ -65,6 +65,7 @@ public final class FileChannelTicketLockManager implements TicketLockManager {
                     StandardOpenOption.CREATE, StandardOpenOption.READ, StandardOpenOption.WRITE);
             fileLock = channel.tryLock();
             if (fileLock == null) {
+                closeQuietly(channel);
                 if (tryOnly) {
                     jvmLock.unlock();
                     return Optional.empty();

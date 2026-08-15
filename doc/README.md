@@ -1,6 +1,6 @@
 # 文档索引 — 本地 Git 提交闸门层
 
-本目录收录本项目的设计与执行文档。**当前进度：P0–P4 全部完成，94 tests green，A1–A12 验收判据全部通过；H1 首次真实数据收集已完成，classification=PARTIAL。本迭代（Web UI + agent 会话编排，S0–S5）：前端已出高保真原型（`doc/prototype/`）与 `gate-web-ui/` 原型实现；后端 `gate-web` 模块 **S0（骨架+认证，A13）、S1（只读+同步 API，A14）、S2（异步 review/publish + SSE，A15/A16）、S3（AgentConfig CRUD + 会话领域 + Claude adapter，A17）、S4（会话 REST + SSE + 工单级锁，A18）、S5（成本回写 + H1 复测，A19）已完成**，gate-web 侧 36 tests green，V4 迁移已落地，静态资源已接入 `gate-web-ui` 构建产物。执行阶段的文档已归档至 `归档/done/`。**
+本目录收录本项目的设计与执行文档。**当前进度：P0–P4 全部完成，94 tests green，A1–A12 验收判据全部通过；H1 首次真实数据收集已完成，classification=PARTIAL。本迭代（Web UI + agent 会话编排，S0–S5）：前端已出高保真原型（`doc/prototype/`）与 `gate-web-ui/` 原型实现；后端 `gate-web` 模块 **S0（骨架+认证，A13）、S1（只读+同步 API，A14）、S2（异步 review/publish + SSE，A15/A16）、S3（AgentConfig CRUD + 会话领域 + Claude/OpenCode 双 adapter + PortAllocator，A17）、S4（会话 REST + SSE + 工单级锁 + 启动 reconcile，A18）、S5（成本回写 + H1 cost ratio 非 NaN，A19）已完成**，gate-web 侧 42 tests green，V4 迁移已落地，静态资源已接入 `gate-web-ui` 构建产物。执行阶段的文档已归档至 `归档/done/`。**
 
 阅读顺序（进场人员从上往下）：归档/done/架构落地执行文档 → 归档/done/spike-结论 → 归档/done/执行文档 →（背景）立项讨论 →（本迭代）执行文档-后端-web → 执行文档-前端-web →（原型）x.md。
 

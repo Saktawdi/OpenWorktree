@@ -2,6 +2,7 @@ package gate.ports;
 
 import gate.domain.session.Session;
 import gate.domain.session.SessionMessage;
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 
@@ -22,6 +23,9 @@ public interface SessionRepository {
     void insert(Session session);
 
     void update(Session session);
+
+    /** Startup reconcile: marks any ACTIVE session as ABORTED (执行文档-后端-web §5.8). */
+    void abortOrphanedActive(Instant now);
 
     void insertMessage(SessionMessage message);
 

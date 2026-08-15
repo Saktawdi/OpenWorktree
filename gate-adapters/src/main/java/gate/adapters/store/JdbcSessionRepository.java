@@ -97,6 +97,14 @@ public final class JdbcSessionRepository implements SessionRepository {
     }
 
     @Override
+    public void abortOrphanedActive(Instant now) {
+        jdbc.update("""
+                UPDATE agent_session SET status = ?, finished_at = ?
+                WHERE status = ?
+                """, SessionStatus.ABORTED.name(), now.toString(), SessionStatus.ACTIVE.name());
+    }
+
+    @Override
     public void insertMessage(SessionMessage message) {
         byte[] contentBytes = message.content() == null ? new byte[0] : message.content().getBytes(StandardCharsets.UTF_8);
         BlobRef ref = blobs.put(contentBytes, "session/" + message.sessionId() + "/" + message.id() + ".txt");
