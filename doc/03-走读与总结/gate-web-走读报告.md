@@ -1,7 +1,7 @@
 # gate-web / gate-web-ui 迭代走读报告
 
 > 走读对象：`D:\project\ai-generate\local-git-ticket-system` 下的新目录 `gate-web`（Maven 后端模块）、`gate-web-ui`（Vue3 前端工程）。
-> 对照基线：`doc/执行文档-后端-web.md`（S0-S5 阶段约束、REST 路由表、V4 DDL、会话编排端口、锁补强、ADR-10..14）。
+> 对照基线：`../02-执行文档/执行文档-后端-web.md`（S0-S5 阶段约束、REST 路由表、V4 DDL、会话编排端口、锁补强、ADR-10..14）。
 > 结论速览：**S0、S1 已完整落地且 20 个测试全绿；S2 异步闸门与 S3-S5 会话编排基本未动，前端 `types/api` 多为占位**。存在若干前后端契约不一致与静态资源路径错位，需在下一迭代处理。
 
 ---
@@ -166,7 +166,7 @@
 
 ## 5. 明显缺口与下一步建议
 
-按 `doc/执行文档-后端-web.md` §10 阶段划分，逐阶段对照实际代码：
+按 `../02-执行文档/执行文档-后端-web.md` §10 阶段划分，逐阶段对照实际代码：
 
 | 阶段 | 文档目标 | 实际状态 | 缺口 |
 |---|---|---|---|
@@ -201,4 +201,4 @@
 - **配置/领域**：`gate-domain/.../config/GateConfig.java`（含 `WebConfig`/`SessionConfig`/`AgentConfigDefaults`、`webConfigured`）、`gate-adapters/.../config/TomlGateConfigLoader.java`（`[web]/[session]/[agent]` 解析）、`gate-adapters/src/main/resources/db/migration/{V1,V2,V3}*.sql`（**无 V4**）。
 - **前端 `gate-web-ui/`**：`package.json`、`vite.config.ts`、`src/main.ts`、`src/App.vue`、`src/router/index.ts`、`src/views/{LoginView,HomeView,AppLayout}.vue`、`src/api/{client,auth,status,tickets,sessions,tasks,review,index}.ts`、`src/composables/useSSE.ts`、`src/stores/authStore.ts`、`src/types/*.ts`、`src/utils/*.ts`、`mocks/{browser,handlers}.ts`、`mocks/sse-server.mjs`。
 - **后端资源**：`gate-web/src/main/resources/web/index.html`（占位独立登录页）、`gate-web/src/main/resources/static/{index.html,assets/*}`（Vue 构建产物，与 StaticHandler 根路径错位）。
-- **文档**：`root pom.xml`（`<module>gate-web</module>`）、`doc/执行文档-后端-web.md`。
+- **文档**：`root pom.xml`（`<module>gate-web</module>`）、`../02-执行文档/执行文档-后端-web.md`。

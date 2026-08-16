@@ -37,7 +37,7 @@
 
 ### 1.3 degraded basis 说明
 
-prism 0.5.0 的 JSON 输出不含 `usage` 字段（已在 `doc/p2-schema-核对.md §3` 确认），因此审核侧 token 数恒为 null。执行侧（agent CLI）的 token 使用也未捕获。两侧 token 均不可用时，`MetricsService` 走 degraded 路径：
+prism 0.5.0 的 JSON 输出不含 `usage` 字段（已在 `p2-schema-核对.md §3` 确认），因此审核侧 token 数恒为 null。执行侧（agent CLI）的 token 使用也未捕获。两侧 token 均不可用时，`MetricsService` 走 degraded 路径：
 
 - cost_ratio_median = NaN（无法计算）
 - metric_basis = "degraded"

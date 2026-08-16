@@ -64,16 +64,16 @@
 按「最省事 → 最灵活」排序，均可落地：
 
 1. **不要拉 dashboard 的预装设计系统；直接用自己的商标包。**
-   既然 gate-web-ui 要「对齐 OpenDesign dashboard 的设计系统」指的是**在 OpenDesign 里编辑并产出的设计系统（品牌包）**，最干净的路径是：在 OpenDesign 里用 `x.md` 的「三、设计系统」一节建立/编辑一个**用户态**设计系统，然后
+   既然 gate-web-ui 要「对齐 OpenDesign dashboard 的设计系统」指的是**在 OpenDesign 里编辑并产出的设计系统（品牌包）**，最干净的路径是：在 OpenDesign 里用 `../02-执行文档/x.md` 的「三、设计系统」一节建立/编辑一个**用户态**设计系统，然后
    - CLI：`od design-systems download <designSystemId> --out ./design-tokens/`
    - 或 HTTP：`GET /api/design-systems/<id>/archive → design-system.zip`
-   下载得到 `design-system/`（含 tokens / components / layout 的 `design-system.html` + SKILLS.md），再把 tokens 落到 gate-web-ui 的 design-token 层（对齐 `x.md` §3.2 令牌表）。
+   下载得到 `design-system/`（含 tokens / components / layout 的 `design-system.html` + SKILLS.md），再把 tokens 落到 gate-web-ui 的 design-token 层（对齐 `../02-执行文档/x.md` §3.2 令牌表）。
 
 2. **走项目级 `designSystemId` 引用（MCP 层）**——但注意当前断点。
    `od_create_project` / `od_update_project` 接收 `designSystemId`，`od_generate_design` 会读取它；但官方明确 v0.17.0 该**自动注入是 no-op**」。落地建议：把每次生成的成品**用 `od_save_project_file` 存进项目**，并在生成时显式传 `designSystemHtml` / `designSystemSummary` 给 `od_lint_artifact` / `od_compose_brief`，绕开「自动注入」缺口。等 v0.18 内容端点补齐后再简化。
 
 3. **直接复用本机/仓库里已固化的设计系统包（拷贝/引用）。**
-   最稳、零运行时依赖：把设计系统的最终产物（tokens JSON / `design-system.html` / CSS 分块）**直接拷入 gate-web-ui 源码**（如 `src/design-system/`），由 `x.md` §3.2 的令牌表驱动工作台的 CSS 变量与组件层。不依赖任何 daemon 在途状态。
+   最稳、零运行时依赖：把设计系统的最终产物（tokens JSON / `design-system.html` / CSS 分块）**直接拷入 gate-web-ui 源码**（如 `src/design-system/`），由 `../02-执行文档/x.md` §3.2 的令牌表驱动工作台的 CSS 变量与组件层。不依赖任何 daemon 在途状态。
 
 > 官方在途计划（推断 / 官方 README 明载）：open-design-mcp 路线图含 **v0.18 增加文件内容端点**，届时 `designSystemId` 自动注入与「MCP 层拉取项目内设计系统内容」会打通；但那针对的是**项目内 `design-system.html` 文档**，仍不等价于「拉取 dashboard 预装 preset」。预装 preset 的可下载性目前没有官方承诺。
 
@@ -85,7 +85,7 @@
 
 2. **若确实要用 MCP 生成型工作流**（`od_create_project` + `od_generate_design` + `od_generate_design_system`），就给 `od_generate_design` 显式传 `designSystemHtml`（strict 模式）并用 `od_lint_artifact`（DS001–DS005）做生成后一致性校验；把每次成品用 `od_save_project_file` 持久化进项目，避免依赖尚未实现的 `designSystemId` 自动注入。
 
-3. **「对齐 OpenDesign dashboard 设计系统」要重新定义成「对齐设计令牌，而不是对齐预装包」**：本机无 daemon、preset 不可下载已是验证事实。建议在 `x.md` 的「三、设计系统」基础上，把 gate-web-ui 需要的令牌（`bg-*/text-*/accent/success/danger/warning`、圆角/字体/间距/投影规范）落地为独立 token 资产，与 OpenDesign 产出的品牌包建立**符号级**对齐（同名令牌映射），而不是像素级对齐某个 dashboard 预装设计系统。
+3. **「对齐 OpenDesign dashboard 设计系统」要重新定义成「对齐设计令牌，而不是对齐预装包」**：本机无 daemon、preset 不可下载已是验证事实。建议在 `../02-执行文档/x.md` 的「三、设计系统」基础上，把 gate-web-ui 需要的令牌（`bg-*/text-*/accent/success/danger/warning`、圆角/字体/间距/投影规范）落地为独立 token 资产，与 OpenDesign 产出的品牌包建立**符号级**对齐（同名令牌映射），而不是像素级对齐某个 dashboard 预装设计系统。
 
 ---
 
