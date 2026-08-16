@@ -17,6 +17,8 @@ export interface Ticket {
   stage: TicketStage;
   /** target_ref: 目标分支 ref (如 refs/heads/main). */
   targetRef: string;
+  /** clone_path: 后端为工单创建的独立工作区路径. */
+  clonePath?: string;
   /** 最新 review_round — 派生自 presubmit 记录, 无预提审时为 null. */
   reviewRound: number | null;
   /** 最新 tree_hash — 预提审固化锚点 (派生自 presubmit). */
@@ -42,8 +44,10 @@ export interface Ticket {
 
 /** 建工单请求 (后端文档 §4.2, POST /api/tickets body; description 为 agent 输入). */
 export interface CreateTicketRequest {
+  /** ticket_no: 后端建工单时使用的唯一编号. */
+  ticketNo: string;
   title: string;
-  description: string;
-  targetRef: string;
+  description?: string;
+  targetRef?: string;
   agentConfigId?: string;
 }

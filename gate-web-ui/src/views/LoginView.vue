@@ -51,10 +51,7 @@ function submit() {
   place-items: center;
   padding: 32px 20px;
   color: var(--text, #172a46);
-  background:
-    radial-gradient(560px 340px at 78% 8%, rgba(176, 75, 28, 0.12), transparent 66%),
-    radial-gradient(500px 300px at 12% 92%, rgba(231, 124, 67, 0.1), transparent 70%),
-    var(--background, #f3efe8);
+  background: var(--background, #eef1f4);
 }
 .login__card {
   width: min(100%, 420px);

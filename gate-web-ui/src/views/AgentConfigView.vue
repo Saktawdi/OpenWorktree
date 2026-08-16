@@ -605,7 +605,7 @@ onBeforeUnmount(() => {
 .action-notice {
   margin: -2px 0 0;
   padding: 9px 12px;
-  border: 1px solid rgba(176, 75, 28, 0.24);
+  border: 1px solid rgba(9, 105, 218, 0.24);
   border-radius: var(--radius-sm);
   color: var(--accent-hover);
   background: var(--accent-soft);
@@ -678,7 +678,7 @@ onBeforeUnmount(() => {
 }
 
 .config-row--active {
-  background: linear-gradient(90deg, var(--accent-soft), transparent 88%);
+  background: var(--accent-soft);
   box-shadow: inset 3px 0 0 var(--accent);
 }
 
@@ -843,7 +843,7 @@ onBeforeUnmount(() => {
 }
 
 .strategy-section--prompt {
-  background: rgba(247, 242, 234, 0.48);
+  background: var(--panel-2);
 }
 
 .strategy-section__head {

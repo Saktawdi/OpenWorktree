@@ -76,7 +76,7 @@ import { GButton, GCard, GBadge, GInput, GSelect } from '@/components/ui';
 }
 .sg__head h2 {
   margin: 0;
-  color: var(--ink, #10263d);
+  color: var(--ink, #24292f);
   font-size: 22px;
   font-weight: 800;
   letter-spacing: -0.03em;
@@ -88,8 +88,8 @@ import { GButton, GCard, GBadge, GInput, GSelect } from '@/components/ui';
 }
 .sg > :deep(.g-card) {
   border-radius: 14px;
-  border-color: var(--border, #e4ddd3);
-  background: var(--panel, #fffdfa);
+  border-color: var(--border, #d8dee4);
+  background: var(--panel, #ffffff);
   box-shadow: 0 9px 24px rgba(36, 52, 70, 0.055);
 }
 .sg > :deep(.g-card) :deep(.g-card__head) {
@@ -121,7 +121,7 @@ import { GButton, GCard, GBadge, GInput, GSelect } from '@/components/ui';
 .skeleton {
   height: 14px;
   border-radius: 999px;
-  background: linear-gradient(100deg, var(--panel-2, #f7f2ea) 20%, rgba(176, 75, 28, 0.25) 42%, var(--panel-2, #f7f2ea) 64%);
+  background: var(--panel-2, #f6f8fa);
   background-size: 360% 100%;
   animation: shimmer 1.4s ease infinite;
 }
@@ -134,7 +134,7 @@ import { GButton, GCard, GBadge, GInput, GSelect } from '@/components/ui';
   border: 1px dashed var(--border-strong, #cbbfaf);
   border-radius: 9px;
   color: var(--text-muted, #718092);
-  background: var(--panel-2, #f7f2ea);
+  background: var(--panel-2, #f6f8fa);
   font-size: 13px;
 }
 .error {

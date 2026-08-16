@@ -4,3 +4,4 @@ export * from './tickets';
 export * from './sessions';
 export * from './tasks';
 export * from './review';
+export * from './config';

@@ -48,7 +48,7 @@ const initials = (name: string) => name.trim().charAt(0).toUpperCase() || '?';
 }
 
 .g-avatar--accent {
-  border-color: rgba(230, 109, 47, 0.2);
+  border-color: rgba(9, 105, 218, 0.2);
   background: var(--accent-soft);
   color: var(--accent-hover);
 }
@@ -56,13 +56,13 @@ const initials = (name: string) => name.trim().charAt(0).toUpperCase() || '?';
 .g-avatar--success {
   border-color: rgba(44, 137, 98, 0.2);
   background: var(--success-soft);
-  color: #277755;
+  color: var(--success);
 }
 
 .g-avatar--warning {
   border-color: rgba(184, 121, 33, 0.22);
   background: var(--warning-soft);
-  color: #98651a;
+  color: var(--warning);
 }
 
 .g-avatar--neutral {

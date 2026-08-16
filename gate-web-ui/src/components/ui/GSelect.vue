@@ -47,7 +47,7 @@ const emit = defineEmits<{ (e: 'update:modelValue', value: string | null): void 
   background-position: right 11px center;
   background-repeat: no-repeat;
   color: var(--text);
-  color-scheme: light;
+  color-scheme: inherit;
   font-size: 13px;
   line-height: 1.45;
   transition:
@@ -57,7 +57,7 @@ const emit = defineEmits<{ (e: 'update:modelValue', value: string | null): void 
 }
 
 .g-select:hover:not(:disabled) {
-  border-color: #b8a998;
+  border-color: var(--border-strong);
 }
 
 .g-select:focus {

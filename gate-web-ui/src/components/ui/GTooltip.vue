@@ -42,8 +42,8 @@ withDefaults(
   padding: 6px 9px;
   border: 1px solid rgba(238, 244, 248, 0.14);
   border-radius: 7px;
-  background: var(--ink-strong);
-  color: var(--ink-text);
+  background: var(--tooltip-bg);
+  color: var(--tooltip-text);
   font-size: 12px;
   font-weight: 550;
   line-height: 1.4;

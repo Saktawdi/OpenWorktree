@@ -526,7 +526,7 @@ function exportCsv() {
   border: 1px solid var(--border);
   border-left: 3px solid var(--accent);
   border-radius: 14px;
-  background: linear-gradient(100deg, var(--panel), rgba(230, 109, 47, 0.055));
+  background: var(--panel-2);
   box-shadow: 0 8px 22px rgba(36, 52, 70, 0.05);
 }
 

@@ -7,10 +7,12 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter, RouterView } from 'vue-router';
 import { useAuthStore } from '@/stores/authStore';
 import { GButton, GIcon, GTooltip } from '@/components/ui';
+import { useConsolePreferences } from '@/composables/useConsolePreferences';
 
 const route = useRoute();
 const router = useRouter();
 const auth = useAuthStore();
+const { applyConsolePreferences, preferences, toggleConsoleTheme } = useConsolePreferences();
 const commandOpen = ref(false);
 const commandQuery = ref('');
 const commandIndex = ref(0);
@@ -22,7 +24,7 @@ interface NavItem {
   key: string;
   label: string;
   routeName: string;
-  icon: 'grid' | 'kanban' | 'shield' | 'chat' | 'chart' | 'bot' | 'palette';
+  icon: 'grid' | 'kanban' | 'shield' | 'chat' | 'chart' | 'bot' | 'palette' | 'settings' | 'folder';
 }
 const navItems: NavItem[] = [
   { key: 'home', label: '项目看板', routeName: 'home', icon: 'grid' },
@@ -31,6 +33,7 @@ const navItems: NavItem[] = [
   { key: 'session', label: '会话', routeName: 'session', icon: 'chat' },
   { key: 'cost', label: '成本', routeName: 'cost', icon: 'chart' },
   { key: 'agents', label: 'Agent 配置', routeName: 'agents', icon: 'bot' },
+  { key: 'settings', label: '系统设置', routeName: 'settings', icon: 'settings' },
   { key: 'styleguide', label: '样式速览', routeName: 'styleguide', icon: 'palette' },
 ];
 
@@ -39,6 +42,15 @@ const activeKey = computed(() => {
   if (name === 'ticket-detail') return 'kanban';
   return navItems.find((n) => n.routeName === name)?.key ?? '';
 });
+
+const isSettingsRoute = computed(() => route.name === 'settings');
+const activeSettingsSection = computed(() => String(route.query.section ?? 'models'));
+const settingsNavItems: Array<NavItem & { section: string }> = [
+  { key: 'settings-models', label: '模型与供应商', routeName: 'settings', section: 'models', icon: 'bot' },
+  { key: 'settings-console', label: '控制台', routeName: 'settings', section: 'console', icon: 'grid' },
+  { key: 'settings-runtime', label: '运行环境', routeName: 'settings', section: 'runtime', icon: 'folder' },
+  { key: 'settings-security', label: '访问安全', routeName: 'settings', section: 'security', icon: 'shield' },
+];
 
 const pageTitle = computed(() => {
   const map: Record<string, string> = {
@@ -49,6 +61,7 @@ const pageTitle = computed(() => {
     session: 'Agent 会话',
     cost: '成本面板',
     agents: 'Agent 配置',
+    settings: '系统设置',
     styleguide: '样式速览',
   };
   return map[String(route.name ?? '')] ?? 'GATE';
@@ -75,6 +88,10 @@ function go(item: NavItem) {
     return;
   }
   router.push({ name: item.routeName });
+}
+
+function goSettingsSection(section: string) {
+  router.push({ name: 'settings', query: { section } });
 }
 
 function openCommand() {
@@ -167,7 +184,10 @@ function logout() {
   router.push({ name: 'login' });
 }
 
-onMounted(() => document.addEventListener('keydown', onDocumentKeydown));
+onMounted(() => {
+  applyConsolePreferences();
+  document.addEventListener('keydown', onDocumentKeydown);
+});
 onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown));
 </script>
 
@@ -182,7 +202,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
         </span>
       </button>
 
-      <nav class="nav">
+      <nav v-if="!isSettingsRoute" class="nav">
         <p class="nav__group">工作区</p>
         <GTooltip v-for="item in navItems" :key="item.key" :content="item.label" side="right" block>
           <button
@@ -191,6 +211,26 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
             :class="{ 'nav__item--active': activeKey === item.key }"
             :aria-label="item.label"
             @click="go(item)"
+          >
+            <GIcon :name="item.icon" :size="16" />
+            <span>{{ item.label }}</span>
+          </button>
+        </GTooltip>
+      </nav>
+
+      <nav v-else class="nav nav--settings" aria-label="系统设置">
+        <button type="button" class="nav__back" @click="router.push({ name: 'home' })">
+          <GIcon name="chevron-left" :size="15" />
+          <span>返回项目看板</span>
+        </button>
+        <p class="nav__group">系统管理</p>
+        <GTooltip v-for="item in settingsNavItems" :key="item.key" :content="item.label" side="right" block>
+          <button
+            type="button"
+            class="nav__item"
+            :class="{ 'nav__item--active': activeSettingsSection === item.section }"
+            :aria-label="item.label"
+            @click="goSettingsSection(item.section)"
           >
             <GIcon :name="item.icon" :size="16" />
             <span>{{ item.label }}</span>
@@ -220,6 +260,17 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
         </div>
         <div class="topbar__right">
           <span class="topbar__status"><i aria-hidden="true" />本地实例运行中</span>
+          <GTooltip :content="preferences.theme === 'dark' ? '切换到日间模式' : '切换到夜间模式'" side="bottom">
+            <button
+              type="button"
+              class="theme-toggle"
+              :aria-label="preferences.theme === 'dark' ? '切换到日间模式' : '切换到夜间模式'"
+              :aria-pressed="preferences.theme === 'dark'"
+              @click="toggleConsoleTheme"
+            >
+              <GIcon :name="preferences.theme === 'dark' ? 'sun' : 'moon'" :size="15" />
+            </button>
+          </GTooltip>
           <button
             type="button"
             class="topbar__hint"
@@ -294,31 +345,26 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
 
 <style scoped>
 .shell {
-  --ink: #17253d;
-  --ink-soft: #253754;
-  --ink-muted: #91a1bb;
-  --orange: var(--accent);
+  --nav-accent: var(--accent);
   display: flex;
   width: 100vw;
   height: 100vh;
   height: 100dvh;
   overflow: hidden;
-  color: var(--text, #17253d);
-  background: var(--background, #f6f2eb);
+  color: var(--text, #1f2328);
+  background: var(--background, #eef1f4);
 }
 
 .sidebar {
-  flex: 0 0 252px;
-  width: 252px;
+  flex: 0 0 232px;
+  width: 232px;
   height: 100%;
   display: flex;
   flex-direction: column;
-  padding: 22px 16px 16px;
-  color: #f7f4ed;
-  background:
-    radial-gradient(circle at 15% 0%, rgba(176, 75, 28, 0.2), transparent 32%),
-    linear-gradient(160deg, #1a2942 0%, var(--ink) 58%, #101d32 100%);
-  box-shadow: 10px 0 30px rgba(25, 37, 58, 0.08);
+  padding: 18px 12px 14px;
+  color: var(--ink-text);
+  background: var(--sidebar-bg);
+  border-right: 1px solid var(--sidebar-border);
   z-index: 2;
 }
 
@@ -326,7 +372,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
   display: flex;
   align-items: center;
   gap: 11px;
-  padding: 4px 8px 27px;
+  padding: 3px 8px 22px;
   border: 0;
   background: transparent;
   cursor: pointer;
@@ -340,10 +386,10 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
   display: grid;
   place-items: center;
   flex: none;
-  border-radius: 11px;
-  color: #fffaf4;
-  background: var(--orange);
-  box-shadow: 0 7px 16px rgba(143, 57, 16, 0.32);
+  border-radius: 7px;
+  color: #ffffff;
+  background: var(--nav-accent);
+  box-shadow: none;
   font-size: 17px;
   font-weight: 800;
   letter-spacing: -0.04em;
@@ -354,14 +400,14 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
   line-height: 1.15;
 }
 .brand__name {
-  color: #fffaf4;
+  color: #ffffff;
   font-size: 15px;
   font-weight: 760;
   letter-spacing: 0.06em;
 }
 .brand__sub {
   margin-top: 5px;
-  color: var(--ink-muted);
+  color: var(--sidebar-muted);
   font-size: 9px;
   font-weight: 650;
   letter-spacing: 0.12em;
@@ -377,11 +423,31 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
 }
 .nav__group {
   margin: 0 10px 9px;
-  color: #8e9db6;
+  color: #8b949e;
   font-size: 10px;
   font-weight: 750;
   letter-spacing: 0.14em;
   text-transform: uppercase;
+}
+.nav__back {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  margin: 0 4px 22px;
+  padding: 0 6px;
+  border: 0;
+  color: #b6bec8;
+  background: transparent;
+  font-size: 11px;
+  font-weight: 650;
+  cursor: pointer;
+}
+.nav__back:hover {
+  color: #ffffff;
+}
+.nav--settings .nav__group {
+  margin-bottom: 8px;
 }
 .nav__item {
   position: relative;
@@ -389,39 +455,38 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
   align-items: center;
   gap: 11px;
   width: 100%;
-  min-height: 42px;
+  min-height: 38px;
   padding: 0 12px;
   border: 1px solid transparent;
-  border-radius: 10px;
-  color: #adbad0;
+  border-radius: 6px;
+  color: #b6bec8;
   background: transparent;
   font-size: 13px;
   font-weight: 560;
   text-align: left;
   cursor: pointer;
-  transition: color 0.16s ease, background 0.16s ease, border-color 0.16s ease, transform 0.16s ease;
+  transition: color 0.16s ease, background 0.16s ease, border-color 0.16s ease;
 }
 .nav__item :deep(svg) {
-  color: #8292ad;
+  color: #8b949e;
   transition: color 0.16s ease;
 }
 .nav__item:hover {
-  color: #fffaf4;
-  background: rgba(255, 255, 255, 0.07);
-  border-color: rgba(255, 255, 255, 0.08);
-  transform: translateX(2px);
+  color: #ffffff;
+  background: rgba(240, 246, 252, 0.1);
+  border-color: rgba(240, 246, 252, 0.1);
 }
 .nav__item:hover :deep(svg) {
-  color: #f2b18b;
+  color: #79c0ff;
 }
 .nav__item--active {
-  color: #fffaf4;
-  background: linear-gradient(90deg, rgba(176, 75, 28, 0.24), rgba(176, 75, 28, 0.08));
-  border-color: rgba(176, 75, 28, 0.26);
-  box-shadow: inset 3px 0 0 var(--orange);
+  color: #ffffff;
+  background: rgba(9, 105, 218, 0.22);
+  border-color: rgba(121, 192, 255, 0.24);
+  box-shadow: inset 3px 0 0 var(--nav-accent);
 }
 .nav__item--active :deep(svg) {
-  color: #f0a071;
+  color: #79c0ff;
 }
 
 .sidebar__foot {
@@ -437,7 +502,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
   gap: 8px;
   min-width: 0;
   padding: 0 8px;
-  color: #9eabc0;
+  color: #8b949e;
   font-family: var(--font-mono);
   font-size: 10px;
   overflow: hidden;
@@ -449,17 +514,17 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
   height: 7px;
   flex: none;
   border-radius: 50%;
-  background: #73d3a1;
-  box-shadow: 0 0 0 3px rgba(115, 211, 161, 0.14);
+  background: var(--success);
+  box-shadow: 0 0 0 3px var(--success-soft);
 }
 .sidebar__foot :deep(.g-btn--ghost) {
   justify-content: flex-start;
-  color: #aebbd0;
-  border-radius: 9px;
+  color: #b6bec8;
+  border-radius: 6px;
 }
 .sidebar__foot :deep(.g-btn--ghost:hover:not(:disabled)) {
-  color: #fffaf4;
-  background: rgba(255, 255, 255, 0.07);
+  color: #ffffff;
+  background: rgba(240, 246, 252, 0.1);
 }
 
 .main {
@@ -469,20 +534,17 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
   min-width: 0;
   height: 100%;
   padding: 0;
-  background:
-    radial-gradient(circle at 90% -10%, rgba(176, 75, 28, 0.09), transparent 32%),
-    var(--background, #f6f2eb);
+  background: var(--background, #eef1f4);
 }
 .topbar {
   display: flex;
-  flex: 0 0 76px;
+  flex: 0 0 64px;
   align-items: center;
   justify-content: space-between;
-  min-height: 76px;
-  padding: 0 clamp(22px, 4vw, 52px);
-  border-bottom: 1px solid rgba(23, 37, 61, 0.08);
-  background: rgba(255, 253, 249, 0.72);
-  backdrop-filter: blur(14px);
+  min-height: 64px;
+  padding: 0 clamp(20px, 3vw, 40px);
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
 }
 .topbar__title {
   display: flex;
@@ -496,24 +558,24 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
   gap: 3px;
 }
 .topbar__eyebrow {
-  color: var(--text-muted, #7a8496);
+  color: var(--text-muted, #636c76);
   font-size: 9px;
   font-weight: 800;
   letter-spacing: 0.16em;
 }
 .topbar__title h1 {
   margin: 0;
-  color: var(--text, #17253d);
+  color: var(--text, #1f2328);
   font-size: 20px;
   font-weight: 760;
   letter-spacing: -0.025em;
 }
 .topbar__loop {
-  padding: 4px 10px;
-  border: 1px solid rgba(23, 37, 61, 0.12);
-  border-radius: 999px;
-  color: var(--text-muted, #7a8496);
-  background: rgba(255, 255, 255, 0.58);
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-muted, #636c76);
+  background: var(--panel-2);
   font-size: 11px;
   white-space: nowrap;
 }
@@ -521,39 +583,61 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
   display: flex;
   align-items: center;
   gap: 17px;
-  color: var(--text-muted, #7a8496);
+  color: var(--text-muted, #636c76);
   font-size: 11px;
+}
+.theme-toggle {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  flex: none;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  background: var(--panel);
+  cursor: pointer;
+  transition: color 0.14s ease, border-color 0.14s ease, background-color 0.14s ease,
+    transform 0.12s ease;
+}
+.theme-toggle:hover {
+  border-color: var(--border-strong);
+  color: var(--accent-hover);
+  background: var(--hover);
+}
+.theme-toggle:active {
+  transform: translateY(1px);
 }
 .topbar__status {
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  color: #68816f;
+  color: var(--success);
   font-weight: 600;
 }
 .topbar__status i {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: #59b786;
-  box-shadow: 0 0 0 3px rgba(89, 183, 134, 0.14);
+  background: var(--success);
+  box-shadow: 0 0 0 3px var(--success-soft);
 }
 .topbar__hint {
   display: inline-flex;
   align-items: center;
   gap: 5px;
   padding: 5px 8px;
-  border: 1px solid rgba(23, 37, 61, 0.12);
+  border: 1px solid var(--border);
   border-radius: 6px;
-  color: var(--text-muted, #7a8496);
-  background: rgba(255, 255, 255, 0.58);
+  color: var(--text-muted, #636c76);
+  background: var(--panel);
   font-family: var(--font-mono);
   font-size: 10px;
   cursor: pointer;
   transition: color 0.14s ease, border-color 0.14s ease, background-color 0.14s ease;
 }
 .topbar__hint:hover {
-  color: var(--text, #17253d);
+  color: var(--text, #1f2328);
   border-color: var(--border-strong);
   background: var(--panel);
 }
@@ -572,13 +656,12 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
   place-items: start center;
   padding: min(14vh, 140px) 18px 18px;
   overflow: auto;
-  background: rgba(16, 38, 61, 0.34);
-  backdrop-filter: blur(5px);
+  background: var(--overlay);
 }
 .command-dialog {
   width: min(560px, 100%);
   overflow: hidden;
-  border: 1px solid rgba(16, 38, 61, 0.17);
+  border: 1px solid var(--border-strong);
   border-radius: var(--radius-lg);
   background: var(--panel);
   box-shadow: var(--shadow-popover);
@@ -645,7 +728,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
 }
 .command-option:hover,
 .command-option--active {
-  border-color: rgba(176, 75, 28, 0.22);
+  border-color: rgba(9, 105, 218, 0.28);
   color: var(--text);
   background: var(--accent-soft);
 }
@@ -694,6 +777,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
   }
   .brand__text,
   .nav__group,
+  .nav__back span,
   .nav__item span,
   .token-chip,
   .sidebar__foot :deep(.g-btn) {
@@ -701,6 +785,11 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
   }
   .nav__item {
     justify-content: center;
+    padding-inline: 0;
+  }
+  .nav__back {
+    justify-content: center;
+    margin: 0;
     padding-inline: 0;
   }
   .sidebar__foot {
@@ -749,6 +838,12 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
     width: 38px;
     min-height: 38px;
     scroll-snap-align: start;
+  }
+  .nav__back {
+    width: 38px;
+    min-height: 38px;
+    flex: 0 0 38px;
+    margin: 0;
   }
   .sidebar__foot {
     display: none;

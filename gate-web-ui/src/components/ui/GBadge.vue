@@ -60,16 +60,16 @@ withDefaults(
 
 .g-badge--success {
   background: var(--success-soft);
-  color: #277755;
+  color: var(--success);
 }
 
 .g-badge--warning {
   background: var(--warning-soft);
-  color: #98651a;
+  color: var(--warning);
 }
 
 .g-badge--danger {
   background: var(--danger-soft);
-  color: #a5423d;
+  color: var(--danger);
 }
 </style>

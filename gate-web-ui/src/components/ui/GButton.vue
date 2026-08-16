@@ -102,12 +102,12 @@ const emit = defineEmits<{ (e: 'click', event: MouseEvent): void }>();
 .g-btn--primary {
   background: var(--accent);
   color: var(--accent-contrast);
-  box-shadow: 0 5px 12px rgba(143, 57, 16, 0.18);
+  box-shadow: none;
 }
 
 .g-btn--primary:hover:not(:disabled) {
   background: var(--accent-hover);
-  box-shadow: 0 7px 16px rgba(143, 57, 16, 0.23);
+  box-shadow: 0 1px 2px rgba(31, 35, 40, 0.16);
 }
 
 .g-btn--secondary {
@@ -119,7 +119,7 @@ const emit = defineEmits<{ (e: 'click', event: MouseEvent): void }>();
 
 .g-btn--secondary:hover:not(:disabled) {
   background: var(--hover);
-  border-color: #b8a998;
+  border-color: var(--border-strong);
 }
 
 .g-btn--ghost {
@@ -134,22 +134,22 @@ const emit = defineEmits<{ (e: 'click', event: MouseEvent): void }>();
 
 .g-btn--danger {
   background: var(--danger);
-  color: #fffaf7;
-  box-shadow: 0 5px 12px rgba(117, 39, 34, 0.16);
+  color: var(--accent-contrast);
+  box-shadow: none;
 }
 
 .g-btn--danger:hover:not(:disabled) {
-  background: #8d2f29;
+  background: var(--danger-hover);
 }
 
 .g-btn--success {
   background: var(--success);
-  color: #f8fffb;
-  box-shadow: 0 5px 12px rgba(38, 119, 83, 0.14);
+  color: var(--accent-contrast);
+  box-shadow: none;
 }
 
 .g-btn--success:hover:not(:disabled) {
-  background: #195d3f;
+  background: var(--success-hover);
 }
 
 .g-btn__spinner {

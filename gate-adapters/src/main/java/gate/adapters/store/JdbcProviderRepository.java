@@ -59,6 +59,12 @@ public final class JdbcProviderRepository implements ProviderRepository {
     }
 
     @Override
+    public void delete(String id) {
+        jdbc.update("DELETE FROM model WHERE provider_id = ?", id);
+        jdbc.update("DELETE FROM provider WHERE id = ?", id);
+    }
+
+    @Override
     public void replaceModels(String providerId, List<String> modelNames, Instant pulledAt) {
         jdbc.update("DELETE FROM model WHERE provider_id = ?", providerId);
         for (String model : modelNames) {

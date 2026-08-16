@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
+import { getTicket } from '@/api/tickets';
 import { GBadge, GButton, GIcon, GInput, GModal } from '@/components/ui';
-import { mockTickets, stageLabels } from '@/mocks/prototypeData';
+import { TICKET_STAGE_LABELS } from '@/types/stage';
 import type { Ticket } from '@/types/ticket';
 import type { TicketStage } from '@/types/stage';
 
@@ -54,8 +55,22 @@ interface ReviewPhaseDefinition {
 const route = useRoute();
 const router = useRouter();
 const ticketNo = String(route.params.no ?? 'T-104');
-const fallbackTicket = mockTickets.find((item) => item.no === ticketNo) ?? mockTickets[3]!;
-const ticket = ref<Ticket>({ ...fallbackTicket });
+const ticket = ref<Ticket>({
+  no: ticketNo,
+  title: '读取工单中...',
+  stage: 'PENDING',
+  targetRef: '',
+  reviewRound: null,
+  treeHash: null,
+  baseCommit: null,
+  execTokenTotal: null,
+  execTokenSource: null,
+  agentConfigId: null,
+  createdAt: '',
+  updatedAt: '',
+});
+const loading = ref(true);
+const loadError = ref('');
 
 const reviewRunState = ref<ReviewRunState>('idle');
 const activePhase = ref<ReviewPhase>('anchor');
@@ -197,7 +212,7 @@ const primaryAction = computed(() => {
 const publishGates = computed(() => [
   { label: '审核锚点完整', detail: 'tree、base 与 target 已确认', passed: hasAnchor.value },
   { label: '人工决定为通过', detail: decisionRecord.value?.type === 'approved' ? '已记录人工通过' : '尚未记录人工通过', passed: decisionRecord.value?.type === 'approved' },
-  { label: '工单处于可发布', detail: stageLabels[ticket.value.stage], passed: ticket.value.stage === 'READY_TO_PUBLISH' },
+  { label: '工单处于可发布', detail: TICKET_STAGE_LABELS[ticket.value.stage], passed: ticket.value.stage === 'READY_TO_PUBLISH' },
   { label: '当前没有运行中的审核', detail: isRunning.value ? 'LLM 审核仍在执行' : '审核未在执行', passed: !isRunning.value },
 ]);
 
@@ -452,6 +467,20 @@ function openSession() {
   router.push({ name: 'session', params: { no: ticket.value.no } });
 }
 
+async function loadTicket() {
+  loading.value = true;
+  loadError.value = '';
+  try {
+    ticket.value = await getTicket(ticketNo);
+  } catch {
+    loadError.value = '无法读取工单数据，请确认工单仍存在且 Gate 后端正在运行。';
+    ticket.value.title = '工单数据不可用';
+  } finally {
+    loading.value = false;
+  }
+}
+
+onMounted(() => void loadTicket());
 onBeforeUnmount(clearReviewTimers);
 </script>
 
@@ -464,7 +493,7 @@ onBeforeUnmount(clearReviewTimers);
         <p>审核结论、人工决定和发布动作都绑定到同一份变更锚点。</p>
       </div>
       <div class="review-header__actions">
-        <GBadge :tone="toneFor(ticket.stage)">{{ stageLabels[ticket.stage] }}</GBadge>
+        <GBadge :tone="toneFor(ticket.stage)">{{ TICKET_STAGE_LABELS[ticket.stage] }}</GBadge>
         <GButton size="sm" variant="secondary" @click="openDetail">
           <GIcon name="external" :size="14" />
           工单详情
@@ -475,6 +504,12 @@ onBeforeUnmount(clearReviewTimers);
         </GButton>
       </div>
     </header>
+
+    <p v-if="loading" class="review-data-state" role="status">正在读取后端工单数据...</p>
+    <p v-else-if="loadError" class="review-data-state review-data-state--error" role="alert">
+      {{ loadError }}
+      <button type="button" @click="loadTicket">重新读取</button>
+    </p>
 
     <section class="command-panel" aria-label="审核命令面板">
       <div class="command-panel__top">
@@ -734,6 +769,34 @@ onBeforeUnmount(clearReviewTimers);
   overflow: auto;
 }
 
+.review-data-state {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: -2px 0 0;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  background: var(--panel-2);
+  font-size: 12px;
+}
+
+.review-data-state--error {
+  border-color: var(--danger-soft);
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.review-data-state button {
+  padding: 0;
+  border: 0;
+  color: var(--accent-hover);
+  background: transparent;
+  font-size: inherit;
+  font-weight: 750;
+  cursor: pointer;
+}
+
 .review-header {
   display: flex;
   align-items: flex-end;
@@ -861,7 +924,7 @@ onBeforeUnmount(clearReviewTimers);
 }
 
 .review-flow__phase--current {
-  background: rgba(176, 75, 28, 0.075);
+  background: var(--accent-soft);
   box-shadow: inset 0 3px 0 var(--accent);
 }
 
@@ -894,7 +957,7 @@ onBeforeUnmount(clearReviewTimers);
 .action-notice {
   margin: -2px 0 0;
   padding: 9px 12px;
-  border: 1px solid rgba(176, 75, 28, 0.24);
+  border: 1px solid rgba(9, 105, 218, 0.24);
   border-radius: var(--radius-sm);
   color: var(--accent-hover);
   background: var(--accent-soft);
@@ -1006,7 +1069,7 @@ onBeforeUnmount(clearReviewTimers);
 .diff-view {
   overflow: auto;
   padding: 0 0 16px;
-  background: #fbf9f5;
+  background: var(--canvas);
 }
 
 .diff-line {
@@ -1038,12 +1101,12 @@ onBeforeUnmount(clearReviewTimers);
 }
 
 .diff-line--highlighted {
-  background: rgba(176, 75, 28, 0.14);
+  background: rgba(9, 105, 218, 0.14);
   box-shadow: inset 3px 0 0 var(--accent);
 }
 
 .diff-line--selected {
-  outline: 2px solid rgba(176, 75, 28, 0.62);
+  outline: 2px solid rgba(9, 105, 218, 0.62);
   outline-offset: -2px;
 }
 
@@ -1070,7 +1133,7 @@ onBeforeUnmount(clearReviewTimers);
 
 .diff-line__number {
   padding-right: 7px;
-  border-left: 1px solid rgba(228, 221, 211, 0.64);
+  border-left: 1px solid var(--border);
   font-size: 10px;
 }
 
@@ -1118,7 +1181,7 @@ onBeforeUnmount(clearReviewTimers);
 }
 
 .finding-row--active {
-  background: rgba(176, 75, 28, 0.085);
+  background: rgba(9, 105, 218, 0.085);
   box-shadow: inset 3px 0 0 var(--accent);
 }
 

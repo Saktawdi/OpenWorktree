@@ -116,6 +116,21 @@ final class ApiRoutes {
         if (seg.length == 2 && seg[1].equals("providers") && method.equals("GET")) {
             return providerList();
         }
+        if (seg.length == 2 && seg[1].equals("providers") && method.equals("POST")) {
+            return providerCreate(requestBody);
+        }
+        if (seg.length == 3 && seg[1].equals("providers")) {
+            if (method.equals("PUT")) {
+                return providerUpdate(seg[2], requestBody);
+            }
+            if (method.equals("DELETE")) {
+                return providerDelete(seg[2]);
+            }
+        }
+        if (seg.length == 4 && seg[1].equals("providers") && seg[3].equals("models")
+                && method.equals("PUT")) {
+            return providerModelsUpdate(seg[2], requestBody);
+        }
         if (seg.length == 2 && seg[1].equals("tickets")) {
             if (method.equals("GET")) {
                 return ticketList();
@@ -747,6 +762,7 @@ final class ApiRoutes {
             m.put("name", p.name());
             m.put("base_url", p.baseUrl());
             m.put("type", p.type());
+            m.put("credential_configured", p.apiKeyRef() != null && !p.apiKeyRef().isBlank());
             m.put("model_count", models.size());
             m.put("models", models);
             rows.add(m);
@@ -754,6 +770,94 @@ final class ApiRoutes {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("providers", rows);
         return new Response(200, body);
+    }
+
+    private Response providerCreate(String requestBody) {
+        Map<String, Object> req = parseObject(requestBody);
+        String id = required(req, "id");
+        if (providers.find(id).isPresent()) {
+            throw new GateException(GateErrorCode.USAGE, "provider already exists: " + id);
+        }
+        ProviderRepository.ProviderRow row = parseProvider(req, id, null);
+        providers.upsert(row, clock.now());
+        return providerDetail(id);
+    }
+
+    private Response providerUpdate(String id, String requestBody) {
+        ProviderRepository.ProviderRow existing = providers.find(id).orElseThrow(() ->
+                new GateException(GateErrorCode.USAGE, "no such provider: " + id));
+        ProviderRepository.ProviderRow row = parseProvider(parseObject(requestBody), id, existing);
+        providers.upsert(row, clock.now());
+        return providerDetail(id);
+    }
+
+    private Response providerDelete(String id) {
+        if (providers.find(id).isEmpty()) {
+            throw new GateException(GateErrorCode.USAGE, "no such provider: " + id);
+        }
+        if ("manual".equals(id)) {
+            throw new GateException(GateErrorCode.USAGE, "manual provider cannot be deleted");
+        }
+        providers.delete(id);
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("ok", true);
+        return new Response(200, body);
+    }
+
+    private Response providerModelsUpdate(String id, String requestBody) {
+        if (providers.find(id).isEmpty()) {
+            throw new GateException(GateErrorCode.USAGE, "no such provider: " + id);
+        }
+        Map<String, Object> req = parseObject(requestBody);
+        Object rawModels = req.get("models");
+        if (!(rawModels instanceof List<?> list)) {
+            throw new GateException(GateErrorCode.USAGE, "models must be an array");
+        }
+        List<String> models = new ArrayList<>();
+        for (Object value : list) {
+            String model = value == null ? "" : value.toString().trim();
+            if (!model.isBlank() && !models.contains(model)) {
+                models.add(model);
+            }
+        }
+        providers.replaceModels(id, models, clock.now());
+        return providerDetail(id);
+    }
+
+    private Response providerDetail(String id) {
+        ProviderRepository.ProviderRow p = providers.find(id).orElseThrow(() ->
+                new GateException(GateErrorCode.USAGE, "no such provider: " + id));
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("id", p.id());
+        body.put("name", p.name());
+        body.put("base_url", p.baseUrl());
+        body.put("type", p.type());
+        body.put("credential_configured", p.apiKeyRef() != null && !p.apiKeyRef().isBlank());
+        List<String> models = providers.models(id);
+        body.put("model_count", models.size());
+        body.put("models", models);
+        return new Response(200, body);
+    }
+
+    private static ProviderRepository.ProviderRow parseProvider(Map<String, Object> req, String id,
+            ProviderRepository.ProviderRow existing) {
+        String name = required(req, "name");
+        String baseUrl = required(req, "base_url");
+        String type = required(req, "type");
+        String apiKeyRef = str(req, "api_key_ref");
+        if (apiKeyRef == null || apiKeyRef.isBlank()) {
+            apiKeyRef = existing == null ? "unconfigured" : existing.apiKeyRef();
+        }
+        Instant createdAt = existing == null ? Instant.now() : existing.createdAt();
+        return new ProviderRepository.ProviderRow(id, name, baseUrl, apiKeyRef, type, createdAt);
+    }
+
+    private static String required(Map<String, Object> req, String key) {
+        String value = str(req, key);
+        if (value == null || value.isBlank()) {
+            throw new GateException(GateErrorCode.USAGE, key + " is required");
+        }
+        return value.trim();
     }
 
     // --- helpers --------------------------------------------------------------------------------

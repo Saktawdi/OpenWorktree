@@ -1,7 +1,7 @@
 /**
  * 路由表 — 对齐前端文档 §3.1 / x.md §5.
  *
- * 当前为原型阶段: 页面使用本地 mock 数据, 后续接入后端 REST.
+ * 页面通过 API 边界读取后端数据, 需要本地 mock 时由测试层单独注入.
  * 守卫: 未登录跳 /login; /login 已登录则跳 /.
  */
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router';
@@ -66,6 +66,12 @@ const routes: RouteRecordRaw[] = [
         name: 'cost',
         component: () => import('@/views/CostPanelView.vue'),
         meta: { closedLoop: 'metrics' },
+      },
+      {
+        path: 'settings',
+        name: 'settings',
+        component: () => import('@/views/SystemSettingsView.vue'),
+        meta: { closedLoop: 'config' },
       },
     ],
   },

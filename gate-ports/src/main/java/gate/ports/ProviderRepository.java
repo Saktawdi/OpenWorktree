@@ -20,6 +20,11 @@ public interface ProviderRepository {
 
     List<ProviderRow> findAll();
 
+    /** Remove a provider and its cached model rows. */
+    default void delete(String id) {
+        throw new UnsupportedOperationException("provider deletion is not supported");
+    }
+
     void replaceModels(String providerId, List<String> modelNames, Instant pulledAt);
 
     List<String> models(String providerId);

@@ -127,7 +127,7 @@ onBeforeUnmount(() => restoreFocus?.focus());
   place-items: center;
   padding: 20px;
   overflow: auto;
-  background: rgba(16, 38, 61, 0.46);
+  background: var(--overlay);
   backdrop-filter: blur(7px);
 }
 
@@ -138,7 +138,7 @@ onBeforeUnmount(() => restoreFocus?.focus());
   max-height: calc(100vh - 40px);
   overflow: hidden;
   background: var(--panel);
-  border: 1px solid rgba(16, 38, 61, 0.14);
+  border: 1px solid var(--overlay-border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-popover);
 }

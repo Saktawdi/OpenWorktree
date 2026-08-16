@@ -77,7 +77,7 @@ const emit = defineEmits<{
 }
 
 .g-input:hover:not(:disabled) {
-  border-color: #b8a998;
+  border-color: var(--border-strong);
 }
 
 .g-input:focus {

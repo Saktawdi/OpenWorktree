@@ -1,10 +1,13 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { GAvatar, GBadge, GButton, GCard, GIcon, GInput } from '@/components/ui';
-import { mockAgents, mockMessages, mockSessions, mockTickets, stageLabels } from '@/mocks/prototypeData';
+import { getTicket } from '@/api/tickets';
+import { GAvatar, GBadge, GButton, GCard, GIcon, GInput, GTooltip } from '@/components/ui';
+import { mockAgents, mockMessages, mockSessions } from '@/mocks/prototypeData';
+import { TICKET_STAGE_LABELS } from '@/types/stage';
 import type { Session } from '@/types/session';
 import type { SessionMessage } from '@/types/session-message';
+import type { Ticket } from '@/types/ticket';
 import type { TicketStage } from '@/types/stage';
 
 type SessionAction = 'start' | 'resume' | 'prompt';
@@ -12,7 +15,22 @@ type SessionAction = 'start' | 'resume' | 'prompt';
 const route = useRoute();
 const router = useRouter();
 const no = String(route.params.no ?? 'T-104');
-const ticket = computed(() => mockTickets.find((item) => item.no === no) ?? mockTickets[3]!);
+const ticket = ref<Ticket>({
+  no,
+  title: '读取工单中...',
+  stage: 'PENDING' as const,
+  targetRef: '',
+  reviewRound: null as number | null,
+  treeHash: null as string | null,
+  baseCommit: null as string | null,
+  execTokenTotal: null,
+  execTokenSource: null,
+  agentConfigId: null as string | null,
+  createdAt: '',
+  updatedAt: '',
+});
+const loading = ref(true);
+const loadError = ref('');
 const sessions = ref<Session[]>(
   mockSessions.filter((session) => session.ticketNo === no).map((session) => ({ ...session })),
 );
@@ -24,6 +42,35 @@ const input = ref('');
 const sending = ref(false);
 const feedback = ref('');
 
+async function loadTicket() {
+  loading.value = true;
+  loadError.value = '';
+  try {
+    const loaded = await getTicket(no);
+    ticket.value = {
+      no: loaded.no,
+      title: loaded.title,
+      stage: loaded.stage,
+      targetRef: loaded.targetRef,
+      reviewRound: loaded.reviewRound,
+      treeHash: loaded.treeHash,
+      baseCommit: loaded.baseCommit,
+      execTokenTotal: loaded.execTokenTotal,
+      execTokenSource: loaded.execTokenSource,
+      agentConfigId: loaded.agentConfigId,
+      createdAt: loaded.createdAt,
+      updatedAt: loaded.updatedAt,
+      ...(loaded.project ? { project: loaded.project } : {}),
+      ...(loaded.branch ? { branch: loaded.branch } : {}),
+    };
+  } catch {
+    loadError.value = '无法读取工单数据，请确认工单仍存在且 Gate 后端正在运行。';
+    ticket.value.title = '工单数据不可用';
+  } finally {
+    loading.value = false;
+  }
+}
+
 const session = computed(() => sessions.value.find((item) => item.id === selectedId.value) ?? sessions.value[0] ?? null);
 const messages = computed(() => (session.value ? messagesBySession.value[session.value.id] ?? [] : []));
 const activeSessions = computed(() => sessions.value.filter((item) => item.status === 'ACTIVE'));
@@ -32,9 +79,6 @@ const preferredAgent = computed(() =>
   mockAgents.find((agent) => agent.id === ticket.value.agentConfigId) ?? mockAgents[0]!,
 );
 const activeAgent = computed(() => (session.value ? agentFor(session.value) : preferredAgent.value));
-const totalTokens = computed(() =>
-  sessions.value.reduce((sum, item) => sum + (item.cumulativeUsage?.totalTokens ?? 0), 0),
-);
 const nextStep = computed(() => {
   if (!session.value) {
     return {
@@ -234,6 +278,8 @@ function send() {
     feedback.value = 'Agent 已返回新消息。';
   }, 900);
 }
+
+onMounted(() => void loadTicket());
 </script>
 
 <template>
@@ -246,6 +292,28 @@ function send() {
       </div>
       <div class="session-head__actions">
         <GBadge tone="success">{{ activeSessions.length }} 个活跃</GBadge>
+        <GTooltip content="查看当前工单" side="bottom">
+          <GButton
+            class="session-head__icon-action"
+            variant="secondary"
+            size="sm"
+            aria-label="查看当前工单"
+            @click="router.push({ name: 'ticket-detail', params: { no: ticket.no } })"
+          >
+            <GIcon name="external" :size="15" />
+          </GButton>
+        </GTooltip>
+        <GTooltip content="打开审核台" side="bottom">
+          <GButton
+            class="session-head__icon-action"
+            variant="secondary"
+            size="sm"
+            aria-label="打开审核台"
+            @click="router.push({ name: 'review', params: { no: ticket.no } })"
+          >
+            <GIcon name="shield" :size="15" />
+          </GButton>
+        </GTooltip>
         <GButton variant="primary" @click="startSession">
           <GIcon name="plus" :size="15" />
           新建会话
@@ -253,13 +321,19 @@ function send() {
       </div>
     </header>
 
+    <p v-if="loading" class="session-data-state" role="status">正在读取后端工单数据...</p>
+    <p v-else-if="loadError" class="session-data-state session-data-state--error" role="alert">
+      {{ loadError }}
+      <button type="button" @click="loadTicket">重新读取</button>
+    </p>
+
     <p class="sr-feedback" role="status" aria-live="polite">{{ feedback }}</p>
 
     <section class="ticket-context" aria-label="当前工单上下文">
       <div class="ticket-context__copy">
         <div class="ticket-context__tags">
           <span class="mono">{{ ticket.no }}</span>
-          <GBadge :tone="stageTone(ticket.stage)">{{ stageLabels[ticket.stage] }}</GBadge>
+          <GBadge :tone="stageTone(ticket.stage)">{{ TICKET_STAGE_LABELS[ticket.stage] }}</GBadge>
         </div>
         <h3>{{ ticket.title }}</h3>
         <div class="ticket-context__meta">
@@ -267,15 +341,6 @@ function send() {
           <span><GIcon name="git-branch" :size="13" />{{ ticket.branch ?? ticket.targetRef }}</span>
           <span><GIcon name="shield" :size="13" />R{{ ticket.reviewRound ?? 0 }}</span>
         </div>
-      </div>
-      <div class="ticket-context__actions">
-        <GButton variant="secondary" size="sm" @click="router.push({ name: 'ticket-detail', params: { no: ticket.no } })">
-          查看工单
-        </GButton>
-        <GButton variant="secondary" size="sm" @click="router.push({ name: 'review', params: { no: ticket.no } })">
-          <GIcon name="shield" :size="14" />
-          审核台
-        </GButton>
       </div>
     </section>
 
@@ -426,51 +491,6 @@ function send() {
         </GCard>
       </main>
 
-      <aside class="context-rail" aria-label="协作上下文与提示">
-        <GCard class="context-card">
-          <template #head>
-            <div class="card-heading">
-              <span class="card-heading__eyebrow">CONTEXT</span>
-              <strong>当前上下文</strong>
-            </div>
-          </template>
-          <dl class="context-list">
-            <div>
-              <dt>目标分支</dt>
-              <dd class="mono">{{ ticket.targetRef }}</dd>
-            </div>
-            <div>
-              <dt>tree 锚点</dt>
-              <dd class="mono">{{ ticket.treeHash ?? '未建立' }}</dd>
-            </div>
-            <div>
-              <dt>累计 Token</dt>
-              <dd class="mono">{{ formatTokens(totalTokens) }}</dd>
-            </div>
-            <div>
-              <dt>执行器</dt>
-              <dd>{{ activeAgent.name }}</dd>
-            </div>
-          </dl>
-        </GCard>
-
-        <GCard class="handoff-card">
-          <template #head>
-            <div class="card-heading">
-              <span class="card-heading__eyebrow">HANDOFF</span>
-              <strong>协作提示</strong>
-            </div>
-          </template>
-          <ol class="handoff-list">
-            <li><span>1</span><p>任务完成后，请让 Agent 汇总修改和验证结果。</p></li>
-            <li><span>2</span><p>预审前确认 tree 锚点与目标分支是否匹配。</p></li>
-            <li><span>3</span><p>遇到决策阻塞时，转到审核台记录人工结论。</p></li>
-          </ol>
-          <GButton variant="secondary" block class="handoff-card__action" @click="router.push({ name: 'review', params: { no: ticket.no } })">
-            打开审核台
-          </GButton>
-        </GCard>
-      </aside>
     </div>
 
     <p v-if="feedback" class="session-feedback" role="status">{{ feedback }}</p>
@@ -479,12 +499,14 @@ function send() {
 
 <style scoped>
 .session-workbench {
+  display: flex;
+  flex-direction: column;
   flex: 1;
+  height: 100%;
   min-height: 0;
-  width: min(100%, 1520px);
-  margin: 0 auto;
-  padding: clamp(20px, 3vw, 38px) clamp(18px, 3.4vw, 52px) 30px;
-  overflow: auto;
+  width: 100%;
+  padding: clamp(18px, 2.4vw, 30px) clamp(18px, 3vw, 42px) 24px;
+  overflow: hidden;
   color: var(--text);
 }
 
@@ -493,7 +515,6 @@ function send() {
 .ticket-context,
 .ticket-context__tags,
 .ticket-context__meta,
-.ticket-context__actions,
 .chat-card__title,
 .chat-card__head-actions,
 .session-row__top,
@@ -545,6 +566,12 @@ function send() {
   border-radius: 9px;
 }
 
+.session-head__icon-action {
+  width: 30px;
+  min-width: 30px;
+  padding: 0 !important;
+}
+
 .sr-feedback {
   position: absolute;
   width: 1px;
@@ -562,7 +589,7 @@ function send() {
   border: 1px solid var(--border);
   border-left: 3px solid var(--accent);
   border-radius: 14px;
-  background: linear-gradient(100deg, var(--panel), rgba(230, 109, 47, 0.055));
+  background: var(--panel-2);
   box-shadow: 0 8px 22px rgba(36, 52, 70, 0.05);
 }
 
@@ -604,34 +631,25 @@ function send() {
   gap: 5px;
 }
 
-.ticket-context__actions {
-  flex: none;
-  gap: 8px;
-}
-
-.ticket-context__actions :deep(.g-btn) {
-  border-radius: 8px;
-}
-
 .collaboration-grid {
   display: grid;
-  grid-template-columns: minmax(250px, 0.78fr) minmax(0, 1.6fr) minmax(245px, 0.72fr);
+  flex: 1;
+  grid-template-columns: minmax(250px, 310px) minmax(0, 1fr);
   gap: 17px;
   align-items: stretch;
-  margin-top: 17px;
-  min-height: min(690px, calc(100dvh - 235px));
+  min-height: 0;
+  margin-top: 16px;
 }
 
 .session-rail,
-.collaboration-main,
-.context-rail {
+.collaboration-main {
+  display: flex;
   min-width: 0;
+  min-height: 0;
 }
 
 .session-list-card,
-.chat-card,
-.context-card,
-.handoff-card {
+.chat-card {
   border-radius: 14px;
   border-color: var(--border);
   background: var(--panel);
@@ -641,14 +659,13 @@ function send() {
 .session-list-card,
 .chat-card {
   display: flex;
+  flex: 1;
   flex-direction: column;
-  min-height: 100%;
+  min-height: 0;
 }
 
 .session-list-card :deep(.g-card__head),
-.chat-card :deep(.g-card__head),
-.context-card :deep(.g-card__head),
-.handoff-card :deep(.g-card__head) {
+.chat-card :deep(.g-card__head) {
   min-height: 58px;
   padding: 13px 16px;
 }
@@ -686,6 +703,34 @@ function send() {
   overflow: auto;
 }
 
+.session-data-state {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: -2px 0 0;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  background: var(--panel-2);
+  font-size: 12px;
+}
+
+.session-data-state--error {
+  border-color: var(--danger-soft);
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.session-data-state button {
+  padding: 0;
+  border: 0;
+  color: var(--accent-hover);
+  background: transparent;
+  font-size: inherit;
+  font-weight: 750;
+  cursor: pointer;
+}
+
 .session-row {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
@@ -708,12 +753,12 @@ function send() {
 }
 
 .session-row.active {
-  border-color: rgba(230, 109, 47, 0.32);
+  border-color: rgba(9, 105, 218, 0.32);
   background: var(--accent-soft);
 }
 
 .session-row.active :deep(.g-avatar) {
-  box-shadow: 0 0 0 3px rgba(230, 109, 47, 0.09);
+  box-shadow: 0 0 0 3px rgba(9, 105, 218, 0.09);
 }
 
 .session-row__copy {
@@ -874,9 +919,9 @@ function send() {
   align-items: center;
   margin: 14px 14px 0;
   padding: 11px;
-  border: 1px solid rgba(230, 109, 47, 0.24);
+  border: 1px solid rgba(9, 105, 218, 0.24);
   border-radius: 10px;
-  background: rgba(230, 109, 47, 0.055);
+  background: var(--accent-soft);
 }
 
 .chat-next-step__icon {
@@ -931,7 +976,7 @@ function send() {
   overflow: auto;
   margin-top: 12px;
   padding: 18px clamp(14px, 2.5vw, 28px);
-  background: linear-gradient(180deg, rgba(247, 242, 234, 0.74), transparent 26%), var(--panel);
+  background: var(--panel-2);
 }
 
 .message-stack {
@@ -1070,7 +1115,7 @@ function send() {
 }
 
 .quick-prompts button:hover {
-  border-color: rgba(230, 109, 47, 0.34);
+  border-color: rgba(9, 105, 218, 0.34);
   color: var(--accent-hover);
   background: var(--accent-soft);
 }
@@ -1095,119 +1140,21 @@ function send() {
   border-radius: 9px;
 }
 
-.context-rail {
-  display: grid;
-  align-content: start;
-  gap: 17px;
-}
-
-.context-card :deep(.g-card__body),
-.handoff-card :deep(.g-card__body) {
-  padding: 15px;
-}
-
-.context-list {
-  display: grid;
-  gap: 0;
-  padding: 0;
-  margin: 0;
-}
-
-.context-list > div {
-  display: grid;
-  gap: 4px;
-  padding: 10px 0;
-  border-bottom: 1px solid var(--border);
-}
-
-.context-list > div:first-child {
-  padding-top: 0;
-}
-
-.context-list > div:last-child {
-  padding-bottom: 0;
-  border-bottom: 0;
-}
-
-.context-list dt {
-  color: var(--text-muted);
-  font-size: 10px;
-}
-
-.context-list dd {
-  margin: 0;
-  overflow: hidden;
-  color: var(--text-secondary);
-  font-size: 11px;
-  font-weight: 700;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.handoff-list {
-  display: grid;
-  gap: 11px;
-  padding: 0;
-  margin: 0;
-  list-style: none;
-}
-
-.handoff-list li {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: 8px;
-  align-items: start;
-}
-
-.handoff-list li > span {
-  display: grid;
-  width: 20px;
-  height: 20px;
-  place-items: center;
-  border-radius: 50%;
-  color: var(--accent-hover);
-  background: var(--accent-soft);
-  font-family: var(--font-mono);
-  font-size: 10px;
-  font-weight: 800;
-}
-
-.handoff-list p {
-  margin: 1px 0 0;
-  color: var(--text-secondary);
-  font-size: 11px;
-  line-height: 1.55;
-}
-
-.handoff-card__action {
-  margin-top: 15px;
-  border-radius: 8px;
-}
-
 .session-feedback {
   margin: 12px 0 0;
   padding: 9px 11px;
-  border: 1px solid rgba(230, 109, 47, 0.2);
+  border: 1px solid rgba(9, 105, 218, 0.2);
   border-radius: 9px;
   color: var(--accent-hover);
   background: var(--accent-soft);
   font-size: 12px;
 }
 
-@media (max-width: 1190px) {
-  .collaboration-grid {
-    grid-template-columns: minmax(250px, 0.78fr) minmax(0, 1.6fr);
-  }
-
-  .context-rail {
-    grid-column: 1 / -1;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
 @media (max-width: 820px) {
   .session-workbench {
+    height: auto;
     padding: 18px 14px 24px;
+    overflow: auto;
   }
 
   .session-head {
@@ -1235,9 +1182,6 @@ function send() {
     max-height: 310px;
   }
 
-  .context-rail {
-    grid-column: auto;
-  }
 }
 
 @media (max-width: 560px) {
@@ -1253,18 +1197,8 @@ function send() {
     padding: 15px;
   }
 
-  .ticket-context__actions {
-    width: 100%;
-  }
-
-  .ticket-context__actions :deep(.g-btn) {
-    flex: 1;
-  }
-
   .session-list-card :deep(.g-card__head),
-  .chat-card :deep(.g-card__head),
-  .context-card :deep(.g-card__head),
-  .handoff-card :deep(.g-card__head) {
+  .chat-card :deep(.g-card__head) {
     padding-inline: 14px;
   }
 
@@ -1295,8 +1229,5 @@ function send() {
     min-width: 58px;
   }
 
-  .context-rail {
-    grid-template-columns: 1fr;
-  }
 }
 </style>

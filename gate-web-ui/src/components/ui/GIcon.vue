@@ -13,6 +13,9 @@ withDefaults(
       | 'chart'
       | 'bot'
       | 'palette'
+      | 'settings'
+      | 'refresh'
+      | 'check'
       | 'plus'
       | 'search'
       | 'folder'
@@ -22,7 +25,9 @@ withDefaults(
       | 'spark'
       | 'chevron-left'
       | 'chevron-right'
-      | 'x';
+      | 'x'
+      | 'sun'
+      | 'moon';
     size?: number;
   }>(),
   {
@@ -38,6 +43,9 @@ const paths: Record<string, string> = {
   chart: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
   bot: '<rect x="4" y="8" width="16" height="12" rx="3"/><path d="M12 8V4m0 0H9m3 0h3M8 13h.01M16 13h.01M9 17c1.5 1 4.5 1 6 0"/>',
   palette: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4"/><path d="M12 3v5M12 16v5M3 12h5M16 12h5"/>',
+  settings: '<path d="M4 6h4M12 6h8M4 12h10M18 12h2M4 18h2M10 18h10"/><circle cx="10" cy="6" r="2"/><circle cx="16" cy="12" r="2"/><circle cx="8" cy="18" r="2"/>',
+  refresh: '<path d="M20 6v5h-5M4 18v-5h5"/><path d="M18.2 9A7 7 0 0 0 6.4 5.6L4 8m16 8-2.4 2.4A7 7 0 0 1 5.8 15"/>',
+  check: '<path d="m5 12 4 4L19 6"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
   search: '<circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/>',
   folder: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/>',
@@ -48,6 +56,8 @@ const paths: Record<string, string> = {
   'chevron-left': '<path d="m15 18-6-6 6-6"/>',
   'chevron-right': '<path d="m9 18 6-6-6-6"/>',
   x: '<path d="M18 6 6 18M6 6l12 12"/>',
+  sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.65 17.65l1.42 1.42M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.65 6.35l1.42-1.42"/>',
+  moon: '<path d="M20.5 14.7A8.5 8.5 0 0 1 9.3 3.5 8.5 8.5 0 1 0 20.5 14.7z"/>',
 };
 </script>
 

@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
+import { getTicket } from '@/api/tickets';
 import { GBadge, GButton, GCard, GIcon, GInput, GModal } from '@/components/ui';
-import { mockAgents, mockSessions, mockTickets, stageLabels } from '@/mocks/prototypeData';
+import { mockAgents, mockSessions } from '@/mocks/prototypeData';
 import type { Session } from '@/types/session';
 import type { Ticket } from '@/types/ticket';
+import { TICKET_STAGE_LABELS } from '@/types/stage';
 import type { TicketStage } from '@/types/stage';
 
 type AppIcon = 'chat' | 'chevron-left' | 'comment' | 'external' | 'folder' | 'git-branch' | 'plus' | 'shield' | 'spark';
@@ -30,12 +32,22 @@ interface ContextItem {
 const route = useRoute();
 const router = useRouter();
 const no = String(route.params.no ?? 'T-104');
-const sourceTicket = mockTickets.find((item) => item.no === no) ?? mockTickets[0]!;
 const ticket = ref<Ticket>({
-  ...sourceTicket,
-  dependencies: [...(sourceTicket.dependencies ?? [])],
-  labels: [...(sourceTicket.labels ?? [])],
+  no,
+  title: '读取工单中...',
+  stage: 'PENDING',
+  targetRef: '',
+  reviewRound: null,
+  treeHash: null,
+  baseCommit: null,
+  execTokenTotal: null,
+  execTokenSource: null,
+  agentConfigId: null,
+  createdAt: '',
+  updatedAt: '',
 });
+const loading = ref(true);
+const loadError = ref('');
 
 const localSessions = ref<Session[]>(
   mockSessions.filter((session) => session.ticketNo === ticket.value.no).map((session) => ({ ...session })),
@@ -106,6 +118,43 @@ const decisionMeta: Record<DecisionState, { label: string; detail: string; tone:
 
 const activeDecision = computed(() => decisionMeta[decisionState.value]);
 
+async function loadTicket() {
+  loading.value = true;
+  loadError.value = '';
+  try {
+    const loaded = await getTicket(no);
+    ticket.value = {
+      ...loaded,
+      dependencies: [...(loaded.dependencies ?? [])],
+      labels: [...(loaded.labels ?? [])],
+    };
+    localSessions.value = mockSessions.filter((session) => session.ticketNo === loaded.no).map((session) => ({ ...session }));
+    selectedSessionId.value = localSessions.value[0]?.id ?? '';
+    decisionState.value = initialDecisionState(loaded.stage);
+    activities.value = [
+      {
+        id: 'anchor',
+        type: 'review',
+        title: loaded.treeHash ? '最近一次预提审已锚定' : '尚未建立审核锚点',
+        detail: loaded.treeHash ? `tree ${loaded.treeHash} 已绑定到 ${loaded.targetRef}` : '执行预提审后将生成可审核的 tree 锚点。',
+        time: formatTime(loaded.updatedAt),
+      },
+      {
+        id: 'session',
+        type: 'session',
+        title: localSessions.value.length ? `已关联 ${localSessions.value.length} 个执行会话` : '尚未关联执行会话',
+        detail: localSessions.value.length ? '可直接续接最近的 Agent 上下文。' : '新建会话后可将任务交给指定 Agent。',
+        time: formatTime(loaded.createdAt),
+      },
+    ];
+  } catch {
+    loadError.value = '无法读取工单详情，请确认工单仍存在且 Gate 后端正在运行。';
+    ticket.value.title = '工单详情不可用';
+  } finally {
+    loading.value = false;
+  }
+}
+
 function initialDecisionState(stage: TicketStage): DecisionState {
   if (stage === 'DONE') return 'published';
   if (stage === 'READY_TO_PUBLISH') return 'approved';
@@ -116,7 +165,10 @@ function initialDecisionState(stage: TicketStage): DecisionState {
 }
 
 function formatTime(iso: string) {
-  return new Date(iso).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
+  const timestamp = Date.parse(iso);
+  return Number.isFinite(timestamp)
+    ? new Date(timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })
+    : '--';
 }
 
 function formatTokens(value: number | null | undefined) {
@@ -290,6 +342,8 @@ async function copyContext(label: string, value: string | null) {
     actionNotice.value = '当前环境无法访问剪贴板，请手动复制。';
   }
 }
+
+onMounted(() => void loadTicket());
 </script>
 
 <template>
@@ -303,7 +357,7 @@ async function copyContext(label: string, value: string | null) {
       <div class="ticket-heading">
         <div class="ticket-heading__line">
           <span class="ticket-heading__no mono">{{ ticket.no }}</span>
-          <GBadge :tone="stageTone(ticket.stage)">{{ stageLabels[ticket.stage] }}</GBadge>
+          <GBadge :tone="stageTone(ticket.stage)">{{ TICKET_STAGE_LABELS[ticket.stage] }}</GBadge>
           <GBadge v-if="ticket.priority" :tone="priorityTone(ticket.priority)">{{ ticket.priority }}</GBadge>
         </div>
         <h2>{{ ticket.title }}</h2>
@@ -320,6 +374,12 @@ async function copyContext(label: string, value: string | null) {
         </GButton>
       </div>
     </header>
+
+    <p v-if="loading" class="detail-data-state" role="status">正在读取后端工单数据...</p>
+    <p v-else-if="loadError" class="detail-data-state detail-data-state--error" role="alert">
+      {{ loadError }}
+      <button type="button" @click="loadTicket">重新读取</button>
+    </p>
 
     <p class="sr-notice" role="status" aria-live="polite">{{ actionNotice }}</p>
 
@@ -351,7 +411,7 @@ async function copyContext(label: string, value: string | null) {
               <span class="card-heading__eyebrow">LIFECYCLE</span>
               <strong>交付流程</strong>
             </div>
-            <GBadge :tone="stageTone(ticket.stage)">{{ stageLabels[ticket.stage] }}</GBadge>
+            <GBadge :tone="stageTone(ticket.stage)">{{ TICKET_STAGE_LABELS[ticket.stage] }}</GBadge>
           </template>
 
           <ol class="lifecycle" aria-label="工单当前生命周期">
@@ -567,6 +627,34 @@ async function copyContext(label: string, value: string | null) {
   color: var(--text);
 }
 
+.detail-data-state {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 14px 0 -2px;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  background: var(--panel-2);
+  font-size: 12px;
+}
+
+.detail-data-state--error {
+  border-color: var(--danger-soft);
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.detail-data-state button {
+  padding: 0;
+  border: 0;
+  color: var(--accent-hover);
+  background: transparent;
+  font-size: inherit;
+  font-weight: 750;
+  cursor: pointer;
+}
+
 .workbench-head {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
@@ -642,7 +730,7 @@ async function copyContext(label: string, value: string | null) {
   border: 1px solid var(--border);
   border-left: 3px solid var(--accent);
   border-radius: 14px;
-  background: linear-gradient(100deg, var(--panel), rgba(230, 109, 47, 0.055));
+  background: var(--panel-2);
   box-shadow: 0 8px 22px rgba(36, 52, 70, 0.05);
 }
 
@@ -810,10 +898,10 @@ async function copyContext(label: string, value: string | null) {
 }
 
 .lifecycle__item--current {
-  border-color: rgba(230, 109, 47, 0.46);
+  border-color: rgba(9, 105, 218, 0.46);
   color: var(--accent-hover);
   background: var(--accent-soft);
-  box-shadow: inset 0 0 0 1px rgba(230, 109, 47, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(9, 105, 218, 0.12);
 }
 
 .lifecycle__item--current .lifecycle__index {
@@ -841,9 +929,9 @@ async function copyContext(label: string, value: string | null) {
   gap: 12px;
   margin-top: 15px;
   padding: 13px;
-  border: 1px solid rgba(230, 109, 47, 0.24);
+  border: 1px solid rgba(9, 105, 218, 0.24);
   border-radius: 11px;
-  background: rgba(230, 109, 47, 0.055);
+  background: var(--accent-soft);
 }
 
 .next-action__icon {
@@ -1168,7 +1256,7 @@ async function copyContext(label: string, value: string | null) {
 
 .session-switcher button:hover,
 .session-switcher button.active {
-  border-color: rgba(230, 109, 47, 0.26);
+  border-color: rgba(9, 105, 218, 0.26);
   color: var(--accent-hover);
   background: var(--accent-soft);
 }
@@ -1216,7 +1304,7 @@ async function copyContext(label: string, value: string | null) {
   width: 34px;
   height: 34px;
   place-items: center;
-  border: 1px solid rgba(230, 109, 47, 0.24);
+  border: 1px solid rgba(9, 105, 218, 0.24);
   border-radius: 11px;
   color: var(--accent-hover);
   background: var(--accent-soft);
@@ -1273,7 +1361,7 @@ async function copyContext(label: string, value: string | null) {
 
 .decision-options button:hover,
 .decision-options button.active {
-  border-color: rgba(230, 109, 47, 0.42);
+  border-color: rgba(9, 105, 218, 0.42);
   color: var(--accent-hover);
   background: var(--accent-soft);
 }
