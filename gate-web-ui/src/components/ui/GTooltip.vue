@@ -40,7 +40,7 @@ withDefaults(
   width: max-content;
   max-width: 240px;
   padding: 6px 9px;
-  border: 1px solid rgba(238, 244, 248, 0.14);
+  border: 1px solid var(--tooltip-border);
   border-radius: 7px;
   background: var(--tooltip-bg);
   color: var(--tooltip-text);

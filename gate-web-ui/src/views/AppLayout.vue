@@ -8,6 +8,7 @@ import { useRoute, useRouter, RouterView } from 'vue-router';
 import { useAuthStore } from '@/stores/authStore';
 import { GButton, GIcon, GTooltip } from '@/components/ui';
 import { useConsolePreferences } from '@/composables/useConsolePreferences';
+import { focusWhenPageActive } from '@/utils/focus';
 
 const route = useRoute();
 const router = useRouter();
@@ -18,7 +19,12 @@ const commandQuery = ref('');
 const commandIndex = ref(0);
 const commandInput = ref<HTMLInputElement | null>(null);
 const commandPanel = ref<HTMLElement | null>(null);
+const mobileNavOpen = ref(false);
+const mobileNavPanel = ref<HTMLElement | null>(null);
 let previousFocus: HTMLElement | null = null;
+let previousMobileFocus: HTMLElement | null = null;
+let previousBodyOverflow = '';
+let overlayScrollLocked = false;
 
 interface NavItem {
   key: string;
@@ -32,7 +38,7 @@ const navItems: NavItem[] = [
   { key: 'review', label: '审核台', routeName: 'review', icon: 'shield' },
   { key: 'session', label: '会话', routeName: 'session', icon: 'chat' },
   { key: 'cost', label: '成本', routeName: 'cost', icon: 'chart' },
-  { key: 'agents', label: 'Agent 配置', routeName: 'agents', icon: 'bot' },
+  { key: 'agents', label: '智能体配置', routeName: 'agents', icon: 'bot' },
   { key: 'settings', label: '系统设置', routeName: 'settings', icon: 'settings' },
   { key: 'styleguide', label: '样式速览', routeName: 'styleguide', icon: 'palette' },
 ];
@@ -44,6 +50,10 @@ const activeKey = computed(() => {
 });
 
 const isSettingsRoute = computed(() => route.name === 'settings');
+const hasProjectContext = computed(() => typeof route.params.projectId === 'string' && Boolean(route.params.projectId));
+const canQuickCreate = computed(() =>
+  hasProjectContext.value && !['login', 'kanban', 'styleguide'].includes(String(route.name ?? '')),
+);
 const activeSettingsSection = computed(() => String(route.query.section ?? 'models'));
 const settingsNavItems: Array<NavItem & { section: string }> = [
   { key: 'settings-models', label: '模型与供应商', routeName: 'settings', section: 'models', icon: 'bot' },
@@ -58,13 +68,26 @@ const pageTitle = computed(() => {
     kanban: '工单看板',
     'ticket-detail': '工单详情',
     review: '审核台',
-    session: 'Agent 会话',
+    session: '智能体会话',
     cost: '成本面板',
-    agents: 'Agent 配置',
+    agents: '智能体配置',
     settings: '系统设置',
     styleguide: '样式速览',
   };
   return map[String(route.name ?? '')] ?? 'GATE';
+});
+
+const loopLabel = computed(() => {
+  const map: Record<string, string> = {
+    status: '状态',
+    layout: '组件',
+    'presubmit+review': '预提审 / 审核',
+    review: '审核',
+    session: '会话',
+    metrics: '成本',
+    config: '配置',
+  };
+  return map[String(route.meta.closedLoop ?? '')] ?? '';
 });
 
 const filteredNavItems = computed(() => {
@@ -81,37 +104,117 @@ watch(filteredNavItems, (items) => {
   if (commandIndex.value >= items.length) commandIndex.value = Math.max(0, items.length - 1);
 });
 
+function syncOverlayScrollLock() {
+  if (typeof document === 'undefined') return;
+  const shouldLock = commandOpen.value || mobileNavOpen.value;
+  if (shouldLock && !overlayScrollLocked) {
+    previousBodyOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    overlayScrollLocked = true;
+  } else if (!shouldLock && overlayScrollLocked) {
+    document.body.style.overflow = previousBodyOverflow;
+    previousBodyOverflow = '';
+    overlayScrollLocked = false;
+  }
+}
+
+watch([commandOpen, mobileNavOpen], syncOverlayScrollLock, { immediate: true });
+
 function go(item: NavItem) {
+  closeMobileNav(false);
+  if (item.routeName === 'kanban') {
+    if (hasProjectContext.value) {
+      router.push({ name: 'kanban', params: { projectId: route.params.projectId } });
+    } else {
+      router.push({ name: 'home' });
+    }
+    return;
+  }
   if (item.routeName === 'review' || item.routeName === 'session') {
+    if (!hasProjectContext.value || !route.params.no) {
+      router.push({ name: 'home' });
+      return;
+    }
     const ticketNo = String(route.params.no ?? 'T-104');
-    router.push({ name: item.routeName, params: { no: ticketNo } });
+    router.push({ name: item.routeName, params: { projectId: route.params.projectId, no: ticketNo } });
     return;
   }
   router.push({ name: item.routeName });
 }
 
 function goSettingsSection(section: string) {
+  closeMobileNav(false);
   router.push({ name: 'settings', query: { section } });
+}
+
+function openTicketComposer() {
+  if (!hasProjectContext.value) {
+    router.push({ name: 'home' });
+    return;
+  }
+  router.push({ name: 'kanban', params: { projectId: route.params.projectId }, query: { compose: '1' } });
 }
 
 function openCommand() {
   if (commandOpen.value) return;
+  closeMobileNav(false);
   previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   commandQuery.value = '';
   commandIndex.value = 0;
   commandOpen.value = true;
-  nextTick(() => commandInput.value?.focus());
+  nextTick(() => focusWhenPageActive(commandInput.value));
 }
 
 function closeCommand(restoreFocus = true) {
   if (!commandOpen.value) return;
   commandOpen.value = false;
-  if (restoreFocus) nextTick(() => previousFocus?.focus());
+  if (restoreFocus) nextTick(() => focusWhenPageActive(previousFocus));
 }
 
 function chooseCommand(item: NavItem) {
   closeCommand(false);
   go(item);
+}
+
+function openMobileNav() {
+  if (mobileNavOpen.value) return;
+  previousMobileFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  mobileNavOpen.value = true;
+  nextTick(() => focusWhenPageActive(mobileNavPanel.value?.querySelector<HTMLElement>('button:not([disabled])')));
+}
+
+function closeMobileNav(restoreFocus = true) {
+  if (!mobileNavOpen.value) return;
+  mobileNavOpen.value = false;
+  if (restoreFocus) nextTick(() => focusWhenPageActive(previousMobileFocus));
+}
+
+function trapMobileNavFocus(event: KeyboardEvent) {
+  if (event.key !== 'Tab' || !mobileNavPanel.value) return;
+  const focusable = Array.from(
+    mobileNavPanel.value.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), input:not([disabled]), [href], [tabindex]:not([tabindex="-1"])',
+    ),
+  );
+  if (!focusable.length) return;
+  const first = focusable[0]!;
+  const last = focusable[focusable.length - 1]!;
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+}
+
+function onMobileNavKeydown(event: KeyboardEvent) {
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    closeMobileNav();
+    return;
+  }
+  trapMobileNavFocus(event);
 }
 
 function moveCommandIndex(amount: number) {
@@ -176,6 +279,11 @@ function onDocumentKeydown(event: KeyboardEvent) {
   if (commandOpen.value && event.key === 'Escape') {
     event.preventDefault();
     closeCommand();
+    return;
+  }
+  if (mobileNavOpen.value && event.key === 'Escape') {
+    event.preventDefault();
+    closeMobileNav();
   }
 }
 
@@ -188,7 +296,15 @@ onMounted(() => {
   applyConsolePreferences();
   document.addEventListener('keydown', onDocumentKeydown);
 });
-onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown));
+onBeforeUnmount(() => {
+  document.removeEventListener('keydown', onDocumentKeydown);
+  closeMobileNav(false);
+  if (overlayScrollLocked) {
+    document.body.style.overflow = previousBodyOverflow;
+    previousBodyOverflow = '';
+    overlayScrollLocked = false;
+  }
+});
 </script>
 
 <template>
@@ -198,7 +314,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
         <span class="brand__mark">G</span>
         <span class="brand__text">
           <span class="brand__name">GATE</span>
-          <span class="brand__sub">LOCAL GIT GATE</span>
+          <span class="brand__sub">本地 Git 闸门</span>
         </span>
       </button>
 
@@ -250,15 +366,28 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
     <div class="main">
       <header class="topbar">
         <div class="topbar__title">
+          <button
+            type="button"
+            class="mobile-nav-toggle"
+            aria-label="打开工作区导航"
+            :aria-expanded="mobileNavOpen"
+            aria-controls="mobile-workspace-nav"
+            @click="openMobileNav"
+          >
+            <GIcon name="menu" :size="17" />
+          </button>
           <div class="topbar__heading">
-            <span class="topbar__eyebrow">GATE / WORKSPACE</span>
             <h1>{{ pageTitle }}</h1>
           </div>
-          <span v-if="route.meta.closedLoop" class="topbar__loop">
-            {{ route.meta.closedLoop }}
+          <span v-if="loopLabel" class="topbar__loop">
+            {{ loopLabel }}
           </span>
         </div>
         <div class="topbar__right">
+          <GButton v-if="canQuickCreate" variant="secondary" size="sm" class="topbar__create" @click="openTicketComposer">
+            <GIcon name="plus" :size="14" />
+            新建工单
+          </GButton>
           <span class="topbar__status"><i aria-hidden="true" />本地实例运行中</span>
           <GTooltip :content="preferences.theme === 'dark' ? '切换到日间模式' : '切换到夜间模式'" side="bottom">
             <button
@@ -329,7 +458,6 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
               >
                 <GIcon :name="item.icon" :size="16" />
                 <span>{{ item.label }}</span>
-                <small class="mono">{{ item.routeName }}</small>
               </button>
             </div>
             <div v-else class="command-empty">
@@ -338,6 +466,76 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
             </div>
           </div>
         </section>
+      </div>
+
+      <div v-if="mobileNavOpen" class="mobile-nav-backdrop" @mousedown.self="() => closeMobileNav()">
+        <aside
+          id="mobile-workspace-nav"
+          ref="mobileNavPanel"
+          class="mobile-nav-panel"
+          role="dialog"
+          aria-modal="true"
+          aria-label="工作区导航"
+          @keydown="onMobileNavKeydown"
+        >
+          <header class="mobile-nav-panel__head">
+            <div class="mobile-nav-panel__brand">
+              <span class="brand__mark">G</span>
+              <span>
+                <strong>GATE</strong>
+                <small>本地 Git 闸门</small>
+              </span>
+            </div>
+            <button type="button" class="icon-button" aria-label="关闭工作区导航" @click="closeMobileNav()">
+              <GIcon name="x" :size="16" />
+            </button>
+          </header>
+
+          <nav v-if="!isSettingsRoute" class="mobile-nav-panel__nav" aria-label="工作区">
+            <p class="nav__group">工作区</p>
+          <button
+            v-for="item in navItems"
+            :key="item.key"
+            type="button"
+            class="nav__item"
+            :class="{ 'nav__item--active': activeKey === item.key }"
+            :aria-current="activeKey === item.key ? 'page' : undefined"
+            :aria-label="item.label"
+            @click="go(item)"
+          >
+              <GIcon :name="item.icon" :size="16" />
+              <span>{{ item.label }}</span>
+            </button>
+          </nav>
+          <nav v-else class="mobile-nav-panel__nav nav--settings" aria-label="系统设置">
+            <button type="button" class="nav__back" @click="router.push({ name: 'home' }); closeMobileNav(false)">
+              <GIcon name="chevron-left" :size="15" />
+              <span>返回项目看板</span>
+            </button>
+            <p class="nav__group">系统管理</p>
+            <button
+              v-for="item in settingsNavItems"
+              :key="item.key"
+              type="button"
+              class="nav__item"
+              :class="{ 'nav__item--active': activeSettingsSection === item.section }"
+              :aria-current="activeSettingsSection === item.section ? 'page' : undefined"
+              :aria-label="item.label"
+              @click="goSettingsSection(item.section)"
+            >
+              <GIcon :name="item.icon" :size="16" />
+              <span>{{ item.label }}</span>
+            </button>
+          </nav>
+
+          <div class="mobile-nav-panel__foot">
+            <div class="token-chip">
+              <span class="token-chip__dot" />
+              {{ auth.tokenDigest || '未登录' }}
+            </div>
+            <GButton variant="ghost" size="sm" block @click="logout">退出登录</GButton>
+          </div>
+        </aside>
       </div>
     </Teleport>
   </div>
@@ -351,8 +549,8 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
   height: 100vh;
   height: 100dvh;
   overflow: hidden;
-  color: var(--text, #1f2328);
-  background: var(--background, #eef1f4);
+  color: var(--text);
+  background: var(--background);
 }
 
 .sidebar {
@@ -386,10 +584,11 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
   display: grid;
   place-items: center;
   flex: none;
-  border-radius: 7px;
-  color: #ffffff;
-  background: var(--nav-accent);
-  box-shadow: none;
+  border: 1px solid color-mix(in srgb, var(--sidebar-accent) 46%, transparent);
+  border-radius: var(--radius-md);
+  color: var(--accent-contrast);
+  background: linear-gradient(145deg, var(--sidebar-accent), var(--nav-accent));
+  box-shadow: var(--shadow-brand);
   font-size: 17px;
   font-weight: 800;
   letter-spacing: -0.04em;
@@ -400,7 +599,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
   line-height: 1.15;
 }
 .brand__name {
-  color: #ffffff;
+  color: var(--sidebar-text);
   font-size: 15px;
   font-weight: 760;
   letter-spacing: 0.06em;
@@ -423,7 +622,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
 }
 .nav__group {
   margin: 0 10px 9px;
-  color: #8b949e;
+  color: var(--sidebar-muted);
   font-size: 10px;
   font-weight: 750;
   letter-spacing: 0.14em;
@@ -437,14 +636,14 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
   margin: 0 4px 22px;
   padding: 0 6px;
   border: 0;
-  color: #b6bec8;
+  color: var(--sidebar-muted);
   background: transparent;
   font-size: 11px;
   font-weight: 650;
   cursor: pointer;
 }
 .nav__back:hover {
-  color: #ffffff;
+  color: var(--sidebar-text);
 }
 .nav--settings .nav__group {
   margin-bottom: 8px;
@@ -458,8 +657,8 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
   min-height: 38px;
   padding: 0 12px;
   border: 1px solid transparent;
-  border-radius: 6px;
-  color: #b6bec8;
+  border-radius: var(--radius-sm);
+  color: var(--sidebar-muted);
   background: transparent;
   font-size: 13px;
   font-weight: 560;
@@ -468,25 +667,25 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
   transition: color 0.16s ease, background 0.16s ease, border-color 0.16s ease;
 }
 .nav__item :deep(svg) {
-  color: #8b949e;
+  color: var(--sidebar-icon);
   transition: color 0.16s ease;
 }
 .nav__item:hover {
-  color: #ffffff;
-  background: rgba(240, 246, 252, 0.1);
-  border-color: rgba(240, 246, 252, 0.1);
+  color: var(--sidebar-text);
+  background: var(--sidebar-hover);
+  border-color: var(--sidebar-hover);
 }
 .nav__item:hover :deep(svg) {
-  color: #79c0ff;
+  color: var(--sidebar-accent);
 }
 .nav__item--active {
-  color: #ffffff;
-  background: rgba(9, 105, 218, 0.22);
-  border-color: rgba(121, 192, 255, 0.24);
+  color: var(--sidebar-text);
+  background: var(--sidebar-active);
+  border-color: var(--sidebar-active-border);
   box-shadow: inset 3px 0 0 var(--nav-accent);
 }
 .nav__item--active :deep(svg) {
-  color: #79c0ff;
+  color: var(--sidebar-accent);
 }
 
 .sidebar__foot {
@@ -494,7 +693,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
   flex-direction: column;
   gap: 10px;
   padding: 17px 2px 0;
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  border-top: 1px solid var(--sidebar-border);
 }
 .token-chip {
   display: flex;
@@ -502,7 +701,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
   gap: 8px;
   min-width: 0;
   padding: 0 8px;
-  color: #8b949e;
+  color: var(--sidebar-muted);
   font-family: var(--font-mono);
   font-size: 10px;
   overflow: hidden;
@@ -519,12 +718,12 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
 }
 .sidebar__foot :deep(.g-btn--ghost) {
   justify-content: flex-start;
-  color: #b6bec8;
-  border-radius: 6px;
+  color: var(--sidebar-muted);
+  border-radius: var(--radius-sm);
 }
 .sidebar__foot :deep(.g-btn--ghost:hover:not(:disabled)) {
-  color: #ffffff;
-  background: rgba(240, 246, 252, 0.1);
+  color: var(--sidebar-text);
+  background: var(--sidebar-hover);
 }
 
 .main {
@@ -534,7 +733,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
   min-width: 0;
   height: 100%;
   padding: 0;
-  background: var(--background, #eef1f4);
+  background: var(--background);
 }
 .topbar {
   display: flex;
@@ -544,7 +743,9 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
   min-height: 64px;
   padding: 0 clamp(20px, 3vw, 40px);
   border-bottom: 1px solid var(--border);
-  background: var(--panel);
+  background: color-mix(in srgb, var(--panel) 94%, transparent);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
 }
 .topbar__title {
   display: flex;
@@ -552,20 +753,36 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
   gap: 14px;
   min-width: 0;
 }
+.mobile-nav-toggle {
+  display: none;
+  width: 32px;
+  height: 32px;
+  flex: none;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  background: var(--panel);
+  cursor: pointer;
+  transition: color 0.14s ease, border-color 0.14s ease, background-color 0.14s ease,
+    transform 0.12s ease;
+}
+.mobile-nav-toggle:hover {
+  border-color: var(--border-strong);
+  color: var(--accent-hover);
+  background: var(--hover);
+}
+.mobile-nav-toggle:active {
+  transform: translateY(1px);
+}
 .topbar__heading {
   display: flex;
   flex-direction: column;
   gap: 3px;
 }
-.topbar__eyebrow {
-  color: var(--text-muted, #636c76);
-  font-size: 9px;
-  font-weight: 800;
-  letter-spacing: 0.16em;
-}
 .topbar__title h1 {
   margin: 0;
-  color: var(--text, #1f2328);
+  color: var(--text);
   font-size: 20px;
   font-weight: 760;
   letter-spacing: -0.025em;
@@ -573,8 +790,8 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
 .topbar__loop {
   padding: 3px 8px;
   border: 1px solid var(--border);
-  border-radius: 6px;
-  color: var(--text-muted, #636c76);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
   background: var(--panel-2);
   font-size: 11px;
   white-space: nowrap;
@@ -583,8 +800,11 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
   display: flex;
   align-items: center;
   gap: 17px;
-  color: var(--text-muted, #636c76);
+  color: var(--text-muted);
   font-size: 11px;
+}
+.topbar__create {
+  min-height: 32px;
 }
 .theme-toggle {
   display: grid;
@@ -628,8 +848,8 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
   gap: 5px;
   padding: 5px 8px;
   border: 1px solid var(--border);
-  border-radius: 6px;
-  color: var(--text-muted, #636c76);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
   background: var(--panel);
   font-family: var(--font-mono);
   font-size: 10px;
@@ -637,7 +857,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
   transition: color 0.14s ease, border-color 0.14s ease, background-color 0.14s ease;
 }
 .topbar__hint:hover {
-  color: var(--text, #1f2328);
+  color: var(--text);
   border-color: var(--border-strong);
   background: var(--panel);
 }
@@ -728,7 +948,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
 }
 .command-option:hover,
 .command-option--active {
-  border-color: rgba(9, 105, 218, 0.28);
+  border-color: var(--accent-border);
   color: var(--text);
   background: var(--accent-soft);
 }
@@ -752,6 +972,97 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
   color: var(--text-faint);
   font-size: 12px;
 }
+.mobile-nav-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  background: var(--overlay);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+.mobile-nav-panel {
+  display: flex;
+  width: min(300px, calc(100vw - 32px));
+  height: 100%;
+  flex-direction: column;
+  padding: 16px 12px 14px;
+  color: var(--ink-text);
+  background: var(--sidebar-bg);
+  border-right: 1px solid var(--sidebar-border);
+  box-shadow: var(--shadow-popover);
+  animation: mobile-nav-in 0.18s ease both;
+}
+.mobile-nav-panel__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 3px 8px 22px;
+}
+.mobile-nav-panel__brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.mobile-nav-panel__brand .brand__mark {
+  width: 34px;
+  height: 34px;
+}
+.mobile-nav-panel__brand > span:last-child {
+  display: grid;
+  gap: 4px;
+}
+.mobile-nav-panel__brand strong {
+  color: var(--sidebar-text);
+  font-size: 14px;
+  letter-spacing: 0.06em;
+}
+.mobile-nav-panel__brand small {
+  color: var(--sidebar-muted);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+}
+.mobile-nav-panel__head .icon-button {
+  color: var(--sidebar-muted);
+}
+.mobile-nav-panel__head .icon-button:hover {
+  border-color: var(--sidebar-border);
+  color: var(--sidebar-text);
+  background: var(--sidebar-hover);
+}
+.mobile-nav-panel__nav {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 0;
+  overflow: auto;
+}
+.mobile-nav-panel__nav .nav__group {
+  margin-top: 0;
+}
+.mobile-nav-panel__nav .nav__item {
+  min-height: 42px;
+}
+.mobile-nav-panel__foot {
+  display: grid;
+  gap: 10px;
+  padding: 17px 2px 0;
+  border-top: 1px solid var(--sidebar-border);
+}
+.mobile-nav-panel__foot :deep(.g-btn--ghost) {
+  justify-content: flex-start;
+  color: var(--sidebar-muted);
+}
+.mobile-nav-panel__foot :deep(.g-btn--ghost:hover:not(:disabled)) {
+  color: var(--sidebar-text);
+  background: var(--sidebar-hover);
+}
+@keyframes mobile-nav-in {
+  from { opacity: 0; transform: translateX(-10px); }
+  to { opacity: 1; transform: translateX(0); }
+}
 .canvas {
   display: flex;
   flex: 1;
@@ -761,8 +1072,16 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
   overflow: hidden;
   border: 0;
   border-radius: 0;
-  background: transparent;
+  background: var(--canvas);
   box-shadow: none;
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .topbar {
+    background: var(--panel);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
 }
 
 @media (max-width: 860px) {
@@ -814,36 +1133,23 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
   .brand {
     padding: 0;
   }
-  .nav {
-    flex-direction: row;
+  .sidebar > .nav {
+    display: none;
+  }
+  .mobile-nav-panel .nav__group,
+  .mobile-nav-panel .nav__back span,
+  .mobile-nav-panel .nav__item span {
+    display: inline;
+  }
+  .mobile-nav-panel .nav__item {
     justify-content: flex-start;
-    gap: 3px;
-    min-width: 0;
-    overflow-x: auto;
-    overflow-y: hidden;
-    scroll-snap-type: x proximity;
-    scrollbar-width: none;
+    width: 100%;
+    padding-inline: 12px;
   }
-  .nav::-webkit-scrollbar {
-    display: none;
-  }
-  .nav :deep(.g-tooltip--block) {
-    width: 38px;
-    flex: 0 0 38px;
-  }
-  .nav :deep(.g-tooltip__bubble) {
-    display: none;
-  }
-  .nav__item {
-    width: 38px;
-    min-height: 38px;
-    scroll-snap-align: start;
-  }
-  .nav__back {
-    width: 38px;
-    min-height: 38px;
-    flex: 0 0 38px;
-    margin: 0;
+  .mobile-nav-panel .nav__back {
+    justify-content: flex-start;
+    margin: 0 4px 22px;
+    padding-inline: 6px;
   }
   .sidebar__foot {
     display: none;
@@ -855,6 +1161,9 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
     flex-basis: 68px;
     min-height: 68px;
     padding-inline: 18px;
+  }
+  .mobile-nav-toggle {
+    display: grid;
   }
   .topbar__title h1 {
     font-size: 18px;
@@ -869,6 +1178,14 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
   .topbar__hint span,
   .topbar__hint kbd {
     display: none;
+  }
+  .topbar__create :deep(.g-btn__label) {
+    display: none;
+  }
+  .topbar__create {
+    width: 32px;
+    min-height: 32px;
+    padding: 0;
   }
 }
 </style>

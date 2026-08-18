@@ -3,6 +3,11 @@
  * GModal — focused confirmation and form dialog.
  */
 import { nextTick, onBeforeUnmount, ref, watch } from 'vue';
+import { focusWhenPageActive } from '@/utils/focus';
+import GIcon from './GIcon.vue';
+
+let bodyLockCount = 0;
+let bodyOverflowBeforeLock = '';
 
 const props = withDefaults(
   defineProps<{
@@ -20,7 +25,9 @@ const emit = defineEmits<{ (e: 'close'): void }>();
 const dialog = ref<HTMLElement | null>(null);
 const closeButton = ref<HTMLButtonElement | null>(null);
 const titleId = 'g-modal-title-' + Math.random().toString(36).slice(2, 9);
+const bodyId = 'g-modal-body-' + Math.random().toString(36).slice(2, 9);
 let restoreFocus: HTMLElement | null = null;
+let bodyLocked = false;
 
 const focusableSelector = [
   'a[href]',
@@ -33,6 +40,25 @@ const focusableSelector = [
 
 function close() {
   emit('close');
+}
+
+function lockBody() {
+  if (typeof document === 'undefined') return;
+  if (bodyLocked) return;
+  if (bodyLockCount === 0) bodyOverflowBeforeLock = document.body.style.overflow;
+  bodyLockCount += 1;
+  bodyLocked = true;
+  document.body.style.overflow = 'hidden';
+}
+
+function unlockBody() {
+  if (typeof document === 'undefined' || !bodyLocked) return;
+  bodyLockCount = Math.max(0, bodyLockCount - 1);
+  bodyLocked = false;
+  if (bodyLockCount === 0) {
+    document.body.style.overflow = bodyOverflowBeforeLock;
+    bodyOverflowBeforeLock = '';
+  }
 }
 
 function onKeydown(event: KeyboardEvent) {
@@ -70,19 +96,24 @@ watch(
   async (isOpen) => {
     if (typeof document === 'undefined') return;
     if (!isOpen) {
-      restoreFocus?.focus();
+      unlockBody();
+      focusWhenPageActive(restoreFocus);
       restoreFocus = null;
       return;
     }
 
+    lockBody();
     restoreFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     await nextTick();
-    (closeButton.value ?? dialog.value)?.focus();
+    focusWhenPageActive(closeButton.value ?? dialog.value);
   },
   { flush: 'post', immediate: true },
 );
 
-onBeforeUnmount(() => restoreFocus?.focus());
+onBeforeUnmount(() => {
+  unlockBody();
+  focusWhenPageActive(restoreFocus);
+});
 </script>
 
 <template>
@@ -96,6 +127,7 @@ onBeforeUnmount(() => restoreFocus?.focus());
           role="dialog"
           aria-modal="true"
           :aria-labelledby="props.title ? titleId : undefined"
+          :aria-describedby="bodyId"
           :aria-label="props.title ? undefined : '对话框'"
           tabindex="-1"
           @keydown="onKeydown"
@@ -103,10 +135,10 @@ onBeforeUnmount(() => restoreFocus?.focus());
           <div v-if="props.title" class="g-modal__head">
             <h2 :id="titleId" class="g-modal__title">{{ props.title }}</h2>
             <button ref="closeButton" class="g-modal__close" type="button" aria-label="关闭" @click="close">
-              <span aria-hidden="true">×</span>
+              <GIcon name="x" :size="16" aria-hidden="true" />
             </button>
           </div>
-          <div class="g-modal__body">
+          <div :id="bodyId" class="g-modal__body">
             <slot />
           </div>
           <div v-if="$slots.footer" class="g-modal__foot">

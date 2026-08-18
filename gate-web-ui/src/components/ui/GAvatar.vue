@@ -48,19 +48,19 @@ const initials = (name: string) => name.trim().charAt(0).toUpperCase() || '?';
 }
 
 .g-avatar--accent {
-  border-color: rgba(9, 105, 218, 0.2);
+  border-color: var(--accent-border);
   background: var(--accent-soft);
   color: var(--accent-hover);
 }
 
 .g-avatar--success {
-  border-color: rgba(44, 137, 98, 0.2);
+  border-color: color-mix(in srgb, var(--success) 26%, transparent);
   background: var(--success-soft);
   color: var(--success);
 }
 
 .g-avatar--warning {
-  border-color: rgba(184, 121, 33, 0.22);
+  border-color: color-mix(in srgb, var(--warning) 28%, transparent);
   background: var(--warning-soft);
   color: var(--warning);
 }

@@ -1,8 +1,11 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { getTicket } from '@/api/tickets';
-import { GBadge, GButton, GIcon, GInput, GModal } from '@/components/ui';
+import { getPresubmitDiff, getReviewResult, getTicket, getWorkingDiff } from '@/api/tickets';
+import { startPublish, startReview } from '@/api/review';
+import { extractTaskProgress, taskEventsPath } from '@/api/tasks';
+import { useSSE } from '@/composables/useSSE';
+import { GBadge, GButton, GCheckbox, GField, GIcon, GInput, GModal, GSkeleton } from '@/components/ui';
 import { TICKET_STAGE_LABELS } from '@/types/stage';
 import type { Ticket } from '@/types/ticket';
 import type { TicketStage } from '@/types/stage';
@@ -55,6 +58,7 @@ interface ReviewPhaseDefinition {
 const route = useRoute();
 const router = useRouter();
 const ticketNo = String(route.params.no ?? 'T-104');
+const projectId = String(route.params.projectId ?? '');
 const ticket = ref<Ticket>({
   no: ticketNo,
   title: '读取工单中...',
@@ -77,7 +81,7 @@ const activePhase = ref<ReviewPhase>('anchor');
 const completedReviewSteps = ref(0);
 const decisionRecord = ref<DecisionRecord | null>(null);
 const actionNotice = ref('');
-const selectedFindingId = ref<string | null>('F-01');
+const selectedFindingId = ref<string | null>(null);
 const selectedDiffLineId = ref<string | null>(null);
 const showDecisionModal = ref(false);
 const showPublishModal = ref(false);
@@ -87,91 +91,65 @@ const decisionConfirmed = ref(false);
 const publishConfirmed = ref(false);
 const decisionError = ref('');
 const publishError = ref('');
-let auditSequence = 3;
+let auditSequence = 0;
 let reviewTimers: Array<ReturnType<typeof setTimeout>> = [];
 
+const diffText = ref('');
+const reviewFindings = ref<string[]>([]);
+const reviewVerdict = ref<string | null>(null);
+const taskProgress = ref<{ percent?: number; label?: string }>({});
+const activeTaskType = ref<'review' | 'publish' | null>(null);
+const activeTaskPath = ref('');
+
+const taskSse = useSSE({
+  path: activeTaskPath,
+  immediate: false,
+  handlers: {
+    progress: (data) => {
+      const progress = extractTaskProgress(data);
+      if (progress.percent != null) taskProgress.value.percent = progress.percent;
+      if (progress.label) taskProgress.value.label = progress.label;
+      actionNotice.value = progress.label || '异步任务进行中...';
+    },
+    done: async () => {
+      taskProgress.value = {};
+      const completedType = activeTaskType.value;
+      activeTaskType.value = null;
+      activeTaskPath.value = '';
+      taskSse.close();
+      actionNotice.value = completedType === 'publish' ? '发布任务已完成，正在刷新工单。' : '审核任务已完成，正在刷新工单与结果。';
+      await loadTicket();
+      if (completedType === 'review') await loadReviewEvidence();
+      reviewRunState.value = completedType === 'review' ? 'complete' : 'idle';
+      activePhase.value = ticket.value.stage === 'DONE' || ticket.value.stage === 'READY_TO_PUBLISH'
+        ? 'publish'
+        : ticket.value.stage === 'REJECTED' || ticket.value.stage === 'NEEDS_HUMAN'
+          ? 'human'
+          : 'llm';
+    },
+    error: () => {
+      taskProgress.value = {};
+      activeTaskType.value = null;
+      activeTaskPath.value = '';
+      taskSse.close();
+      reviewRunState.value = 'idle';
+      actionNotice.value = '异步任务流已结束，请刷新工单确认结果。';
+    },
+  },
+});
+
 const reviewPhases: ReviewPhaseDefinition[] = [
-  { id: 'anchor', label: '锚点', description: '确认 tree、base 与 target' },
-  { id: 'llm', label: 'LLM 审核', description: '读取变更并形成结论' },
+  { id: 'anchor', label: '锚点', description: '确认树锚点、基线与目标分支' },
+  { id: 'llm', label: '模型审核', description: '读取变更并形成结论' },
   { id: 'human', label: '人工决定', description: '通过或驳回审核结论' },
   { id: 'publish', label: '发布', description: '受控完成最终交付' },
 ];
 
 const reviewSteps = ['读取审核锚点', '收集变更证据', '交叉检查风险', '整理审核结论'];
 
-const findings = ref<ReviewFinding[]>([
-  {
-    id: 'F-01',
-    severity: 'blocker',
-    status: 'open',
-    title: '锚点信息在主视图中没有稳定承载',
-    detail: '审核者离开顶部后无法确认 tree_hash 与 base_commit 是否仍匹配当前证据。',
-    location: 'ReviewConsoleView.vue',
-    lines: [17, 20],
-  },
-  {
-    id: 'F-02',
-    severity: 'attention',
-    status: 'open',
-    title: '发现项没有反向定位到 Diff 行',
-    detail: '问题描述与代码证据断开，复核时需要手动查找受影响区域。',
-    location: 'ReviewConsoleView.vue',
-    lines: [29, 33],
-  },
-  {
-    id: 'F-03',
-    severity: 'note',
-    status: 'verified',
-    title: '发布动作缺少前置门槛说明',
-    detail: '可发布状态、人工决定与锚点完整性应同时满足后再开放发布。',
-    location: 'ReviewConsoleView.vue',
-    lines: [43, 47],
-  },
-]);
-
-const diffLines: DiffLine[] = [
-  { id: 'd-01', kind: 'context', oldLine: 11, newLine: 11, code: 'const ticket = ref(currentTicket);' },
-  { id: 'd-02', kind: 'context', oldLine: 12, newLine: 12, code: 'const reviewRound = computed(() => ticket.value.reviewRound ?? 0);' },
-  { id: 'd-03', kind: 'remove', oldLine: 13, newLine: null, code: 'const running = ref(false);' },
-  { id: 'd-04', kind: 'add', oldLine: null, newLine: 13, code: "const reviewRunState = ref<'idle' | 'running' | 'complete'>('idle');" },
-  { id: 'd-05', kind: 'add', oldLine: null, newLine: 14, code: "const activePhase = ref<ReviewPhase>('anchor');" },
-  { id: 'd-06', kind: 'add', oldLine: null, newLine: 15, code: 'const hasAnchor = computed(() => Boolean(treeHash.value && baseCommit.value && targetRef.value));' },
-  { id: 'd-07', kind: 'context', oldLine: 14, newLine: 16, code: '' },
-  { id: 'd-08', kind: 'add', oldLine: null, newLine: 17, code: 'function setReviewAnchor() {' },
-  { id: 'd-09', kind: 'add', oldLine: null, newLine: 18, code: '  if (!hasAnchor.value) throw new Error("审核锚点不完整");' },
-  { id: 'd-10', kind: 'add', oldLine: null, newLine: 19, code: '  audit.write({ treeHash, baseCommit, targetRef });' },
-  { id: 'd-11', kind: 'add', oldLine: null, newLine: 20, code: '}' },
-  { id: 'd-12', kind: 'context', oldLine: 15, newLine: 21, code: '' },
-  { id: 'd-13', kind: 'add', oldLine: null, newLine: 29, code: 'function focusFinding(finding: Finding) {' },
-  { id: 'd-14', kind: 'add', oldLine: null, newLine: 30, code: '  selectedFindingId.value = finding.id;' },
-  { id: 'd-15', kind: 'add', oldLine: null, newLine: 31, code: '  scrollToDiffRange(finding.location, finding.lines);' },
-  { id: 'd-16', kind: 'add', oldLine: null, newLine: 32, code: '  highlightedLines.value = finding.lines;' },
-  { id: 'd-17', kind: 'add', oldLine: null, newLine: 33, code: '}' },
-  { id: 'd-18', kind: 'context', oldLine: 16, newLine: 34, code: '' },
-  { id: 'd-19', kind: 'remove', oldLine: 30, newLine: null, code: 'function publish() { ticket.stage = "DONE"; }' },
-  { id: 'd-20', kind: 'add', oldLine: null, newLine: 43, code: 'function canPublish() {' },
-  { id: 'd-21', kind: 'add', oldLine: null, newLine: 44, code: '  return hasAnchor.value && decision.type === "approved";' },
-  { id: 'd-22', kind: 'add', oldLine: null, newLine: 45, code: '    && ticket.stage === "READY_TO_PUBLISH" && !isRunning.value;' },
-  { id: 'd-23', kind: 'add', oldLine: null, newLine: 46, code: '}' },
-  { id: 'd-24', kind: 'add', oldLine: null, newLine: 47, code: 'function publishWithConfirmation() { /* audit then publish */ }' },
-];
-
-const auditEntries = ref<AuditEntry[]>([
-  {
-    id: 'A-01',
-    title: '审核锚点已加载',
-    detail: 'tree、base 与 target 已绑定到本次审核。',
-    at: ticket.value.updatedAt,
-    tone: 'accent',
-  },
-  {
-    id: 'A-02',
-    title: '证据已准备',
-    detail: '当前 Diff 可直接关联发现项。',
-    at: ticket.value.updatedAt,
-    tone: 'neutral',
-  },
-]);
+const findings = ref<ReviewFinding[]>([]);
+const diffLines: DiffLine[] = [];
+const auditEntries = ref<AuditEntry[]>([]);
 
 const isRunning = computed(() => reviewRunState.value === 'running');
 const hasAnchor = computed(() => Boolean(ticket.value.treeHash && ticket.value.baseCommit && ticket.value.targetRef));
@@ -181,7 +159,7 @@ const canDecide = computed(() => reviewRunState.value === 'complete' && ticket.v
 const canPublish = computed(
   () =>
     hasAnchor.value &&
-    decisionRecord.value?.type === 'approved' &&
+    (decisionRecord.value?.type === 'approved' || ticket.value.stage === 'READY_TO_PUBLISH') &&
     ticket.value.stage === 'READY_TO_PUBLISH' &&
     !isRunning.value,
 );
@@ -202,18 +180,18 @@ const highlightedDiffLineIds = computed(() => {
 const primaryAction = computed(() => {
   if (ticket.value.stage === 'DONE') return { label: '发布已完成', disabled: true };
   if (!hasAnchor.value) return { label: '补齐审核锚点', disabled: false };
-  if (isRunning.value) return { label: 'LLM 审核进行中', disabled: true };
+  if (isRunning.value) return { label: '模型审核进行中', disabled: true };
   if (ticket.value.stage === 'NEEDS_HUMAN') return { label: '处理人工决定', disabled: false };
   if (ticket.value.stage === 'READY_TO_PUBLISH' && canPublish.value) return { label: '确认发布', disabled: false };
   if (ticket.value.stage === 'REJECTED') return { label: '返回工单处理', disabled: false };
-  return { label: reviewRunState.value === 'complete' ? '重新运行 LLM 审核' : '运行 LLM 审核', disabled: false };
+  return { label: reviewRunState.value === 'complete' ? '重新运行模型审核' : '运行模型审核', disabled: false };
 });
 
 const publishGates = computed(() => [
-  { label: '审核锚点完整', detail: 'tree、base 与 target 已确认', passed: hasAnchor.value },
-  { label: '人工决定为通过', detail: decisionRecord.value?.type === 'approved' ? '已记录人工通过' : '尚未记录人工通过', passed: decisionRecord.value?.type === 'approved' },
+  { label: '审核锚点完整', detail: '树锚点、基线与目标分支已确认', passed: hasAnchor.value },
+  { label: '人工决定为通过', detail: decisionRecord.value?.type === 'approved' || ticket.value.stage === 'READY_TO_PUBLISH' ? '已记录人工通过' : '尚未记录人工通过', passed: decisionRecord.value?.type === 'approved' || ticket.value.stage === 'READY_TO_PUBLISH' },
   { label: '工单处于可发布', detail: TICKET_STAGE_LABELS[ticket.value.stage], passed: ticket.value.stage === 'READY_TO_PUBLISH' },
-  { label: '当前没有运行中的审核', detail: isRunning.value ? 'LLM 审核仍在执行' : '审核未在执行', passed: !isRunning.value },
+  { label: '当前没有运行中的审核', detail: isRunning.value ? '模型审核仍在执行' : '审核未在执行', passed: !isRunning.value },
 ]);
 
 function toneFor(stage: TicketStage): 'neutral' | 'accent' | 'success' | 'warning' | 'danger' {
@@ -251,13 +229,15 @@ function phaseState(phase: ReviewPhase) {
 }
 
 function formatDate(value: string) {
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) return '--';
   return new Intl.DateTimeFormat('zh-CN', {
     month: '2-digit',
     day: '2-digit',
     hour: '2-digit',
     minute: '2-digit',
     hour12: false,
-  }).format(new Date(value));
+  }).format(timestamp);
 }
 
 function addAudit(title: string, detail: string, tone: AuditEntry['tone']) {
@@ -313,28 +293,35 @@ function clearReviewTimers() {
   reviewTimers = [];
 }
 
-function runReviewStep(index: number) {
-  const timer = setTimeout(() => {
-    completedReviewSteps.value = index + 1;
-    if (index < reviewSteps.length - 1) {
-      runReviewStep(index + 1);
-      return;
-    }
-    reviewTimers = [];
-    reviewRunState.value = 'complete';
-    activePhase.value = 'human';
-    updateTicketStage('NEEDS_HUMAN');
-    ticket.value.reviewRound = (ticket.value.reviewRound ?? 0) + 1;
-    addAudit('LLM 审核完成', '第 ' + ticket.value.reviewRound + ' 轮审核已完成，等待人工决定。', 'warning');
-    actionNotice.value = 'LLM 审核已完成，现需人工记录通过或驳回结论。';
-  }, 650);
-  reviewTimers.push(timer);
+async function startTaskFlow(type: 'review' | 'publish') {
+  if (activeTaskType.value) return;
+  try {
+    const reviewRequest: Parameters<typeof startReview>[1] = {
+      // 本地无引擎时后端要求 human_pass=true 才能完成审核; 有引擎时该字段仍可安全传递.
+      humanPass: true,
+    };
+    if (ticket.value.reviewRound != null) reviewRequest.round = ticket.value.reviewRound;
+    const publishRequest: Parameters<typeof startPublish>[1] = {};
+    if (ticket.value.reviewRound != null) publishRequest.round = ticket.value.reviewRound;
+    const accepted = type === 'review'
+      ? await startReview(ticket.value.no, reviewRequest)
+      : await startPublish(ticket.value.no, publishRequest);
+    activeTaskType.value = type;
+    activeTaskPath.value = taskEventsPath(accepted.taskId);
+    taskProgress.value = {};
+    reviewRunState.value = 'running';
+    activePhase.value = type === 'review' ? 'llm' : 'publish';
+    actionNotice.value = type === 'review' ? '审核任务已提交，正在等待 SSE 进度。' : '发布任务已提交，正在等待 SSE 进度。';
+    taskSse.reopen();
+  } catch {
+    actionNotice.value = type === 'review' ? '审核任务提交失败，请检查后端日志。' : '发布任务提交失败，请检查后端日志。';
+  }
 }
 
 function runLLMReview() {
   if (!hasAnchor.value) {
     activePhase.value = 'anchor';
-    actionNotice.value = '审核锚点不完整，请先在工单详情补齐 tree、base 与 target。';
+    actionNotice.value = '审核锚点不完整，请先在工单详情补齐树锚点、基线与目标分支。';
     return;
   }
   if (isRunning.value || ticket.value.stage === 'DONE') return;
@@ -344,14 +331,12 @@ function runLLMReview() {
   activePhase.value = 'llm';
   completedReviewSteps.value = 0;
   decisionRecord.value = null;
-  updateTicketStage('IN_REVIEW');
-  actionNotice.value = 'LLM 正在按四个阶段审核当前锚定的变更。';
-  runReviewStep(0);
+  void startTaskFlow('review');
 }
 
 function openDecision(type: DecisionType) {
   if (!canDecide.value) {
-    actionNotice.value = '请先完成 LLM 审核，再记录人工决定。';
+    actionNotice.value = '请先完成模型审核，再记录人工决定。';
     return;
   }
   decisionType.value = type;
@@ -415,11 +400,8 @@ function confirmPublish() {
     publishError.value = '请确认将以当前审核锚点完成发布。';
     return;
   }
-  updateTicketStage('DONE');
-  activePhase.value = 'publish';
-  addAudit('已完成发布', '以当前审核锚点完成受控发布。', 'success');
-  actionNotice.value = '发布已完成，工单已归档。';
   closePublishModal();
+  void startTaskFlow('publish');
 }
 
 function scrollToSection(id: string) {
@@ -460,18 +442,19 @@ function performPrimaryAction() {
 }
 
 function openDetail() {
-  router.push({ name: 'ticket-detail', params: { no: ticket.value.no } });
+  router.push({ name: 'ticket-detail', params: { projectId, no: ticket.value.no } });
 }
 
 function openSession() {
-  router.push({ name: 'session', params: { no: ticket.value.no } });
+  router.push({ name: 'session', params: { projectId, no: ticket.value.no } });
 }
 
 async function loadTicket() {
   loading.value = true;
   loadError.value = '';
   try {
-    ticket.value = await getTicket(ticketNo);
+    ticket.value = await getTicket(ticketNo, projectId);
+    await loadReviewEvidence();
   } catch {
     loadError.value = '无法读取工单数据，请确认工单仍存在且 Gate 后端正在运行。';
     ticket.value.title = '工单数据不可用';
@@ -480,32 +463,159 @@ async function loadTicket() {
   }
 }
 
+function parseUnifiedDiff(diff: string): DiffLine[] {
+  const lines: DiffLine[] = [];
+  let oldLine = 0;
+  let newLine = 0;
+  let id = 0;
+  for (const line of diff.split('\n')) {
+    const hunk = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
+    if (hunk) {
+      oldLine = Number(hunk[1]);
+      newLine = Number(hunk[2]);
+      continue;
+    }
+    if (/^(---|\+\+\+)/.test(line)) continue;
+    const kind: DiffKind = line.startsWith('+') ? 'add' : line.startsWith('-') ? 'remove' : 'context';
+    const code = line.startsWith('+') || line.startsWith('-') ? line.slice(1) : line;
+    lines.push({
+      id: `d-${String(++id).padStart(2, '0')}`,
+      kind,
+      oldLine: kind === 'add' ? null : oldLine,
+      newLine: kind === 'remove' ? null : newLine,
+      code,
+    });
+    if (kind !== 'add') oldLine += 1;
+    if (kind !== 'remove') newLine += 1;
+  }
+  return lines;
+}
+
+function parseFindings(raw: string): ReviewFinding[] {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      return parsed.map((item, index) => {
+        const rec = item && typeof item === 'object' ? item as Record<string, unknown> : {};
+        const severity = String(rec.severity ?? 'note').toLowerCase();
+        const file = String(rec.file ?? rec.location ?? '');
+        const lineStart = Number(rec.line_start ?? rec.lineStart ?? 0) || 0;
+        const lineEnd = Number(rec.line_end ?? rec.lineEnd ?? lineStart) || lineStart;
+        return {
+          id: String(rec.id ?? `F-${String(index + 1).padStart(2, '0')}`),
+          severity: severity === 'blocker' || severity === 'attention' || severity === 'note' ? severity as FindingSeverity : 'note',
+          status: 'open',
+          title: String(rec.title ?? rec.message ?? ''),
+          detail: String(rec.detail ?? rec.message ?? ''),
+          location: file,
+          lines: [lineStart, lineEnd] as [number, number],
+        };
+      });
+    }
+  } catch {
+    // fall through to plain-text parsing
+  }
+  const list: ReviewFinding[] = [];
+  const lines = raw.split('\n').map((line) => line.trim()).filter(Boolean);
+  lines.forEach((line, index) => {
+    const severity = /^BLOCKER/i.test(line) ? 'blocker' : /^(WARNING|ATTENTION)/i.test(line) ? 'attention' : 'note';
+    const text = line.replace(/^(BLOCKER|WARNING|ATTENTION|NIT|INFO)\s*:\s*/i, '');
+    const [title = text, ...rest] = text.split(': ');
+    list.push({
+      id: `F-${String(index + 1).padStart(2, '0')}`,
+      severity,
+      status: 'open',
+      title,
+      detail: rest.join(': ') || text,
+      location: '',
+      lines: [0, 0],
+    });
+  });
+  return list;
+}
+
+async function loadReviewEvidence(): Promise<void> {
+  diffText.value = '';
+  reviewFindings.value = [];
+  reviewVerdict.value = null;
+  findings.value = [];
+  diffLines.splice(0, diffLines.length);
+  selectedFindingId.value = null;
+  selectedDiffLineId.value = null;
+  auditEntries.value = [];
+  auditSequence = 0;
+  const round = ticket.value.reviewRound;
+  let diffLoaded = false;
+  if (round != null && ticket.value.treeHash) {
+    try {
+      const diffResult = await getPresubmitDiff(ticket.value.no, round);
+      diffText.value = diffResult.diff;
+      diffLines.splice(0, diffLines.length, ...parseUnifiedDiff(diffResult.diff));
+      diffLoaded = true;
+      addAudit('预提审变更已加载', `第 ${round} 轮审核证据已从后端读取。`, 'accent');
+    } catch {
+      // A stale round can exist without its blob; the live clone is the next source of truth.
+    }
+  }
+  if (!diffLoaded) {
+    try {
+      const working = await getWorkingDiff(ticket.value.no);
+      diffText.value = working.diff;
+      diffLines.splice(0, diffLines.length, ...parseUnifiedDiff(working.diff));
+      diffLoaded = true;
+      addAudit('工作区变更已加载', '当前工单工作区的实时变更已从后端读取。', 'accent');
+    } catch {
+      actionNotice.value = '暂时无法读取工作区变更，请确认工单工作区仍存在。';
+    }
+  }
+  if (diffLoaded && diffLines.length === 0) {
+    actionNotice.value = '当前工作区没有可展示的变更。';
+  }
+  try {
+    const review = await getReviewResult(ticket.value.no);
+    reviewVerdict.value = review.verdict;
+    reviewFindings.value = review.findings.split('\n').filter(Boolean);
+    const parsed = parseFindings(review.findings);
+    findings.value = parsed;
+    addAudit('审核结果已加载', `后端返回结论：${review.verdict || '未标注'}。`, review.verdict === 'PASS' ? 'success' : 'warning');
+  } catch {
+    // A ticket without a review result has no findings to display.
+  }
+  if (hasAnchor.value) addAudit('审核锚点已加载', '树锚点、基线与目标分支已绑定到当前工单。', 'neutral');
+}
+
 onMounted(() => void loadTicket());
-onBeforeUnmount(clearReviewTimers);
+onBeforeUnmount(() => {
+  clearReviewTimers();
+  taskSse.close();
+});
 </script>
 
 <template>
   <div class="review-page">
-    <header class="review-header">
-      <div class="review-header__copy">
-        <p class="section-kicker">审核工作台</p>
-        <h2>先锁定证据，再作出决定。</h2>
-        <p>审核结论、人工决定和发布动作都绑定到同一份变更锚点。</p>
-      </div>
-      <div class="review-header__actions">
-        <GBadge :tone="toneFor(ticket.stage)">{{ TICKET_STAGE_LABELS[ticket.stage] }}</GBadge>
-        <GButton size="sm" variant="secondary" @click="openDetail">
-          <GIcon name="external" :size="14" />
-          工单详情
-        </GButton>
-        <GButton size="sm" variant="secondary" @click="openSession">
-          <GIcon name="chat" :size="14" />
-          会话
-        </GButton>
-      </div>
-    </header>
+    <div class="review-actions">
+      <GBadge :tone="toneFor(ticket.stage)">{{ TICKET_STAGE_LABELS[ticket.stage] }}</GBadge>
+      <GButton size="sm" variant="secondary" @click="openDetail">
+        <GIcon name="external" :size="14" />
+        工单详情
+      </GButton>
+      <GButton size="sm" variant="secondary" @click="openSession">
+        <GIcon name="chat" :size="14" />
+        会话
+      </GButton>
+    </div>
 
-    <p v-if="loading" class="review-data-state" role="status">正在读取后端工单数据...</p>
+    <div v-if="loading" class="review-skeleton" role="status" aria-label="正在读取审核数据">
+      <div class="review-skeleton__panel">
+        <GSkeleton variant="text" width="24%" height="14px" />
+        <GSkeleton variant="text" width="56%" height="16px" />
+        <GSkeleton variant="text" width="36%" />
+      </div>
+      <div class="review-skeleton__grid">
+        <GSkeleton variant="block" height="220px" />
+        <GSkeleton variant="block" height="220px" />
+      </div>
+    </div>
     <p v-else-if="loadError" class="review-data-state review-data-state--error" role="alert">
       {{ loadError }}
       <button type="button" @click="loadTicket">重新读取</button>
@@ -552,7 +662,7 @@ onBeforeUnmount(clearReviewTimers);
         <header class="evidence-panel__head">
           <div>
             <p class="section-label">变更证据</p>
-            <h3 id="evidence-heading">ReviewConsoleView.vue</h3>
+            <h3 id="evidence-heading">{{ ticket.clonePath || '工作区变更' }}</h3>
           </div>
           <span class="mono evidence-panel__stats">{{ diffLines.length }} 行变更</span>
         </header>
@@ -562,9 +672,9 @@ onBeforeUnmount(clearReviewTimers);
             <GIcon name="shield" :size="15" />
             <span>审核锚点</span>
           </div>
-          <code class="mono"><small>tree</small>{{ ticket.treeHash || '--' }}</code>
-          <code class="mono"><small>base</small>{{ ticket.baseCommit || '--' }}</code>
-          <code class="mono"><small>target</small>{{ ticket.targetRef || '--' }}</code>
+          <code class="mono"><small>树锚点</small>{{ ticket.treeHash || '--' }}</code>
+          <code class="mono"><small>基线</small>{{ ticket.baseCommit || '--' }}</code>
+          <code class="mono"><small>目标分支</small>{{ ticket.targetRef || '--' }}</code>
         </section>
 
         <div class="diff-caption">
@@ -572,7 +682,7 @@ onBeforeUnmount(clearReviewTimers);
           <span v-if="selectedFinding" class="diff-caption__active">当前聚焦：{{ selectedFinding.id }}</span>
         </div>
 
-        <div class="diff-view" aria-label="变更 Diff">
+        <div v-if="diffLines.length" class="diff-view" aria-label="变更内容">
           <button
             v-for="line in diffLines"
             :id="'diff-line-' + line.id"
@@ -586,7 +696,7 @@ onBeforeUnmount(clearReviewTimers);
                 'diff-line--selected': selectedDiffLineId === line.id,
               },
             ]"
-            :aria-label="'Diff 行 ' + (line.newLine ?? line.oldLine ?? '')"
+            :aria-label="'差异第 ' + (line.newLine ?? line.oldLine ?? '') + ' 行'"
             @click="selectDiffLine(line)"
           >
             <span class="diff-line__marker">{{ line.kind === 'add' ? '+' : line.kind === 'remove' ? '-' : ' ' }}</span>
@@ -594,6 +704,11 @@ onBeforeUnmount(clearReviewTimers);
             <span class="diff-line__number">{{ line.newLine ?? '' }}</span>
             <code>{{ line.code || ' ' }}</code>
           </button>
+        </div>
+        <div v-else class="diff-empty" role="status">
+          <GIcon name="folder" :size="19" />
+            <strong>暂无真实变更</strong>
+          <span>后端没有返回当前工作区或预提审轮次的变更。</span>
         </div>
       </main>
 
@@ -624,7 +739,11 @@ onBeforeUnmount(clearReviewTimers);
               <strong>{{ finding.title }}</strong>
               <small class="mono">{{ finding.location }}:{{ finding.lines[0] }}-{{ finding.lines[1] }}</small>
               <span>{{ finding.detail }}</span>
-            </button>
+             </button>
+             <div v-if="findings.length === 0" class="findings-empty">
+               <GIcon name="check" :size="17" />
+               <span>{{ reviewVerdict ? '后端未返回发现项。' : '尚无审核结果，不预设发现项。' }}</span>
+             </div>
           </div>
 
           <div v-if="selectedFinding" class="finding-control">
@@ -655,7 +774,7 @@ onBeforeUnmount(clearReviewTimers);
             </div>
           </div>
 
-          <ol v-else class="audit-list">
+           <ol v-else-if="auditEntries.length" class="audit-list">
             <li v-for="entry in auditEntries.slice(0, 4)" :key="entry.id">
               <span class="audit-list__tone" :class="'audit-list__tone--' + entry.tone" />
               <div>
@@ -664,7 +783,8 @@ onBeforeUnmount(clearReviewTimers);
                 <time>{{ formatDate(entry.at) }}</time>
               </div>
             </li>
-          </ol>
+           </ol>
+           <p v-else class="audit-empty">尚无后端审核证据。</p>
         </section>
 
         <section id="decision-panel" class="rail-panel decision-panel" aria-labelledby="decision-heading">
@@ -679,7 +799,7 @@ onBeforeUnmount(clearReviewTimers);
           </header>
 
           <p v-if="decisionRecord" class="decision-summary">{{ decisionRecord.reason }}</p>
-          <p v-else class="decision-summary">LLM 审核完成后，由人工确认通过或说明驳回原因。</p>
+          <p v-else class="decision-summary">模型审核完成后，由人工确认通过或说明驳回原因。</p>
           <div class="decision-actions">
             <GButton size="sm" variant="success" :disabled="!canDecide" @click="openDecision('approved')">人工通过</GButton>
             <GButton size="sm" variant="danger" :disabled="!canDecide" @click="openDecision('rejected')">人工驳回</GButton>
@@ -714,20 +834,19 @@ onBeforeUnmount(clearReviewTimers);
         <p v-if="decisionType === 'approved'">通过后，工单会进入可发布状态，且该决定会写入本地审计轨迹。</p>
         <p v-else>驳回后，工单会回到待处理状态。请留下可以指导后续执行的理由。</p>
 
-        <label class="field">
-          <span>{{ decisionType === 'approved' ? '补充说明（可选）' : '驳回理由' }}</span>
+        <GField :label="decisionType === 'approved' ? '补充说明（可选）' : '驳回理由'" for-id="review-decision-reason" :hint="decisionType === 'approved' ? '记录审核结论中最值得保留的一句。' : '请说明需要修正的证据或风险。'" :required="decisionType === 'rejected'">
           <GInput
+            id="review-decision-reason"
             v-model="decisionReason"
             type="textarea"
             :rows="3"
-            :placeholder="decisionType === 'approved' ? '例如：锚点、Diff 与审核结论已经核对。' : '例如：tree_hash 与当前 Diff 不一致，需要重新提审。'"
+            :placeholder="decisionType === 'approved' ? '例如：锚点、变更内容与审核结论已经核对。' : '例如：树锚点与当前变更不一致，需要重新提审。'"
           />
-        </label>
+        </GField>
 
-        <label v-if="decisionType === 'approved'" class="confirmation-field">
-          <input v-model="decisionConfirmed" type="checkbox" />
-          <span>我已核对审核结论、变更证据与发布前置条件。</span>
-        </label>
+        <GCheckbox v-if="decisionType === 'approved'" v-model="decisionConfirmed" name="decision-confirmed" class="confirmation-field">
+          我已核对审核结论、变更证据与发布前置条件。
+        </GCheckbox>
 
         <p v-if="decisionError" class="modal-error" role="alert">{{ decisionError }}</p>
       </div>
@@ -741,11 +860,10 @@ onBeforeUnmount(clearReviewTimers);
 
     <GModal :show="showPublishModal" title="确认受控发布" width="500px" @close="closePublishModal">
       <div class="decision-modal">
-        <p>发布将使用当前 tree、base 与 target 作为审计锚点，并将工单状态更新为已完成。</p>
-        <label class="confirmation-field">
-          <input v-model="publishConfirmed" type="checkbox" />
-          <span>确认以当前审核锚点完成发布，且不再保留未决审核动作。</span>
-        </label>
+          <p>发布将使用当前树锚点、基线与目标分支作为审计依据，并将工单状态更新为已完成。</p>
+        <GCheckbox v-model="publishConfirmed" name="publish-confirmed" class="confirmation-field">
+          确认以当前审核锚点完成发布，且不再保留未决审核动作。
+        </GCheckbox>
         <p v-if="publishError" class="modal-error" role="alert">{{ publishError }}</p>
       </div>
       <template #footer>
@@ -767,6 +885,33 @@ onBeforeUnmount(clearReviewTimers);
   margin: 0 auto;
   padding: clamp(20px, 2.6vw, 34px) clamp(18px, 2.7vw, 42px) 30px;
   overflow: auto;
+}
+
+.review-skeleton {
+  display: grid;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.review-skeleton__panel {
+  display: grid;
+  gap: 10px;
+  padding: 16px 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--panel);
+}
+
+.review-skeleton__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+@media (max-width: 1024px) {
+  .review-skeleton__grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .review-data-state {
@@ -797,18 +942,6 @@ onBeforeUnmount(clearReviewTimers);
   cursor: pointer;
 }
 
-.review-header {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 24px;
-}
-
-.review-header__copy {
-  min-width: 0;
-}
-
-.section-kicker,
 .section-label {
   margin: 0 0 7px;
   color: var(--accent);
@@ -818,7 +951,6 @@ onBeforeUnmount(clearReviewTimers);
   text-transform: uppercase;
 }
 
-.review-header h2,
 .evidence-panel h3,
 .rail-panel h3 {
   margin: 0;
@@ -827,18 +959,7 @@ onBeforeUnmount(clearReviewTimers);
   letter-spacing: -0.035em;
 }
 
-.review-header h2 {
-  font-size: clamp(25px, 3vw, 35px);
-}
-
-.review-header__copy > p:last-child {
-  max-width: 620px;
-  margin: 8px 0 0;
-  color: var(--text-muted);
-  font-size: 13px;
-}
-
-.review-header__actions {
+.review-actions {
   display: flex;
   align-items: center;
   justify-content: flex-end;
@@ -957,7 +1078,7 @@ onBeforeUnmount(clearReviewTimers);
 .action-notice {
   margin: -2px 0 0;
   padding: 9px 12px;
-  border: 1px solid rgba(9, 105, 218, 0.24);
+  border: 1px solid var(--accent-border);
   border-radius: var(--radius-sm);
   color: var(--accent-hover);
   background: var(--accent-soft);
@@ -1072,6 +1193,34 @@ onBeforeUnmount(clearReviewTimers);
   background: var(--canvas);
 }
 
+.diff-empty,
+.findings-empty,
+.audit-empty {
+  display: grid;
+  justify-items: center;
+  gap: 7px;
+  padding: 30px 18px;
+  color: var(--text-muted);
+  font-size: 11px;
+  text-align: center;
+}
+
+.diff-empty {
+  min-height: 180px;
+  place-content: center;
+  background: var(--canvas);
+}
+
+.diff-empty strong {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.diff-empty span,
+.findings-empty span {
+  line-height: 1.5;
+}
+
 .diff-line {
   display: grid;
   grid-template-columns: 20px 40px 40px minmax(max-content, 1fr);
@@ -1093,27 +1242,27 @@ onBeforeUnmount(clearReviewTimers);
 }
 
 .diff-line--add {
-  background: rgba(35, 114, 79, 0.07);
+  background: color-mix(in srgb, var(--success) 7%, transparent);
 }
 
 .diff-line--remove {
-  background: rgba(173, 63, 55, 0.07);
+  background: color-mix(in srgb, var(--danger) 7%, transparent);
 }
 
 .diff-line--highlighted {
-  background: rgba(9, 105, 218, 0.14);
+  background: var(--accent-soft);
   box-shadow: inset 3px 0 0 var(--accent);
 }
 
 .diff-line--selected {
-  outline: 2px solid rgba(9, 105, 218, 0.62);
+  outline: 2px solid var(--accent);
   outline-offset: -2px;
 }
 
 .diff-line__marker,
 .diff-line__number {
   color: var(--text-faint);
-  background: rgba(23, 37, 54, 0.03);
+  background: color-mix(in srgb, var(--text) 4%, transparent);
   text-align: right;
   user-select: none;
 }
@@ -1163,6 +1312,11 @@ onBeforeUnmount(clearReviewTimers);
   display: grid;
 }
 
+.findings-empty {
+  min-height: 100px;
+  border-top: 1px solid var(--border);
+}
+
 .finding-row {
   display: grid;
   gap: 5px;
@@ -1181,7 +1335,7 @@ onBeforeUnmount(clearReviewTimers);
 }
 
 .finding-row--active {
-  background: rgba(9, 105, 218, 0.085);
+  background: var(--accent-soft);
   box-shadow: inset 3px 0 0 var(--accent);
 }
 
@@ -1302,6 +1456,12 @@ onBeforeUnmount(clearReviewTimers);
   margin: 0;
   padding: 0;
   list-style: none;
+  border-top: 1px solid var(--border);
+}
+
+.audit-empty {
+  min-height: 76px;
+  margin: 0;
   border-top: 1px solid var(--border);
 }
 
@@ -1459,24 +1619,6 @@ onBeforeUnmount(clearReviewTimers);
   font-weight: 700;
 }
 
-.confirmation-field {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  color: var(--text-secondary);
-  font-size: 12px;
-  line-height: 1.5;
-  cursor: pointer;
-}
-
-.confirmation-field input {
-  width: 15px;
-  height: 15px;
-  margin: 2px 0 0;
-  flex: none;
-  accent-color: var(--accent);
-}
-
 .modal-error {
   margin: 0;
   color: var(--danger);
@@ -1485,12 +1627,7 @@ onBeforeUnmount(clearReviewTimers);
 }
 
 @media (max-width: 980px) {
-  .review-header {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-
-  .review-header__actions {
+  .review-actions {
     justify-content: flex-start;
   }
 

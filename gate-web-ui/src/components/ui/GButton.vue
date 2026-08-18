@@ -11,6 +11,8 @@ withDefaults(
     loading?: boolean;
     block?: boolean;
     type?: 'button' | 'submit';
+    ariaLabel?: string;
+    title?: string;
   }>(),
   {
     variant: 'secondary',
@@ -19,6 +21,8 @@ withDefaults(
     loading: false,
     block: false,
     type: 'button',
+    ariaLabel: '',
+    title: '',
   },
 );
 
@@ -32,6 +36,8 @@ const emit = defineEmits<{ (e: 'click', event: MouseEvent): void }>();
     :class="['g-btn--' + variant, 'g-btn--' + size, { 'g-btn--block': block }]"
     :disabled="disabled || loading"
     :aria-busy="loading || undefined"
+    :aria-label="ariaLabel || undefined"
+    :title="title || undefined"
     @click="(e: MouseEvent) => emit('click', e)"
   >
     <span v-if="loading" class="g-btn__spinner" aria-hidden="true" />
@@ -72,9 +78,9 @@ const emit = defineEmits<{ (e: 'click', event: MouseEvent): void }>();
 }
 
 .g-btn:focus-visible {
-  outline: 2px solid var(--accent-contrast);
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
-  box-shadow: 0 0 0 4px var(--accent);
+  box-shadow: 0 0 0 4px var(--accent-focus-ring);
 }
 
 .g-btn:disabled {
@@ -102,12 +108,12 @@ const emit = defineEmits<{ (e: 'click', event: MouseEvent): void }>();
 .g-btn--primary {
   background: var(--accent);
   color: var(--accent-contrast);
-  box-shadow: none;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16), 0 2px 4px rgba(13, 52, 63, 0.12);
 }
 
 .g-btn--primary:hover:not(:disabled) {
   background: var(--accent-hover);
-  box-shadow: 0 1px 2px rgba(31, 35, 40, 0.16);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2), 0 4px 10px rgba(13, 52, 63, 0.16);
 }
 
 .g-btn--secondary {

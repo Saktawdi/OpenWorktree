@@ -1,20 +1,30 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { getTicket } from '@/api/tickets';
-import { GAvatar, GBadge, GButton, GCard, GIcon, GInput, GTooltip } from '@/components/ui';
-import { mockAgents, mockMessages, mockSessions } from '@/mocks/prototypeData';
+import {
+  abortSession,
+  getHistory,
+  listTicketSessions,
+  normalizeSessionMessage,
+  sendMessage,
+  sessionEventsPath,
+  startSession as apiStartSession,
+} from '@/api/sessions';
+import { listAgentConfigs } from '@/api/agentConfig';
+import { useSSE } from '@/composables/useSSE';
+import { GAvatar, GBadge, GButton, GCard, GIcon, GInput, GSkeleton, GTooltip } from '@/components/ui';
 import { TICKET_STAGE_LABELS } from '@/types/stage';
+import type { AgentConfig } from '@/types/agentConfig';
 import type { Session } from '@/types/session';
 import type { SessionMessage } from '@/types/session-message';
 import type { Ticket } from '@/types/ticket';
 import type { TicketStage } from '@/types/stage';
 
-type SessionAction = 'start' | 'resume' | 'prompt';
-
 const route = useRoute();
 const router = useRouter();
 const no = String(route.params.no ?? 'T-104');
+const projectId = String(route.params.projectId ?? '');
 const ticket = ref<Ticket>({
   no,
   title: '读取工单中...',
@@ -31,22 +41,75 @@ const ticket = ref<Ticket>({
 });
 const loading = ref(true);
 const loadError = ref('');
-const sessions = ref<Session[]>(
-  mockSessions.filter((session) => session.ticketNo === no).map((session) => ({ ...session })),
-);
-const selectedId = ref(sessions.value[0]?.id ?? '');
-const messagesBySession = ref<Record<string, SessionMessage[]>>(
-  Object.fromEntries(sessions.value.map((session) => [session.id, [...(mockMessages[session.id] ?? [])]])),
-);
+const sessions = ref<Session[]>([]);
+const selectedId = ref('');
+const messagesBySession = ref<Record<string, SessionMessage[]>>({});
 const input = ref('');
 const sending = ref(false);
 const feedback = ref('');
+const agentConfigs = ref<AgentConfig[]>([]);
+const activeSessionPath = ref('');
+
+const fallbackAgent: AgentConfig = {
+  id: 'claude-sonnet-default',
+  name: 'Claude Sonnet',
+  cli: 'CLAUDE',
+  providerId: 'newapi',
+  model: 'claude-3-5-sonnet-20241022',
+  systemPrompt: null,
+  extraFlags: [],
+  description: null,
+};
+
+const sessionSse = useSSE({
+  path: activeSessionPath,
+  immediate: false,
+  handlers: {
+    message: handleSessionEvent,
+    usage: handleSessionEvent,
+    tool_call: handleSessionEvent,
+    done: handleSessionEvent,
+    error: handleSessionEvent,
+  },
+});
+
+function handleSessionEvent(data: string) {
+  try {
+    const parsed = JSON.parse(data) as { kind?: string; message?: unknown; session_id?: string };
+    if (parsed.message) {
+      const message = normalizeSessionMessage(parsed.message);
+      appendMessage(message);
+    }
+    if (parsed.kind === 'done' || parsed.kind === 'error') {
+      feedback.value = parsed.kind === 'done' ? '会话事件流已结束。' : '会话事件流报告错误。';
+    }
+  } catch {
+    // 非 JSON 事件忽略.
+  }
+}
+
+function appendMessage(message: SessionMessage) {
+  const sid = message.sessionId;
+  const list = messagesBySession.value[sid] ?? (messagesBySession.value[sid] = []);
+  if (!list.some((item) => item.id === message.id)) {
+    list.push(message);
+  }
+}
+
+function dedupeMessages(list: SessionMessage[]): SessionMessage[] {
+  const seen = new Set<string>();
+  return list.filter((message) => {
+    if (seen.has(message.id)) return false;
+    seen.add(message.id);
+    return true;
+  });
+}
 
 async function loadTicket() {
   loading.value = true;
   loadError.value = '';
   try {
-    const loaded = await getTicket(no);
+    const loaded = await getTicket(no, projectId);
     ticket.value = {
       no: loaded.no,
       title: loaded.title,
@@ -71,47 +134,52 @@ async function loadTicket() {
   }
 }
 
+async function loadAgentConfigs() {
+  try {
+    agentConfigs.value = await listAgentConfigs();
+  } catch {
+    agentConfigs.value = [];
+  }
+}
+
+async function loadSessions() {
+  try {
+    sessions.value = await listTicketSessions(no);
+    if (sessions.value.length && !sessions.value.some((item) => item.id === selectedId.value)) {
+      selectedId.value = sessions.value[0]!.id;
+    }
+    // 首次设置 selectedId 会触发 watch 加载历史并打开 SSE；此处不重复调用.
+  } catch {
+    feedback.value = '无法读取会话列表，请确认 Gate 后端正在运行。';
+  }
+}
+
+async function loadHistory(sid: string) {
+  try {
+    const history = await getHistory(sid);
+    messagesBySession.value = {
+      ...messagesBySession.value,
+      [sid]: dedupeMessages(history),
+    };
+  } catch {
+    feedback.value = `无法读取会话 ${sid} 的历史消息。`;
+  }
+}
+
+function openSessionSse(sid: string) {
+  sessionSse.close();
+  activeSessionPath.value = sessionEventsPath(sid);
+  sessionSse.reopen();
+}
+
 const session = computed(() => sessions.value.find((item) => item.id === selectedId.value) ?? sessions.value[0] ?? null);
 const messages = computed(() => (session.value ? messagesBySession.value[session.value.id] ?? [] : []));
 const activeSessions = computed(() => sessions.value.filter((item) => item.status === 'ACTIVE'));
 const closedSessions = computed(() => sessions.value.filter((item) => item.status !== 'ACTIVE'));
 const preferredAgent = computed(() =>
-  mockAgents.find((agent) => agent.id === ticket.value.agentConfigId) ?? mockAgents[0]!,
+  agentConfigs.value.find((agent) => agent.id === ticket.value.agentConfigId) ?? agentConfigs.value[0] ?? fallbackAgent,
 );
 const activeAgent = computed(() => (session.value ? agentFor(session.value) : preferredAgent.value));
-const nextStep = computed(() => {
-  if (!session.value) {
-    return {
-      action: 'start' as SessionAction,
-      title: '先建立一个执行会话',
-      detail: '会话会绑定当前工单、执行器与上下文，后续可直接续接。',
-      label: '建立会话',
-    };
-  }
-  if (session.value.status !== 'ACTIVE') {
-    return {
-      action: 'resume' as SessionAction,
-      title: '恢复最近一次会话',
-      detail: '保留已有消息和用量记录，继续在同一上下文内协作。',
-      label: '继续会话',
-    };
-  }
-  if (!messages.value.length) {
-    return {
-      action: 'prompt' as SessionAction,
-      title: '写下第一条任务指令',
-      detail: '先明确目标、约束和验收条件，Agent 才能开始有据可查的工作。',
-      label: '填入引导语',
-    };
-  }
-  return {
-    action: 'prompt' as SessionAction,
-    title: '沿用当前上下文继续处理',
-    detail: '补充下一步目标，Agent 会在当前分支和审核锚点上继续工作。',
-    label: '继续协作',
-  };
-});
-
 const quickPrompts = computed(() => [
   {
     label: '继续当前任务',
@@ -128,7 +196,7 @@ const quickPrompts = computed(() => [
 ]);
 
 function agentFor(value: Session) {
-  return mockAgents.find((agent) => agent.id === value.agentConfigId) ?? mockAgents[0]!;
+  return agentConfigs.value.find((agent) => agent.id === value.agentConfigId) ?? fallbackAgent;
 }
 
 function stageTone(stage: TicketStage): 'neutral' | 'accent' | 'success' | 'warning' | 'danger' {
@@ -166,36 +234,32 @@ function lastMessageFor(sessionId: string) {
   return list.length ? list[list.length - 1]!.content : '尚无消息，等待第一条任务指令。';
 }
 
-function createSession() {
+async function createSession(): Promise<Session | null> {
   const agent = preferredAgent.value;
-  const id = `sess-local-${no.toLowerCase()}-${sessions.value.length + 1}`;
-  const created: Session = {
-    id,
-    ticketNo: ticket.value.no,
-    agentConfigId: agent.id,
-    cli: agent.cli,
-    status: 'ACTIVE',
-    cliSessionId: null,
-    clonePath: `local/${ticket.value.no}`,
-    allocatedPort: agent.cli === 'OPENCODE' ? 51000 + sessions.value.length : -1,
-    startedAt: new Date().toISOString(),
-    finishedAt: null,
-    cumulativeUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
-  };
-  sessions.value.unshift(created);
-  messagesBySession.value[id] = [];
-  selectedId.value = id;
-  return created;
+  try {
+    const created = await apiStartSession(ticket.value.no, {
+      agentConfigId: agent.id,
+      ...(input.value.trim() ? { initialPrompt: input.value.trim() } : {}),
+    });
+    sessions.value.unshift(created);
+    messagesBySession.value[created.id] = [];
+    selectedId.value = created.id;
+    openSessionSse(created.id);
+    feedback.value = `已为 ${ticket.value.no} 建立 ${created.id}，可直接写入第一条指令。`;
+    return created;
+  } catch {
+    feedback.value = '创建会话失败，请检查智能体配置与后端日志。';
+    return null;
+  }
 }
 
-function startSession() {
-  const created = createSession();
-  feedback.value = `已为 ${ticket.value.no} 建立 ${created.id}，可直接写入第一条指令。`;
+async function startSession() {
+  await createSession();
 }
 
 function resumeSession() {
   if (!session.value) {
-    startSession();
+    void startSession();
     return;
   }
   if (session.value.status !== 'ACTIVE') {
@@ -210,32 +274,27 @@ function resumeSession() {
   }
 }
 
-function endSession() {
+async function endSession() {
   if (!session.value || session.value.status !== 'ACTIVE') return;
+  try {
+    await abortSession(session.value.id);
+  } catch {
+    // 后端可能没有进行中的任务; 本地仍标记结束.
+  }
   session.value.status = 'CLOSED';
   session.value.finishedAt = new Date().toISOString();
   feedback.value = `${session.value.id} 已结束，消息与用量记录已保留。`;
 }
 
-function runNextStep() {
-  if (nextStep.value.action === 'start') {
-    startSession();
-    return;
-  }
-  if (nextStep.value.action === 'resume') {
-    resumeSession();
-    return;
-  }
-  applyPrompt(`请继续处理 ${ticket.value.no}，结合当前上下文说明已完成内容、下一步和需要确认的事项。`);
-}
-
 function applyPrompt(text: string) {
-  if (!session.value) startSession();
+  if (!session.value) {
+    void startSession();
+  }
   input.value = text;
-  feedback.value = '引导语已填入，可修改后发送给 Agent。';
+  feedback.value = '引导语已填入，可修改后发送给智能体。';
 }
 
-function ensureActiveSession() {
+async function ensureActiveSession(): Promise<Session | null> {
   if (!session.value) return createSession();
   if (session.value.status !== 'ACTIVE') {
     session.value.status = 'ACTIVE';
@@ -245,13 +304,14 @@ function ensureActiveSession() {
   return session.value;
 }
 
-function send() {
+async function send() {
   const text = input.value.trim();
   if (!text || sending.value) return;
-  const current = ensureActiveSession();
+  const current = await ensureActiveSession();
+  if (!current) return;
   const list = messagesBySession.value[current.id] ?? (messagesBySession.value[current.id] = []);
   list.push({
-    id: `m${Date.now()}`,
+    id: `local-${Date.now()}`,
     sessionId: current.id,
     role: 'USER',
     content: text,
@@ -262,66 +322,42 @@ function send() {
   });
   input.value = '';
   sending.value = true;
-  feedback.value = '消息已发送，Agent 正在基于当前工单上下文处理。';
-  setTimeout(() => {
-    list.push({
-      id: `m${Date.now()}`,
-      sessionId: current.id,
-      role: 'ASSISTANT',
-      content: `收到。我会继续围绕 ${ticket.value.no} 处理，并在预审前确认 tree 锚点、目标分支和可验证证据。`,
-      toolCalls: [{ name: 'read_file', argumentsJson: 'src/views/ReviewConsoleView.vue', resultJson: null }],
-      usage: { promptTokens: 1380, completionTokens: 290, totalTokens: 1670 },
-      degraded: false,
-      timestamp: new Date().toISOString(),
-    });
+  feedback.value = '消息已发送，智能体正在基于当前工单上下文处理。';
+  try {
+    await sendMessage(current.id, text);
+    openSessionSse(current.id);
+  } catch {
+    feedback.value = '消息发送失败，请检查后端日志。';
+  } finally {
     sending.value = false;
-    feedback.value = 'Agent 已返回新消息。';
-  }, 900);
+  }
 }
 
-onMounted(() => void loadTicket());
+watch(selectedId, async (id) => {
+  if (!id) return;
+  await loadHistory(id);
+  openSessionSse(id);
+});
+
+onMounted(async () => {
+  await Promise.all([loadTicket(), loadAgentConfigs()]);
+  await loadSessions();
+});
+onBeforeUnmount(() => sessionSse.close());
 </script>
 
 <template>
   <div class="session-workbench">
-    <header class="session-head">
-      <div>
-        <p class="section-kicker">AGENT COLLABORATION</p>
-        <h2>工单协作会话</h2>
-        <p class="session-head__sub">让执行、审核和上下文在同一个可续接的工作面里流转。</p>
+    <div v-if="loading" class="session-skeleton" role="status" aria-label="正在读取会话数据">
+      <div class="session-skeleton__context">
+        <GSkeleton variant="text" width="30%" height="14px" />
+        <GSkeleton variant="text" width="52%" height="18px" />
+        <GSkeleton variant="text" width="44%" />
       </div>
-      <div class="session-head__actions">
-        <GBadge tone="success">{{ activeSessions.length }} 个活跃</GBadge>
-        <GTooltip content="查看当前工单" side="bottom">
-          <GButton
-            class="session-head__icon-action"
-            variant="secondary"
-            size="sm"
-            aria-label="查看当前工单"
-            @click="router.push({ name: 'ticket-detail', params: { no: ticket.no } })"
-          >
-            <GIcon name="external" :size="15" />
-          </GButton>
-        </GTooltip>
-        <GTooltip content="打开审核台" side="bottom">
-          <GButton
-            class="session-head__icon-action"
-            variant="secondary"
-            size="sm"
-            aria-label="打开审核台"
-            @click="router.push({ name: 'review', params: { no: ticket.no } })"
-          >
-            <GIcon name="shield" :size="15" />
-          </GButton>
-        </GTooltip>
-        <GButton variant="primary" @click="startSession">
-          <GIcon name="plus" :size="15" />
-          新建会话
-        </GButton>
+      <div class="session-skeleton__body">
+        <GSkeleton variant="block" height="260px" />
       </div>
-    </header>
-
-    <p v-if="loading" class="session-data-state" role="status">正在读取后端工单数据...</p>
+    </div>
     <p v-else-if="loadError" class="session-data-state session-data-state--error" role="alert">
       {{ loadError }}
       <button type="button" @click="loadTicket">重新读取</button>
@@ -342,6 +378,30 @@ onMounted(() => void loadTicket());
           <span><GIcon name="shield" :size="13" />R{{ ticket.reviewRound ?? 0 }}</span>
         </div>
       </div>
+      <div class="ticket-context__actions" aria-label="工单操作">
+        <GTooltip content="查看当前工单" side="bottom">
+          <GButton
+            class="ticket-context__icon-action"
+            variant="secondary"
+            size="sm"
+            aria-label="查看当前工单"
+            @click="router.push({ name: 'ticket-detail', params: { projectId, no: ticket.no } })"
+          >
+            <GIcon name="external" :size="15" />
+          </GButton>
+        </GTooltip>
+        <GTooltip content="打开审核台" side="bottom">
+          <GButton
+            class="ticket-context__icon-action"
+            variant="secondary"
+            size="sm"
+            aria-label="打开审核台"
+            @click="router.push({ name: 'review', params: { projectId, no: ticket.no } })"
+          >
+            <GIcon name="shield" :size="15" />
+          </GButton>
+        </GTooltip>
+      </div>
     </section>
 
     <div class="collaboration-grid">
@@ -349,10 +409,23 @@ onMounted(() => void loadTicket());
         <GCard class="session-list-card">
           <template #head>
             <div class="card-heading">
-              <span class="card-heading__eyebrow">SESSIONS</span>
+              <span class="card-heading__eyebrow">会话列表</span>
               <strong>关联会话</strong>
             </div>
-            <span class="session-list-card__count">{{ sessions.length }} 个</span>
+            <div class="session-list-card__tools">
+              <span class="session-list-card__count">{{ sessions.length }} 个</span>
+              <GTooltip content="新建会话" side="top">
+                <GButton
+                  class="session-list-card__new"
+                  variant="primary"
+                  size="sm"
+                  aria-label="新建会话"
+                  @click="startSession"
+                >
+                  <GIcon name="plus" :size="15" />
+                </GButton>
+              </GTooltip>
+            </div>
           </template>
 
           <div v-if="sessions.length" class="session-list" aria-label="选择会话">
@@ -380,7 +453,7 @@ onMounted(() => void loadTicket());
           <div v-else class="session-list-empty">
             <GIcon name="chat" :size="18" aria-hidden="true" />
             <strong>还没有关联会话</strong>
-            <p>创建首个会话后，Agent 会获得这张工单的上下文。</p>
+            <p>创建首个会话后，智能体会获得这张工单的上下文。</p>
             <GButton variant="secondary" size="sm" @click="startSession">创建首个会话</GButton>
           </div>
 
@@ -420,22 +493,12 @@ onMounted(() => void loadTicket());
             </template>
             <template v-else>
               <div class="card-heading">
-                <span class="card-heading__eyebrow">WORKING SESSION</span>
+                <span class="card-heading__eyebrow">当前会话</span>
                 <strong>等待建立协作会话</strong>
               </div>
               <GButton variant="secondary" size="sm" @click="startSession">开始</GButton>
             </template>
           </template>
-
-          <div class="chat-next-step">
-            <div class="chat-next-step__icon" aria-hidden="true"><GIcon name="spark" :size="18" /></div>
-            <div>
-              <span>下一步</span>
-              <strong>{{ nextStep.title }}</strong>
-              <p>{{ nextStep.detail }}</p>
-            </div>
-            <GButton variant="primary" size="sm" @click="runNextStep">{{ nextStep.label }}</GButton>
-          </div>
 
           <div class="chat-messages" aria-label="会话消息">
             <template v-if="session">
@@ -449,7 +512,7 @@ onMounted(() => void loadTicket());
                   <div class="message__meta">
                     <span class="mono">{{ formatTime(message.timestamp) }}</span>
                     <GBadge v-if="message.usage" tone="warning">
-                      {{ formatTokens(message.usage.totalTokens) }} token
+                      {{ formatTokens(message.usage.totalTokens) }} 令牌
                     </GBadge>
                   </div>
                 </article>
@@ -457,13 +520,13 @@ onMounted(() => void loadTicket());
               <div v-else class="chat-empty">
                 <GIcon name="chat" :size="21" aria-hidden="true" />
                 <strong>会话已经就绪</strong>
-                <p>使用下方快捷引导，或直接写下想让 Agent 处理的事项。</p>
+                <p>使用下方快捷引导，或直接写下想让智能体处理的事项。</p>
               </div>
             </template>
             <div v-else class="chat-empty">
               <GIcon name="chat" :size="21" aria-hidden="true" />
               <strong>先建立执行会话</strong>
-              <p>会话会把当前工单、Agent 配置与消息记录放在同一个协作上下文里。</p>
+              <p>会话会把当前工单、智能体配置与消息记录放在同一个协作上下文里。</p>
               <GButton variant="secondary" size="sm" @click="startSession">建立会话</GButton>
             </div>
           </div>
@@ -480,8 +543,8 @@ onMounted(() => void loadTicket());
               v-model="input"
               type="textarea"
               :rows="1"
-              aria-label="发送给 Agent 的消息"
-              placeholder="输入要交给 Agent 的下一步任务，Shift + Enter 可以换行"
+              aria-label="发送给智能体的消息"
+              placeholder="输入要交给智能体的下一步任务，使用换行键可以换行"
               @keydown="(event: KeyboardEvent) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); send(); } }"
             />
             <GButton variant="primary" :loading="sending" :disabled="!input.trim()" @click="send">
@@ -510,27 +573,21 @@ onMounted(() => void loadTicket());
   color: var(--text);
 }
 
-.session-head,
-.session-head__actions,
 .ticket-context,
 .ticket-context__tags,
 .ticket-context__meta,
+.ticket-context__actions,
 .chat-card__title,
 .chat-card__head-actions,
 .session-row__top,
 .session-list-card__foot,
+.session-list-card__tools,
 .quick-prompts,
 .chat-composer {
   display: flex;
   align-items: center;
 }
 
-.session-head {
-  justify-content: space-between;
-  gap: 20px;
-}
-
-.section-kicker,
 .card-heading__eyebrow {
   margin: 0;
   color: var(--accent-hover);
@@ -538,38 +595,6 @@ onMounted(() => void loadTicket());
   font-size: 10px;
   font-weight: 800;
   letter-spacing: 0.12em;
-}
-
-.session-head h2 {
-  margin: 5px 0 0;
-  color: var(--ink);
-  font-size: clamp(25px, 3.2vw, 35px);
-  font-weight: 790;
-  letter-spacing: -0.045em;
-  line-height: 1.12;
-}
-
-.session-head__sub {
-  max-width: 620px;
-  margin: 8px 0 0;
-  color: var(--text-muted);
-  font-size: 13px;
-  line-height: 1.6;
-}
-
-.session-head__actions {
-  flex: none;
-  gap: 9px;
-}
-
-.session-head__actions :deep(.g-btn) {
-  border-radius: 9px;
-}
-
-.session-head__icon-action {
-  width: 30px;
-  min-width: 30px;
-  padding: 0 !important;
 }
 
 .sr-feedback {
@@ -590,7 +615,18 @@ onMounted(() => void loadTicket());
   border-left: 3px solid var(--accent);
   border-radius: 14px;
   background: var(--panel-2);
-  box-shadow: 0 8px 22px rgba(36, 52, 70, 0.05);
+  box-shadow: var(--shadow-panel);
+}
+
+.ticket-context__actions {
+  flex: none;
+  gap: 8px;
+}
+
+.ticket-context__icon-action {
+  width: 32px;
+  min-width: 32px;
+  padding: 0 !important;
 }
 
 .ticket-context__copy {
@@ -653,7 +689,7 @@ onMounted(() => void loadTicket());
   border-radius: 14px;
   border-color: var(--border);
   background: var(--panel);
-  box-shadow: 0 9px 24px rgba(36, 52, 70, 0.055);
+  box-shadow: var(--shadow-panel);
 }
 
 .session-list-card,
@@ -688,6 +724,16 @@ onMounted(() => void loadTicket());
   font-size: 11px;
 }
 
+.session-list-card__tools {
+  gap: 8px;
+}
+
+.session-list-card__new {
+  width: 30px;
+  min-width: 30px;
+  padding: 0 !important;
+}
+
 .session-list-card :deep(.g-card__body) {
   display: flex;
   flex: 1;
@@ -701,6 +747,25 @@ onMounted(() => void loadTicket());
   align-content: start;
   gap: 5px;
   overflow: auto;
+}
+
+.session-skeleton {
+  display: grid;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.session-skeleton__context {
+  display: grid;
+  gap: 10px;
+  padding: 16px 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--panel);
+}
+
+.session-skeleton__body {
+  min-height: 0;
 }
 
 .session-data-state {
@@ -753,12 +818,12 @@ onMounted(() => void loadTicket());
 }
 
 .session-row.active {
-  border-color: rgba(9, 105, 218, 0.32);
+  border-color: var(--accent-border);
   background: var(--accent-soft);
 }
 
 .session-row.active :deep(.g-avatar) {
-  box-shadow: 0 0 0 3px rgba(9, 105, 218, 0.09);
+  box-shadow: 0 0 0 3px var(--accent-focus-ring);
 }
 
 .session-row__copy {
@@ -912,63 +977,6 @@ onMounted(() => void loadTicket());
   border-radius: 8px;
 }
 
-.chat-next-step {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  gap: 11px;
-  align-items: center;
-  margin: 14px 14px 0;
-  padding: 11px;
-  border: 1px solid rgba(9, 105, 218, 0.24);
-  border-radius: 10px;
-  background: var(--accent-soft);
-}
-
-.chat-next-step__icon {
-  display: grid;
-  width: 34px;
-  height: 34px;
-  place-items: center;
-  border-radius: 9px;
-  color: var(--accent-hover);
-  background: var(--accent-soft);
-}
-
-.chat-next-step > div:nth-child(2) {
-  min-width: 0;
-}
-
-.chat-next-step span,
-.chat-next-step strong,
-.chat-next-step p {
-  display: block;
-}
-
-.chat-next-step span {
-  color: var(--accent-hover);
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-}
-
-.chat-next-step strong {
-  margin-top: 2px;
-  color: var(--ink);
-  font-size: 12px;
-}
-
-.chat-next-step p {
-  margin: 2px 0 0;
-  color: var(--text-muted);
-  font-size: 10px;
-  line-height: 1.45;
-}
-
-.chat-next-step :deep(.g-btn) {
-  min-width: 88px;
-  border-radius: 8px;
-}
-
 .chat-messages {
   display: flex;
   flex: 1;
@@ -1115,7 +1123,7 @@ onMounted(() => void loadTicket());
 }
 
 .quick-prompts button:hover {
-  border-color: rgba(9, 105, 218, 0.34);
+  border-color: var(--accent-border);
   color: var(--accent-hover);
   background: var(--accent-soft);
 }
@@ -1143,7 +1151,7 @@ onMounted(() => void loadTicket());
 .session-feedback {
   margin: 12px 0 0;
   padding: 9px 11px;
-  border: 1px solid rgba(9, 105, 218, 0.2);
+  border: 1px solid var(--accent-border);
   border-radius: 9px;
   color: var(--accent-hover);
   background: var(--accent-soft);
@@ -1155,16 +1163,6 @@ onMounted(() => void loadTicket());
     height: auto;
     padding: 18px 14px 24px;
     overflow: auto;
-  }
-
-  .session-head {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-
-  .session-head__actions {
-    width: 100%;
-    justify-content: space-between;
   }
 
   .ticket-context {
@@ -1185,14 +1183,6 @@ onMounted(() => void loadTicket());
 }
 
 @media (max-width: 560px) {
-  .session-head h2 {
-    font-size: 25px;
-  }
-
-  .session-head__actions :deep(.g-btn) {
-    flex: 1;
-  }
-
   .ticket-context {
     padding: 15px;
   }
@@ -1200,16 +1190,6 @@ onMounted(() => void loadTicket());
   .session-list-card :deep(.g-card__head),
   .chat-card :deep(.g-card__head) {
     padding-inline: 14px;
-  }
-
-  .chat-next-step {
-    grid-template-columns: auto minmax(0, 1fr);
-    margin: 12px 12px 0;
-  }
-
-  .chat-next-step :deep(.g-btn) {
-    grid-column: 1 / -1;
-    width: 100%;
   }
 
   .message {

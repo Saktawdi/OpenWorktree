@@ -29,3 +29,4 @@ Thumbs.db
 # Local development launcher & runtime home (gate.toml / auth.git / gate.db)
 /start-local.bat
 /local-run/
+*.timestamp-*.mjs

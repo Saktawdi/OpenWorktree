@@ -10,6 +10,12 @@ withDefaults(
     rows?: number;
     disabled?: boolean;
     ariaLabel?: string;
+    ariaDescribedby?: string;
+    ariaInvalid?: boolean;
+    required?: boolean;
+    id?: string;
+    name?: string;
+    autocomplete?: string;
   }>(),
   {
     modelValue: '',
@@ -18,6 +24,12 @@ withDefaults(
     rows: 2,
     disabled: false,
     ariaLabel: '',
+    ariaDescribedby: '',
+    ariaInvalid: false,
+    required: false,
+    id: '',
+    name: '',
+    autocomplete: 'off',
   },
 );
 
@@ -35,7 +47,13 @@ const emit = defineEmits<{
     :placeholder="placeholder"
     :rows="rows"
     :disabled="disabled"
+    :id="id || undefined"
+    :name="name || undefined"
+    :autocomplete="autocomplete || undefined"
     :aria-label="ariaLabel || undefined"
+    :aria-describedby="ariaDescribedby || undefined"
+    :aria-invalid="ariaInvalid || undefined"
+    :required="required || undefined"
     @input="emit('update:modelValue', ($event.target as HTMLTextAreaElement).value)"
     @keydown="emit('keydown', $event)"
   />
@@ -46,7 +64,13 @@ const emit = defineEmits<{
     :value="modelValue"
     :placeholder="placeholder"
     :disabled="disabled"
+    :id="id || undefined"
+    :name="name || undefined"
+    :autocomplete="autocomplete || undefined"
     :aria-label="ariaLabel || undefined"
+    :aria-describedby="ariaDescribedby || undefined"
+    :aria-invalid="ariaInvalid || undefined"
+    :required="required || undefined"
     @input="emit('update:modelValue', ($event.target as HTMLInputElement).value)"
     @keydown="emit('keydown', $event)"
   />
@@ -56,7 +80,7 @@ const emit = defineEmits<{
 .g-input {
   display: block;
   width: 100%;
-  min-height: 38px;
+  min-height: var(--control-height);
   padding: 8px 12px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
@@ -77,12 +101,12 @@ const emit = defineEmits<{
 }
 
 .g-input:hover:not(:disabled) {
-  border-color: var(--border-strong);
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--border-strong));
 }
 
 .g-input:focus {
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
+  box-shadow: var(--focus-ring);
 }
 
 .g-input:disabled {

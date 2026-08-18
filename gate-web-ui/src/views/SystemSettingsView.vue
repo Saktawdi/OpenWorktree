@@ -1,21 +1,21 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { GBadge, GButton, GIcon, GInput, GModal } from '@/components/ui';
+import { GBadge, GButton, GCheckbox, GField, GIcon, GInput, GModal } from '@/components/ui';
 import {
   createProvider,
   deleteProvider,
+  fetchProviderModels,
   getProviders,
-  getSystemConfig,
+  getRuntime,
   replaceProviderModels,
   updateProvider,
 } from '@/api/config';
-import type { ProviderPayload, ProviderView, SystemConfigView } from '@/api/config';
+import type { ProviderPayload, ProviderView, RuntimeView } from '@/api/config';
 import { useConsolePreferences } from '@/composables/useConsolePreferences';
 import { useAuthStore } from '@/stores/authStore';
 
 type SettingsSection = 'models' | 'console' | 'runtime' | 'security';
-type DataSource = 'server' | 'local';
 
 interface ProviderForm {
   id: string;
@@ -28,40 +28,7 @@ interface ProviderForm {
 const providerStorageKey = 'gate.provider-config';
 const defaultModelStorageKey = 'gate.default-models';
 
-const fallbackConfig: SystemConfigView = {
-  project: 'gate',
-  auth_repo: '--',
-  clones_root: '--',
-  target_ref_whitelist: ['refs/heads/main'],
-  gate_home: '--',
-  engine_configured: false,
-  web: {
-    bind: '127.0.0.1',
-    port: 4097,
-    allowed_origins: ['127.0.0.1', 'localhost'],
-  },
-};
-
-const fallbackProviders: ProviderView[] = [
-  {
-    id: 'newapi',
-    name: 'New API Gateway',
-    base_url: 'http://127.0.0.1:3000/v1',
-    type: 'openai-compatible',
-    credential_configured: true,
-    model_count: 2,
-    models: ['gpt-5.2-codex', 'claude-3-5-sonnet-20241022'],
-  },
-  {
-    id: 'manual',
-    name: '人工审核',
-    base_url: 'local://manual',
-    type: 'manual',
-    credential_configured: true,
-    model_count: 1,
-    models: ['human'],
-  },
-];
+const fallbackProviders: ProviderView[] = [];
 
 const sectionItems: Array<{
   id: SettingsSection;
@@ -86,9 +53,8 @@ const routeSection = computed<SettingsSection>(() => {
 const activeSection = ref<SettingsSection>(routeSection.value);
 const loading = ref(false);
 const saving = ref(false);
-const configSource = ref<DataSource>('local');
 const notice = ref('');
-const systemConfig = ref<SystemConfigView>(fallbackConfig);
+const runtime = ref<RuntimeView | null>(null);
 const providers = ref<ProviderView[]>([]);
 const activeProviderId = ref('');
 const modelDraft = ref('');
@@ -100,6 +66,7 @@ const editingProviderId = ref<string | null>(null);
 const providerSubmitted = ref(false);
 const providerForm = reactive<ProviderForm>(emptyProviderForm());
 const defaultModels = reactive<Record<string, string>>({});
+const fetchingModels = ref(false);
 
 const {
   preferences,
@@ -117,18 +84,17 @@ const consoleDraft = reactive({
 const activeProvider = computed(() =>
   providers.value.find((provider) => provider.id === activeProviderId.value) ?? providers.value[0] ?? null,
 );
-const configSourceLabel = computed(() => (configSource.value === 'server' ? '已连接后端' : '浏览器本地缓存'));
 const webEndpoint = computed(() => {
-  const web = systemConfig.value.web;
+  const web = runtime.value?.web;
   return web ? `${web.bind}:${web.port}` : '--';
 });
 const providerFormError = computed(() => {
-  if (!providerForm.id.trim()) return '请填写 Provider ID。';
+  if (!providerForm.id.trim()) return '请填写供应商标识。';
   if (!/^[a-z0-9][a-z0-9._-]*$/i.test(providerForm.id.trim())) return 'ID 只能包含字母、数字、点、下划线和连字符。';
   if (!providerForm.name.trim()) return '请填写供应商名称。';
-  if (!providerForm.base_url.trim()) return '请填写 Base URL。';
+  if (!providerForm.base_url.trim()) return '请填写服务地址。';
   if (providers.value.some((provider) => provider.id === providerForm.id.trim() && provider.id !== editingProviderId.value)) {
-    return '这个 Provider ID 已经存在。';
+    return '这个供应商标识已经存在。';
   }
   return '';
 });
@@ -247,7 +213,6 @@ async function saveProvider() {
       ? await updateProvider(editingProviderId.value, payload)
       : await createProvider(payload);
     replaceProviderInState(next);
-    configSource.value = 'server';
     notice.value = `已保存 ${next.name}。`;
   } catch {
     const next: ProviderView = {
@@ -277,7 +242,6 @@ async function removeProvider() {
   saving.value = true;
   try {
     await deleteProvider(provider.id);
-    configSource.value = 'server';
   } catch {
     notice.value = '后端暂不可用，已在当前浏览器移除该供应商。';
   }
@@ -303,7 +267,6 @@ async function saveModels(nextModels: string[], message: string) {
   try {
     const next = await replaceProviderModels(provider.id, models);
     replaceProviderInState(next);
-    configSource.value = 'server';
   } catch {
     provider.models = models;
     provider.model_count = models.length;
@@ -375,11 +338,10 @@ async function loadProviders() {
     const remoteProviders = await getProviders();
     if (remoteProviders.length) {
       providers.value = remoteProviders;
-      configSource.value = 'server';
       persistLocalProviders();
     }
   } catch {
-    configSource.value = 'local';
+    providers.value = localProviders;
   }
   ensureDefaultModel(activeProvider.value);
 }
@@ -387,13 +349,29 @@ async function loadProviders() {
 async function loadRuntimeConfig() {
   loading.value = true;
   try {
-    systemConfig.value = await getSystemConfig();
-    configSource.value = 'server';
+    runtime.value = await getRuntime();
   } catch {
-    systemConfig.value = fallbackConfig;
-    notice.value = '后端配置暂不可用，当前显示安全默认值。';
+    runtime.value = null;
+    notice.value = '后端运行状态暂不可用，请确认 gate-web 已启动。';
   } finally {
     loading.value = false;
+  }
+}
+
+async function syncProviderModels() {
+  const provider = activeProvider.value;
+  if (!provider || provider.id === 'manual') return;
+  fetchingModels.value = true;
+  notice.value = '';
+  try {
+    const next = await fetchProviderModels(provider.id);
+    replaceProviderInState(next);
+    notice.value = `已从 ${next.name} 上游同步 ${next.models.length} 个模型。`;
+    persistLocalProviders();
+  } catch {
+    notice.value = '上游模型列表同步失败，请检查服务地址、凭据引用和供应商日志。';
+  } finally {
+    fetchingModels.value = false;
   }
 }
 
@@ -434,18 +412,6 @@ watch(routeSection, (section) => {
 
 <template>
   <div class="settings-page">
-    <header class="settings-header">
-      <div>
-        <p class="settings-kicker"><GIcon name="settings" :size="13" /> System settings</p>
-        <h2>系统设置</h2>
-        <p>把模型连接、控制台偏好和本地边界放在同一个可验证的工作区。</p>
-      </div>
-      <span class="source-state" :class="{ 'source-state--online': configSource === 'server' }">
-        <i aria-hidden="true" />
-        {{ configSourceLabel }}
-      </span>
-    </header>
-
     <p v-if="notice" class="settings-notice" role="status">{{ notice }}</p>
 
     <div class="settings-layout">
@@ -469,7 +435,7 @@ watch(routeSection, (section) => {
             <div>
               <p class="section-label">连接目录</p>
               <h2 id="models-heading">模型与供应商</h2>
-              <p>先选供应商，再维护它旗下能被 Agent 和审核引擎使用的模型。</p>
+              <p>先选供应商，再维护它旗下能被智能体和审核引擎使用的模型。</p>
             </div>
             <GButton size="sm" variant="primary" @click="openCreateProvider">
               <GIcon name="plus" :size="14" /> 添加供应商
@@ -505,21 +471,22 @@ watch(routeSection, (section) => {
                   <p class="mono provider-id">{{ activeProvider.id }}</p>
                 </div>
                 <div class="detail-actions">
+                  <GButton v-if="activeProvider.id !== 'manual'" size="sm" variant="secondary" :loading="fetchingModels" @click="syncProviderModels"><GIcon name="refresh" :size="13" /> 从上游同步</GButton>
                   <GButton size="sm" variant="secondary" @click="openEditProvider(activeProvider)">编辑</GButton>
                   <GButton v-if="activeProvider.id !== 'manual'" size="sm" variant="ghost" @click="showDeleteConfirm = true">删除</GButton>
                 </div>
               </header>
 
               <dl class="provider-facts">
-                <div><dt>Base URL</dt><dd class="mono">{{ activeProvider.base_url }}</dd></div>
+                <div><dt>服务地址</dt><dd class="mono">{{ activeProvider.base_url }}</dd></div>
                 <div><dt>凭据引用</dt><dd><span class="credential-state"><i aria-hidden="true" />{{ activeProvider.credential_configured ? '已配置' : '未配置' }}</span></dd></div>
                 <div><dt>模型数量</dt><dd>{{ activeProvider.models.length }} 个模型</dd></div>
                 <div><dt>默认模型</dt><dd class="mono">{{ ensureDefaultModel(activeProvider) || '未设置' }}</dd></div>
               </dl>
 
               <section class="models-panel" aria-labelledby="provider-models-heading">
-                <header class="models-panel__head"><div><h3 id="provider-models-heading">可用模型</h3><p>默认模型会用于未明确指定模型的新会话。</p></div><span class="mono">{{ activeProvider.models.length }} items</span></header>
-                <form class="model-add" @submit.prevent="addModel"><GInput v-model="modelDraft" aria-label="模型名称" placeholder="输入模型 ID，例如 gpt-5.2-codex" /><GButton type="submit" size="sm" variant="secondary" :disabled="!modelDraft.trim() || saving"><GIcon name="plus" :size="14" /> 添加模型</GButton></form>
+                <header class="models-panel__head"><div><h3 id="provider-models-heading">可用模型</h3><p>默认模型会用于未明确指定模型的新会话。</p></div><span class="mono">{{ activeProvider.models.length }} 项</span></header>
+                <form class="model-add" @submit.prevent="addModel"><GInput v-model="modelDraft" aria-label="模型名称" placeholder="输入模型标识，例如 gpt-5.2-codex" /><GButton type="submit" size="sm" variant="secondary" :disabled="!modelDraft.trim() || saving"><GIcon name="plus" :size="14" /> 添加模型</GButton></form>
                 <div v-if="activeProvider.models.length" class="model-list">
                   <div v-for="model in activeProvider.models" :key="model" class="model-row">
                     <span class="model-row__icon"><GIcon name="check" :size="14" /></span>
@@ -534,7 +501,7 @@ watch(routeSection, (section) => {
                     </template>
                   </div>
                 </div>
-                <div v-else class="models-empty"><GIcon name="bot" :size="18" /><strong>还没有模型</strong><span>添加一个模型 ID 后，Agent 配置就能直接选择它。</span></div>
+                <div v-else class="models-empty"><GIcon name="bot" :size="18" /><strong>还没有模型</strong><span>添加一个模型标识后，智能体配置就能直接选择它。</span></div>
               </section>
             </div>
             <div v-else class="provider-empty-detail"><GIcon name="bot" :size="20" /><strong>选择一个供应商</strong><span>或者先创建新的模型供应商。</span><GButton size="sm" variant="secondary" @click="openCreateProvider">添加供应商</GButton></div>
@@ -547,37 +514,57 @@ watch(routeSection, (section) => {
             <div class="setting-row"><div><strong>外观主题</strong><span>在日间和夜间工作区之间快速切换。</span></div><div class="segmented-control" role="group" aria-label="外观主题"><button type="button" :aria-pressed="consoleDraft.theme === 'light'" :class="{ active: consoleDraft.theme === 'light' }" @click="consoleDraft.theme = 'light'">日间</button><button type="button" :aria-pressed="consoleDraft.theme === 'dark'" :class="{ active: consoleDraft.theme === 'dark' }" @click="consoleDraft.theme = 'dark'">夜间</button></div></div>
             <div class="setting-row"><div><strong>界面密度</strong><span>控制看板卡片、列表间距和页面留白。</span></div><div class="segmented-control" role="group" aria-label="界面密度"><button type="button" :aria-pressed="consoleDraft.density === 'comfortable'" :class="{ active: consoleDraft.density === 'comfortable' }" @click="consoleDraft.density = 'comfortable'">舒适</button><button type="button" :aria-pressed="consoleDraft.density === 'compact'" :class="{ active: consoleDraft.density === 'compact' }" @click="consoleDraft.density = 'compact'">紧凑</button></div></div>
             <div class="setting-row"><div><strong>工单默认视图</strong><span>进入工单工作区时首先展示的视图。</span></div><div class="segmented-control" role="group" aria-label="工单默认视图"><button type="button" :aria-pressed="consoleDraft.defaultTicketView === 'board'" :class="{ active: consoleDraft.defaultTicketView === 'board' }" @click="consoleDraft.defaultTicketView = 'board'">看板</button><button type="button" :aria-pressed="consoleDraft.defaultTicketView === 'records'" :class="{ active: consoleDraft.defaultTicketView === 'records' }" @click="consoleDraft.defaultTicketView = 'records'">记录</button></div></div>
-            <label class="setting-row setting-row--toggle"><div><strong>减少界面动效</strong><span>关闭抽屉、悬停和状态切换中的非必要动画。</span></div><span class="switch-control"><input v-model="consoleDraft.reduceMotion" type="checkbox" /><i aria-hidden="true" /></span></label>
+            <div class="setting-row setting-row--toggle"><div><strong>减少界面动效</strong><span>关闭抽屉、悬停和状态切换中的非必要动画。</span></div><GCheckbox v-model="consoleDraft.reduceMotion" variant="switch" aria-label="减少界面动效" /></div>
           </div>
           <footer class="settings-actions"><GButton variant="ghost" @click="resetConsole">恢复默认</GButton><GButton variant="primary" @click="saveConsole"><GIcon name="check" :size="14" /> 保存偏好</GButton></footer>
         </section>
 
         <section v-else-if="activeSection === 'runtime'" class="settings-section" aria-labelledby="runtime-heading">
-          <header class="settings-section__head"><div><p class="section-label">服务状态</p><h2 id="runtime-heading">运行环境</h2><p>来自 `/api/config` 的只读运行信息，敏感字段不会返回前端。</p></div><GButton size="sm" variant="secondary" :loading="loading" @click="loadRuntimeConfig"><GIcon name="refresh" :size="14" /> 重新读取</GButton></header>
-          <dl class="system-facts"><div><dt>项目</dt><dd>{{ systemConfig.project }}</dd></div><div><dt>Gate Home</dt><dd class="mono">{{ systemConfig.gate_home }}</dd></div><div><dt>权威仓库</dt><dd class="mono">{{ systemConfig.auth_repo }}</dd></div><div><dt>Clone 根目录</dt><dd class="mono">{{ systemConfig.clones_root }}</dd></div><div><dt>目标引用白名单</dt><dd class="value-list"><span v-for="refName in systemConfig.target_ref_whitelist" :key="refName" class="mono">{{ refName }}</span></dd></div><div><dt>审核引擎</dt><dd><span class="engine-state" :class="{ 'engine-state--ready': systemConfig.engine_configured }">{{ systemConfig.engine_configured ? '已配置' : '未读取' }}</span></dd></div></dl>
+          <header class="settings-section__head"><div><p class="section-label">服务状态</p><h2 id="runtime-heading">运行环境</h2><p>来自 `/api/runtime` 的实时探测，不把立项配置冒充运行状态。</p></div><GButton size="sm" variant="secondary" :loading="loading" @click="loadRuntimeConfig"><GIcon name="refresh" :size="14" /> 重新读取</GButton></header>
+          <div v-if="runtime" class="runtime-grid">
+            <dl class="system-facts"><div><dt>服务</dt><dd>{{ runtime.service }}</dd></div><div><dt>运行时长</dt><dd>{{ runtime.uptime_seconds }} 秒</dd></div><div><dt>Java</dt><dd class="mono">{{ runtime.java.version }} · {{ runtime.java.vendor }}</dd></div><div><dt>操作系统</dt><dd>{{ runtime.os.name }} / {{ runtime.os.arch }}</dd></div><div><dt>Git</dt><dd><span class="engine-state" :class="{ 'engine-state--ready': runtime.git.available }">{{ runtime.git.available ? runtime.git.version || '可用' : '不可用' }}</span></dd></div><div><dt>审核引擎</dt><dd><span class="engine-state" :class="{ 'engine-state--ready': runtime.engine.available }">{{ runtime.engine.configured ? (runtime.engine.available ? '已配置且可用' : '已配置但不可用') : '未配置' }}</span></dd></div><div><dt>数据库</dt><dd class="mono">{{ runtime.database.path }}</dd></div><div><dt>服务目录</dt><dd class="mono">{{ runtime.gate_home }}</dd></div><div><dt>权威仓库</dt><dd class="mono">{{ runtime.auth_repo }}</dd></div><div><dt>会话 / 任务</dt><dd>{{ runtime.counts.active_sessions }} / {{ runtime.counts.running_tasks }}</dd></div></dl>
+            <section class="runtime-agents" aria-label="智能体命令行工具探测"><span class="section-label">智能体命令行工具</span><div v-for="agent in runtime.agent_clis" :key="agent.name" class="runtime-agent"><span class="mono">{{ agent.name }}</span><GBadge :tone="agent.available ? 'success' : agent.note ? 'warning' : 'neutral'">{{ agent.available ? '可用' : agent.note ? '已安装·无法运行' : '未安装' }}</GBadge><small>{{ agent.version || agent.note || '未探测到版本' }}</small></div></section>
+          </div>
+          <p v-else class="settings-empty-state">暂无真实运行状态。点击“重新读取”或确认后端服务已经启动。</p>
         </section>
 
         <section v-else class="settings-section" aria-labelledby="security-heading">
           <header class="settings-section__head"><div><p class="section-label">本机边界</p><h2 id="security-heading">访问安全</h2><p>控制台只允许本机访问，服务端配置仍在 gate.toml 中维护。</p></div></header>
-          <dl class="security-facts"><div><dt>监听地址</dt><dd class="mono">{{ webEndpoint }}</dd><span>必须使用 loopback 地址，禁止绑定 0.0.0.0。</span></div><div><dt>允许来源</dt><dd class="value-list"><span v-for="origin in systemConfig.web?.allowed_origins ?? []" :key="origin" class="mono">{{ origin }}</span></dd><span>Host 与 Origin 均受白名单校验。</span></div><div><dt>HUMAN token</dt><dd class="credential-state"><i aria-hidden="true" />{{ auth.tokenDigest || '未登录' }}</dd><span>浏览器只保存明文 token，配置接口不会回传敏感值。</span></div></dl>
-          <footer class="danger-zone"><div><strong>清除本机登录凭据</strong><span>删除当前浏览器中的 token 并返回登录页。</span></div><GButton variant="danger" @click="logout">退出并清除</GButton></footer>
+          <dl class="security-facts"><div><dt>监听地址</dt><dd class="mono">{{ webEndpoint }}</dd><span>来自实时运行状态，必须使用本机回环地址。</span></div><div><dt>服务端口</dt><dd class="mono">{{ runtime?.web?.port ?? '--' }}</dd><span>主机与来源校验由后端执行。</span></div><div><dt>人工令牌</dt><dd class="credential-state"><i aria-hidden="true" />{{ auth.tokenDigest || '未登录' }}</dd><span>浏览器只保存明文令牌，配置接口不会回传敏感值。</span></div></dl>
+          <footer class="danger-zone"><div><strong>清除本机登录凭据</strong><span>删除当前浏览器中的登录令牌并返回登录页。</span></div><GButton variant="danger" @click="logout">退出并清除</GButton></footer>
         </section>
       </main>
     </div>
 
     <GModal :show="showProviderForm" :title="editingProviderId ? '编辑供应商' : '添加供应商'" width="560px" @close="closeProviderForm">
       <form class="provider-form" @submit.prevent="saveProvider">
-        <p>保存的是连接元数据和凭据引用，不会把 API key 明文写进前端。</p>
-        <div class="form-grid"><label class="field"><span>Provider ID</span><GInput v-model="providerForm.id" :disabled="Boolean(editingProviderId)" placeholder="例如 newapi" /><em v-if="providerSubmitted && providerFormError">{{ providerFormError }}</em></label><label class="field"><span>名称</span><GInput v-model="providerForm.name" placeholder="例如 New API Gateway" /></label></div>
-        <label class="field"><span>Base URL</span><GInput v-model="providerForm.base_url" placeholder="https://api.example.com/v1" /></label>
-        <div class="form-grid"><label class="field"><span>类型</span><GInput v-model="providerForm.type" placeholder="openai-compatible" /></label><label class="field"><span>凭据引用</span><GInput v-model="providerForm.api_key_ref" placeholder="例如 env:NEWAPI_KEY" /><small>留空表示保留已有引用。不要填写 API key 明文。</small></label></div>
+        <p>保存的是连接元数据和凭据引用，不会把 API 密钥明文写进前端。</p>
+        <div class="form-grid">
+          <GField label="供应商标识" for-id="provider-id" :error="providerSubmitted ? providerFormError : ''" required>
+            <GInput id="provider-id" v-model="providerForm.id" name="provider-id" autocomplete="off" :disabled="Boolean(editingProviderId)" placeholder="例如 newapi" required />
+          </GField>
+          <GField label="名称" for-id="provider-name" hint="显示在供应商目录和智能体配置中。" required>
+            <GInput id="provider-name" v-model="providerForm.name" name="provider-name" autocomplete="off" placeholder="例如：新 API 网关" required />
+          </GField>
+        </div>
+        <GField label="服务地址" for-id="provider-base-url" hint="使用 OpenAI 兼容服务时，通常以 /v1 结尾。" required>
+          <GInput id="provider-base-url" v-model="providerForm.base_url" name="provider-base-url" autocomplete="url" placeholder="https://api.example.com/v1" required />
+        </GField>
+        <div class="form-grid">
+          <GField label="类型" for-id="provider-type" hint="例如 openai-compatible。">
+            <GInput id="provider-type" v-model="providerForm.type" name="provider-type" autocomplete="off" placeholder="例如：openai-compatible" />
+          </GField>
+          <GField label="凭据引用" for-id="provider-key-ref" hint="留空表示保留已有引用。不要填写 API 密钥明文。">
+            <GInput id="provider-key-ref" v-model="providerForm.api_key_ref" name="provider-key-ref" autocomplete="off" placeholder="例如 env:NEWAPI_KEY" />
+          </GField>
+        </div>
         <p v-if="providerSubmitted && providerFormError" class="form-notice" role="alert">{{ providerFormError }}</p>
       </form>
       <template #footer><GButton variant="ghost" @click="closeProviderForm">取消</GButton><GButton variant="primary" :loading="saving" @click="saveProvider">保存供应商</GButton></template>
     </GModal>
 
     <GModal :show="showDeleteConfirm" title="删除供应商" width="430px" @close="showDeleteConfirm = false">
-      <p class="confirm-copy">将删除 {{ activeProvider?.name }} 以及它缓存的模型列表。已经创建的 Agent 配置不会被自动改写。</p>
+      <p class="confirm-copy">将删除 {{ activeProvider?.name }} 以及它缓存的模型列表。已经创建的智能体配置不会被自动改写。</p>
       <template #footer><GButton variant="ghost" @click="showDeleteConfirm = false">取消</GButton><GButton variant="danger" :loading="saving" @click="removeProvider">确认删除</GButton></template>
     </GModal>
   </div>
@@ -585,36 +572,33 @@ watch(routeSection, (section) => {
 
 <style scoped>
 .settings-page { display: flex; height: 100%; min-width: 0; min-height: 0; flex-direction: column; padding: 20px 28px 0; overflow: hidden; }
-.settings-header { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; flex: none; padding-bottom: 18px; }
-.settings-header h2 { margin: 0; color: var(--text); font-size: 24px; font-weight: 760; letter-spacing: -0.03em; }
-.settings-header > div > p:last-child { margin: 6px 0 0; color: var(--text-muted); font-size: 12px; }
-.settings-kicker, .section-label { display: inline-flex; align-items: center; gap: 6px; margin: 0 0 7px; color: var(--accent-hover); font-size: 10px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
-.source-state { display: inline-flex; align-items: center; gap: 7px; padding: 5px 8px; border: 1px solid var(--border); border-radius: 6px; color: var(--text-muted); background: var(--panel); font-size: 10px; font-weight: 700; }
-.source-state i, .credential-state i { width: 7px; height: 7px; flex: none; border-radius: 50%; background: var(--warning); }
-.source-state--online i, .credential-state i { background: var(--success); box-shadow: 0 0 0 3px var(--success-soft); }
+.section-label { display: inline-flex; align-items: center; gap: 6px; margin: 0 0 7px; color: var(--accent-hover); font-size: 10px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
+.credential-state i { width: 7px; height: 7px; flex: none; border-radius: 50%; background: var(--success); box-shadow: 0 0 0 3px var(--success-soft); }
 .settings-notice { flex: none; margin: 0 0 12px; padding: 8px 10px; border-left: 3px solid var(--accent); color: var(--text-secondary); background: var(--accent-soft); font-size: 11px; }
-.settings-layout { display: grid; grid-template-columns: 205px minmax(0, 1fr); min-height: 0; flex: 1; border-top: 1px solid var(--border); }
+.settings-layout { display: grid; grid-template-columns: 205px minmax(0, 1fr); min-height: 0; flex: 1; }
 .settings-nav { display: grid; align-content: start; gap: 3px; padding: 14px 14px 24px 0; border-right: 1px solid var(--border); }
-.settings-nav button { display: grid; grid-template-columns: 24px minmax(0, 1fr); gap: 8px; align-items: start; width: 100%; padding: 9px; border: 1px solid transparent; border-radius: 6px; color: var(--text-muted); background: transparent; text-align: left; cursor: pointer; }
+.settings-nav button { display: grid; grid-template-columns: 24px minmax(0, 1fr); gap: 8px; align-items: start; width: 100%; padding: 9px; border: 1px solid transparent; border-radius: var(--radius-sm); color: var(--text-muted); background: transparent; text-align: left; cursor: pointer; }
 .settings-nav button:hover { color: var(--text); background: var(--hover); }
-.settings-nav button.active { border-color: rgba(9, 105, 218, .22); color: var(--accent-hover); background: var(--accent-soft); }
+.settings-nav button.active { border-color: var(--accent-border); color: var(--accent-hover); background: var(--accent-soft); }
 .settings-nav button > span { display: grid; gap: 2px; min-width: 0; }
 .settings-nav strong { color: inherit; font-size: 12px; }
 .settings-nav small { overflow: hidden; color: var(--text-faint); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .settings-content { min-width: 0; overflow: auto; padding: 0 0 34px 26px; }
-.settings-section { width: 100%; max-width: 1120px; }
+.settings-section { width: 100%; max-width: none; min-height: 100%; }
+.models-section { display: flex; flex-direction: column; }
 .settings-section__head { display: flex; align-items: center; justify-content: space-between; gap: 18px; min-height: 86px; border-bottom: 1px solid var(--border); }
+.settings-section__head :deep(.g-btn) { flex-shrink: 0; }
 .settings-section__head h2 { margin: 0; color: var(--text); font-size: 18px; font-weight: 750; letter-spacing: -.02em; }
 .settings-section__head p:last-child { margin: 5px 0 0; color: var(--text-muted); font-size: 11px; }
-.provider-workspace { display: grid; grid-template-columns: 240px minmax(0, 1fr); min-height: 500px; }
+.provider-workspace { display: grid; flex: 1; grid-template-columns: 240px minmax(0, 1fr); min-height: 500px; }
 .provider-catalog { display: flex; flex-direction: column; min-width: 0; padding: 17px 14px 0 0; border-right: 1px solid var(--border); }
 .provider-catalog__head { display: flex; align-items: center; justify-content: space-between; padding: 0 9px 9px; color: var(--text-muted); font-size: 11px; font-weight: 750; }
 .provider-catalog__head b { color: var(--text-faint); font-family: var(--font-mono); font-size: 10px; }
 .provider-list { display: grid; gap: 2px; }
-.provider-row { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; gap: 8px; align-items: center; min-width: 0; width: 100%; padding: 9px; border: 1px solid transparent; border-radius: 6px; color: var(--text-secondary); background: transparent; text-align: left; cursor: pointer; }
+.provider-row { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; gap: 8px; align-items: center; min-width: 0; width: 100%; padding: 9px; border: 1px solid transparent; border-radius: var(--radius-sm); color: var(--text-secondary); background: transparent; text-align: left; cursor: pointer; }
 .provider-row:hover { background: var(--hover); }
-.provider-row.active { border-color: rgba(9, 105, 218, .24); color: var(--text); background: var(--accent-soft); }
-.provider-row__mark, .provider-title__mark { display: grid; place-items: center; width: 26px; height: 26px; border: 1px solid var(--border); border-radius: 6px; color: var(--accent); background: var(--panel); }
+.provider-row.active { border-color: var(--accent-border); color: var(--text); background: var(--accent-soft); }
+.provider-row__mark, .provider-title__mark { display: grid; place-items: center; width: 26px; height: 26px; border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--accent); background: var(--panel); }
 .provider-row__copy { display: grid; gap: 2px; min-width: 0; }
 .provider-row__copy strong { overflow: hidden; color: inherit; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .provider-row__copy small { overflow: hidden; color: var(--text-faint); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
@@ -639,7 +623,7 @@ watch(routeSection, (section) => {
 .models-panel__head p { margin: 4px 0 0; color: var(--text-muted); font-size: 11px; }
 .models-panel__head > span { color: var(--text-faint); font-size: 10px; }
 .model-add { display: flex; gap: 7px; padding: 11px 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
-.model-add :deep(.g-input) { min-height: 34px; }
+.model-add :deep(.g-input) { flex: 1 1 0; min-width: 0; min-height: 34px; }
 .model-list { display: grid; }
 .model-row { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto auto; gap: 8px; align-items: center; min-height: 48px; border-bottom: 1px solid var(--border); }
 .model-row__icon { display: grid; place-items: center; width: 20px; height: 20px; border-radius: 4px; color: var(--text-faint); background: var(--panel-2); }
@@ -657,17 +641,19 @@ watch(routeSection, (section) => {
 .setting-row > div:first-child { display: grid; gap: 4px; }
 .setting-row strong, .danger-zone strong { color: var(--text); font-size: 13px; font-weight: 720; }
 .setting-row > div:first-child span, .danger-zone span { color: var(--text-muted); font-size: 11px; }
-.segmented-control { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 2px; padding: 2px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel-2); }
-.segmented-control button { min-height: 30px; border: 0; border-radius: 4px; color: var(--text-muted); background: transparent; font-size: 11px; font-weight: 700; cursor: pointer; }
-.segmented-control button.active { color: var(--text); background: var(--panel); box-shadow: 0 1px 2px rgba(31, 35, 40, .1); }
-.switch-control { position: relative; justify-self: end; width: 40px; height: 22px; }
-.switch-control input { position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
-.switch-control i { position: absolute; inset: 0; border: 1px solid var(--border-strong); border-radius: 999px; background: var(--panel-2); }
-.switch-control i::after { position: absolute; top: 3px; left: 3px; width: 14px; height: 14px; border-radius: 50%; background: var(--panel); box-shadow: 0 1px 2px rgba(31,35,40,.2); content: ''; transition: transform .16s ease; }
-.switch-control input:checked + i { border-color: var(--accent); background: var(--accent); }
-.switch-control input:checked + i::after { transform: translateX(18px); }
+.segmented-control { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 2px; padding: 2px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--panel-2); }
+.segmented-control button { min-height: 30px; border: 0; border-radius: var(--radius-sm); color: var(--text-muted); background: transparent; font-size: 11px; font-weight: 700; cursor: pointer; transition: color 0.14s ease, background-color 0.14s ease, box-shadow 0.14s ease; }
+.segmented-control button:hover:not(.active) { color: var(--text-secondary); }
+.segmented-control button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.segmented-control button.active { color: var(--text); background: var(--panel); box-shadow: 0 1px 2px color-mix(in srgb, var(--text) 12%, transparent), 0 0 0 1px var(--border); }
+.setting-row--toggle :deep(.g-checkbox) { justify-self: end; }
 .settings-actions { display: flex; justify-content: flex-end; gap: 7px; padding-top: 16px; }
 .system-facts, .security-facts { margin: 0; }
+.runtime-grid { display: grid; grid-template-columns: minmax(0, 1fr) 220px; gap: 18px; }
+.runtime-agents { display: grid; align-content: start; gap: 8px; padding: 14px; border: 1px solid var(--border); background: var(--panel-2); }
+.runtime-agent { display: grid; grid-template-columns: 1fr auto; gap: 4px 8px; align-items: center; padding: 9px 0; border-top: 1px solid var(--border); }
+.runtime-agent small { grid-column: 1 / -1; color: var(--text-muted); font-size: 10px; }
+.settings-empty-state { margin: 0; padding: 24px 0; color: var(--text-muted); font-size: 12px; }
 .system-facts > div { display: grid; grid-template-columns: 180px minmax(0,1fr); gap: 16px; align-items: center; min-height: 56px; border-bottom: 1px solid var(--border); }
 .system-facts dt, .security-facts dt { color: var(--text-muted); font-size: 11px; font-weight: 700; }
 .system-facts dd, .security-facts dd { min-width: 0; margin: 0; overflow: hidden; color: var(--text-secondary); font-size: 12px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
@@ -686,7 +672,7 @@ watch(routeSection, (section) => {
 .field small, .field em { color: var(--text-muted); font-size: 10px; line-height: 1.4; }
 .field em, .form-notice { margin: 0; color: var(--danger); font-style: normal; font-weight: 650; }
 .form-notice { padding: 8px 10px; border-left: 3px solid var(--danger); background: var(--danger-soft); }
-@media (min-width: 681px) { .settings-layout { display: block; } .settings-nav { display: none; } .settings-content { padding-left: 0; } }
-@media (max-width: 900px) { .settings-page { padding-inline: 18px; } .provider-workspace { grid-template-columns: 190px minmax(0,1fr); } .provider-facts { grid-template-columns: repeat(2,minmax(0,1fr)); } .provider-facts > div:nth-child(3) { border-left: 0; padding-left: 0; border-top: 1px solid var(--border); } .provider-facts > div:nth-child(4) { border-top: 1px solid var(--border); } }
-@media (max-width: 680px) { .settings-page { padding: 16px 14px 0; } .settings-header { align-items: flex-start; flex-direction: column; gap: 12px; } .settings-layout { grid-template-columns: 1fr; border-top: 0; } .settings-nav { grid-template-columns: repeat(2,minmax(0,1fr)); padding: 10px 0; border-right: 0; border-bottom: 1px solid var(--border); } .settings-nav button { min-height: 48px; } .settings-content { padding: 0 0 28px; } .settings-section__head { min-height: 76px; } .provider-workspace { grid-template-columns: 1fr; } .provider-catalog { padding: 12px 0 0; border-right: 0; border-bottom: 1px solid var(--border); } .provider-list { grid-template-columns: repeat(2,minmax(0,1fr)); } .catalog-add { margin: 6px 8px 0; } .provider-detail { padding: 0; } .provider-detail__head { min-height: 76px; } .provider-facts { grid-template-columns: repeat(2,minmax(0,1fr)); } .provider-facts > div, .provider-facts > div:not(:first-child) { padding: 11px 8px 11px 0; } .provider-facts > div:nth-child(odd) { border-left: 0; padding-left: 0; } .provider-facts > div:nth-child(n+3) { border-top: 1px solid var(--border); } .model-add { align-items: stretch; flex-direction: column; } .setting-row { grid-template-columns: 1fr; gap: 10px; } .switch-control { justify-self: start; } .form-grid { grid-template-columns: 1fr; } }
+@media (min-width: 681px) { .settings-layout { display: block; height: 100%; } .settings-nav { display: none; } .settings-content { height: 100%; padding-left: 0; } }
+@media (max-width: 900px) { .settings-page { padding-inline: 18px; } .provider-workspace { grid-template-columns: 190px minmax(0,1fr); } .provider-facts { grid-template-columns: repeat(2,minmax(0,1fr)); } .provider-facts > div:nth-child(3) { border-left: 0; padding-left: 0; border-top: 1px solid var(--border); } .provider-facts > div:nth-child(4) { border-top: 1px solid var(--border); } .runtime-grid { grid-template-columns: 1fr; } }
+@media (max-width: 680px) { .settings-page { padding: 16px 14px 0; } .settings-layout { grid-template-columns: 1fr; } .settings-nav { grid-template-columns: repeat(2,minmax(0,1fr)); padding: 10px 0; border-right: 0; border-bottom: 1px solid var(--border); } .settings-nav button { min-height: 48px; } .settings-content { padding: 0 0 28px; } .settings-section__head { min-height: 76px; } .provider-workspace { grid-template-columns: 1fr; } .provider-catalog { padding: 12px 0 0; border-right: 0; border-bottom: 1px solid var(--border); } .provider-list { grid-template-columns: repeat(2,minmax(0,1fr)); } .catalog-add { margin: 6px 8px 0; } .provider-detail { padding: 0; } .provider-detail__head { min-height: 76px; } .provider-facts { grid-template-columns: repeat(2,minmax(0,1fr)); } .provider-facts > div, .provider-facts > div:not(:first-child) { padding: 11px 8px 11px 0; } .provider-facts > div:nth-child(odd) { border-left: 0; padding-left: 0; } .provider-facts > div:nth-child(n+3) { border-top: 1px solid var(--border); } .model-add { align-items: stretch; flex-direction: column; } .setting-row { grid-template-columns: 1fr; gap: 10px; } .setting-row--toggle :deep(.g-checkbox) { justify-self: start; } .form-grid { grid-template-columns: 1fr; } }
 </style>

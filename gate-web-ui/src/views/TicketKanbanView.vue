@@ -1,14 +1,19 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
-import { useRouter } from 'vue-router';
-import { GAvatar, GBadge, GButton, GIcon, GInput, GModal, GSelect } from '@/components/ui';
-import { createTicket, listTickets } from '@/api/tickets';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
+import { GAvatar, GBadge, GButton, GField, GIcon, GInput, GModal, GSelect } from '@/components/ui';
+import { createTicket, listTickets, updateTicket } from '@/api/tickets';
+import { listAgentConfigs } from '@/api/agentConfig';
+import { listProjects, type ProjectView } from '@/api/projects';
 import { useConsolePreferences } from '@/composables/useConsolePreferences';
 import { KANBAN_COLUMNS, stageToKanbanColumnStage, TICKET_STAGE_LABELS } from '@/types/stage';
 import type { Ticket } from '@/types/ticket';
 import type { TicketStage } from '@/types/stage';
+import type { AgentConfig } from '@/types/agentConfig';
 
 type ViewMode = 'board' | 'records';
+type TicketPriority = NonNullable<Ticket['priority']>;
+type FocusFilter = 'all' | 'active' | 'review' | 'attention' | 'ready';
 
 interface NextStep {
   label: string;
@@ -17,24 +22,44 @@ interface NextStep {
 }
 
 const router = useRouter();
+const route = useRoute();
 const { preferences } = useConsolePreferences();
 const view = ref<ViewMode>(preferences.defaultTicketView);
 const tickets = ref<Ticket[]>([]);
+const agentConfigs = ref<AgentConfig[]>([]);
+const projects = ref<ProjectView[]>([]);
 const loading = ref(true);
 const dataError = ref('');
 const query = ref('');
+const focusFilter = ref<FocusFilter>('all');
+const priorityFilter = ref<TicketPriority | 'all'>('all');
 const activityMessage = ref('');
 const dragTicketNo = ref<string | null>(null);
 const activeDropStage = ref<TicketStage | null>(null);
 const drawerTicketNo = ref<string | null>(null);
 const drawerRef = ref<HTMLElement | null>(null);
 const drawerTrigger = ref<HTMLElement | null>(null);
+const drawerEditing = ref(false);
+const savingEdit = ref(false);
+const editError = ref('');
+const editTitle = ref('');
+const editDescription = ref('');
+const editNote = ref('');
+const editLabels = ref('');
+const editPriority = ref<TicketPriority | null>(null);
 
 const showCreate = ref(false);
 const newNo = ref('');
 const newTitle = ref('');
 const newAgent = ref<string | null>(null);
+const newPriority = ref<TicketPriority | null>(null);
 const createError = ref('');
+
+const projectId = computed(() => {
+  const value = route.params.projectId;
+  return typeof value === 'string' ? value : '';
+});
+const currentProject = computed(() => projects.value.find((project) => project.id === projectId.value) ?? null);
 
 const stageOrder: TicketStage[] = [
   'PENDING',
@@ -52,6 +77,20 @@ const stageOptions = stageOrder.map((stage) => ({
   label: TICKET_STAGE_LABELS[stage],
   value: stage,
 }));
+const priorityOptions = [
+  { label: 'P0 · 紧急', value: 'P0' },
+  { label: 'P1 · 高', value: 'P1' },
+  { label: 'P2 · 普通', value: 'P2' },
+  { label: 'P3 · 低', value: 'P3' },
+];
+const agentOptions = computed(() => agentConfigs.value.map((config) => ({
+  label: `${config.name} · ${config.cli}`,
+  value: config.id,
+})));
+const filterPriorityOptions = [
+  { label: '全部优先级', value: 'all' },
+  ...priorityOptions,
+];
 
 const nextStepByStage: Record<TicketStage, NextStep> = {
   PENDING: { label: '开始执行', target: 'IN_PROGRESS', description: '创建执行上下文并进入处理队列。' },
@@ -69,6 +108,7 @@ const normalizedQuery = computed(() => query.value.trim().toLowerCase());
 const activeCount = computed(() => tickets.value.filter((ticket) => !['DONE', 'CANCELLED'].includes(ticket.stage)).length);
 const reviewCount = computed(() => tickets.value.filter((ticket) => ['PRESUBMITTED', 'IN_REVIEW', 'READY_TO_PUBLISH'].includes(ticket.stage)).length);
 const readyCount = computed(() => tickets.value.filter((ticket) => ticket.stage === 'READY_TO_PUBLISH').length);
+const attentionCount = computed(() => tickets.value.filter((ticket) => ['NEEDS_HUMAN', 'REJECTED'].includes(ticket.stage)).length);
 const orderedTickets = computed(() =>
   [...tickets.value].sort((left, right) => {
     const priorityDelta = priorityRank(left.priority) - priorityRank(right.priority);
@@ -85,6 +125,11 @@ const drawerCanReview = computed(() =>
 );
 
 function matchesQuery(ticket: Ticket) {
+  if (focusFilter.value === 'active' && ['DONE', 'CANCELLED'].includes(ticket.stage)) return false;
+  if (focusFilter.value === 'review' && !['PRESUBMITTED', 'IN_REVIEW', 'READY_TO_PUBLISH'].includes(ticket.stage)) return false;
+  if (focusFilter.value === 'attention' && !['NEEDS_HUMAN', 'REJECTED'].includes(ticket.stage)) return false;
+  if (focusFilter.value === 'ready' && ticket.stage !== 'READY_TO_PUBLISH') return false;
+  if (priorityFilter.value !== 'all' && ticket.priority !== priorityFilter.value) return false;
   if (!normalizedQuery.value) return true;
   const haystack = [ticket.no, ticket.title, ticket.project, ticket.branch, ...(ticket.labels ?? [])]
     .filter(Boolean)
@@ -101,6 +146,17 @@ function ticketsForStage(stage: TicketStage) {
   return orderedTickets.value.filter(
     (ticket) => stageToKanbanColumnStage(ticket.stage) === stage && matchesQuery(ticket),
   );
+}
+
+function setFocusFilter(filter: FocusFilter) {
+  focusFilter.value = focusFilter.value === filter && filter !== 'all' ? 'all' : filter;
+  if (focusFilter.value !== 'all') view.value = 'board';
+}
+
+function clearFilters() {
+  query.value = '';
+  focusFilter.value = 'all';
+  priorityFilter.value = 'all';
 }
 
 function columnCount(stage: TicketStage) {
@@ -121,27 +177,33 @@ function agentName(ticket: Ticket) {
 }
 
 function formatDate(value: string) {
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) return '--';
   return new Intl.DateTimeFormat('zh-CN', {
     month: '2-digit',
     day: '2-digit',
     hour: '2-digit',
     minute: '2-digit',
     hour12: false,
-  }).format(new Date(value));
+  }).format(timestamp);
 }
 
 function formatToken(value: number | null) {
   return value == null ? '--' : new Intl.NumberFormat('zh-CN').format(value);
 }
 
-function moveTicket(no: string, target: TicketStage) {
+async function moveTicket(no: string, target: TicketStage) {
   const ticket = tickets.value.find((item) => item.no === no);
   if (!ticket || ticket.stage === target) return;
 
   const previous = ticket.stage;
-  ticket.stage = target;
-  ticket.updatedAt = new Date().toISOString();
-  activityMessage.value = `${ticket.no} 已从${TICKET_STAGE_LABELS[previous]}转入${TICKET_STAGE_LABELS[target]}。`;
+  try {
+    const updated = await updateTicket(no, { stage: target }, projectId.value);
+    Object.assign(ticket, updated);
+    activityMessage.value = `${ticket.no} 已从${TICKET_STAGE_LABELS[previous]}转入${TICKET_STAGE_LABELS[target]}。`;
+  } catch {
+    activityMessage.value = `${ticket.no} 不能从${TICKET_STAGE_LABELS[previous]}转入${TICKET_STAGE_LABELS[target]}，请按审核流程推进。`;
+  }
 }
 
 function onDragStart(event: DragEvent, ticket: Ticket) {
@@ -159,7 +221,7 @@ function onDragEnter(stage: TicketStage) {
 function onDrop(event: DragEvent, target: TicketStage) {
   event.preventDefault();
   const no = event.dataTransfer?.getData('text/plain') || dragTicketNo.value;
-  if (no) moveTicket(no, target);
+  if (no) void moveTicket(no, target);
   dragTicketNo.value = null;
   activeDropStage.value = null;
 }
@@ -172,13 +234,18 @@ function clearDragState() {
 function openDrawer(no: string, event?: MouseEvent) {
   drawerTrigger.value = event?.currentTarget instanceof HTMLElement ? event.currentTarget : null;
   drawerTicketNo.value = no;
+  drawerEditing.value = false;
+  editError.value = '';
   nextTick(() => {
     drawerRef.value?.querySelector<HTMLElement>('[data-drawer-autofocus]')?.focus();
   });
 }
 
 function closeDrawer() {
+  if (savingEdit.value) return;
   const trigger = drawerTrigger.value;
+  drawerEditing.value = false;
+  editError.value = '';
   drawerTicketNo.value = null;
   drawerTrigger.value = null;
   nextTick(() => trigger?.focus());
@@ -186,19 +253,72 @@ function closeDrawer() {
 
 function moveDrawerToNextStep() {
   if (!drawerTicket.value || !drawerNextStep.value) return;
-  moveTicket(drawerTicket.value.no, drawerNextStep.value.target);
+  void moveTicket(drawerTicket.value.no, drawerNextStep.value.target);
 }
 
 function updateDrawerStage(value: string | null) {
   if (!value || !drawerTicket.value || !stageOrder.includes(value as TicketStage)) return;
-  moveTicket(drawerTicket.value.no, value as TicketStage);
+  void moveTicket(drawerTicket.value.no, value as TicketStage);
+}
+
+function parseEditLabels(value: string): string[] {
+  return [...new Set(value.split(/[,，\n]/).map((label) => label.trim()).filter(Boolean))];
+}
+
+function openDrawerEdit() {
+  if (!drawerTicket.value) return;
+  editTitle.value = drawerTicket.value.title;
+  editDescription.value = drawerTicket.value.description ?? '';
+  editNote.value = drawerTicket.value.note ?? '';
+  editLabels.value = (drawerTicket.value.labels ?? []).join(', ');
+  editPriority.value = drawerTicket.value.priority ?? null;
+  editError.value = '';
+  drawerEditing.value = true;
+  nextTick(() => {
+    drawerRef.value?.querySelector<HTMLElement>('[data-drawer-edit-title]')?.focus();
+  });
+}
+
+function cancelDrawerEdit() {
+  if (savingEdit.value) return;
+  drawerEditing.value = false;
+  editError.value = '';
+}
+
+async function saveDrawerEdit() {
+  const title = editTitle.value.trim();
+  if (!title) {
+    editError.value = '标题不能为空。';
+    return;
+  }
+  if (!drawerTicket.value || savingEdit.value) return;
+
+  savingEdit.value = true;
+  editError.value = '';
+  try {
+    const updated = await updateTicket(drawerTicket.value.no, {
+      title,
+      description: editDescription.value.trim() || null,
+      note: editNote.value.trim() || null,
+      labels: parseEditLabels(editLabels.value),
+      priority: editPriority.value,
+    }, projectId.value);
+    const localTicket = tickets.value.find((item) => item.no === updated.no);
+    if (localTicket) Object.assign(localTicket, updated);
+    activityMessage.value = `${updated.no} 工单信息已保存。`;
+    drawerEditing.value = false;
+  } catch {
+    editError.value = '保存失败，请检查后端连接后重试。';
+  } finally {
+    savingEdit.value = false;
+  }
 }
 
 function goTo(name: 'ticket-detail' | 'review' | 'session') {
   if (!drawerTicket.value) return;
   const no = drawerTicket.value.no;
   closeDrawer();
-  router.push({ name, params: { no } });
+  router.push({ name, params: { projectId: projectId.value, no } });
 }
 
 function onDocumentKeydown(event: KeyboardEvent) {
@@ -206,7 +326,8 @@ function onDocumentKeydown(event: KeyboardEvent) {
 
   if (event.key === 'Escape') {
     event.preventDefault();
-    closeDrawer();
+    if (drawerEditing.value) cancelDrawerEdit();
+    else closeDrawer();
     return;
   }
 
@@ -248,8 +369,12 @@ function openCreate() {
   newNo.value = suggestedTicketNo();
   newTitle.value = '';
   newAgent.value = null;
+  newPriority.value = null;
   createError.value = '';
   showCreate.value = true;
+  nextTick(() => {
+    document.querySelector<HTMLElement>('[data-compose-title]')?.focus();
+  });
 }
 
 function closeCreate() {
@@ -260,10 +385,27 @@ function closeCreate() {
 async function loadTickets() {
   loading.value = true;
   dataError.value = '';
+  tickets.value = [];
+  if (!projectId.value) {
+    dataError.value = '请先从项目看板选择一个项目。';
+    loading.value = false;
+    return;
+  }
   try {
-    tickets.value = await listTickets();
+    const [ticketResult, agentResult, projectResult] = await Promise.allSettled([
+      listTickets(projectId.value),
+      listAgentConfigs(),
+      listProjects(),
+    ]);
+    if (ticketResult.status === 'fulfilled') tickets.value = ticketResult.value;
+    if (agentResult.status === 'fulfilled') agentConfigs.value = agentResult.value;
+    if (projectResult.status === 'fulfilled') projects.value = projectResult.value;
+    if (ticketResult.status === 'rejected') throw ticketResult.reason;
+    if (projectResult.status !== 'fulfilled' || !projectResult.value.some((project) => project.id === projectId.value)) {
+      throw new Error('project not found');
+    }
   } catch {
-    dataError.value = '无法读取工单数据，请确认 Gate 后端正在运行。';
+    dataError.value = '无法读取该项目的工单数据，请确认项目仍存在且 Gate 后端正在运行。';
   } finally {
     loading.value = false;
   }
@@ -291,6 +433,8 @@ async function create() {
       ticketNo: no,
       title: newTitle.value.trim(),
       ...(newAgent.value ? { agentConfigId: newAgent.value } : {}),
+      ...(newPriority.value ? { priority: newPriority.value } : {}),
+      projectId: projectId.value,
     });
     await loadTickets();
     view.value = 'board';
@@ -308,15 +452,54 @@ onMounted(() => {
   void loadTickets();
 });
 onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown));
+
+watch(projectId, () => {
+  closeDrawer();
+  void loadTickets();
+});
+
+watch(
+  () => route.query.compose,
+  (value) => {
+    if (value !== '1') return;
+    openCreate();
+    void router.replace({
+      name: 'kanban',
+      params: { projectId: projectId.value },
+      query: { ...route.query, compose: undefined },
+    });
+  },
+  { immediate: true },
+);
 </script>
 
 <template>
   <div class="kanban-page">
     <header class="board-header">
+      <div class="board-header__context">
+        <div>
+          <p class="section-label">项目工单看板</p>
+          <h2>{{ currentProject?.name ?? projectId }}</h2>
+        </div>
+        <GButton variant="ghost" size="sm" @click="router.push({ name: 'home' })">
+          <GIcon name="chevron-left" :size="14" />
+          切换项目
+        </GButton>
+      </div>
+
       <div class="summary-strip" aria-label="工单摘要">
-        <span class="summary-item"><strong>{{ activeCount }}</strong> 活跃工单</span>
-        <span class="summary-item"><strong>{{ reviewCount }}</strong> 审核流转</span>
-        <span class="summary-item"><strong>{{ readyCount }}</strong> 待发布</span>
+        <button type="button" class="summary-item" :class="{ active: focusFilter === 'active' }" @click="setFocusFilter('active')">
+          <strong>{{ activeCount }}</strong> 活跃工单
+        </button>
+        <button type="button" class="summary-item" :class="{ active: focusFilter === 'review' }" @click="setFocusFilter('review')">
+          <strong>{{ reviewCount }}</strong> 审核流转
+        </button>
+        <button type="button" class="summary-item" :class="{ active: focusFilter === 'attention' }" @click="setFocusFilter('attention')">
+          <strong>{{ attentionCount }}</strong> 需人工处理
+        </button>
+        <button type="button" class="summary-item" :class="{ active: focusFilter === 'ready' }" @click="setFocusFilter('ready')">
+          <strong>{{ readyCount }}</strong> 待发布
+        </button>
         <span class="summary-strip__total">共 {{ tickets.length }} 个</span>
       </div>
 
@@ -353,9 +536,25 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
         <GInput
           v-model="query"
           class="board-search"
-          aria-label="搜索工单、项目、分支或标签"
-          placeholder="搜索工单、项目或标签"
+          aria-label="搜索当前项目的工单、分支或标签"
+          placeholder="搜索工单、分支或标签"
         />
+        <details class="filter-more">
+          <summary><GIcon name="settings" :size="13" />更多筛选</summary>
+          <div class="filter-more__body">
+            <GField class="filter-more__field" label="优先级" for-id="kanban-priority-filter">
+              <GSelect id="kanban-priority-filter" v-model="priorityFilter" :options="filterPriorityOptions" />
+            </GField>
+            <button
+              v-if="focusFilter !== 'all' || priorityFilter !== 'all' || query"
+              type="button"
+              class="filter-clear"
+              @click="clearFilters"
+            >
+              清除筛选
+            </button>
+          </div>
+        </details>
         <GButton variant="primary" @click="openCreate">
           <GIcon name="plus" :size="15" />
           新建工单
@@ -385,11 +584,14 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
         <section
           v-for="column in KANBAN_COLUMNS"
           :key="column.stage"
-          class="kanban-column"
-          :class="{
-            'kanban-column--collapsed': column.collapsed,
-            'kanban-column--drop-target': activeDropStage === column.stage,
-          }"
+          :class="[
+            'kanban-column',
+            'kanban-column--' + toneFor(column.stage),
+            {
+              'kanban-column--collapsed': column.collapsed,
+              'kanban-column--drop-target': activeDropStage === column.stage,
+            },
+          ]"
           role="listitem"
           :aria-label="column.label + '，' + columnCount(column.stage) + ' 个工单'"
           @dragenter.prevent="onDragEnter(column.stage)"
@@ -425,7 +627,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
               >
                 <span class="kanban-card__topline">
                   <span class="mono kanban-card__no">{{ ticket.no }}</span>
-                  <GBadge :tone="toneFor(ticket.stage)">{{ TICKET_STAGE_LABELS[ticket.stage] }}</GBadge>
+                  <GBadge v-if="ticket.stage === 'REJECTED'" tone="danger">已驳回</GBadge>
                   <span
                     v-if="ticket.priority"
                     class="priority"
@@ -462,6 +664,16 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
                   </span>
                 </span>
               </button>
+              <button
+                v-if="nextStepByStage[ticket.stage]"
+                type="button"
+                class="kanban-card__advance"
+                :aria-label="'推进 ' + ticket.no + '：' + nextStepByStage[ticket.stage].label"
+                @click.stop="moveTicket(ticket.no, nextStepByStage[ticket.stage].target)"
+              >
+                <GIcon name="spark" :size="12" />
+                <span>{{ nextStepByStage[ticket.stage].label }}</span>
+              </button>
             </article>
           </div>
 
@@ -483,8 +695,8 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
       <div class="records-panel__head">
         <div>
           <p class="section-label">流转记录</p>
-          <h2>全部工单</h2>
-          <p>记录视图用于回溯和定位，点击任意一行打开详情抽屉。</p>
+          <h2>当前项目全部工单</h2>
+          <p>记录视图仅展示「{{ currentProject?.name ?? projectId }}」下的工单。</p>
         </div>
         <span class="records-panel__count">{{ records.length }} 条</span>
       </div>
@@ -497,7 +709,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
               <th>项目与分支</th>
               <th>阶段</th>
               <th>审核</th>
-              <th>Token</th>
+              <th>执行令牌</th>
               <th>更新时间</th>
               <th><span class="sr-only">操作</span></th>
             </tr>
@@ -536,20 +748,41 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
     </section>
 
     <GModal :show="showCreate" title="新建工单" width="460px" @close="closeCreate">
-      <div class="form">
-        <label class="field"><span>工单号</span><GInput v-model="newNo" /></label>
-        <label class="field"><span>标题</span><GInput v-model="newTitle" placeholder="例如：修复审核台锚定" /></label>
-        <label class="field">
-          <span>Agent 配置</span>
-          <GSelect
-            v-model="newAgent"
-            :options="[
-              { label: 'Claude Sonnet', value: 'claude-sonnet-default' },
-              { label: 'OpenCode Default', value: 'opencode-default' },
-            ]"
-            placeholder="不使用 agent（人工）"
-          />
-        </label>
+      <div class="compose">
+        <div class="compose__intro">
+          <span class="compose__mark"><GIcon name="spark" :size="16" /></span>
+          <div>
+            <strong>先写下要推进的事</strong>
+            <p>工单号会自动生成。需要时再补充执行上下文。</p>
+          </div>
+        </div>
+        <GField label="标题" for-id="compose-title" required>
+          <GInput id="compose-title" v-model="newTitle" data-compose-title name="ticket-title" autocomplete="off" placeholder="例如：修复审核台锚定" required />
+        </GField>
+        <details class="compose-advanced">
+          <summary>补充执行上下文</summary>
+          <div class="compose-advanced__body">
+            <GField label="工单号" for-id="compose-no" hint="留空时按项目当前序列自动生成。">
+              <GInput id="compose-no" v-model="newNo" name="ticket-no" autocomplete="off" placeholder="例如 T-104" />
+            </GField>
+            <GField label="智能体配置" for-id="compose-agent">
+              <GSelect
+                id="compose-agent"
+                v-model="newAgent"
+                :options="agentOptions"
+                placeholder="不使用智能体"
+              />
+            </GField>
+            <div class="form-grid form-grid--two">
+              <GField label="所属项目">
+                <div class="field-readonly"><GIcon name="folder" :size="13" />{{ currentProject?.name ?? projectId }}</div>
+              </GField>
+              <GField label="优先级" for-id="compose-priority">
+                <GSelect id="compose-priority" v-model="newPriority" :options="priorityOptions" placeholder="未设置" />
+              </GField>
+            </div>
+          </div>
+        </details>
         <p v-if="createError" class="field-error" role="alert">{{ createError }}</p>
       </div>
       <template #footer>
@@ -557,6 +790,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
         <GButton variant="primary" @click="create">创建</GButton>
       </template>
     </GModal>
+
   </div>
 
   <Teleport to="body">
@@ -567,26 +801,49 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
           class="ticket-drawer"
           role="dialog"
           aria-modal="true"
-          aria-labelledby="ticket-drawer-title"
+          :aria-labelledby="drawerEditing ? 'ticket-drawer-edit-title' : 'ticket-drawer-title'"
           tabindex="-1"
         >
           <header class="ticket-drawer__head">
             <div>
               <p class="section-label">工单详情</p>
               <span class="mono ticket-drawer__no">{{ drawerTicket.no }}</span>
+              <span v-if="drawerEditing" id="ticket-drawer-edit-title" class="sr-only">编辑工单 {{ drawerTicket.no }}</span>
             </div>
-            <button data-drawer-autofocus type="button" class="icon-button" aria-label="关闭详情抽屉" @click="closeDrawer">
-              <GIcon name="x" :size="17" />
-            </button>
+            <div class="ticket-drawer__head-actions">
+              <span v-if="drawerEditing" class="ticket-drawer__editing-state">编辑中</span>
+              <GButton v-else variant="ghost" size="sm" @click="openDrawerEdit">
+                <GIcon name="edit" :size="13" />
+                编辑
+              </GButton>
+              <button
+                data-drawer-autofocus
+                type="button"
+                class="icon-button"
+                aria-label="关闭详情抽屉"
+                :disabled="savingEdit"
+                @click="closeDrawer"
+              >
+                <GIcon name="x" :size="17" />
+              </button>
+            </div>
           </header>
 
-          <div class="ticket-drawer__body">
+          <form class="ticket-drawer__body" @submit.prevent="saveDrawerEdit">
             <div class="ticket-drawer__title-row">
-              <h2 id="ticket-drawer-title">{{ drawerTicket.title }}</h2>
+              <GInput
+                v-if="drawerEditing"
+                v-model="editTitle"
+                data-drawer-edit-title
+                class="drawer-edit-title"
+                aria-label="工单标题"
+                placeholder="输入工单标题"
+              />
+              <h2 v-else id="ticket-drawer-title">{{ drawerTicket.title }}</h2>
               <GBadge :tone="toneFor(drawerTicket.stage)">{{ TICKET_STAGE_LABELS[drawerTicket.stage] }}</GBadge>
             </div>
 
-            <div class="ticket-drawer__submeta">
+            <div v-if="!drawerEditing" class="ticket-drawer__submeta">
               <span v-if="drawerTicket.project">
                 <GIcon name="folder" :size="13" />
                 {{ drawerTicket.project }}
@@ -600,7 +857,56 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
               </span>
             </div>
 
-            <section v-if="drawerNextStep" class="drawer-next-step">
+            <div v-else class="drawer-edit-form">
+              <GField label="需求描述" for-id="drawer-description" hint="描述范围、验收标准和不希望被改动的部分。">
+                <GInput
+                  id="drawer-description"
+                  v-model="editDescription"
+                  type="textarea"
+                  :rows="4"
+                  aria-label="需求描述"
+                  placeholder="描述要完成什么、范围和验收标准"
+                />
+              </GField>
+              <GField label="备注" for-id="drawer-note" hint="补充处理人需要知道的上下文。">
+                <GInput
+                  id="drawer-note"
+                  v-model="editNote"
+                  type="textarea"
+                  :rows="3"
+                  aria-label="工单备注"
+                  placeholder="补充处理人需要知道的上下文"
+                />
+              </GField>
+              <div class="drawer-edit-grid">
+                <GField label="标签" for-id="drawer-labels">
+                  <GInput id="drawer-labels" v-model="editLabels" name="ticket-labels" autocomplete="off" aria-label="工单标签" placeholder="逗号或换行分隔" />
+                </GField>
+                <GField label="优先级" for-id="drawer-priority">
+                  <GSelect id="drawer-priority" v-model="editPriority" :options="priorityOptions" placeholder="未设置" aria-label="工单优先级" />
+                </GField>
+              </div>
+              <small class="drawer-edit-hint">标签会自动去重；清空输入即可移除全部标签。</small>
+              <p v-if="editError" class="drawer-edit-error" role="alert">{{ editError }}</p>
+            </div>
+
+            <section v-if="!drawerEditing" class="drawer-section drawer-content-section">
+              <div class="drawer-section__head"><h3>需求与备注</h3></div>
+              <div class="drawer-copy-grid">
+                <article class="drawer-copy-block">
+                  <span>需求描述</span>
+                  <p v-if="drawerTicket.description?.trim()" class="drawer-copy-block__text">{{ drawerTicket.description }}</p>
+                  <p v-else class="drawer-copy-block__text drawer-muted">暂无需求描述</p>
+                </article>
+                <article class="drawer-copy-block">
+                  <span>备注</span>
+                  <p v-if="drawerTicket.note?.trim()" class="drawer-copy-block__text">{{ drawerTicket.note }}</p>
+                  <p v-else class="drawer-copy-block__text drawer-muted">暂无备注</p>
+                </article>
+              </div>
+            </section>
+
+            <section v-if="drawerNextStep && !drawerEditing" class="drawer-next-step">
               <div>
                 <p class="section-label">建议下一步</p>
                 <h3>{{ drawerNextStep.label }}</h3>
@@ -625,41 +931,6 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
               />
             </section>
 
-            <dl class="drawer-facts">
-              <div>
-                <dt>项目</dt>
-                <dd>{{ drawerTicket.project || '--' }}</dd>
-              </div>
-              <div>
-                <dt>执行分支</dt>
-                <dd class="mono">{{ drawerTicket.branch || '--' }}</dd>
-              </div>
-              <div>
-                <dt>目标引用</dt>
-                <dd class="mono">{{ drawerTicket.targetRef || '--' }}</dd>
-              </div>
-              <div>
-                <dt>审核轮次</dt>
-                <dd>R{{ drawerTicket.reviewRound ?? 0 }}</dd>
-              </div>
-              <div>
-                <dt>累计 Token</dt>
-                <dd class="mono">{{ formatToken(drawerTicket.execTokenTotal) }}</dd>
-              </div>
-              <div>
-                <dt>Token 来源</dt>
-                <dd>{{ drawerTicket.execTokenSource || '--' }}</dd>
-              </div>
-              <div>
-                <dt>Tree hash</dt>
-                <dd class="mono">{{ drawerTicket.treeHash || '--' }}</dd>
-              </div>
-              <div>
-                <dt>Base commit</dt>
-                <dd class="mono">{{ drawerTicket.baseCommit || '--' }}</dd>
-              </div>
-            </dl>
-
             <section class="drawer-section drawer-section--split">
               <div>
                 <div class="drawer-section__head"><h3>执行者</h3></div>
@@ -667,7 +938,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
                   <GAvatar :name="agentName(drawerTicket)" size="md" :tone="drawerTicket.agentConfigId ? 'accent' : 'neutral'" />
                   <div>
                     <strong>{{ agentName(drawerTicket) }}</strong>
-                    <small class="mono">{{ drawerTicket.agentConfigId || 'manual' }}</small>
+                    <small class="mono">{{ drawerTicket.agentConfigId || '手动选择' }}</small>
                   </div>
                 </div>
               </div>
@@ -687,28 +958,35 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
                 </div>
                 <div>
                   <span>标签</span>
-                  <div v-if="drawerTicket.labels?.length" class="drawer-labels">
-                    <b v-for="label in drawerTicket.labels" :key="label">{{ label }}</b>
+                  <div v-if="!drawerEditing && drawerTicket.labels?.length" class="drawer-labels">
+                    <span v-for="label in drawerTicket.labels" :key="label">{{ label }}</span>
                   </div>
-                  <p v-else class="drawer-muted">暂无标签</p>
+                  <p v-else-if="!drawerEditing" class="drawer-muted">暂无标签</p>
+                  <p v-else class="drawer-muted">标签已在上方编辑</p>
                 </div>
               </div>
             </section>
-          </div>
+          </form>
 
-          <footer class="ticket-drawer__foot">
-            <GButton variant="secondary" @click="goTo('ticket-detail')">
-              <GIcon name="external" :size="14" />
-              详情页
-            </GButton>
-            <GButton variant="ghost" @click="goTo('session')">
-              <GIcon name="chat" :size="14" />
-              会话
-            </GButton>
-            <GButton v-if="drawerCanReview" variant="success" @click="goTo('review')">
-              <GIcon name="shield" :size="14" />
-              审核
-            </GButton>
+          <footer class="ticket-drawer__foot" :class="{ 'ticket-drawer__foot--editing': drawerEditing }">
+            <template v-if="drawerEditing">
+              <GButton variant="ghost" :disabled="savingEdit" @click="cancelDrawerEdit">取消编辑</GButton>
+              <GButton variant="primary" :loading="savingEdit" @click="saveDrawerEdit">保存修改</GButton>
+            </template>
+            <template v-else>
+              <GButton variant="secondary" @click="goTo('ticket-detail')">
+                <GIcon name="external" :size="14" />
+                详情页
+              </GButton>
+              <GButton variant="ghost" @click="goTo('session')">
+                <GIcon name="chat" :size="14" />
+                会话
+              </GButton>
+              <GButton v-if="drawerCanReview" variant="success" @click="goTo('review')">
+                <GIcon name="shield" :size="14" />
+                审核
+              </GButton>
+            </template>
           </footer>
         </aside>
       </div>
@@ -722,8 +1000,8 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
   min-width: 0;
   min-height: 0;
   flex-direction: column;
-  gap: 12px;
-  padding: 14px 0 0;
+  gap: 14px;
+  padding: 18px 0 0;
   overflow: hidden;
 }
 
@@ -733,8 +1011,48 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
   justify-content: space-between;
   gap: 24px;
   flex: none;
-  min-height: 40px;
+  min-height: 52px;
   margin-inline: 22px;
+}
+
+.board-header__context {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+}
+
+.board-header__context .section-label {
+  margin-bottom: 4px;
+}
+
+.board-header__context h2 {
+  max-width: 240px;
+  margin: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 18px;
+  font-weight: 780;
+  letter-spacing: -0.025em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.field-readonly {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 38px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  background: var(--panel-2);
+  font-size: 12px;
+}
+
+.field-readonly :deep(svg) {
+  color: var(--accent-hover);
 }
 
 .section-label {
@@ -766,13 +1084,64 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
   padding-block: 7px;
 }
 
+.filter-more {
+  position: relative;
+  flex: none;
+}
+.filter-more summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  background: var(--panel);
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  list-style: none;
+}
+.filter-more summary::-webkit-details-marker { display: none; }
+.filter-more summary:hover { border-color: var(--border-strong); background: var(--hover); }
+.filter-more[open] summary { border-color: var(--accent-border); color: var(--accent-hover); background: var(--accent-soft); }
+.filter-more__body {
+  position: absolute;
+  top: calc(100% + 7px);
+  right: 0;
+  z-index: 5;
+  display: grid;
+  grid-template-columns: minmax(150px, 1fr);
+  gap: 8px;
+  width: 300px;
+  padding: 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--panel);
+  box-shadow: var(--shadow-popover);
+}
+.filter-more__body :deep(.g-select) { min-height: 34px; font-size: 11px; }
+.filter-more__field :deep(.g-field__label) { color: var(--text-muted); font-size: 10px; }
+.filter-clear {
+  grid-column: 1 / -1;
+  justify-self: start;
+  padding: 0;
+  border: 0;
+  color: var(--accent-hover);
+  background: transparent;
+  font-size: 10px;
+  font-weight: 750;
+  cursor: pointer;
+}
+
 .view-toggle {
   display: inline-flex;
   gap: 2px;
   padding: 3px;
   border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--panel);
+  border-radius: var(--radius-md);
+  background: var(--panel-2);
 }
 
 .view-toggle button {
@@ -781,8 +1150,8 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
   gap: 5px;
   min-height: 30px;
   padding: 0 10px;
-  border: 0;
-  border-radius: 7px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
   color: var(--text-muted);
   background: transparent;
   font-size: 12px;
@@ -801,17 +1170,20 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
 }
 
 .view-toggle button.active {
-  color: var(--text);
+  border: 1px solid var(--accent-border);
+  color: var(--accent-hover);
   background: var(--panel-2);
-  box-shadow: 0 1px 2px rgba(23, 37, 61, 0.08);
+  box-shadow: var(--shadow-panel);
 }
 
 .summary-strip {
   display: flex;
   align-items: center;
-  gap: 17px;
+  gap: 0;
   flex-wrap: wrap;
   flex: none;
+  min-height: 38px;
+  border-left: 2px solid var(--accent);
   color: var(--text-muted);
   font-size: 12px;
 }
@@ -819,19 +1191,36 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
 .summary-item {
   display: inline-flex;
   align-items: baseline;
-  gap: 5px;
+  gap: 7px;
+  min-height: 30px;
+  padding: 0 14px;
+  border-right: 1px solid var(--border);
+}
+.summary-item {
+  border-top: 0;
+  border-bottom: 0;
+  color: var(--text-muted);
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: color 0.15s ease, background-color 0.15s ease;
+}
+.summary-item:hover,
+.summary-item.active {
+  color: var(--accent-hover);
+  background: var(--accent-soft);
 }
 
 .summary-item strong {
   color: var(--text);
   font-family: var(--font-mono);
-  font-size: 14px;
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
 }
 
 .summary-strip__total {
-  margin-left: 2px;
-  padding-left: 12px;
-  border-left: 1px solid var(--border);
+  padding: 0 14px;
   color: var(--text-faint);
   font-family: var(--font-mono);
   font-size: 11px;
@@ -840,7 +1229,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
 .activity-message {
   margin: -3px 22px 0;
   padding: 9px 12px;
-  border: 1px solid rgba(9, 105, 218, 0.24);
+  border: 1px solid var(--accent-border);
   border-radius: var(--radius-sm);
   color: var(--accent-hover);
   background: var(--accent-soft);
@@ -883,17 +1272,25 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
 }
 
 .kanban-loading span {
+  position: relative;
   min-height: 220px;
+  overflow: hidden;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  background: linear-gradient(100deg, var(--panel-2) 35%, var(--hover) 50%, var(--panel-2) 65%);
-  background-size: 240% 100%;
-  animation: kanban-loading 1.3s ease-in-out infinite;
+  background: var(--skeleton-base);
+}
+
+.kanban-loading span::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, var(--skeleton-shine), transparent);
+  animation: kanban-loading 1.4s ease-in-out infinite;
 }
 
 @keyframes kanban-loading {
-  from { background-position: 100% 0; }
-  to { background-position: -100% 0; }
+  100% { transform: translateX(100%); }
 }
 
 .board-surface {
@@ -952,7 +1349,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
   width: 100%;
   height: 100%;
   min-height: 0;
-  padding: 0 12px 14px;
+  padding: 0 18px 16px;
   overflow-x: auto;
   overflow-y: hidden;
   overscroll-behavior-x: contain;
@@ -970,6 +1367,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--panel-2);
+  box-shadow: var(--shadow-panel);
   transition: border-color 0.16s ease, background-color 0.16s ease, box-shadow 0.16s ease;
 }
 
@@ -980,7 +1378,27 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
 .kanban-column--drop-target {
   border-color: var(--accent);
   background: var(--accent-soft);
-  box-shadow: 0 0 0 3px rgba(9, 105, 218, 0.13);
+  box-shadow: 0 0 0 3px var(--accent-focus-ring), var(--shadow-panel);
+}
+
+.kanban-column--neutral .kanban-column__head {
+  box-shadow: inset 0 2px 0 var(--border-strong);
+}
+
+.kanban-column--accent .kanban-column__head {
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+
+.kanban-column--success .kanban-column__head {
+  box-shadow: inset 0 2px 0 var(--success);
+}
+
+.kanban-column--warning .kanban-column__head {
+  box-shadow: inset 0 2px 0 var(--warning);
+}
+
+.kanban-column--danger .kanban-column__head {
+  box-shadow: inset 0 2px 0 var(--danger);
 }
 
 .kanban-column__head {
@@ -1050,23 +1468,24 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--panel);
-  box-shadow: 0 2px 7px rgba(31, 35, 40, 0.05);
+  box-shadow: var(--shadow-panel);
   transition: border-color 0.16s ease, box-shadow 0.16s ease, opacity 0.16s ease, transform 0.16s ease;
 }
 
 .kanban-card:hover {
   border-color: var(--border-strong);
-  box-shadow: 0 7px 15px rgba(31, 35, 40, 0.09);
+  box-shadow: var(--shadow-popover);
 }
 
 .kanban-card--rejected {
-  border-color: rgba(154, 56, 48, 0.4);
+  border-color: color-mix(in srgb, var(--danger) 40%, transparent);
   box-shadow: inset 3px 0 0 var(--danger);
 }
 
 .kanban-card--dragging {
   opacity: 0.43;
-  transform: rotate(1deg);
+  transform: rotate(1deg) scale(0.99);
+  box-shadow: var(--shadow-popover);
 }
 
 .kanban-card__button {
@@ -1085,10 +1504,33 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
   background: var(--hover);
 }
 
+.kanban-card__advance {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 7px;
+  width: calc(100% - 24px);
+  min-height: 27px;
+  margin: 0 12px 10px;
+  padding: 0 8px;
+  border: 1px solid var(--accent-border);
+  border-radius: 6px;
+  color: var(--accent-hover);
+  background: var(--accent-soft);
+  font-size: 10px;
+  font-weight: 750;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease, transform 0.12s ease;
+}
+.kanban-card__advance:hover { border-color: var(--accent); background: var(--hover); }
+.kanban-card__advance:active { transform: translateY(1px); }
+
 .kanban-card__button:focus-visible,
 .record-ticket:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
+  box-shadow: inset 0 0 0 1px var(--accent-border);
 }
 
 .kanban-card__topline,
@@ -1176,7 +1618,8 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
 .kanban-card__footer {
   justify-content: space-between;
   gap: 8px;
-  padding-top: 2px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
   color: var(--text-faint);
   font-size: 10px;
 }
@@ -1347,6 +1790,50 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
   gap: 15px;
 }
 
+.compose {
+  display: grid;
+  gap: 16px;
+}
+.compose__intro {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 12px;
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  background: var(--accent-soft);
+}
+.compose__mark {
+  display: grid;
+  width: 31px;
+  height: 31px;
+  flex: none;
+  place-items: center;
+  border-radius: var(--radius-sm);
+  color: var(--accent-hover);
+  background: var(--panel);
+}
+.compose__intro > div { min-width: 0; }
+.compose__intro strong { display: block; color: var(--text); font-size: 12px; }
+.compose__intro p { margin: 3px 0 0; color: var(--text-muted); font-size: 11px; }
+.field--primary :deep(.g-input) { min-height: 48px; font-size: 14px; }
+.compose-advanced { border-top: 1px solid var(--border); }
+.compose-advanced summary {
+  padding: 12px 0 0;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 750;
+  cursor: pointer;
+  list-style: none;
+}
+.compose-advanced summary::-webkit-details-marker { display: none; }
+.compose-advanced summary::after { float: right; color: var(--text-faint); content: '+'; font-family: var(--font-mono); font-size: 14px; }
+.compose-advanced[open] summary::after { content: '-'; }
+.compose-advanced__body { display: grid; gap: 15px; padding-top: 13px; }
+.form-grid { display: grid; gap: 14px; }
+.form-grid--two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
 .field {
   display: grid;
   gap: 7px;
@@ -1398,7 +1885,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
   overflow: hidden;
   border-left: 1px solid var(--overlay-border);
   background: var(--panel);
-  box-shadow: -18px 0 45px rgba(16, 38, 61, 0.17);
+  box-shadow: var(--shadow-popover);
 }
 
 .ticket-drawer__head {
@@ -1414,6 +1901,27 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
 .ticket-drawer__no {
   color: var(--accent-hover);
   font-size: 12px;
+  font-weight: 800;
+}
+
+.ticket-drawer__head-actions {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.ticket-drawer__head-actions :deep(.g-btn) {
+  min-height: 30px;
+  padding-inline: 9px;
+}
+
+.ticket-drawer__editing-state {
+  padding: 5px 8px;
+  border: 1px solid var(--accent-border);
+  border-radius: 6px;
+  color: var(--accent-hover);
+  background: var(--accent-soft);
+  font-size: 10px;
   font-weight: 800;
 }
 
@@ -1473,6 +1981,15 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
   margin-top: 3px;
 }
 
+.drawer-edit-title {
+  min-width: 0;
+  min-height: 42px;
+  padding: 8px 10px;
+  color: var(--text);
+  font-size: 18px;
+  font-weight: 760;
+}
+
 .ticket-drawer__submeta {
   display: flex;
   align-items: center;
@@ -1489,12 +2006,93 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
   gap: 4px;
 }
 
+.drawer-copy-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.drawer-copy-block {
+  display: grid;
+  min-width: 0;
+  gap: 7px;
+  padding: 11px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+}
+
+.drawer-copy-block > span {
+  color: var(--accent-hover);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.drawer-copy-block__text {
+  min-width: 0;
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.drawer-edit-form {
+  display: grid;
+  gap: 13px;
+  margin-top: 17px;
+  padding: 14px;
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius-md);
+  background: var(--accent-soft);
+}
+
+.drawer-edit-field {
+  display: grid;
+  gap: 7px;
+}
+
+.drawer-edit-field > span {
+  color: var(--accent-hover);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.drawer-edit-field :deep(.g-input),
+.drawer-edit-field :deep(.g-select) {
+  background: var(--panel);
+}
+
+.drawer-edit-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(132px, 0.85fr);
+  gap: 10px;
+}
+
+.drawer-edit-hint {
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.drawer-edit-error {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--danger-soft);
+  border-radius: 7px;
+  color: var(--danger);
+  background: var(--danger-soft);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
 .drawer-next-step {
   display: grid;
   gap: 13px;
   margin-top: 20px;
   padding: 15px;
-  border: 1px solid rgba(9, 105, 218, 0.26);
+  border: 1px solid var(--accent-border);
   border-radius: var(--radius-md);
   background: var(--accent-soft);
 }
@@ -1543,46 +2141,6 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
 .drawer-section__head > span {
   color: var(--text-faint);
   font-size: 10px;
-}
-
-.drawer-facts {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0;
-  margin: 21px 0 0;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  overflow: hidden;
-}
-
-.drawer-facts > div {
-  min-width: 0;
-  padding: 11px 13px;
-  background: var(--panel-2);
-}
-
-.drawer-facts > div:nth-child(odd) {
-  border-right: 1px solid var(--border);
-}
-
-.drawer-facts > div:nth-child(n + 3) {
-  border-top: 1px solid var(--border);
-}
-
-.drawer-facts dt {
-  color: var(--text-faint);
-  font-size: 10px;
-  font-weight: 750;
-}
-
-.drawer-facts dd {
-  margin: 4px 0 0;
-  overflow: hidden;
-  color: var(--text-secondary);
-  font-size: 11px;
-  font-weight: 650;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .drawer-section--split {
@@ -1650,16 +2208,22 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
 .drawer-labels {
   display: flex;
   flex-wrap: wrap;
-  gap: 5px;
+  gap: 6px;
 }
 
-.drawer-labels b {
-  padding: 3px 6px;
-  border-radius: 5px;
-  color: var(--ink-soft);
-  background: rgba(26, 54, 82, 0.08);
+.drawer-labels span {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  padding: 5px 9px;
+  border: 1px solid var(--accent-border);
+  border-radius: 999px;
+  color: var(--accent-hover);
+  background: var(--accent-soft);
   font-size: 10px;
-  font-weight: 700;
+  font-weight: 750;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
 }
 
 .ticket-drawer__foot {
@@ -1669,6 +2233,14 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
   padding: 14px 22px;
   border-top: 1px solid var(--border);
   background: var(--panel-2);
+}
+
+.ticket-drawer__foot--editing {
+  justify-content: stretch;
+}
+
+.ticket-drawer__foot--editing :deep(.g-btn) {
+  flex: 1;
 }
 
 .ticket-drawer-enter-active,
@@ -1725,6 +2297,9 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
   .ticket-drawer-leave-active .ticket-drawer {
     transition: none;
   }
+  .kanban-loading span::after {
+    animation: none;
+  }
 }
 
 @media (max-width: 1080px) {
@@ -1737,6 +2312,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
     justify-content: flex-start;
     width: 100%;
   }
+  .filter-more__body { left: 0; right: auto; }
 }
 
 @media (max-width: 700px) {
@@ -1751,7 +2327,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
 
   .board-actions {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr) auto auto;
     align-items: center;
   }
 
@@ -1762,10 +2338,17 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
   }
 
   .board-actions :deep(.g-btn) {
-    grid-column: 2;
+    grid-column: 3;
     grid-row: 1;
     width: auto;
   }
+
+  .filter-more { grid-column: 2; grid-row: 1; }
+  .filter-more summary { min-width: 36px; padding-inline: 8px; }
+  .filter-more summary :deep(svg) { flex: none; }
+  .filter-more summary { font-size: 0; }
+  .filter-more summary::after { content: '筛选'; font-size: 11px; }
+  .filter-more__body { top: calc(100% + 6px); width: min(300px, calc(100vw - 28px)); }
 
   .view-toggle {
     grid-column: 1;
@@ -1773,12 +2356,20 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
   }
 
   .summary-strip {
-    gap: 9px 14px;
+    width: 100%;
+    gap: 0;
+    padding-top: 9px;
+    border-top: 1px solid var(--border);
+    border-left: 0;
+  }
+
+  .summary-item {
+    padding-inline: 10px;
   }
 
   .summary-strip__total {
     width: auto;
-    margin-left: 0;
+    padding-inline: 10px;
   }
 
   .activity-message {
@@ -1806,7 +2397,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
     border-top: 1px solid var(--overlay-border);
     border-left: 0;
     border-radius: 16px 16px 0 0;
-    box-shadow: 0 -18px 45px rgba(16, 38, 61, 0.17);
+    box-shadow: var(--shadow-popover);
   }
 
   .drawer-layer {
@@ -1832,6 +2423,11 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
   .g-table {
     min-width: 820px;
   }
+  .summary-strip { overflow-x: auto; flex-wrap: nowrap; }
+  .summary-item { flex: none; }
+  .filter-more__body { grid-template-columns: 1fr; }
+  .filter-more__body .filter-clear { grid-column: auto; }
+  .form-grid--two { grid-template-columns: 1fr; }
 
   .ticket-drawer__head {
     padding-inline: 17px;
@@ -1851,19 +2447,16 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown)
     grid-column: 1 / -1;
   }
 
-  .drawer-facts {
+  .ticket-drawer__foot--editing :deep(.g-btn:last-child) {
+    grid-column: auto;
+  }
+
+  .drawer-edit-grid {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .drawer-facts > div,
-  .drawer-facts > div:nth-child(odd),
-  .drawer-facts > div:nth-child(n + 3) {
-    border-right: 0;
-    border-top: 1px solid var(--border);
-  }
-
-  .drawer-facts > div:first-child {
-    border-top: 0;
+  .drawer-copy-grid {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .drawer-section--split {
