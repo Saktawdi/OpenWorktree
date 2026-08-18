@@ -15,11 +15,11 @@
  *   - 发布进度 SSE: GET /api/tasks/{id}/events (S2)
  *   - 会话流式 SSE: GET /api/sessions/{sid}/events (S3b)
  */
-import { onBeforeUnmount, ref, type Ref } from 'vue';
+import { getCurrentInstance, onBeforeUnmount, ref, type Ref } from 'vue';
 
 export interface UseSSEOptions {
-  /** SSE 完整路径 (相对 origin, e.g. /api/tasks/abc/events). */
-  path: string;
+  /** SSE 完整路径 (相对 origin, e.g. /api/tasks/abc/events); 也接受响应式 Ref<string>. */
+  path: string | Ref<string>;
   /** 是否激活; false 时不连接. 默认 true. */
   immediate?: boolean;
   /** 最大重连次数 (默认 6 次, 第 6 次退避到 ~30s). */
@@ -104,7 +104,8 @@ export function useSSE(opts: UseSSEOptions): UseSSEReturn {
   function connect(): void {
     if (closed) return;
     const token = readToken();
-    const url = appendToken(opts.path, token);
+    const path = typeof opts.path === 'string' ? opts.path : opts.path.value;
+    const url = appendToken(path, token);
     setState('connecting');
 
     try {
@@ -189,14 +190,14 @@ export function useSSE(opts: UseSSEOptions): UseSSEReturn {
     connect();
   }
 
-  if (immediate) {
-    connect();
+  // 组件卸载时自动 close, 防 EventSource 泄漏 (前端文档 §5.2).
+  if (getCurrentInstance()) {
+    onBeforeUnmount(() => {
+      close();
+    });
   }
 
-  // 组件卸载时自动 close, 防 EventSource 泄漏 (前端文档 §5.2).
-  onBeforeUnmount(() => {
-    close();
-  });
+  if (immediate) connect();
 
   return { state, retryCount, lastError, close, reopen };
 }

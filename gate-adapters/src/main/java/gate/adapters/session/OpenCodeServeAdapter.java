@@ -100,7 +100,7 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                     spawnServe(port, request.clonePath());
                 }
                 waitHealthy(port);
-                String cliSessionId = createSession(port, request.clonePath());
+                String cliSessionId = createSession(port);
                 Session session = new Session(UUID.randomUUID().toString(), request.ticketNo(),
                         config.id(), AgentCli.OPENCODE, SessionStatus.ACTIVE, cliSessionId,
                         request.clonePath(), port, clock.now(), null, SessionUsage.EMPTY);
@@ -214,8 +214,11 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                 "opencode serve did not become healthy on port " + port);
     }
 
-    private String createSession(int port, String clonePath) {
-        String body = "{\"cwd\":\"" + escapeJson(clonePath == null ? "" : clonePath) + "\"}";
+    private String createSession(int port) {
+        // The serve process is started with the ticket clone as its working directory. Current
+        // OpenCode accepts only session metadata here; directory routing belongs to the server
+        // instance, not the session-create body.
+        String body = "{}";
         HttpResponse<String> resp = post("http://127.0.0.1:" + port + "/session", body);
         if (resp.statusCode() / 100 != 2) {
             throw new GateException(GateErrorCode.GATE_ERROR_IO,
@@ -238,8 +241,12 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
             if (port == null || session.cliSessionId() == null) {
                 throw new GateException(GateErrorCode.USAGE, "session has no opencode endpoint");
             }
+            AgentConfig config = agentConfigs.find(session.agentConfigId()).orElseThrow();
             tasks.update(progress(task, 10, "发送到 opencode"));
-            String body = "{\"message\":\"" + escapeJson(message) + "\"}";
+            // Omitting model is intentional: OpenCode resolves its provider and default model
+            // from the user's own config. An explicit provider/model override is only added when
+            // the profile selected one from the CLI-discovered catalog.
+            String body = messageBody(config, message);
             HttpResponse<String> resp = post("http://127.0.0.1:" + port + "/session/"
                     + session.cliSessionId() + "/message", body);
             tasks.update(progress(task, 70, "解析 opencode 响应"));
@@ -263,6 +270,33 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
             tasks.update(success(task, "{\"message_count\":" + sessions.findMessages(session.id()).size() + "}"));
         } catch (Throwable e) {
             tasks.update(fail(task, e));
+        }
+    }
+
+    private static String messageBody(AgentConfig config, String message) {
+        StringBuilder body = new StringBuilder("{\"parts\":[{\"type\":\"text\",\"text\":\"")
+                .append(escapeJson(message)).append("\"}]");
+        ModelRef model = ModelRef.parse(config.model());
+        if (model != null) {
+            body.append(",\"model\":{\"providerID\":\"")
+                    .append(escapeJson(model.providerId()))
+                    .append("\",\"modelID\":\"")
+                    .append(escapeJson(model.modelId()))
+                    .append("\"}");
+        }
+        return body.append('}').toString();
+    }
+
+    private record ModelRef(String providerId, String modelId) {
+        private static ModelRef parse(String value) {
+            if (value == null || value.isBlank()) {
+                return null;
+            }
+            int slash = value.indexOf('/');
+            if (slash <= 0 || slash >= value.length() - 1) {
+                return null;
+            }
+            return new ModelRef(value.substring(0, slash), value.substring(slash + 1));
         }
     }
 

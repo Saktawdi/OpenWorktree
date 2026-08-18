@@ -9,18 +9,19 @@ import java.nio.charset.StandardCharsets;
 import java.util.Map;
 
 /**
- * Serves the SPA static bundle from the classpath ({@code /web/**}) with history-mode fallback
+ * Serves the SPA static bundle from the classpath ({@code /static/**}) with history-mode fallback
  * (执行文档-后端-web §2.5).
  *
  * <p>Anything not under {@code /api/*} lands here. A request for an existing file is served with a
  * best-effort content type; a request that does not resolve to a file returns {@code index.html} so
  * the Vue router can handle the path client-side. Static resources are NOT token-checked (§3.4).
  *
- * <p>Path traversal is refused: any resolved resource path must stay under {@code /web}.
+ * <p>Path traversal is refused: any resolved resource path must stay under {@code /static}.
  */
 final class StaticHandler implements HttpHandler {
 
-    private static final String ROOT = "/web";
+    // The Vite build writes the production bundle to gate-web/src/main/resources/static.
+    private static final String ROOT = "/static";
     private static final Map<String, String> CONTENT_TYPES = Map.of(
             ".html", "text/html; charset=utf-8",
             ".js", "text/javascript; charset=utf-8",

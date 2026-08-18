@@ -17,6 +17,8 @@ import org.springframework.jdbc.core.RowMapper;
 /** JdbcTemplate-backed {@link AgentConfigRepository} over the {@code agent_config} table. */
 public final class JdbcAgentConfigRepository implements AgentConfigRepository {
 
+    private static final String CLI_DEFAULT = "cli-default";
+
     private final JdbcTemplate jdbc;
 
     public JdbcAgentConfigRepository(JdbcTemplate jdbc) {
@@ -27,8 +29,8 @@ public final class JdbcAgentConfigRepository implements AgentConfigRepository {
             rs.getString("id"),
             rs.getString("name"),
             AgentCli.valueOf(rs.getString("cli")),
-            rs.getString("provider_id"),
-            rs.getString("model"),
+            readOptional(rs.getString("provider_id")),
+            readOptional(rs.getString("model")),
             rs.getString("system_prompt"),
             parseStringList(rs.getString("extra_flags")),
             rs.getString("description"));
@@ -51,7 +53,8 @@ public final class JdbcAgentConfigRepository implements AgentConfigRepository {
                                         description, created_at, updated_at)
                 VALUES (?,?,?,?,?,?,?,?,?,?)
                 """,
-                config.id(), config.name(), config.cli().name(), config.providerId(), config.model(),
+                config.id(), config.name(), config.cli().name(), storeOptional(config.providerId()),
+                storeOptional(config.model()),
                 config.systemPrompt(), writeStringList(config.extraFlags()), config.description(),
                 now.toString(), now.toString());
     }
@@ -63,7 +66,8 @@ public final class JdbcAgentConfigRepository implements AgentConfigRepository {
                        system_prompt = ?, extra_flags = ?, description = ?, updated_at = ?
                 WHERE id = ?
                 """,
-                config.name(), config.cli().name(), config.providerId(), config.model(),
+                config.name(), config.cli().name(), storeOptional(config.providerId()),
+                storeOptional(config.model()),
                 config.systemPrompt(), writeStringList(config.extraFlags()), config.description(),
                 now.toString(), config.id());
     }
@@ -96,6 +100,14 @@ public final class JdbcAgentConfigRepository implements AgentConfigRepository {
     private static String writeStringList(List<String> values) {
         List<String> safe = values == null ? List.of() : values;
         return write(safe);
+    }
+
+    private static String readOptional(String value) {
+        return CLI_DEFAULT.equals(value) ? null : value;
+    }
+
+    private static String storeOptional(String value) {
+        return value == null || value.isBlank() ? CLI_DEFAULT : value;
     }
 
     private static String write(Object value) {

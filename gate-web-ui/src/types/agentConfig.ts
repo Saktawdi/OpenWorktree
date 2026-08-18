@@ -7,9 +7,10 @@ export interface AgentConfig {
   id: string;
   name: string;
   cli: AgentCli;
-  /** 关联 provider 表. */
-  providerId: string;
-  model: string;
+  /** API runtime 的可选关联；本机 CLI agent 通常为空。 */
+  providerId?: string | null;
+  /** 可选模型覆盖；为空时由 CLI 使用自身默认模型。 */
+  model?: string | null;
   /** 可空; 额外 system prompt. */
   systemPrompt?: string | null;
   /** JSON array of strings; 透传 CLI flag. */

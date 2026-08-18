@@ -2,9 +2,9 @@ import { defineConfig } from 'vite';
 import vue from '@vitejs/plugin-vue';
 import { fileURLToPath, URL } from 'node:url';
 
-// Dev proxy: /api → 真后端 127.0.0.1:4097; /api/**/events (SSE) → mock SSE server 127.0.0.1:4098.
-// Mock-first: 默认 dev 不起真后端, 用 MSW (browser) + mocks/sse-server.mjs (SSE) 兜底.
-//   - 切真联调: 启 gate-web (java -jar ...), 设 VITE_ENABLE_MSW=false 并可选 VITE_SSE_BACKEND_URL 指真后端 SSE.
+// Dev proxy: /api → 真后端 127.0.0.1:4097; /api/**/events (SSE) → SSE target.
+// Real-backend-first: MSW 默认关闭 (设 VITE_ENABLE_MSW=true 才启用浏览器侧 mock);
+// SSE 默认指向 mock SSE server 127.0.0.1:4098, 真后端联调时设 VITE_SSE_BACKEND_URL 指真后端.
 const backendTarget = process.env.VITE_BACKEND_URL ?? 'http://127.0.0.1:4097';
 const sseTarget = process.env.VITE_SSE_BACKEND_URL ?? 'http://127.0.0.1:4098';
 

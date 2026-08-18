@@ -10,9 +10,13 @@ import type { TicketStage } from './stage';
 export type ExecTokenSource = 'agent_cli' | 'manual' | 'unavailable';
 
 export interface Ticket {
-  /** ticket_no: 项目内唯一, 如 PROJ-12. */
+  /** ticket_no: 后端全局唯一编号, 如 PROJ-12；项目看板通过 projectId 隔离。 */
   no: string;
   title: string;
+  /** 需求描述：会随工单上下文提供给执行侧。 */
+  description?: string | null;
+  /** 工单备注：面向处理者的补充说明。 */
+  note?: string | null;
   /** stage: 见 src/types/stage.ts 状态机. */
   stage: TicketStage;
   /** target_ref: 目标分支 ref (如 refs/heads/main). */
@@ -34,7 +38,8 @@ export interface Ticket {
   createdAt: string;
   updatedAt: string;
   /** 以下为前端展示增强字段（原型阶段本地补充，后端未强制） */
-  project?: string;
+  projectId?: string | null;
+  project?: string | null;
   dependencies?: string[];
   labels?: string[];
   priority?: 'P0' | 'P1' | 'P2' | 'P3';
@@ -47,7 +52,20 @@ export interface CreateTicketRequest {
   /** ticket_no: 后端建工单时使用的唯一编号. */
   ticketNo: string;
   title: string;
-  description?: string;
+  description?: string | null;
+  note?: string | null;
+  labels?: string[];
   targetRef?: string;
   agentConfigId?: string;
+  priority?: Ticket['priority'];
+  projectId?: string;
 }
+
+export type TicketUpdateRequest = {
+  title?: string;
+  description?: string | null;
+  note?: string | null;
+  labels?: string[] | null;
+  priority?: Ticket['priority'] | null;
+  stage?: TicketStage;
+};

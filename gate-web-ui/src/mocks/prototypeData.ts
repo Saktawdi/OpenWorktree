@@ -3,7 +3,6 @@
  * 后续接入真实 API 后删除或替换为 store 拉取。
  */
 import type { Ticket } from '@/types/ticket';
-import type { TicketStage } from '@/types/stage';
 import type { AgentConfig } from '@/types/agentConfig';
 import type { Session } from '@/types/session';
 import type { SessionMessage } from '@/types/session-message';
@@ -280,14 +279,5 @@ export const mockMessages: Record<string, SessionMessage[]> = {
   ],
 };
 
-export const stageLabels: Record<TicketStage, string> = {
-  PENDING: '待开始',
-  IN_PROGRESS: '进行中',
-  PRESUBMITTED: '已预提审',
-  IN_REVIEW: '审核中',
-  REJECTED: '已驳回',
-  READY_TO_PUBLISH: '可发布',
-  NEEDS_HUMAN: '待人工',
-  DONE: '已完成',
-  CANCELLED: '已取消',
-};
+// 阶段标签已迁至 src/constants/stages.ts（真实数据展示共用），此处转发保持兼容。
+export { stageLabels } from '@/constants/stages';

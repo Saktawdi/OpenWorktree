@@ -16,6 +16,7 @@ import axios, {
 } from 'axios';
 import type { GateErrorResponse } from '@/types/errors';
 import { formatGateError } from '@/utils/errorCodeMap';
+import { useAuthStore } from '@/stores/authStore';
 
 export interface ClientHandlers {
   /** 401/403 触发时调用 (默认: 清 token + 跳登录). */
@@ -33,6 +34,15 @@ export function setRouterGetter(getter: () => { push: (path: string) => void }):
 
 let handlers: ClientHandlers = {
   onAuthError: () => {
+    try {
+      useAuthStore().logout();
+    } catch {
+      try {
+        localStorage.removeItem('gate_token');
+      } catch {
+        // 静默
+      }
+    }
     routerGetter?.().push('/login');
   },
   onBusinessError: (_code, message) => {

@@ -21,4 +21,35 @@ public interface TicketRepository {
     List<Ticket> findByStage(TicketStage stage);
 
     List<Ticket> findAll();
+
+    /** Returns only the tickets owned by one project (project-scoped board). */
+    default List<Ticket> findAllByProject(String projectId) {
+        return findAll().stream()
+                .filter(ticket -> projectId != null && projectId.equals(ticket.projectId()))
+                .toList();
+    }
+
+    /**
+     * Updates the editable (non-gate-controlled) ticket fields (V5 web console). A {@code null}
+     * priority explicitly clears it; {@code null} title keeps the stored title.
+     */
+    default void updateEditable(String ticketNo, String title, String priority, Instant now) {
+        throw new UnsupportedOperationException("editable ticket update is not supported");
+    }
+
+    /**
+     * Updates the editable work item content. The text values are nullable so callers can clear
+     * the requirement description or note; labels are replaced as a complete list.
+     *
+     * <p>The four-argument overload remains for adapters compiled against the V5 metadata shape.
+     */
+    default void updateEditable(String ticketNo, String title, String priority,
+                                String description, String note, List<String> labels, Instant now) {
+        updateEditable(ticketNo, title, priority, now);
+    }
+
+    /** Detaches every ticket from a project (project delete path, legacy compatibility). */
+    default void clearProject(String projectId, Instant now) {
+        throw new UnsupportedOperationException("project detach is not supported");
+    }
 }

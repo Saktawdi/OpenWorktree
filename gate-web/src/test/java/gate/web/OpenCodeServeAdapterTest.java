@@ -53,6 +53,7 @@ class OpenCodeServeAdapterTest {
     private JdbcGateTaskRepository tasks;
     private FileChannelTicketLockManager ticketLocks;
     private OpenCodeServeAdapter adapter;
+    private String lastMessageRequest;
 
     @BeforeEach
     void setUp() throws Exception {
@@ -71,7 +72,7 @@ class OpenCodeServeAdapterTest {
         ticketLocks = new FileChannelTicketLockManager(root.resolve("locks"));
 
         agentConfigs.insert(new AgentConfig("opencode-test", "OpenCode Test", AgentCli.OPENCODE,
-                "manual", "opencode-test", null, List.of(), "test"), now);
+                "manual", "opencode/test-model", null, List.of(), "test"), now);
         ticketRepository.insert(new gate.domain.ticket.Ticket("OPEN-1", "t", "refs/heads/main",
                 root.resolve("clone").toString(), null, null, null, null,
                 gate.domain.ticket.TicketStage.IN_PROGRESS, now, now));
@@ -117,6 +118,12 @@ class OpenCodeServeAdapterTest {
                 .filter(m -> m.role() == gate.domain.session.Role.ASSISTANT)
                 .findFirst().orElseThrow();
         assertEquals(10L, assistant.usage().totalTokens());
+        assertNotNull(lastMessageRequest);
+        assertTrue(lastMessageRequest.contains("\"parts\":[{\"type\":\"text\",\"text\":\"hi\"}]"),
+                lastMessageRequest);
+        assertTrue(lastMessageRequest.contains(
+                "\"model\":{\"providerID\":\"opencode\",\"modelID\":\"test-model\"}"),
+                lastMessageRequest);
     }
 
     private void waitForTask(String taskId) throws Exception {
@@ -149,6 +156,7 @@ class OpenCodeServeAdapterTest {
     }
 
     private void message(HttpExchange exchange) throws java.io.IOException {
+        lastMessageRequest = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
         byte[] body = ("{\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"hello opencode\"}]},"
                 + "\"usage\":{\"input_tokens\":7,\"output_tokens\":3,\"total_tokens\":10}}")
                 .getBytes(StandardCharsets.UTF_8);

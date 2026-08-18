@@ -246,8 +246,12 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
         argv.add("stream-json");
         argv.add("--output-format");
         argv.add("stream-json");
-        argv.add("--model");
-        argv.add(config.model());
+        // No model flag means Claude Code resolves its own provider/model configuration. The
+        // agent profile may still opt into an explicit model override when one is selected.
+        if (config.model() != null && !config.model().isBlank()) {
+            argv.add("--model");
+            argv.add(config.model());
+        }
         if (resumeSessionId != null && !resumeSessionId.isBlank()) {
             argv.add("--resume");
             argv.add(resumeSessionId);
@@ -278,7 +282,8 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
             String content = "# Gate 工单上下文\n\n"
                     + "- 工单号: " + request.ticketNo() + "\n"
                     + "- 目标分支: " + request.targetRef() + "\n"
-                    + "- AgentConfig: " + config.id() + " (" + config.model() + ")\n"
+                    + "- AgentConfig: " + config.id() + " ("
+                    + (config.model() == null ? "CLI 默认设置" : config.model()) + ")\n"
                     + "- 你无权 push 到权威库；预提审请调 presubmit_create MCP 工具\n"
                     + "- tree_hash 约定: 审核锚定不可变 tree，修改后需重新预提审\n";
             Files.writeString(file, content, StandardCharsets.UTF_8);

@@ -108,6 +108,12 @@ public final class JdbcGateTaskRepository implements TaskRegistry {
     }
 
     @Override
+    public long countByStatus(String status) {
+        Long count = jdbc.queryForObject("SELECT COUNT(*) FROM gate_task WHERE status = ?", Long.class, status);
+        return count == null ? 0 : count;
+    }
+
+    @Override
     public Stream<GateTaskEvent> stream(String id) {
         TaskChannel ch = channels.get(id);
         if (ch == null) {

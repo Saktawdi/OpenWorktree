@@ -16,6 +16,7 @@ import gate.adapters.hook.FileHookInstaller;
 import gate.adapters.lock.FileChannelLockManager;
 import gate.adapters.lock.FileChannelTicketLockManager;
 import gate.adapters.preflight.DefaultPreflightChecker;
+import gate.adapters.process.CliLocator;
 import gate.adapters.process.ProcessRunnerImpl;
 import gate.adapters.session.ClaudeHeadlessAdapter;
 import gate.adapters.session.DispatchAgentSessionPort;
@@ -24,6 +25,7 @@ import gate.adapters.session.PortAllocator;
 import gate.adapters.store.JdbcAgentConfigRepository;
 import gate.adapters.store.JdbcCredentialRepository;
 import gate.adapters.store.JdbcPresubmitRepository;
+import gate.adapters.store.JdbcProjectRepository;
 import gate.adapters.store.JdbcProviderRepository;
 import gate.adapters.store.JdbcGateTaskRepository;
 import gate.adapters.store.JdbcPublishIntentRepository;
@@ -66,6 +68,7 @@ import gate.ports.TicketRepository;
 import gate.ports.TopologyInitializer;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.time.Instant;
 import javax.sql.DataSource;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
@@ -107,6 +110,12 @@ public final class WebComponents {
     private final TicketLockManager ticketLockManager;
     private final Clock clock;
     private final Path envFile;
+    private final ProcessRunner processRunner;
+    private final GitCli git;
+    private final Instant startedAt;
+    private final gate.ports.ProjectRepository projectRepository;
+    private final ProviderModelFetcher modelFetcher;
+    private final RuntimeInfoService runtimeInfo;
 
     public WebComponents(GateConfig config, String gitExecutable, Path envFile) {
         this(config, gitExecutable, envFile, null);
@@ -120,9 +129,12 @@ public final class WebComponents {
         this.config = config;
         this.clock = new SystemClock();
         this.envFile = envFile;
+        this.startedAt = this.clock.now();
 
         ProcessRunner processRunner = new ProcessRunnerImpl(config.gateHome().resolve("proc"));
+        this.processRunner = processRunner;
         GitCli git = new GitCli(processRunner, gitExecutable, Duration.ofSeconds(120));
+        this.git = git;
 
         SnapshotCapture snapshotCapture = new GitCliSnapshot(git, config.indexDir());
         CommitPublisher commitPublisher = new GitCliPublisher(git, config.indexDir());
@@ -154,6 +166,7 @@ public final class WebComponents {
         this.publishIntentRepository = intents;
         this.blobStore = blobStore;
         this.providerRepository = new JdbcProviderRepository(jdbc);
+        seedCliDefaultProvider();
         this.credentials = new JdbcCredentialRepository(jdbc);
         JdbcGateTaskRepository gateTasks = new JdbcGateTaskRepository(jdbc, clock);
         gateTasks.failOrphaned(clock.now());
@@ -161,6 +174,8 @@ public final class WebComponents {
 
         JdbcAgentConfigRepository agentConfigs = new JdbcAgentConfigRepository(jdbc);
         this.agentConfigRepository = agentConfigs;
+        this.projectRepository = new JdbcProjectRepository(jdbc);
+        this.modelFetcher = new ProviderModelFetcher(envFile);
         JdbcSessionRepository sessionRepo = new JdbcSessionRepository(jdbc, blobStore);
         sessionRepo.abortOrphanedActive(clock.now());
         this.sessionRepository = sessionRepo;
@@ -175,6 +190,9 @@ public final class WebComponents {
                 blobStore, auditLog, lockManager, txRunner, clock);
         this.metricsService = new MetricsService(reviewResults, presubmits, tickets);
         this.taskRunner = new TaskRunner(taskRegistry, gateService, clock, ticketLockManager);
+        CliLocator cliLocator = new CliLocator(processRunner);
+        this.runtimeInfo = new RuntimeInfoService(config, gitExecutable, processRunner, cliLocator,
+                gateService, tickets, sessionRepository, taskRegistry, startedAt, this.clock::now);
         if (sessionPortOverride != null) {
             this.claudeAdapter = null;
             this.opencodeAdapter = null;
@@ -183,10 +201,14 @@ public final class WebComponents {
             int portMin = config.session() == null ? 49152 : config.session().portRangeMin();
             int portMax = config.session() == null ? 65535 : config.session().portRangeMax();
             PortAllocator portAllocator = new PortAllocator(portMin, portMax);
+            // Resolve to the real file (npm's claude.cmd / opencode.cmd on Windows) — ProcessBuilder
+            // cannot launch a bare .cmd name, which would break every session start on Windows.
+            String claudeCmd = cliLocator.locate("claude").map(Path::toString).orElse("claude");
+            String opencodeCmd = cliLocator.locate("opencode").map(Path::toString).orElse("opencode");
             this.claudeAdapter = new ClaudeHeadlessAdapter(processRunner, agentConfigs, sessionRepo,
-                    tickets, taskRegistry, ticketLockManager, clock, "claude");
+                    tickets, taskRegistry, ticketLockManager, clock, claudeCmd);
             this.opencodeAdapter = new OpenCodeServeAdapter(processRunner, agentConfigs, sessionRepo,
-                    tickets, taskRegistry, ticketLockManager, clock, portAllocator, "opencode");
+                    tickets, taskRegistry, ticketLockManager, clock, portAllocator, opencodeCmd);
             this.agentSessionPort = new DispatchAgentSessionPort(agentConfigs, sessionRepo,
                     claudeAdapter, opencodeAdapter);
         }
@@ -209,6 +231,15 @@ public final class WebComponents {
             providerRepository.upsert(new ProviderRepository.ProviderRow(
                     "manual", "manual (human reviewer)", "local://manual", "none", "manual", clock.now()),
                     clock.now());
+        }
+    }
+
+    /** Private FK target used when a local CLI profile leaves provider/model under CLI control. */
+    private void seedCliDefaultProvider() {
+        if (providerRepository.find("cli-default").isEmpty()) {
+            providerRepository.upsert(new ProviderRepository.ProviderRow(
+                    "cli-default", "CLI default (internal)", "local://cli-default", "none", "cli-runtime",
+                    clock.now()), clock.now());
         }
     }
 
@@ -290,6 +321,30 @@ public final class WebComponents {
 
     public TicketLockManager ticketLockManager() {
         return ticketLockManager;
+    }
+
+    public gate.ports.ProjectRepository projectRepository() {
+        return projectRepository;
+    }
+
+    public ProviderModelFetcher modelFetcher() {
+        return modelFetcher;
+    }
+
+    public RuntimeInfoService runtimeInfo() {
+        return runtimeInfo;
+    }
+
+    public GitCli git() {
+        return git;
+    }
+
+    public ProcessRunner processRunner() {
+        return processRunner;
+    }
+
+    public Instant startedAt() {
+        return startedAt;
     }
 
     /** Shuts down the async task executor and session adapters. Idempotent; called by {@link WebServer#close()}. */

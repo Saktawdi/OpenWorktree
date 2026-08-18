@@ -70,6 +70,22 @@ class AgentConfigApiTest {
         assertEquals(400, after.statusCode(), after.body());
     }
 
+    @Test
+    void cli_profile_can_leave_provider_and_model_to_the_cli() throws Exception {
+        HttpResponse<String> create = post("/api/agent-configs", """
+                {"id":"opencode-default","name":"OpenCode Default","cli":"OPENCODE",
+                 "system_prompt":null,"extra_flags":[],"description":"uses CLI config"}
+                """);
+        assertEquals(201, create.statusCode(), create.body());
+        assertTrue(create.body().contains("\"provider_id\":null"), create.body());
+        assertTrue(create.body().contains("\"model\":null"), create.body());
+
+        HttpResponse<String> detail = get("/api/agent-configs/opencode-default");
+        assertEquals(200, detail.statusCode(), detail.body());
+        assertTrue(detail.body().contains("\"provider_id\":null"), detail.body());
+        assertTrue(detail.body().contains("\"model\":null"), detail.body());
+    }
+
     private HttpResponse<String> get(String path) throws Exception {
         HttpRequest req = HttpRequest.newBuilder(URI.create(base + path))
                 .header("Authorization", "Bearer " + token)

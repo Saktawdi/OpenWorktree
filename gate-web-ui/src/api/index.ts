@@ -5,3 +5,5 @@ export * from './sessions';
 export * from './tasks';
 export * from './review';
 export * from './config';
+export * from './agentConfig';
+export * from './metrics';

@@ -8,8 +8,10 @@ import java.util.List;
  * @param id           e.g. "claude-sonnet-default"
  * @param name         display name
  * @param cli          OPENCODE | CLAUDE
- * @param providerId   provider table id
- * @param model        model name
+ * @param providerId   optional provider table id for a future API-backed runtime; local CLI
+ *                     sessions leave this unset so the CLI owns provider selection
+ * @param model        optional model override; local CLI sessions leave this unset to use the
+ *                     CLI's own default configuration
  * @param systemPrompt optional extra system prompt
  * @param extraFlags   passthrough CLI flags
  * @param description  optional description
@@ -34,12 +36,12 @@ public record AgentConfig(
         if (cli == null) {
             throw new IllegalArgumentException("cli must not be null");
         }
-        if (providerId == null || providerId.isBlank()) {
-            throw new IllegalArgumentException("providerId must not be blank");
-        }
-        if (model == null || model.isBlank()) {
-            throw new IllegalArgumentException("model must not be blank");
-        }
+        providerId = nullable(providerId);
+        model = nullable(model);
         extraFlags = extraFlags == null ? List.of() : List.copyOf(extraFlags);
+    }
+
+    private static String nullable(String value) {
+        return value == null || value.isBlank() ? null : value;
     }
 }

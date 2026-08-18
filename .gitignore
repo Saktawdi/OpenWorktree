@@ -25,3 +25,7 @@ doc/归档/
 # OS
 Thumbs.db
 .DS_Store
+
+# Local development launcher & runtime home (gate.toml / auth.git / gate.db)
+/start-local.bat
+/local-run/

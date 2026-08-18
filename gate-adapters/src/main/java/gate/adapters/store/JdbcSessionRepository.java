@@ -67,6 +67,12 @@ public final class JdbcSessionRepository implements SessionRepository {
     }
 
     @Override
+    public List<Session> findByStatus(SessionStatus status) {
+        return jdbc.query("SELECT * FROM agent_session WHERE status = ? ORDER BY started_at",
+                SESSION_MAPPER, status.name());
+    }
+
+    @Override
     public void insert(Session session) {
         SessionUsage u = session.cumulativeUsage() == null ? SessionUsage.EMPTY : session.cumulativeUsage();
         jdbc.update("""

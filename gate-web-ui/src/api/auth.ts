@@ -23,7 +23,7 @@ export interface AuthVerifyResponse {
 export async function verifyToken(token: string): Promise<AuthVerifyResponse> {
   const resp = await client.post<AuthVerifyResponse>(
     '/auth/verify',
-    {},
+    { token },
     {
       headers: { Authorization: `Bearer ${token}` },
     },

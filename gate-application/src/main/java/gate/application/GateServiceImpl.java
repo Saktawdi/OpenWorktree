@@ -38,6 +38,7 @@ import gate.ports.SnapshotCapture;
 import gate.ports.TicketRepository;
 import gate.domain.audit.AuditEvent;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -535,8 +536,12 @@ public final class GateServiceImpl implements GateService {
     public StatusResult status(StatusQuery query) {
         RepoRef auth = RepoRef.of(config.authRepo());
         String targetRef = config.primaryTargetRef();
-        String authTip = refToString(refObserver.tip(auth, targetRef));
-        long count = refObserver.countCommits(auth, targetRef);
+        // A gate whose auth repo directory does not exist yet (fresh deploy, before init/reconcile)
+        // must still serve a status snapshot: git cannot even start in a missing cwd, which would
+        // escalate to GATE_ERROR_IO and fail the whole projection. Degrade to empty auth facts.
+        boolean authPresent = Files.exists(config.authRepo());
+        String authTip = authPresent ? refToString(refObserver.tip(auth, targetRef)) : null;
+        long count = authPresent ? refObserver.countCommits(auth, targetRef) : 0L;
 
         List<Ticket> ticketList = query.ticketNo() == null
                 ? tickets.findAll()
@@ -555,7 +560,7 @@ public final class GateServiceImpl implements GateService {
                 if (intent.isPresent()) {
                     intentStatus = intent.get().status().name();
                     commitSha = intent.get().commitSha() == null ? null : intent.get().commitSha().hex();
-                    publishedInAuth = intent.get().commitSha() != null
+                    publishedInAuth = authPresent && intent.get().commitSha() != null
                             && refObserver.published(auth, intent.get().targetRef(), intent.get().commitSha());
                 }
             }

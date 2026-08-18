@@ -57,6 +57,11 @@ public interface TaskRegistry {
      */
     Stream<GateTaskEvent> stream(String id);
 
+    /** Count of tasks currently in one status ("RUNNING" for the runtime status endpoint, V5). */
+    default long countByStatus(String status) {
+        throw new UnsupportedOperationException("countByStatus is not supported");
+    }
+
     /** One immutable element of a task's event stream. */
     record GateTaskEvent(String taskId, String kind, String payloadJson, Instant at) {}
 }

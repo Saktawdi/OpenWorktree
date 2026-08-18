@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { client } from '@/api/client';
-import { createTicket, listTickets, normalizeTicket } from '@/api/tickets';
+import { createTicket, listTickets, normalizeTicket, updateTicket } from '@/api/tickets';
 
 describe('tickets API normalization', () => {
   beforeEach(() => vi.restoreAllMocks());
@@ -55,5 +55,70 @@ describe('tickets API normalization', () => {
       title: '新工单',
       agent_config_id: 'manual',
     });
+  });
+
+  it('uses the project-scoped endpoint for a project board', async () => {
+    const get = vi.spyOn(client, 'get').mockResolvedValue({
+      data: { tickets: [{ ticket_no: 'ALPHA-1', title: '项目工单', stage: 'IN_PROGRESS' }] },
+    } as never);
+
+    await listTickets('alpha');
+
+    expect(get).toHaveBeenCalledWith('/projects/alpha/tickets');
+  });
+
+  it('binds creation to the current project board', async () => {
+    const post = vi.spyOn(client, 'post').mockResolvedValue({
+      data: { ticket_no: 'ALPHA-2', title: '项目工单', stage: 'IN_PROGRESS', project_id: 'alpha' },
+    } as never);
+
+    await createTicket({ ticketNo: 'ALPHA-2', title: '项目工单', projectId: 'alpha' });
+
+    expect(post).toHaveBeenCalledWith('/projects/alpha/tickets', {
+      ticket_no: 'ALPHA-2',
+      title: '项目工单',
+      project_id: 'alpha',
+    });
+  });
+
+  it('uses the project scope when moving a ticket from the board', async () => {
+    const patch = vi.spyOn(client, 'patch').mockResolvedValue({
+      data: { ticket_no: 'ALPHA-1', title: '项目工单', stage: 'CANCELLED', project_id: 'alpha' },
+    } as never);
+
+    await updateTicket('ALPHA-1', { stage: 'CANCELLED' }, 'alpha');
+
+    expect(patch).toHaveBeenCalledWith('/projects/alpha/tickets/ALPHA-1', { stage: 'CANCELLED' });
+  });
+
+  it('round-trips editable ticket content through the project PATCH endpoint', async () => {
+    const patch = vi.spyOn(client, 'patch').mockResolvedValue({
+      data: {
+        ticket_no: 'ALPHA-1',
+        title: '更新后的标题',
+        description: '验收标准',
+        note: '和后端保持一致',
+        labels: ['前端', '体验'],
+        stage: 'IN_PROGRESS',
+        project_id: 'alpha',
+      },
+    } as never);
+
+    const updated = await updateTicket('ALPHA-1', {
+      title: '更新后的标题',
+      description: '验收标准',
+      note: '和后端保持一致',
+      labels: ['前端', '体验'],
+    }, 'alpha');
+
+    expect(patch).toHaveBeenCalledWith('/projects/alpha/tickets/ALPHA-1', {
+      title: '更新后的标题',
+      description: '验收标准',
+      note: '和后端保持一致',
+      labels: ['前端', '体验'],
+    });
+    expect(updated.description).toBe('验收标准');
+    expect(updated.note).toBe('和后端保持一致');
+    expect(updated.labels).toEqual(['前端', '体验']);
   });
 });
