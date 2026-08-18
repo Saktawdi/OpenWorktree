@@ -6,13 +6,10 @@ import {
   abortSession,
   getHistory,
   listTicketSessions,
-  normalizeSessionMessage,
-  sendMessage,
-  sessionEventsPath,
   startSession as apiStartSession,
 } from '@/api/sessions';
+import { postSessionStream } from '@/api/stream';
 import { listAgentConfigs } from '@/api/agentConfig';
-import { useSSE } from '@/composables/useSSE';
 import { renderMarkdown } from '@/utils/markdown';
 import { GAvatar, GBadge, GButton, GIcon, GSkeleton } from '@/components/ui';
 import { TICKET_STAGE_LABELS } from '@/types/stage';
@@ -57,16 +54,13 @@ const streamingThoughtSeconds = ref(0);
 let thoughtTimer: ReturnType<typeof setInterval> | null = null;
 const feedback = ref('');
 const agentConfigs = ref<AgentConfig[]>([]);
-const activeSessionPath = ref('');
 const textareaRef = ref<HTMLTextAreaElement | null>(null);
 const messagesContainerRef = ref<HTMLElement | null>(null);
 const copiedId = ref<string | null>(null);
 const openToolDetails = ref<Record<string, boolean>>({});
 const openThoughts = ref<Record<string, boolean>>({});
 
-// 简化的状态机与消息投影机制
-const activeTaskId = ref<string | null>(null);
-let pollTimer: ReturnType<typeof setInterval> | null = null;
+let currentAbortController: AbortController | null = null;
 
 const fallbackAgent: AgentConfig = {
   id: 'claude-sonnet-default',
@@ -78,26 +72,6 @@ const fallbackAgent: AgentConfig = {
   extraFlags: [],
   description: null,
 };
-
-const sessionSse = useSSE({
-  path: activeSessionPath,
-  immediate: false,
-  handlers: {
-    message: handleSessionEvent,
-    chunk: handleChunkEvent,
-    text_delta: handleChunkEvent,
-    reasoning_delta: handleReasoningEvent,
-    reasoning_chunk: handleReasoningEvent,
-    tool_call: handleToolCallEvent,
-    tool_start: handleToolCallEvent,
-    tool_chunk: handleToolChunkEvent,
-    tool_end: handleToolEndEvent,
-    usage: handleSessionEvent,
-    done: handleDoneEvent,
-    error: handleErrorEvent,
-    interrupted: handleInterruptedEvent,
-  },
-});
 
 function startThoughtTimer() {
   if (thoughtTimer) clearInterval(thoughtTimer);
@@ -111,19 +85,6 @@ function stopThoughtTimer() {
   if (thoughtTimer) {
     clearInterval(thoughtTimer);
     thoughtTimer = null;
-  }
-}
-
-function handleSessionEvent(data: string) {
-  try {
-    const parsed = JSON.parse(data) as { kind?: string; message?: unknown; session_id?: string };
-    if (parsed.message) {
-      const message = normalizeSessionMessage(parsed.message);
-      appendMessage(message);
-      scrollToBottom();
-    }
-  } catch {
-    // ignore
   }
 }
 
@@ -147,165 +108,6 @@ function getOrCreateStreamingAssistantMessage(sessionId: string): SessionMessage
   };
   list.push(newMsg);
   return newMsg;
-}
-
-function handleChunkEvent(data: string) {
-  try {
-    const parsed = JSON.parse(data) as { delta?: string; content?: string; text?: string };
-    const chunk = parsed.delta ?? parsed.content ?? parsed.text ?? '';
-    if (!chunk || !session.value) return;
-    isStreaming.value = true;
-    const msg = getOrCreateStreamingAssistantMessage(session.value.id);
-    msg.content += chunk;
-    scrollToBottom();
-  } catch {
-    // ignore
-  }
-}
-
-function handleReasoningEvent(data: string) {
-  try {
-    const parsed = JSON.parse(data) as { delta?: string; reasoning?: string };
-    const chunk = parsed.delta ?? parsed.reasoning ?? '';
-    if (!chunk || !session.value) return;
-    isStreaming.value = true;
-    const msg = getOrCreateStreamingAssistantMessage(session.value.id);
-    msg.reasoningContent = (msg.reasoningContent ?? '') + chunk;
-    if (!openThoughts.value[msg.id]) {
-      openThoughts.value[msg.id] = true;
-    }
-    scrollToBottom();
-  } catch {
-    // ignore
-  }
-}
-
-function handleToolCallEvent(data: string) {
-  try {
-    const parsed = JSON.parse(data) as { toolCall?: ToolCallExecution; name?: string; arguments?: unknown };
-    if (!session.value) return;
-    isStreaming.value = true;
-    const msg = getOrCreateStreamingAssistantMessage(session.value.id);
-    const tool = parsed.toolCall ?? {
-      id: `tool-${Date.now()}`,
-      name: parsed.name ?? 'tool_execution',
-      argumentsJson: typeof parsed.arguments === 'string' ? parsed.arguments : JSON.stringify(parsed.arguments ?? {}),
-      resultJson: null,
-      status: 'RUNNING',
-      startedAt: new Date().toISOString(),
-    };
-    const existing = msg.toolCalls.find((t) => t.id && t.id === tool.id);
-    if (!existing) {
-      msg.toolCalls.push(tool);
-    }
-    scrollToBottom();
-  } catch {
-    // ignore
-  }
-}
-
-function handleToolChunkEvent(data: string) {
-  try {
-    const parsed = JSON.parse(data) as { toolId?: string; stdout?: string; stderr?: string };
-    if (!session.value || !parsed.toolId) return;
-    const msg = getOrCreateStreamingAssistantMessage(session.value.id);
-    const tool = msg.toolCalls.find((t) => t.id === parsed.toolId);
-    if (tool) {
-      if (parsed.stdout) tool.stdout = (tool.stdout ?? '') + parsed.stdout;
-      if (parsed.stderr) tool.stderr = (tool.stderr ?? '') + parsed.stderr;
-      scrollToBottom();
-    }
-  } catch {
-    // ignore
-  }
-}
-
-function handleToolEndEvent(data: string) {
-  try {
-    const parsed = JSON.parse(data) as { toolId?: string; result?: string; exitCode?: number; durationMs?: number };
-    if (!session.value) return;
-    const msg = getOrCreateStreamingAssistantMessage(session.value.id);
-    const tool = msg.toolCalls.find((t) => t.id === parsed.toolId);
-    if (tool) {
-      if (parsed.result) tool.resultJson = parsed.result;
-      if (parsed.exitCode !== undefined) tool.exitCode = parsed.exitCode;
-      if (parsed.durationMs) tool.durationMs = parsed.durationMs;
-      tool.status = tool.exitCode && tool.exitCode !== 0 ? 'ERROR' : 'SUCCESS';
-      tool.finishedAt = new Date().toISOString();
-    }
-    scrollToBottom();
-  } catch {
-    // ignore
-  }
-}
-
-function handleDoneEvent() {
-  stopThoughtTimer();
-  isStreaming.value = false;
-  activeTaskId.value = null;
-  if (pollTimer) {
-    clearInterval(pollTimer);
-    pollTimer = null;
-  }
-  if (session.value) {
-    loadHistory(session.value.id);
-  }
-  feedback.value = '智能体执行完毕。';
-}
-
-function handleErrorEvent() {
-  stopThoughtTimer();
-  isStreaming.value = false;
-  activeTaskId.value = null;
-  if (pollTimer) {
-    clearInterval(pollTimer);
-    pollTimer = null;
-  }
-  if (session.value) {
-    const list = messagesBySession.value[session.value.id] ?? [];
-    const last = list[list.length - 1];
-    if (last && last.role === 'ASSISTANT') {
-      last.status = 'ERROR';
-    }
-  }
-  feedback.value = '会话事件流报告错误。';
-}
-
-function handleInterruptedEvent() {
-  stopThoughtTimer();
-  isStreaming.value = false;
-  activeTaskId.value = null;
-  if (pollTimer) {
-    clearInterval(pollTimer);
-    pollTimer = null;
-  }
-  if (session.value) {
-    const list = messagesBySession.value[session.value.id] ?? [];
-    const last = list[list.length - 1];
-    if (last && last.role === 'ASSISTANT') {
-      last.status = 'INTERRUPTED';
-    }
-  }
-  feedback.value = '智能体生成已由用户中断。';
-}
-
-function appendMessage(message: SessionMessage) {
-  const sid = message.sessionId;
-  const list = messagesBySession.value[sid] ?? (messagesBySession.value[sid] = []);
-  const existingIdx = list.findIndex((item) => item.id === message.id);
-  if (existingIdx >= 0) {
-    list[existingIdx] = message;
-    return;
-  }
-  // 若收到服务端推送的真实 USER 消息，替换掉本地乐观插入的 local-* 消息
-  if (message.role === 'USER') {
-    const localIdx = list.findIndex((item) => item.id.startsWith('local-') && item.content === message.content);
-    if (localIdx !== -1) {
-      list.splice(localIdx, 1, message);
-      return;
-    }
-  }
-  list.push(message);
 }
 
 function dedupeMessages(list: SessionMessage[]): SessionMessage[] {
@@ -387,12 +189,6 @@ async function loadHistory(sid: string) {
   } catch {
     feedback.value = `无法读取会话 ${sid} 的历史消息。`;
   }
-}
-
-function openSessionSse(sid: string) {
-  sessionSse.close();
-  activeSessionPath.value = sessionEventsPath(sid);
-  sessionSse.reopen();
 }
 
 const session = computed(() => sessions.value.find((item) => item.id === selectedId.value) ?? sessions.value[0] ?? null);
@@ -548,7 +344,6 @@ async function createSession(): Promise<Session | null> {
     sessions.value.unshift(created);
     messagesBySession.value[created.id] = [];
     selectedId.value = created.id;
-    openSessionSse(created.id);
     feedback.value = `已建立协作会话 ${created.id}`;
     return created;
   } catch {
@@ -568,9 +363,9 @@ async function abortCurrentGeneration() {
   isAborting.value = true;
   isStreaming.value = false;
   stopThoughtTimer();
-  if (pollTimer) {
-    clearInterval(pollTimer);
-    pollTimer = null;
+  if (currentAbortController) {
+    currentAbortController.abort();
+    currentAbortController = null;
   }
   
   // 乐观更新界面上最后一条 Assistant 消息状态为已中止
@@ -618,11 +413,10 @@ async function endSession() {
   session.value.finishedAt = new Date().toISOString();
   isStreaming.value = false;
   stopThoughtTimer();
-  if (pollTimer) {
-    clearInterval(pollTimer);
-    pollTimer = null;
+  if (currentAbortController) {
+    currentAbortController.abort();
+    currentAbortController = null;
   }
-  sessionSse.close();
   feedback.value = `${session.value.id} 已结束。`;
 }
 
@@ -707,50 +501,74 @@ async function send() {
   isStreaming.value = true;
   startThoughtTimer();
 
-  // 预置一个 Assistant 消息等待流式输出
-  getOrCreateStreamingAssistantMessage(current.id);
+  const assistantMsg = getOrCreateStreamingAssistantMessage(current.id);
+  currentAbortController = new AbortController();
 
   try {
-    const res = await sendMessage(current.id, text);
-    activeTaskId.value = res.taskId;
-    openSessionSse(current.id);
-    // 启动 DSH 式任务轮询兜底，确保即使长连接中途静默也能无缝落盘同步
-    if (pollTimer) clearInterval(pollTimer);
-    let attempts = 0;
-    pollTimer = setInterval(async () => {
-      attempts++;
-      if (attempts > 60 || !isStreaming.value) {
-        if (pollTimer) {
-          clearInterval(pollTimer);
-          pollTimer = null;
-        }
-        return;
-      }
-      try {
-        const history = await getHistory(current.id);
-        if (history.length > 0) {
-          const lastMsg = history[history.length - 1];
-          if (lastMsg && (lastMsg.role === 'ASSISTANT' || lastMsg.role === 'ERROR')) {
-            messagesBySession.value[current.id] = dedupeMessages(history);
-            isStreaming.value = false;
-            stopThoughtTimer();
-            if (pollTimer) {
-              clearInterval(pollTimer);
-              pollTimer = null;
-            }
-            scrollToBottom();
+    await postSessionStream(
+      current.id,
+      text,
+      {
+        onToken: (delta) => {
+          assistantMsg.content += delta;
+          scrollToBottom();
+        },
+        onThinking: (delta) => {
+          assistantMsg.reasoningContent = (assistantMsg.reasoningContent ?? '') + delta;
+          openThoughts.value[assistantMsg.id] = true;
+          scrollToBottom();
+        },
+        onToolCall: (chunk) => {
+          const existing = assistantMsg.toolCalls?.find((t) => t.id === chunk.callId);
+          if (existing) {
+            if (chunk.argumentDelta) existing.argumentsJson = (existing.argumentsJson || '') + chunk.argumentDelta;
+            if (chunk.result) existing.resultJson = chunk.result;
+            if (chunk.status) existing.status = chunk.status as any;
+          } else {
+            assistantMsg.toolCalls?.push({
+              id: chunk.callId,
+              name: chunk.toolName,
+              status: chunk.status as any,
+              argumentsJson: chunk.argumentDelta || '',
+              resultJson: chunk.result || null,
+            });
           }
-        }
-      } catch {
-        // ignore
-      }
-    }, 1500);
-  } catch {
-    feedback.value = '消息发送失败，请确认 Gate 后端连接正常。';
+          scrollToBottom();
+        },
+        onUsage: (usage) => {
+          assistantMsg.usage = {
+            promptTokens: usage.promptTokens ?? null,
+            completionTokens: usage.completionTokens ?? null,
+            totalTokens: usage.totalTokens ?? null,
+          };
+        },
+        onDone: () => {
+          assistantMsg.status = 'SUCCESS';
+          isStreaming.value = false;
+          stopThoughtTimer();
+          currentAbortController = null;
+        },
+        onError: (err) => {
+          assistantMsg.status = 'ERROR';
+          if (!assistantMsg.content) {
+            assistantMsg.content = `⚠️ 执行错误: ${err.message}`;
+          }
+          isStreaming.value = false;
+          stopThoughtTimer();
+          currentAbortController = null;
+        },
+      },
+      currentAbortController.signal
+    );
+  } catch (err: any) {
+    if (err.name !== 'AbortError') {
+      feedback.value = '消息发送失败，请确认 Gate 后端连接正常。';
+    }
     isStreaming.value = false;
     stopThoughtTimer();
   } finally {
     sending.value = false;
+    currentAbortController = null;
   }
 }
 
@@ -768,7 +586,6 @@ watch(input, () => {
 watch(selectedId, async (id) => {
   if (!id) return;
   await loadHistory(id);
-  openSessionSse(id);
 });
 
 onMounted(async () => {
@@ -777,11 +594,10 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
-  sessionSse.close();
   stopThoughtTimer();
-  if (pollTimer) {
-    clearInterval(pollTimer);
-    pollTimer = null;
+  if (currentAbortController) {
+    currentAbortController.abort();
+    currentAbortController = null;
   }
 });
 </script>

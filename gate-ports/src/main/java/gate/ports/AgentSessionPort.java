@@ -2,9 +2,10 @@ package gate.ports;
 
 import gate.domain.session.Session;
 import gate.domain.session.SessionMessage;
+import gate.domain.session.SessionStreamChunk;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
+import java.util.function.Consumer;
 import java.util.stream.Stream;
 
 /**
@@ -22,7 +23,7 @@ public interface AgentSessionPort {
     /** Start a session bound to a ticket's clone; returns the new session. */
     Session start(StartRequest request);
 
-    /** Send a message; returns a task id (async) whose progress streams via {@link #streamEvents}. */
+    /** Send a message; returns a task id (async) whose progress streams via {@link #attachListener}. */
     String sendMessage(SendRequest request);
 
     /** Abort an in-flight message or tear down the session process. */
@@ -31,8 +32,14 @@ public interface AgentSessionPort {
     /** Read-only history, independent of any running process. */
     List<SessionMessage> getHistory(String sessionId);
 
-    /** SSE event stream: replays past messages, then streams live. */
+    /** Legacy / batch event stream: replays past messages. */
     Stream<SessionEvent> streamEvents(String sessionId);
+
+    /**
+     * Attach a real-time event listener for live streaming chunks.
+     * Returns an {@link AutoCloseable} to unregister the listener.
+     */
+    AutoCloseable attachListener(String sessionId, Consumer<SessionStreamChunk> listener);
 
     record StartRequest(
             String ticketNo,
@@ -55,3 +62,4 @@ public interface AgentSessionPort {
             String kind) {
     }
 }
+

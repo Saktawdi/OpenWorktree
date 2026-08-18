@@ -9,6 +9,7 @@ import gate.domain.session.Role;
 import gate.domain.session.Session;
 import gate.domain.session.SessionMessage;
 import gate.domain.session.SessionStatus;
+import gate.domain.session.SessionStreamChunk;
 import gate.domain.session.SessionUsage;
 import gate.domain.task.GateTask;
 import gate.domain.task.GateTaskStatus;
@@ -26,13 +27,17 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.function.Consumer;
 import java.util.stream.Stream;
 
 /**
@@ -54,6 +59,7 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
     private final String claudeExecutable;
     private final List<String> claudePrefix;
     private final ExecutorService executor;
+    private final Map<String, Set<Consumer<SessionStreamChunk>>> listeners = new ConcurrentHashMap<>();
 
     public ClaudeHeadlessAdapter(ProcessRunner processRunner,
                                  AgentConfigRepository agentConfigs,
@@ -96,6 +102,29 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
     }
 
     @Override
+    public AutoCloseable attachListener(String sessionId, Consumer<SessionStreamChunk> listener) {
+        listeners.computeIfAbsent(sessionId, k -> Collections.newSetFromMap(new ConcurrentHashMap<>())).add(listener);
+        return () -> {
+            Set<Consumer<SessionStreamChunk>> set = listeners.get(sessionId);
+            if (set != null) {
+                set.remove(listener);
+            }
+        };
+    }
+
+    private void emitChunk(String sessionId, SessionStreamChunk chunk) {
+        Set<Consumer<SessionStreamChunk>> set = listeners.get(sessionId);
+        if (set != null) {
+            for (Consumer<SessionStreamChunk> listener : set) {
+                try {
+                    listener.accept(chunk);
+                } catch (Exception ignored) {
+                }
+            }
+        }
+    }
+
+    @Override
     public Session start(StartRequest request) {
         try (AutoCloseable ignored = ticketLocks.acquire(request.ticketNo())) {
             return startLocked(request);
@@ -121,17 +150,21 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
         writeMcpConfig(mcpConfig, request.env());
 
         List<String> argv = buildArgv(config, contextFile, mcpConfig, null, request.initialPrompt());
-        ProcessRunner.ProcRun run = processRunner.run(argv, clone, request.env(), Duration.ofMinutes(10));
-
-        ParsedOutput parsed = parseStream(run.stdout());
         Session session = new Session(
                 sessionId, request.ticketNo(), config.id(), AgentCli.CLAUDE, SessionStatus.ACTIVE,
-                parsed.sessionId, request.clonePath(), -1, now, null, SessionUsage.EMPTY);
+                null, request.clonePath(), -1, now, null, SessionUsage.EMPTY);
         sessions.insert(session);
 
-        // Always record the user message; record the assistant message only when something was parsed.
         insertUserMessage(sessionId, request.initialPrompt(), now);
+
+        ProcessRunner.ProcRun run = processRunner.runStreaming(argv, clone, request.env(), Duration.ofMinutes(10),
+                line -> handleStreamLine(sessionId, line), null);
+
+        ParsedOutput parsed = parseStream(run.stdout());
         Session withUsage = session;
+        if (parsed.sessionId != null) {
+            withUsage = withUsage.withCliSessionId(parsed.sessionId);
+        }
         if (parsed.assistantText != null || parsed.usage != null) {
             insertAssistantMessage(sessionId, parsed.assistantText == null ? "" : parsed.assistantText,
                     parsed.usage, parsed.degraded, now);
@@ -139,11 +172,15 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
                 withUsage = withUsage.withCumulativeUsage(parsed.usage);
                 sessions.update(withUsage);
                 writeback(withUsage);
+                emitChunk(sessionId, new SessionStreamChunk.UsageChunk(sessionId, parsed.usage, now));
             }
         }
         if (!run.ok() && parsed.sessionId == null) {
             insertErrorMessage(sessionId, run.stderrFirstLine(), now);
             sessions.update(withUsage.withStatus(SessionStatus.ABORTED).withFinishedAt(now));
+            emitChunk(sessionId, new SessionStreamChunk.ErrorChunk(sessionId, "PROCESS_ERROR", run.stderrFirstLine(), now));
+        } else {
+            emitChunk(sessionId, new SessionStreamChunk.DoneChunk(sessionId, sessionId, now));
         }
         return sessions.find(sessionId).orElse(withUsage);
     }
@@ -164,6 +201,7 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
             Session aborted = s.withStatus(SessionStatus.ABORTED).withFinishedAt(clock.now());
             sessions.update(aborted);
             writeback(aborted);
+            emitChunk(sessionId, new SessionStreamChunk.ErrorChunk(sessionId, "ABORTED", "Session aborted by user", clock.now()));
         });
     }
 
@@ -189,6 +227,42 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
     // Internals
     // -------------------------------------------------------------------------------------------
 
+    private void handleStreamLine(String sessionId, String line) {
+        if (line == null || line.isBlank()) {
+            return;
+        }
+        try {
+            Object parsed = MiniJson.parse(line.trim());
+            if (!(parsed instanceof Map<?, ?> m)) {
+                return;
+            }
+            Map<String, Object> obj = cast(m);
+            Instant now = clock.now();
+
+            String type = String.valueOf(obj.get("type"));
+            if ("content_block_delta".equals(type)) {
+                Object deltaObj = obj.get("delta");
+                if (deltaObj instanceof Map<?, ?> dm) {
+                    Map<String, Object> delta = cast(dm);
+                    String deltaType = String.valueOf(delta.get("type"));
+                    if ("text_delta".equals(deltaType)) {
+                        String text = String.valueOf(delta.get("text"));
+                        emitChunk(sessionId, new SessionStreamChunk.ContentChunk(sessionId, text, now));
+                    } else if ("thinking_delta".equals(deltaType)) {
+                        String thinking = String.valueOf(delta.get("thinking"));
+                        emitChunk(sessionId, new SessionStreamChunk.ThinkingChunk(sessionId, thinking, now));
+                    }
+                }
+            } else if ("tool_use".equals(type) || "tool_call".equals(type)) {
+                String callId = String.valueOf(obj.getOrDefault("id", "call_" + System.currentTimeMillis()));
+                String name = String.valueOf(obj.getOrDefault("name", "unknown"));
+                String input = obj.get("input") == null ? "{}" : String.valueOf(obj.get("input"));
+                emitChunk(sessionId, new SessionStreamChunk.ToolCallChunk(sessionId, callId, name, input, null, "RUNNING", now));
+            }
+        } catch (Exception ignored) {
+        }
+    }
+
     private void runSend(GateTask task, Session session, String message, boolean resume) {
         try (AutoCloseable ignored = ticketLocks.acquire(session.ticketNo())) {
             AgentConfig config = agentConfigs.find(session.agentConfigId()).orElseThrow();
@@ -197,19 +271,26 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
             Path contextFile = contextDir.resolve("CLAUDE.md");
             Path mcpConfig = contextDir.resolve("mcp-config.json");
             tasks.update(progress(task, 10, "启动 claude"));
-            List<String> argv = buildArgv(config, contextFile, mcpConfig,
-                    resume ? session.cliSessionId() : session.cliSessionId(), message);
-            ProcessRunner.ProcRun run = processRunner.run(argv, clone, Map.of(), Duration.ofMinutes(10));
-            tasks.update(progress(task, 70, "解析 stream-json"));
-            ParsedOutput parsed = parseStream(run.stdout());
             Instant now = clock.now();
             insertUserMessage(session.id(), message, now);
+
+            List<String> argv = buildArgv(config, contextFile, mcpConfig,
+                    resume ? session.cliSessionId() : session.cliSessionId(), message);
+            ProcessRunner.ProcRun run = processRunner.runStreaming(argv, clone, Map.of(), Duration.ofMinutes(10),
+                    line -> handleStreamLine(session.id(), line), null);
+
+            tasks.update(progress(task, 70, "解析 stream-json"));
+            ParsedOutput parsed = parseStream(run.stdout());
             if (parsed.assistantText != null || parsed.usage != null) {
                 insertAssistantMessage(session.id(),
                         parsed.assistantText == null ? "" : parsed.assistantText,
                         parsed.usage, parsed.degraded, now);
+                if (parsed.usage != null) {
+                    emitChunk(session.id(), new SessionStreamChunk.UsageChunk(session.id(), parsed.usage, now));
+                }
             } else {
                 insertErrorMessage(session.id(), run.stderrFirstLine(), now);
+                emitChunk(session.id(), new SessionStreamChunk.ErrorChunk(session.id(), "PROCESS_ERROR", run.stderrFirstLine(), now));
             }
             SessionUsage cumulative = session.cumulativeUsage().add(parsed.usage == null ? SessionUsage.EMPTY : parsed.usage);
             Session updated = session.withCumulativeUsage(cumulative);
@@ -218,9 +299,11 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
             }
             sessions.update(updated);
             writeback(updated);
+            emitChunk(session.id(), new SessionStreamChunk.DoneChunk(session.id(), session.id(), now));
             tasks.update(success(task, "{\"session_id\":\"" + (parsed.sessionId == null ? "" : parsed.sessionId)
                     + "\",\"message_count\":" + sessions.findMessages(session.id()).size() + "}"));
         } catch (Throwable e) {
+            emitChunk(session.id(), new SessionStreamChunk.ErrorChunk(session.id(), "INTERNAL_ERROR", e.getMessage(), clock.now()));
             tasks.update(fail(task, e));
         }
     }
@@ -368,71 +451,76 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
         return new ParsedOutput(sessionId, assistantText, usage, degraded);
     }
 
-    @SuppressWarnings("unchecked")
-    private static Map<String, Object> cast(Map<?, ?> m) {
-        return (Map<String, Object>) m;
-    }
-
-    private static String extractText(Object message, Object directText) {
-        if (directText != null) {
-            return String.valueOf(directText);
+    private static String extractText(Object message, Object text) {
+        if (text instanceof String s && !s.isBlank()) {
+            return s;
         }
-        if (message instanceof Map<?, ?> m) {
-            Object content = m.get("content");
+        if (message instanceof Map<?, ?> mm) {
+            Map<String, Object> map = cast(mm);
+            Object content = map.get("content");
+            if (content instanceof String s) {
+                return s;
+            }
             if (content instanceof List<?> list) {
-                for (Object o : list) {
-                    if (o instanceof Map<?, ?> cm) {
-                        Map<String, Object> cmm = cast(cm);
-                        Object type = cmm.get("type");
-                        if (type == null || "text".equals(String.valueOf(type))) {
-                            Object text = cmm.get("text");
-                            if (text != null) {
-                                return String.valueOf(text);
+                StringBuilder b = new StringBuilder();
+                for (Object item : list) {
+                    if (item instanceof Map<?, ?> im) {
+                        Map<String, Object> itemMap = cast(im);
+                        if ("text".equals(itemMap.get("type"))) {
+                            Object t = itemMap.get("text");
+                            if (t != null) {
+                                b.append(t);
                             }
                         }
                     }
                 }
+                return b.isEmpty() ? null : b.toString();
             }
         }
         return null;
     }
 
-    private static Long longOrNull(Object v) {
-        if (v instanceof Number n) {
-            return n.longValue();
-        }
-        if (v != null) {
-            try {
-                return Long.parseLong(String.valueOf(v));
-            } catch (NumberFormatException ignored) {
-                return null;
-            }
-        }
-        return null;
-    }
-
-    private static String escapeJson(String s) {
-        return s == null ? "" : s.replace("\\", "\\\\").replace("\"", "\\\"");
-    }
-
-    private static GateTask progress(GateTask task, int percent, String label) {
-        String payload = "{\"percent\":" + percent + ",\"label\":\"" + label + "\"}";
+    private static GateTask progress(GateTask task, int percent, String step) {
         return new GateTask(task.id(), task.type(), task.ticketNo(), task.sessionId(),
-                GateTaskStatus.RUNNING, task.startedAt(), null, payload, null);
+                GateTaskStatus.RUNNING, task.startedAt(), null,
+                "{\"percent\":" + percent + ",\"label\":\"" + escapeJson(step) + "\"}", null);
     }
 
     private static GateTask success(GateTask task, String resultJson) {
+        Instant now = Instant.now();
         return new GateTask(task.id(), task.type(), task.ticketNo(), task.sessionId(),
-                GateTaskStatus.SUCCEEDED, task.startedAt(), null, resultJson, null);
+                GateTaskStatus.SUCCEEDED, task.startedAt(), now, resultJson, null);
     }
 
-    private static GateTask fail(GateTask task, Throwable e) {
-        String message = e instanceof GateException ge ? ge.getMessage() : "internal error";
+    private static GateTask fail(GateTask task, Throwable err) {
+        Instant now = Instant.now();
+        String msg = err.getMessage() == null ? err.getClass().getSimpleName() : err.getMessage();
         return new GateTask(task.id(), task.type(), task.ticketNo(), task.sessionId(),
-                GateTaskStatus.FAILED, task.startedAt(), null, null,
-                "{\"error_code\":" + (e instanceof GateException ge ? ge.code().code() : 70)
-                        + ",\"error\":\"" + (e instanceof GateException ge2 ? ge2.code().name() : "INTERNAL")
-                        + "\",\"message\":\"" + escapeJson(message) + "\"}");
+                GateTaskStatus.FAILED, task.startedAt(), now, null,
+                "{\"error\":\"" + escapeJson(msg) + "\"}");
+    }
+
+    private static Long longOrNull(Object val) {
+        if (val instanceof Number n) {
+            return n.longValue();
+        }
+        return null;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> cast(Map<?, ?> raw) {
+        Map<String, Object> typed = new LinkedHashMap<>();
+        for (Map.Entry<?, ?> e : raw.entrySet()) {
+            typed.put(String.valueOf(e.getKey()), (Object) e.getValue());
+        }
+        return typed;
+    }
+
+    private static String escapeJson(String s) {
+        if (s == null) {
+            return "";
+        }
+        return s.replace("\\", "\\\\").replace("\"", "\\\"");
     }
 
     private record ParsedOutput(String sessionId, String assistantText, SessionUsage usage, boolean degraded) {

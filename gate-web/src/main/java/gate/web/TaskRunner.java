@@ -107,7 +107,7 @@ final class TaskRunner {
         p.put("percent", percent);
         p.put("label", label);
         tasks.update(new GateTask(task.id(), task.type(), task.ticketNo(), task.sessionId(),
-                GateTaskStatus.RUNNING, task.startedAt(), null, Json.write(p), null));
+                GateTaskStatus.RUNNING, task.startedAt(), null, null, null));
     }
 
     private void success(GateTask task, String resultJson) {

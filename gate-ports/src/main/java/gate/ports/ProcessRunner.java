@@ -4,6 +4,7 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Consumer;
 
 /**
  * The only seam that owns process mechanics: timeout, {@code destroyForcibly}, reaping
@@ -16,6 +17,14 @@ import java.util.Map;
 public interface ProcessRunner {
 
     ProcRun run(List<String> argv, Path cwd, Map<String, String> env, Duration timeout);
+
+    /**
+     * Run process while streaming stdout and stderr line-by-line via consumers.
+     */
+    default ProcRun runStreaming(List<String> argv, Path cwd, Map<String, String> env, Duration timeout,
+                                 Consumer<String> stdoutConsumer, Consumer<String> stderrConsumer) {
+        return run(argv, cwd, env, timeout);
+    }
 
     /**
      * @param timedOut true when the process was killed by the timeout, in which case
@@ -34,3 +43,4 @@ public interface ProcessRunner {
         }
     }
 }
+

@@ -69,6 +69,14 @@ public final class DispatchAgentSessionPort implements AgentSessionPort {
         return adapter(s.cli()).streamEvents(sessionId);
     }
 
+    @Override
+    public AutoCloseable attachListener(String sessionId, java.util.function.Consumer<gate.domain.session.SessionStreamChunk> listener) {
+        Session s = sessions.find(sessionId)
+                .orElseThrow(() -> new GateException(GateErrorCode.USAGE,
+                        "no such session: " + sessionId));
+        return adapter(s.cli()).attachListener(sessionId, listener);
+    }
+
     private AgentSessionPort adapter(AgentCli cli) {
         if (cli == AgentCli.OPENCODE) {
             if (opencode == null) {

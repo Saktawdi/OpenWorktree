@@ -188,5 +188,10 @@ class SessionOrchestrationTest {
             }
             return events.stream();
         }
+
+        @Override
+        public AutoCloseable attachListener(String sessionId, java.util.function.Consumer<gate.domain.session.SessionStreamChunk> listener) {
+            return () -> {};
+        }
     }
 }

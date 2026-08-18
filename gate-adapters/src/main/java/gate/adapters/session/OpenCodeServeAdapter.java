@@ -9,6 +9,7 @@ import gate.domain.session.Role;
 import gate.domain.session.Session;
 import gate.domain.session.SessionMessage;
 import gate.domain.session.SessionStatus;
+import gate.domain.session.SessionStreamChunk;
 import gate.domain.session.SessionUsage;
 import gate.domain.task.GateTask;
 import gate.domain.task.GateTaskStatus;
@@ -20,6 +21,7 @@ import gate.ports.SessionRepository;
 import gate.ports.TaskRegistry;
 import gate.ports.TicketLockManager;
 import gate.ports.TicketRepository;
+
 import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -68,6 +70,7 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
     private final ExecutorService executor;
     private final Map<Integer, Process> serveProcesses = new ConcurrentHashMap<>();
     private final Map<String, Integer> sessionPorts = new ConcurrentHashMap<>();
+    private final Map<String, java.util.Set<java.util.function.Consumer<SessionStreamChunk>>> listeners = new ConcurrentHashMap<>();
 
     public OpenCodeServeAdapter(ProcessRunner processRunner,
                                 AgentConfigRepository agentConfigs,
@@ -94,6 +97,29 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
             t.setDaemon(true);
             return t;
         });
+    }
+
+    @Override
+    public AutoCloseable attachListener(String sessionId, java.util.function.Consumer<SessionStreamChunk> listener) {
+        listeners.computeIfAbsent(sessionId, k -> java.util.Collections.newSetFromMap(new ConcurrentHashMap<>())).add(listener);
+        return () -> {
+            java.util.Set<java.util.function.Consumer<SessionStreamChunk>> set = listeners.get(sessionId);
+            if (set != null) {
+                set.remove(listener);
+            }
+        };
+    }
+
+    private void emitChunk(String sessionId, SessionStreamChunk chunk) {
+        java.util.Set<java.util.function.Consumer<SessionStreamChunk>> set = listeners.get(sessionId);
+        if (set != null) {
+            for (java.util.function.Consumer<SessionStreamChunk> listener : set) {
+                try {
+                    listener.accept(chunk);
+                } catch (Exception ignored) {
+                }
+            }
+        }
     }
 
     @Override
@@ -266,9 +292,6 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
             }
             AgentConfig config = agentConfigs.find(session.agentConfigId()).orElseThrow();
             tasks.update(progress(task, 10, "发送到 opencode"));
-            // Omitting model is intentional: OpenCode resolves its provider and default model
-            // from the user's own config. An explicit provider/model override is only added when
-            // the profile selected one from the CLI-discovered catalog.
             String body = messageBody(config, message);
             HttpResponse<String> resp = post("http://127.0.0.1:" + port + "/session/"
                     + session.cliSessionId() + "/message", body);
@@ -279,17 +302,26 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                 sessions.insertMessage(new SessionMessage(UUID.randomUUID().toString(), session.id(),
                         Role.ASSISTANT, parsed.text == null ? "" : parsed.text, List.of(),
                         parsed.usage, parsed.degraded, now));
+                if (parsed.text != null) {
+                    emitChunk(session.id(), new SessionStreamChunk.ContentChunk(session.id(), parsed.text, now));
+                }
+                if (parsed.usage != null) {
+                    emitChunk(session.id(), new SessionStreamChunk.UsageChunk(session.id(), parsed.usage, now));
+                }
             } else {
                 sessions.insertMessage(new SessionMessage(UUID.randomUUID().toString(), session.id(),
                         Role.ERROR, resp.body(), List.of(), null, true, now));
+                emitChunk(session.id(), new SessionStreamChunk.ErrorChunk(session.id(), "OPENCODE_ERROR", resp.body(), now));
             }
             SessionUsage cumulative = session.cumulativeUsage().add(
                     parsed.usage == null ? SessionUsage.EMPTY : parsed.usage);
             Session updated = session.withCumulativeUsage(cumulative);
             sessions.update(updated);
             writeback(updated);
+            emitChunk(session.id(), new SessionStreamChunk.DoneChunk(session.id(), session.id(), now));
             tasks.update(success(task, "{\"message_count\":" + sessions.findMessages(session.id()).size() + "}"));
         } catch (Throwable e) {
+            emitChunk(session.id(), new SessionStreamChunk.ErrorChunk(session.id(), "INTERNAL_ERROR", e.getMessage(), clock.now()));
             tasks.update(fail(task, e));
         }
     }

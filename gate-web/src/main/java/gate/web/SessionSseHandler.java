@@ -3,6 +3,7 @@ package gate.web;
 import com.sun.net.httpserver.HttpExchange;
 import gate.domain.error.GateErrorCode;
 import gate.domain.session.SessionMessage;
+import gate.domain.session.SessionStreamChunk;
 import gate.domain.session.ToolCall;
 import gate.ports.AgentSessionPort;
 import gate.ports.SessionRepository;
@@ -14,13 +15,15 @@ import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
 /**
  * SSE writer for agent session events (执行文档-后端-web §4.1, §9.3).
  *
- * <p>Currently the session adapter's {@code streamEvents} replays persisted messages; this handler
- * writes them as named SSE events ({@code event: message|usage|tool_call|done|error}).
+ * <p>Emits initial message history snapshot, attaches a real-time listener for live SessionStreamChunks,
+ * and flushes SSE data frames (`event: token | thinking | tool_call | usage | done | error`).
  */
 final class SessionSseHandler {
 
@@ -43,7 +46,7 @@ final class SessionSseHandler {
         exchange.getResponseHeaders().set("Connection", "keep-alive");
         exchange.sendResponseHeaders(200, 0);
         try (OutputStream os = exchange.getResponseBody()) {
-            // First emit current history snapshot
+            // 1. Emit current history snapshot
             try (Stream<AgentSessionPort.SessionEvent> events = sessions.streamEvents(sessionId)) {
                 Iterator<AgentSessionPort.SessionEvent> it = events.iterator();
                 while (it.hasNext()) {
@@ -54,13 +57,80 @@ final class SessionSseHandler {
                     os.flush();
                 }
             }
-            // Send ping before closing
+
+            // 2. Attach live streaming listener
+            CountDownLatch doneLatch = new CountDownLatch(1);
+            try (AutoCloseable handle = sessions.attachListener(sessionId, chunk -> {
+                try {
+                    String eventName = "token";
+                    if (chunk instanceof SessionStreamChunk.ThinkingChunk) {
+                        eventName = "thinking";
+                    } else if (chunk instanceof SessionStreamChunk.ToolCallChunk) {
+                        eventName = "tool_call";
+                    } else if (chunk instanceof SessionStreamChunk.UsageChunk) {
+                        eventName = "usage";
+                    } else if (chunk instanceof SessionStreamChunk.DoneChunk) {
+                        eventName = "done";
+                    } else if (chunk instanceof SessionStreamChunk.ErrorChunk) {
+                        eventName = "error";
+                    }
+                    Map<String, Object> chunkPayload = chunkJson(chunk);
+                    String data = Json.write(chunkPayload);
+                    synchronized (os) {
+                        os.write(("event: " + eventName + "\n").getBytes(StandardCharsets.UTF_8));
+                        os.write(("data: " + data + "\n\n").getBytes(StandardCharsets.UTF_8));
+                        os.flush();
+                    }
+                    if (chunk instanceof SessionStreamChunk.DoneChunk || chunk instanceof SessionStreamChunk.ErrorChunk) {
+                        doneLatch.countDown();
+                    }
+                } catch (IOException ex) {
+                    doneLatch.countDown();
+                }
+            })) {
+                // Wait up to 5 seconds if live streaming or quick done
+                doneLatch.await(5, TimeUnit.SECONDS);
+            } catch (Exception ignored) {
+            }
+
+            // Final ping before closing
             os.write(": ping\n\n".getBytes(StandardCharsets.UTF_8));
             os.flush();
         } catch (IOException ignored) {
             // client disconnected
         }
         return 200;
+    }
+
+    private static Map<String, Object> chunkJson(SessionStreamChunk chunk) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("session_id", chunk.sessionId());
+        m.put("timestamp", chunk.timestamp().toString());
+        if (chunk instanceof SessionStreamChunk.ContentChunk c) {
+            m.put("text_delta", c.textDelta());
+        } else if (chunk instanceof SessionStreamChunk.ThinkingChunk t) {
+            m.put("thinking_delta", t.thinkingDelta());
+        } else if (chunk instanceof SessionStreamChunk.ToolCallChunk tc) {
+            m.put("call_id", tc.callId());
+            m.put("tool_name", tc.toolName());
+            m.put("argument_delta", tc.argumentDelta());
+            m.put("result", tc.result());
+            m.put("status", tc.status());
+        } else if (chunk instanceof SessionStreamChunk.UsageChunk u) {
+            if (u.usage() != null) {
+                Map<String, Object> usageMap = new LinkedHashMap<>();
+                usageMap.put("prompt_tokens", u.usage().promptTokens());
+                usageMap.put("completion_tokens", u.usage().completionTokens());
+                usageMap.put("total_tokens", u.usage().totalTokens());
+                m.put("usage", usageMap);
+            }
+        } else if (chunk instanceof SessionStreamChunk.DoneChunk d) {
+            m.put("full_message_id", d.fullMessageId());
+        } else if (chunk instanceof SessionStreamChunk.ErrorChunk err) {
+            m.put("error_code", err.errorCode());
+            m.put("error_message", err.errorMessage());
+        }
+        return m;
     }
 
     private static Map<String, Object> sessionEventJson(AgentSessionPort.SessionEvent e) {
@@ -100,3 +170,4 @@ final class SessionSseHandler {
         return m;
     }
 }
+

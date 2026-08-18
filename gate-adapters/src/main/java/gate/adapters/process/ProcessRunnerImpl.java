@@ -3,7 +3,10 @@ package gate.adapters.process;
 import gate.domain.error.GateErrorCode;
 import gate.domain.error.GateException;
 import gate.ports.ProcessRunner;
+import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -12,15 +15,15 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 
 /**
  * The single implementation of {@link ProcessRunner}.
  *
- * <p>stdout and stderr are redirected to temporary <em>files</em>, never read from pipes. Reading
- * from a pipe means a child that fills the OS pipe buffer blocks forever, which in turn means
- * {@code waitFor(timeout)} never fires and the timeout silently never happens — §8.4 item 9. With
- * file redirection the child can never block on us.
+ * <p>stdout and stderr are redirected to temporary <em>files</em> in normal mode, or drained via
+ * dedicated threads in streaming mode to prevent pipe buffer stalls while enabling line-by-line consumption.
  *
  * <p>On timeout the whole process tree is destroyed: {@code descendants()} first, then the process
  * itself, since git spawns helpers (e.g. {@code git-receive-pack}) that would otherwise survive and
@@ -92,6 +95,91 @@ public final class ProcessRunnerImpl implements ProcessRunner {
         }
     }
 
+    @Override
+    public ProcRun runStreaming(List<String> argv, Path cwd, Map<String, String> env, Duration timeout,
+                                Consumer<String> stdoutConsumer, Consumer<String> stderrConsumer) {
+        if (argv == null || argv.isEmpty()) {
+            throw new IllegalArgumentException("argv must not be empty");
+        }
+        Instant started = Instant.now();
+        StringBuilder stdoutAcc = new StringBuilder();
+        StringBuilder stderrAcc = new StringBuilder();
+        try {
+            ProcessBuilder pb = new ProcessBuilder(new ArrayList<>(argv));
+            if (cwd != null) {
+                pb.directory(cwd.toFile());
+            }
+            if (env != null) {
+                pb.environment().putAll(env);
+            }
+
+            Process process = pb.start();
+            process.getOutputStream().close();
+
+            CompletableFuture<Void> outFuture = CompletableFuture.runAsync(() ->
+                    drainStream(process.getInputStream(), line -> {
+                        synchronized (stdoutAcc) {
+                            stdoutAcc.append(line).append("\n");
+                        }
+                        if (stdoutConsumer != null) {
+                            try {
+                                stdoutConsumer.accept(line);
+                            } catch (Exception ignored) {
+                            }
+                        }
+                    }));
+
+            CompletableFuture<Void> errFuture = CompletableFuture.runAsync(() ->
+                    drainStream(process.getErrorStream(), line -> {
+                        synchronized (stderrAcc) {
+                            stderrAcc.append(line).append("\n");
+                        }
+                        if (stderrConsumer != null) {
+                            try {
+                                stderrConsumer.accept(line);
+                            } catch (Exception ignored) {
+                            }
+                        }
+                    }));
+
+            boolean exited = process.waitFor(timeout.toMillis(), TimeUnit.MILLISECONDS);
+            int exitCode;
+            boolean timedOut = false;
+            if (!exited) {
+                timedOut = true;
+                killTree(process);
+                process.waitFor(5, TimeUnit.SECONDS);
+                exitCode = process.isAlive() ? -1 : process.exitValue();
+            } else {
+                exitCode = process.exitValue();
+            }
+
+            try {
+                CompletableFuture.allOf(outFuture, errFuture).get(2, TimeUnit.SECONDS);
+            } catch (Exception ignored) {
+            }
+
+            return new ProcRun(List.copyOf(argv), exitCode, stdoutAcc.toString(), stderrAcc.toString(),
+                    Duration.between(started, Instant.now()), timedOut);
+        } catch (IOException e) {
+            throw new GateException(GateErrorCode.GATE_ERROR_IO,
+                    "failed to run " + String.join(" ", argv) + ": " + e.getMessage(), e);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new GateException(GateErrorCode.GATE_ERROR_IO, "interrupted running " + String.join(" ", argv), e);
+        }
+    }
+
+    private static void drainStream(InputStream in, Consumer<String> lineConsumer) {
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                lineConsumer.accept(line);
+            }
+        } catch (IOException ignored) {
+        }
+    }
+
     private static void killTree(Process process) {
         process.descendants().forEach(ProcessHandle::destroyForcibly);
         process.destroyForcibly();
@@ -117,3 +205,4 @@ public final class ProcessRunnerImpl implements ProcessRunner {
         }
     }
 }
+
