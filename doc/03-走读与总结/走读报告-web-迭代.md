@@ -165,7 +165,7 @@ D3 全部验收延续既有判据：会话闭环 A17/A18 以 claude adapter 为�
 - `ToolCall(name, argumentsJson, resultJson)`；`SessionUsage(/*OpenAI-style*/ promptTokens, completionTokens, totalTokens)`，含 `add` 逐字段相加、`EMPTY` 常量
 
 **两个 adapter：**
-- `OpenCodeServeAdapter`：每工单 clone 起 `opencode serve --port <allocated> --hostname 127.0.0.1`；端口 49152–65535 动态分配（`PortAllocator` CAS）；start 等 `/health` 就绪（超时 10s）；sendMessage 走 `POST /session/:id/message` 或 `prompt_async`+`GET /event` SSE；abort 杀 serve 进程；getHistory 走 `GET /session/:id/message`（会话持久化在 `~/.local/share/opencode` 或项目级存储）。
+- `OpenCodeServeAdapter`：每工单 clone 起 `opencode serve --port <allocated> --hostname 127.0.0.1`；端口 49152–65535 动态分配（`PortAllocator` CAS）；start 等 `/health` 就绪（超时 `session.start_timeout_seconds` 默认 60s；HTTP 客户端固定 HTTP/1.1，规避 Java HTTP/2 h2c 升级卡 opencode(Bun) 的根因）；失败即杀进程防泄漏；sendMessage 走 `POST /session/:id/message` 或 `prompt_async`+`GET /event` SSE；abort 杀 serve 进程；getHistory 走 `GET /session/:id/message`（会话持久化在 `~/.local/share/opencode` 或项目级存储）。
 - `ClaudeHeadlessAdapter`：每消息 `claude -p --input-format stream-json --output-format stream-json --model <m> --resume <session-id> --append-system-prompt-file <工单上下文文件> --mcp-config <闸门 mcp 配置> --strict-mcp-config --permission-mode acceptEdits`；首条无 `--resume`（新建会话拿 session-id 落库），后续 `--resume` 续接。
 
 **决策表（§5.9）要点：** D4 claude 首选、opencode 备选；D5 端口动态区间分配；D6（同 D3）Web 接管 clone；D7 usage 解析失败标 degraded 仍入库（类比 review 侧）。

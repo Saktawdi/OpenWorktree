@@ -45,8 +45,7 @@ async function submit() {
 
 <template>
   <div class="login">
-    <div class="login__glow login__glow--a" aria-hidden="true" />
-    <div class="login__glow login__glow--b" aria-hidden="true" />
+    <div class="login__grid" aria-hidden="true" />
 
     <GCard class="login__card" title="本地操作台">
       <template #head>
@@ -99,38 +98,29 @@ async function submit() {
   background: var(--background);
 }
 
-.login__glow {
+.login__grid {
   position: absolute;
-  width: min(58vw, 640px);
-  aspect-ratio: 1;
-  border-radius: 50%;
-  filter: blur(90px);
-  opacity: 0.5;
+  inset: 0;
+  background-image:
+    linear-gradient(to right, var(--border-subtle) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--border-subtle) 1px, transparent 1px);
+  background-size: 32px 32px;
+  mask-image: radial-gradient(circle at center, black 35%, transparent 75%);
+  -webkit-mask-image: radial-gradient(circle at center, black 35%, transparent 75%);
+  opacity: 0.65;
   pointer-events: none;
-}
-
-.login__glow--a {
-  top: -18%;
-  right: -12%;
-  background: radial-gradient(circle, var(--accent-soft), transparent 68%);
-}
-
-.login__glow--b {
-  bottom: -22%;
-  left: -14%;
-  background: radial-gradient(circle, var(--success-soft), transparent 68%);
-  opacity: 0.4;
 }
 
 .login__card {
   position: relative;
-  width: min(100%, 420px);
+  width: min(100%, 400px);
   border-radius: var(--radius-xl);
-  box-shadow: var(--shadow-popover);
+  box-shadow: var(--card-highlight), var(--shadow-popover);
 }
 
 .login__card :deep(.g-card__head) {
-  padding-top: 18px;
+  padding-top: 16px;
+  background: linear-gradient(180deg, var(--hover) 0%, transparent 100%);
 }
 
 .login__card :deep(.g-card__body) {
@@ -140,13 +130,13 @@ async function submit() {
 .login__brand {
   display: flex;
   align-items: center;
-  gap: 11px;
+  gap: 10px;
 }
 
 .login__mark {
   display: grid;
-  width: 36px;
-  height: 36px;
+  width: 34px;
+  height: 34px;
   place-items: center;
   flex: none;
   border: 1px solid var(--accent-border);
@@ -154,7 +144,7 @@ async function submit() {
   color: var(--accent-contrast);
   background: linear-gradient(145deg, var(--accent-hover), var(--accent));
   box-shadow: var(--shadow-brand);
-  font-size: 17px;
+  font-size: 16px;
   font-weight: 800;
   letter-spacing: -0.04em;
 }
@@ -162,28 +152,28 @@ async function submit() {
 .login__brand-text {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 2px;
   line-height: 1.1;
 }
 
 .login__brand-text strong {
   color: var(--text);
-  font-size: 15px;
-  font-weight: 760;
-  letter-spacing: 0.06em;
+  font-size: 14.5px;
+  font-weight: 750;
+  letter-spacing: 0.05em;
 }
 
 .login__brand-text small {
   color: var(--text-muted);
-  font-size: 9px;
-  font-weight: 650;
-  letter-spacing: 0.12em;
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
 }
 
 .login__sub {
-  margin: 0 0 18px;
+  margin: 0 0 16px;
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: 12.5px;
 }
 
 .login__form {
@@ -192,8 +182,7 @@ async function submit() {
 }
 
 .login__card :deep(.g-input) {
-  min-height: 42px;
-  border-radius: var(--radius-md);
+  min-height: 40px;
 }
 
 .login__error {
@@ -202,7 +191,7 @@ async function submit() {
   gap: 7px;
   margin: 10px 0 0;
   padding: 8px 10px;
-  border: 1px solid color-mix(in srgb, var(--danger) 30%, transparent);
+  border: 1px solid var(--danger-border);
   border-radius: var(--radius-sm);
   color: var(--danger);
   background: var(--danger-soft);
@@ -211,9 +200,9 @@ async function submit() {
 }
 
 .login__btn {
-  margin-top: 18px;
-  min-height: 42px;
-  border-radius: var(--radius-md);
+  margin-top: 16px;
+  min-height: 40px;
+  font-size: 13.5px;
 }
 
 .login__card :deep(.g-field__hint) {
@@ -231,7 +220,7 @@ async function submit() {
   align-items: center;
   gap: 7px;
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: 11.5px;
   letter-spacing: 0.02em;
 }
 
@@ -249,18 +238,6 @@ async function submit() {
   }
   .login__card :deep(.g-card__body) {
     padding: 18px;
-  }
-}
-
-@media (prefers-reduced-transparency: reduce) {
-  .login__glow {
-    display: none;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .login__glow {
-    filter: none;
   }
 }
 </style>

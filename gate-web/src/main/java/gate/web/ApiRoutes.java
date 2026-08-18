@@ -439,11 +439,12 @@ final class ApiRoutes {
 
     /**
      * V8 editable metadata: {@code {"title"?, "description"?, "note"?, "labels"?, "priority"?,
-     * "stage"?}}. A present-but-null priority clears it; description/note may also be cleared with
-     * null or an empty string, and labels are a complete replacement list. Stage changes are
-     * queue-management moves only — anything crossing the review gate (PRESUBMITTED / IN_REVIEW /
-     * READY_TO_PUBLISH, in either direction) is refused; those transitions belong to
-     * presubmit/review/publish.
+     * "stage"?, "agent_config_id"?}}. A present-but-null priority clears it; description/note may
+     * also be cleared with null or an empty string, and labels are a complete replacement list.
+     * {@code agent_config_id} rebinds the executing agent (null/blank detaches it, back to
+     * manual). Stage changes are queue-management moves only — anything crossing the review gate
+     * (PRESUBMITTED / IN_REVIEW / READY_TO_PUBLISH, in either direction) is refused; those
+     * transitions belong to presubmit/review/publish.
      */
     private Response ticketUpdate(String ticketNo, String requestBody) {
         Ticket t = tickets.find(ticketNo).orElseThrow(() -> new GateException(
@@ -460,9 +461,10 @@ final class ApiRoutes {
         Map<String, Object> req = parseObject(requestBody);
         boolean hasEditable = req.containsKey("title") || req.containsKey("description")
                 || req.containsKey("note") || req.containsKey("labels") || req.containsKey("priority");
-        if (!hasEditable && !req.containsKey("stage")) {
+        boolean hasAgentConfig = req.containsKey("agent_config_id");
+        if (!hasEditable && !hasAgentConfig && !req.containsKey("stage")) {
             throw new GateException(GateErrorCode.USAGE,
-                    "nothing to update: provide title, description, note, labels, priority or stage");
+                    "nothing to update: provide title, description, note, labels, priority, agent_config_id or stage");
         }
         String title = req.containsKey("title") ? str(req, "title") : null;
         if (title != null && title.isBlank()) {
@@ -473,6 +475,16 @@ final class ApiRoutes {
                 ? optionalText(req, "description") : t.description();
         String note = req.containsKey("note") ? optionalText(req, "note") : t.note();
         List<String> labels = req.containsKey("labels") ? parseTicketLabels(req) : t.labels();
+        String agentConfigId = null;
+        if (hasAgentConfig) {
+            agentConfigId = str(req, "agent_config_id");
+            if (agentConfigId != null && agentConfigId.isBlank()) {
+                agentConfigId = null;
+            }
+            if (agentConfigId != null && agentConfigs.find(agentConfigId).isEmpty()) {
+                throw new GateException(GateErrorCode.USAGE, "no such agent config: " + agentConfigId);
+            }
+        }
         if (req.containsKey("stage")) {
             TicketStage next = parseStage(str(req, "stage"));
             ensureQueueTransition(t.stage(), next);
@@ -480,6 +492,9 @@ final class ApiRoutes {
         }
         if (hasEditable) {
             tickets.updateEditable(ticketNo, title, priority, description, note, labels, clock.now());
+        }
+        if (hasAgentConfig) {
+            tickets.updateAgentConfig(ticketNo, agentConfigId, clock.now());
         }
         return new Response(200, ticketJson(
                 tickets.find(ticketNo).orElseThrow(() -> new GateException(

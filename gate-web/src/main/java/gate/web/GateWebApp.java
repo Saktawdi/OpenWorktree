@@ -54,6 +54,7 @@ public final class GateWebApp {
 
             System.err.println("GATE_WEB_TOKEN=" + token + "  (also written to " + web.humanTokenFile() + ")");
             System.err.println("gate-web: listening on http://" + web.bind() + ":" + server.port() + "/");
+            Thread.currentThread().join();
         } catch (GateException e) {
             System.err.println("gate-web: " + e.code().name() + ": " + e.getMessage());
             System.exit(e.code().code());

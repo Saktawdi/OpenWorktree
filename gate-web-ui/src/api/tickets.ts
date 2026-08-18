@@ -137,6 +137,7 @@ export async function updateTicket(ticketNo: string, request: TicketUpdateReques
   if (request.labels !== undefined) payload.labels = request.labels;
   if (request.priority !== undefined) payload.priority = request.priority;
   if (request.stage !== undefined) payload.stage = request.stage;
+  if (request.agentConfigId !== undefined) payload.agent_config_id = request.agentConfigId;
   const endpoint = projectId
     ? `/projects/${encodeURIComponent(projectId)}/tickets/${encodeURIComponent(ticketNo)}`
     : `/tickets/${encodeURIComponent(ticketNo)}`;

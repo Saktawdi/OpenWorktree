@@ -404,7 +404,7 @@ public record SessionUsage(Long promptTokens, Long completionTokens, Long totalT
 - 每工单 clone 起 `opencode serve --port <allocated> --hostname 127.0.0.1`。
 - 端口分配：49152-65535 区间（可配 `[session] port_range_min/max`），`PortAllocator` 原子分配 + 释放（见 §7.3）。
 - 生命周期：
-  - `start`：spawn serve 进程，等 `/health` 就绪（超时 10s），`POST /session` 建会话拿 session id。
+  - `start`：spawn serve 进程，等 `/health` 就绪（超时 `[session] start_timeout_seconds`，默认 60s），`POST /session` 建会话拿 session id。**HTTP 客户端固定 HTTP/1.1**：Java `HttpClient` 默认 HTTP/2，其 h2c 明文升级会卡在 opencode(Bun) 服务器——日志已打印 `server listening` 但 `/health` 永不返回 200，导致每次 `start` 都 503 且泄漏一个 serve 进程（实测根因）。失败时先 `killProcess`（连同 cmd/opencode 子进程）再释放端口，杜绝泄漏。
   - `sendMessage`：`POST /session/:id/message`（同步）或 `prompt_async` + `GET /event` SSE（异步）；解析事件流为 `SessionMessage`（含 usage）。
   - `abort`：`POST /session/:id/abort`，杀 serve 进程。
   - `getHistory`：`GET /session/:id/message`（不依赖运行中的 serve——opencode 会话持久化在 `~/.local/share/opencode` 或项目级存储）。
@@ -776,7 +776,7 @@ mvn test
 
 | # | 风险 | 触发条件 | 止损动作 |
 |---|---|---|---|
-| R1 | opencode serve 进程泄漏 | 工单关闭但 serve 未杀，端口耗尽 | shutdown hook + reconcile 扫描 + 端口分配上限告警；超上限拒绝新会话（429） |
+| R1 | opencode serve 进程泄漏 | 工单关闭但 serve 未杀，端口耗尽 | 已缓解：`start` 失败即 `killProcess`+释放端口（不再泄漏）；仍保留 shutdown hook 与 reconcile 扫描、端口分配上限告警；超上限拒绝新会话（429） |
 | R2 | claude 每消息 spawn 的延迟与 Windows 进程开销 | 单次 sendMessage > 30s，用户体验差 | 优化项（长驻 stream-json 进程）列为 S4 后；首期接受延迟，SSE 显示「agent 启动中」 |
 | R3 | 会话与 presubmit 工作区冲突 | session 改文件时 presubmit 固化 tree 拿到半成品 | 工单级串行锁（§7.2）+ presubmit 遇 session 持锁直接 422 |
 | R4 | Web 化引入并发锁回归 | B1-B19 有回归 | S2 验收强制跑 `BypassMatrixTest`；任何回归阻塞发布 |

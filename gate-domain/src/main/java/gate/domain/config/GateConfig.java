@@ -144,12 +144,19 @@ public record GateConfig(
     }
 
     /** Agent session orchestration defaults (执行文档-后端-web §5, §8). */
-    public record SessionConfig(int portRangeMin, int portRangeMax, String defaultCli, String defaultAgentConfig) {
+    public record SessionConfig(int portRangeMin, int portRangeMax, String defaultCli, String defaultAgentConfig,
+                                int startTimeoutSeconds) {
 
         public SessionConfig {
             if (portRangeMin <= 0 || portRangeMax > 65535 || portRangeMin > portRangeMax) {
                 throw new IllegalArgumentException(
                         "session port range invalid: [" + portRangeMin + ", " + portRangeMax + "]");
+            }
+            // Cold boot of the agent CLI (opencode serve with plugins) can exceed 10s, so the health
+            // wait must be generous and never hardcoded short (执行文档-后端-web §7.3/R1).
+            if (startTimeoutSeconds < 5 || startTimeoutSeconds > 900) {
+                throw new IllegalArgumentException(
+                        "session.start_timeout_seconds out of range: " + startTimeoutSeconds);
             }
         }
     }

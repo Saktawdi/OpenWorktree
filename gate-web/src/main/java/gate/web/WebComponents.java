@@ -207,8 +207,10 @@ public final class WebComponents {
             String opencodeCmd = cliLocator.locate("opencode").map(Path::toString).orElse("opencode");
             this.claudeAdapter = new ClaudeHeadlessAdapter(processRunner, agentConfigs, sessionRepo,
                     tickets, taskRegistry, ticketLockManager, clock, claudeCmd);
+            int startTimeout = config.session() == null ? 60 : config.session().startTimeoutSeconds();
             this.opencodeAdapter = new OpenCodeServeAdapter(processRunner, agentConfigs, sessionRepo,
-                    tickets, taskRegistry, ticketLockManager, clock, portAllocator, opencodeCmd);
+                    tickets, taskRegistry, ticketLockManager, clock, portAllocator, opencodeCmd,
+                    startTimeout);
             this.agentSessionPort = new DispatchAgentSessionPort(agentConfigs, sessionRepo,
                     claudeAdapter, opencodeAdapter);
         }

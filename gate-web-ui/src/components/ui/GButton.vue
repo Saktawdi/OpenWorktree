@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
  * GButton — compact action control used throughout the gate console.
- * The public props/events are intentionally stable for existing views.
+ * Upgraded with physical micro-press feedback, accessible focus rings, and smooth states.
  */
 withDefaults(
   defineProps<{
@@ -33,7 +33,7 @@ const emit = defineEmits<{ (e: 'click', event: MouseEvent): void }>();
   <button
     :type="type"
     class="g-btn"
-    :class="['g-btn--' + variant, 'g-btn--' + size, { 'g-btn--block': block }]"
+    :class="['g-btn--' + variant, 'g-btn--' + size, { 'g-btn--block': block, 'is-loading': loading }]"
     :disabled="disabled || loading"
     :aria-busy="loading || undefined"
     :aria-label="ariaLabel || undefined"
@@ -50,22 +50,23 @@ const emit = defineEmits<{ (e: 'click', event: MouseEvent): void }>();
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: 7px;
   min-width: 0;
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
-  font-weight: 650;
-  letter-spacing: 0.005em;
+  font-weight: 600;
+  letter-spacing: -0.005em;
   line-height: 1;
   white-space: nowrap;
   cursor: pointer;
   user-select: none;
+  position: relative;
   transition:
-    background-color 0.16s ease,
-    border-color 0.16s ease,
-    color 0.16s ease,
-    box-shadow 0.16s ease,
-    transform 0.12s ease;
+    background-color 0.14s cubic-bezier(0.16, 1, 0.3, 1),
+    border-color 0.14s cubic-bezier(0.16, 1, 0.3, 1),
+    color 0.14s cubic-bezier(0.16, 1, 0.3, 1),
+    box-shadow 0.14s cubic-bezier(0.16, 1, 0.3, 1),
+    transform 0.08s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .g-btn__label {
@@ -74,31 +75,31 @@ const emit = defineEmits<{ (e: 'click', event: MouseEvent): void }>();
 }
 
 .g-btn:active:not(:disabled) {
-  transform: translateY(1px);
+  transform: scale(0.98) translateY(0.5px);
 }
 
 .g-btn:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-  box-shadow: 0 0 0 4px var(--accent-focus-ring);
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
 
 .g-btn:disabled {
-  opacity: 0.52;
+  opacity: 0.5;
   cursor: not-allowed;
   box-shadow: none;
 }
 
 .g-btn--md {
-  min-height: 38px;
-  padding: 0 15px;
+  min-height: var(--control-height);
+  padding: 0 14px;
   font-size: 13px;
 }
 
 .g-btn--sm {
-  min-height: 30px;
+  min-height: var(--control-height-sm);
   padding: 0 10px;
   font-size: 12px;
+  border-radius: var(--radius-xs);
 }
 
 .g-btn--block {
@@ -108,24 +109,29 @@ const emit = defineEmits<{ (e: 'click', event: MouseEvent): void }>();
 .g-btn--primary {
   background: var(--accent);
   color: var(--accent-contrast);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16), 0 2px 4px rgba(13, 52, 63, 0.12);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22), var(--shadow-xs);
 }
 
 .g-btn--primary:hover:not(:disabled) {
   background: var(--accent-hover);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2), 0 4px 10px rgba(13, 52, 63, 0.16);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.26), var(--shadow-sm);
+}
+
+.g-btn--primary:active:not(:disabled) {
+  background: var(--accent-active);
 }
 
 .g-btn--secondary {
   background: var(--panel);
   border-color: var(--border-strong);
   color: var(--text);
-  box-shadow: 0 1px 1px rgba(38, 41, 46, 0.03);
+  box-shadow: var(--card-highlight), var(--shadow-xs);
 }
 
 .g-btn--secondary:hover:not(:disabled) {
   background: var(--hover);
-  border-color: var(--border-strong);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border-strong));
+  box-shadow: var(--shadow-sm);
 }
 
 .g-btn--ghost {
@@ -140,22 +146,24 @@ const emit = defineEmits<{ (e: 'click', event: MouseEvent): void }>();
 
 .g-btn--danger {
   background: var(--danger);
-  color: var(--accent-contrast);
-  box-shadow: none;
+  color: #ffffff;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2), var(--shadow-xs);
 }
 
 .g-btn--danger:hover:not(:disabled) {
   background: var(--danger-hover);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25), var(--shadow-sm);
 }
 
 .g-btn--success {
   background: var(--success);
-  color: var(--accent-contrast);
-  box-shadow: none;
+  color: #ffffff;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2), var(--shadow-xs);
 }
 
 .g-btn--success:hover:not(:disabled) {
   background: var(--success-hover);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25), var(--shadow-sm);
 }
 
 .g-btn__spinner {
@@ -165,7 +173,7 @@ const emit = defineEmits<{ (e: 'click', event: MouseEvent): void }>();
   border: 2px solid currentColor;
   border-right-color: transparent;
   border-radius: 50%;
-  animation: g-btn-spin 0.7s linear infinite;
+  animation: g-btn-spin 0.65s linear infinite;
 }
 
 @keyframes g-btn-spin {

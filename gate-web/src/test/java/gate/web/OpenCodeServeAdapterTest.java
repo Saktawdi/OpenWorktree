@@ -89,7 +89,7 @@ class OpenCodeServeAdapterTest {
         PortAllocator allocator = new PortAllocator(port, port);
         adapter = new OpenCodeServeAdapter(new ProcessRunnerImpl(root.resolve("proc")),
                 agentConfigs, sessions, ticketRepository, tasks, ticketLocks, new SystemClock(),
-                allocator, "");
+                allocator, "", 60);
     }
 
     @AfterEach
@@ -112,12 +112,13 @@ class OpenCodeServeAdapterTest {
         String taskId = adapter.sendMessage(new AgentSessionPort.SendRequest(session.id(), "hi", true));
         waitForTask(taskId);
         List<SessionMessage> history = sessions.findMessages(session.id());
+        System.out.println("HISTORY MESSAGES: " + history);
         assertTrue(history.stream().anyMatch(m -> m.role() == gate.domain.session.Role.ASSISTANT
                 && "hello opencode".equals(m.content())));
         SessionMessage assistant = history.stream()
                 .filter(m -> m.role() == gate.domain.session.Role.ASSISTANT)
                 .findFirst().orElseThrow();
-        assertEquals(10L, assistant.usage().totalTokens());
+        assertEquals(38866L, assistant.usage().totalTokens());
         assertNotNull(lastMessageRequest);
         assertTrue(lastMessageRequest.contains("\"parts\":[{\"type\":\"text\",\"text\":\"hi\"}]"),
                 lastMessageRequest);
@@ -157,9 +158,10 @@ class OpenCodeServeAdapterTest {
 
     private void message(HttpExchange exchange) throws java.io.IOException {
         lastMessageRequest = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
-        byte[] body = ("{\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"hello opencode\"}]},"
-                + "\"usage\":{\"input_tokens\":7,\"output_tokens\":3,\"total_tokens\":10}}")
-                .getBytes(StandardCharsets.UTF_8);
+        byte[] body = ("{\"info\":{\"tokens\":{\"input\":38726,\"output\":89,\"total\":38866}},"
+                + "\"parts\":[{\"type\":\"step-start\"},{\"type\":\"reasoning\",\"text\":\"thinking\"},"
+                + "{\"type\":\"text\",\"text\":\"hello opencode\"},"
+                + "{\"type\":\"step-finish\",\"tokens\":{\"input\":38726,\"output\":89,\"total\":38866}}]}").getBytes(StandardCharsets.UTF_8);
         exchange.getResponseHeaders().set("Content-Type", "application/json");
         exchange.sendResponseHeaders(200, body.length);
         exchange.getResponseBody().write(body);

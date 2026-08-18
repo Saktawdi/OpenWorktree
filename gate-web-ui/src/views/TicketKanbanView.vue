@@ -47,6 +47,8 @@ const editDescription = ref('');
 const editNote = ref('');
 const editLabels = ref('');
 const editPriority = ref<TicketPriority | null>(null);
+const assigningAgent = ref(false);
+const assignError = ref('');
 
 const showCreate = ref(false);
 const newNo = ref('');
@@ -173,6 +175,8 @@ function toneFor(stage: TicketStage): 'neutral' | 'accent' | 'success' | 'warnin
 
 function agentName(ticket: Ticket) {
   if (!ticket.agentConfigId) return '人工';
+  const config = agentConfigs.value.find((item) => item.id === ticket.agentConfigId);
+  if (config) return config.name;
   return ticket.agentConfigId.includes('claude') ? 'Claude' : 'OpenCode';
 }
 
@@ -236,6 +240,7 @@ function openDrawer(no: string, event?: MouseEvent) {
   drawerTicketNo.value = no;
   drawerEditing.value = false;
   editError.value = '';
+  assignError.value = '';
   nextTick(() => {
     drawerRef.value?.querySelector<HTMLElement>('[data-drawer-autofocus]')?.focus();
   });
@@ -259,6 +264,27 @@ function moveDrawerToNextStep() {
 function updateDrawerStage(value: string | null) {
   if (!value || !drawerTicket.value || !stageOrder.includes(value as TicketStage)) return;
   void moveTicket(drawerTicket.value.no, value as TicketStage);
+}
+
+/** 抽屉内指派/更换执行智能体; null = 取消指派, 回到人工处理. */
+async function assignDrawerAgent(value: string | null) {
+  const ticket = drawerTicket.value;
+  if (!ticket || assigningAgent.value || ticket.agentConfigId === value) return;
+
+  assigningAgent.value = true;
+  assignError.value = '';
+  try {
+    const updated = await updateTicket(ticket.no, { agentConfigId: value }, projectId.value);
+    const localTicket = tickets.value.find((item) => item.no === updated.no);
+    if (localTicket) Object.assign(localTicket, updated);
+    activityMessage.value = value
+      ? `${ticket.no} 已指派给 ${agentName(updated)} 开始执行。`
+      : `${ticket.no} 已取消智能体指派，回到人工处理。`;
+  } catch {
+    assignError.value = '指派失败，请确认该智能体配置仍然可用后重试。';
+  } finally {
+    assigningAgent.value = false;
+  }
 }
 
 function parseEditLabels(value: string): string[] {
@@ -319,6 +345,10 @@ function goTo(name: 'ticket-detail' | 'review' | 'session') {
   const no = drawerTicket.value.no;
   closeDrawer();
   router.push({ name, params: { projectId: projectId.value, no } });
+}
+
+function openTicketSession(no: string) {
+  router.push({ name: 'session', params: { projectId: projectId.value, no } });
 }
 
 function onDocumentKeydown(event: KeyboardEvent) {
@@ -665,14 +695,13 @@ watch(
                 </span>
               </button>
               <button
-                v-if="nextStepByStage[ticket.stage]"
                 type="button"
                 class="kanban-card__advance"
-                :aria-label="'推进 ' + ticket.no + '：' + nextStepByStage[ticket.stage].label"
-                @click.stop="moveTicket(ticket.no, nextStepByStage[ticket.stage].target)"
+                :aria-label="'进入 ' + ticket.no + ' 会话'"
+                @click.stop="openTicketSession(ticket.no)"
               >
-                <GIcon name="spark" :size="12" />
-                <span>{{ nextStepByStage[ticket.stage].label }}</span>
+                <GIcon name="chat" :size="12" />
+                <span>会话</span>
               </button>
             </article>
           </div>
@@ -706,6 +735,7 @@ watch(
           <thead>
             <tr>
               <th>工单</th>
+              <th>优先级</th>
               <th>项目与分支</th>
               <th>阶段</th>
               <th>审核</th>
@@ -721,6 +751,16 @@ watch(
                   <span class="mono">{{ ticket.no }}</span>
                   <strong>{{ ticket.title }}</strong>
                 </button>
+              </td>
+              <td>
+                <span
+                  v-if="ticket.priority"
+                  class="priority"
+                  :class="'priority--' + ticket.priority.toLowerCase()"
+                >
+                  {{ ticket.priority }}
+                </span>
+                <span v-else class="record-priority-empty">--</span>
               </td>
               <td>
                 <div class="record-project">
@@ -740,7 +780,7 @@ watch(
               </td>
             </tr>
             <tr v-if="records.length === 0">
-              <td colspan="7" class="table-empty">没有匹配的工单记录</td>
+              <td colspan="8" class="table-empty">没有匹配的工单记录</td>
             </tr>
           </tbody>
         </table>
@@ -933,7 +973,10 @@ watch(
 
             <section class="drawer-section drawer-section--split">
               <div>
-                <div class="drawer-section__head"><h3>执行者</h3></div>
+                <div class="drawer-section__head">
+                  <h3>执行者</h3>
+                  <span v-if="assigningAgent" class="mono">保存中…</span>
+                </div>
                 <div class="drawer-agent">
                   <GAvatar :name="agentName(drawerTicket)" size="md" :tone="drawerTicket.agentConfigId ? 'accent' : 'neutral'" />
                   <div>
@@ -941,6 +984,19 @@ watch(
                     <small class="mono">{{ drawerTicket.agentConfigId || '手动选择' }}</small>
                   </div>
                 </div>
+                <GSelect
+                  v-if="!drawerEditing"
+                  class="drawer-agent-select"
+                  :model-value="drawerTicket.agentConfigId"
+                  :options="agentOptions"
+                  placeholder="人工 · 不指派"
+                  clearable
+                  :disabled="assigningAgent"
+                  aria-label="指派执行智能体"
+                  @update:model-value="assignDrawerAgent"
+                />
+                <small v-if="!drawerEditing" class="drawer-agent-hint">选择智能体后立即指派执行；选回「人工 · 不指派」可收回。</small>
+                <p v-if="assignError" class="drawer-agent-error" role="alert">{{ assignError }}</p>
               </div>
               <div>
                 <div class="drawer-section__head"><h3>更新时间</h3></div>
@@ -1772,6 +1828,11 @@ watch(
   font-size: 10px;
 }
 
+.record-priority-empty {
+  color: var(--text-faint);
+  font-size: 11px;
+}
+
 .record-updated {
   color: var(--text-muted) !important;
   font-family: var(--font-mono);
@@ -2158,6 +2219,25 @@ watch(
   display: grid;
   gap: 2px;
   min-width: 0;
+}
+
+.drawer-agent-select {
+  margin-top: 9px;
+}
+
+.drawer-agent-hint {
+  display: block;
+  margin-top: 6px;
+  color: var(--text-faint);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.drawer-agent-error {
+  margin: 8px 0 0;
+  color: var(--danger);
+  font-size: 11px;
+  font-weight: 650;
 }
 
 .drawer-agent strong {

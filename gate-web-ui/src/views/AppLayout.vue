@@ -57,7 +57,7 @@ const canQuickCreate = computed(() =>
 const activeSettingsSection = computed(() => String(route.query.section ?? 'models'));
 const settingsNavItems: Array<NavItem & { section: string }> = [
   { key: 'settings-models', label: '模型与供应商', routeName: 'settings', section: 'models', icon: 'bot' },
-  { key: 'settings-console', label: '控制台', routeName: 'settings', section: 'console', icon: 'grid' },
+  { key: 'settings-console', label: '控制台偏好', routeName: 'settings', section: 'console', icon: 'grid' },
   { key: 'settings-runtime', label: '运行环境', routeName: 'settings', section: 'runtime', icon: 'folder' },
   { key: 'settings-security', label: '访问安全', routeName: 'settings', section: 'security', icon: 'shield' },
 ];
@@ -554,12 +554,12 @@ onBeforeUnmount(() => {
 }
 
 .sidebar {
-  flex: 0 0 232px;
-  width: 232px;
+  flex: 0 0 var(--sidebar-width);
+  width: var(--sidebar-width);
   height: 100%;
   display: flex;
   flex-direction: column;
-  padding: 18px 12px 14px;
+  padding: 16px 12px 14px;
   color: var(--ink-text);
   background: var(--sidebar-bg);
   border-right: 1px solid var(--sidebar-border);
@@ -737,11 +737,11 @@ onBeforeUnmount(() => {
 }
 .topbar {
   display: flex;
-  flex: 0 0 64px;
+  flex: 0 0 var(--topbar-height);
   align-items: center;
   justify-content: space-between;
-  min-height: 64px;
-  padding: 0 clamp(20px, 3vw, 40px);
+  min-height: var(--topbar-height);
+  padding: 0 clamp(16px, 2.5vw, 32px);
   border-bottom: 1px solid var(--border);
   background: color-mix(in srgb, var(--panel) 94%, transparent);
   backdrop-filter: blur(14px);

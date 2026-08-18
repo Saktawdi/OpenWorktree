@@ -1,6 +1,7 @@
 <script setup lang="ts">
 /**
  * GTooltip — lightweight hover/focus hint for dense console controls.
+ * Upgraded with boundary-safe layout, entry micro-transitions, and pointer-events protection.
  */
 withDefaults(
   defineProps<{
@@ -36,33 +37,34 @@ withDefaults(
 
 .g-tooltip__bubble {
   position: absolute;
-  z-index: 30;
+  z-index: 50;
   width: max-content;
-  max-width: 240px;
-  padding: 6px 9px;
+  max-width: 260px;
+  padding: 5px 9px;
   border: 1px solid var(--tooltip-border);
-  border-radius: 7px;
+  border-radius: var(--radius-sm);
   background: var(--tooltip-bg);
   color: var(--tooltip-text);
-  font-size: 12px;
-  font-weight: 550;
-  line-height: 1.4;
+  font-size: 11.5px;
+  font-weight: 500;
+  line-height: 1.35;
   box-shadow: var(--shadow-popover);
   opacity: 0;
   pointer-events: none;
-  transition: opacity 0.14s ease, transform 0.14s ease;
+  transition:
+    opacity 0.12s cubic-bezier(0.16, 1, 0.3, 1),
+    transform 0.12s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .g-tooltip:hover .g-tooltip__bubble,
 .g-tooltip:focus-within .g-tooltip__bubble {
   opacity: 1;
-  pointer-events: auto;
 }
 
 .g-tooltip__bubble--top {
-  bottom: calc(100% + 8px);
+  bottom: calc(100% + 6px);
   left: 50%;
-  transform: translate(-50%, 3px);
+  transform: translate(-50%, 4px);
 }
 
 .g-tooltip:hover .g-tooltip__bubble--top,
@@ -71,9 +73,9 @@ withDefaults(
 }
 
 .g-tooltip__bubble--bottom {
-  top: calc(100% + 8px);
+  top: calc(100% + 6px);
   left: 50%;
-  transform: translate(-50%, -3px);
+  transform: translate(-50%, -4px);
 }
 
 .g-tooltip:hover .g-tooltip__bubble--bottom,
@@ -83,8 +85,8 @@ withDefaults(
 
 .g-tooltip__bubble--left {
   top: 50%;
-  right: calc(100% + 8px);
-  transform: translate(3px, -50%);
+  right: calc(100% + 6px);
+  transform: translate(4px, -50%);
 }
 
 .g-tooltip:hover .g-tooltip__bubble--left,
@@ -94,8 +96,8 @@ withDefaults(
 
 .g-tooltip__bubble--right {
   top: 50%;
-  left: calc(100% + 8px);
-  transform: translate(-3px, -50%);
+  left: calc(100% + 6px);
+  transform: translate(-4px, -50%);
 }
 
 .g-tooltip:hover .g-tooltip__bubble--right,

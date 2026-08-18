@@ -1,11 +1,11 @@
 <script setup lang="ts">
 /**
- * GAvatar — compact owner/agent marker.
+ * GAvatar — compact owner/agent marker with enhanced typography and micro-rings.
  */
 withDefaults(
   defineProps<{
     name: string;
-    size?: 'sm' | 'md';
+    size?: 'sm' | 'md' | 'lg';
     tone?: 'accent' | 'success' | 'warning' | 'neutral';
   }>(),
   {
@@ -29,10 +29,11 @@ const initials = (name: string) => name.trim().charAt(0).toUpperCase() || '?';
   place-items: center;
   flex: none;
   border: 1px solid transparent;
-  border-radius: 50%;
-  font-weight: 750;
+  border-radius: var(--radius-full);
+  font-weight: 700;
   line-height: 1;
   user-select: none;
+  box-shadow: var(--shadow-xs);
 }
 
 .g-avatar--sm {
@@ -42,27 +43,45 @@ const initials = (name: string) => name.trim().charAt(0).toUpperCase() || '?';
 }
 
 .g-avatar--md {
-  width: 32px;
-  height: 32px;
-  font-size: 13px;
+  width: 30px;
+  height: 30px;
+  font-size: 12.5px;
+}
+
+.g-avatar--lg {
+  width: 38px;
+  height: 38px;
+  font-size: 15px;
 }
 
 .g-avatar--accent {
   border-color: var(--accent-border);
   background: var(--accent-soft);
+  color: var(--accent);
+}
+
+html[data-theme='dark'] .g-avatar--accent {
   color: var(--accent-hover);
 }
 
 .g-avatar--success {
-  border-color: color-mix(in srgb, var(--success) 26%, transparent);
+  border-color: var(--success-border);
   background: var(--success-soft);
   color: var(--success);
 }
 
+html[data-theme='dark'] .g-avatar--success {
+  color: var(--success-hover);
+}
+
 .g-avatar--warning {
-  border-color: color-mix(in srgb, var(--warning) 28%, transparent);
+  border-color: var(--warning-border);
   background: var(--warning-soft);
   color: var(--warning);
+}
+
+html[data-theme='dark'] .g-avatar--warning {
+  color: var(--warning-hover);
 }
 
 .g-avatar--neutral {

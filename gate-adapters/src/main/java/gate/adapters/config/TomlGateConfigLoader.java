@@ -39,7 +39,7 @@ public final class TomlGateConfigLoader {
             // 执行文档-后端-web §8.1: web operations console + agent session orchestration.
             "web.bind", "web.port", "web.allowed_origins", "web.human_token_file",
             "session.port_range_min", "session.port_range_max", "session.default_cli",
-            "session.default_agent_config",
+            "session.default_agent_config", "session.start_timeout_seconds",
             "agent.default_model", "agent.default_provider", "agent.context_template");
 
     public GateConfig load(Path tomlPath) {
@@ -212,12 +212,14 @@ public final class TomlGateConfigLoader {
 
         GateConfig.SessionConfig session = null;
         if (scalars.containsKey("session.port_range_min") || scalars.containsKey("session.port_range_max")
-                || scalars.containsKey("session.default_cli") || scalars.containsKey("session.default_agent_config")) {
+                || scalars.containsKey("session.default_cli") || scalars.containsKey("session.default_agent_config")
+                || scalars.containsKey("session.start_timeout_seconds")) {
             session = new GateConfig.SessionConfig(
                     (int) longValueOr(scalars, "session.port_range_min", 49152L),
                     (int) longValueOr(scalars, "session.port_range_max", 65535L),
                     scalars.getOrDefault("session.default_cli", "claude"),
-                    scalars.get("session.default_agent_config"));
+                    scalars.get("session.default_agent_config"),
+                    (int) longValueOr(scalars, "session.start_timeout_seconds", 60L));
         }
 
         GateConfig.AgentConfigDefaults agent = null;

@@ -48,6 +48,14 @@ public interface TicketRepository {
         updateEditable(ticketNo, title, priority, now);
     }
 
+    /**
+     * Rebinds the agent config executing a ticket (web drawer assignment). A {@code null} id
+     * detaches the ticket from any agent (back to manual handling).
+     */
+    default void updateAgentConfig(String ticketNo, String agentConfigId, Instant now) {
+        throw new UnsupportedOperationException("agent config update is not supported");
+    }
+
     /** Detaches every ticket from a project (project delete path, legacy compatibility). */
     default void clearProject(String projectId, Instant now) {
         throw new UnsupportedOperationException("project detach is not supported");

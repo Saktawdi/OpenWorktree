@@ -1,4 +1,7 @@
 <script setup lang="ts">
+/**
+ * GField - Form input wrapper with strict typography and error states.
+ */
 withDefaults(
   defineProps<{
     label: string;
@@ -39,7 +42,7 @@ withDefaults(
 .g-field {
   display: grid;
   min-width: 0;
-  gap: 7px;
+  gap: 6px;
 }
 
 .g-field__head {
@@ -54,8 +57,9 @@ withDefaults(
   min-width: 0;
   color: var(--text-secondary);
   font-size: 12px;
-  font-weight: 750;
+  font-weight: 650;
   line-height: 1.35;
+  letter-spacing: -0.005em;
 }
 
 .g-field__required {
@@ -68,7 +72,7 @@ withDefaults(
 .g-field__message {
   color: var(--text-muted);
   font-size: 11px;
-  line-height: 1.5;
+  line-height: 1.45;
 }
 
 .g-field__hint,
@@ -78,7 +82,7 @@ withDefaults(
 
 .g-field__message {
   color: var(--danger);
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .g-field--error :deep(.g-input),

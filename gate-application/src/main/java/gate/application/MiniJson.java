@@ -154,15 +154,30 @@ public final class MiniJson {
         throw new IllegalArgumentException("bad null at " + i);
     }
 
-    private Long readNumber() {
+    private Number readNumber() {
         int start = i;
         if (peek() == '-') {
             i++;
         }
-        while (i < s.length() && Character.isDigit(s.charAt(i))) {
-            i++;
+        boolean isFloat = false;
+        while (i < s.length()) {
+            char c = s.charAt(i);
+            if (Character.isDigit(c)) {
+                i++;
+            } else if (c == '.' || c == 'e' || c == 'E' || c == '+' || c == '-') {
+                if (c == '.' || c == 'e' || c == 'E') {
+                    isFloat = true;
+                }
+                i++;
+            } else {
+                break;
+            }
         }
-        return Long.parseLong(s.substring(start, i));
+        String numStr = s.substring(start, i);
+        if (isFloat) {
+            return Double.parseDouble(numStr);
+        }
+        return Long.parseLong(numStr);
     }
 
     private void skipWs() {

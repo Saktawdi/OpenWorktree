@@ -2,7 +2,7 @@
 import { computed } from 'vue';
 /**
  * GSkeleton — layout-matching placeholder shown while data loads.
- * Shape mirrors the content it replaces (rule: skeletons over spinners).
+ * Upgraded with subtle, eye-comfortable light flow and strict radius alignment.
  */
 const props = withDefaults(
   defineProps<{
@@ -44,7 +44,7 @@ const lineCount = computed(() => props.lines ?? 1);
 .g-skeleton {
   display: inline-block;
   width: 100%;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-xs);
   background: var(--skeleton-base);
   overflow: hidden;
   position: relative;
@@ -56,7 +56,7 @@ const lineCount = computed(() => props.lines ?? 1);
   inset: 0;
   transform: translateX(-100%);
   background: linear-gradient(90deg, transparent, var(--skeleton-shine), transparent);
-  animation: g-skeleton-shimmer 1.4s ease-in-out infinite;
+  animation: g-skeleton-shimmer 1.6s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
 
 .g-skeleton--text {
@@ -64,23 +64,23 @@ const lineCount = computed(() => props.lines ?? 1);
 }
 
 .g-skeleton--text-last {
-  width: 62%;
+  width: 60%;
 }
 
 .g-skeleton--block {
-  height: 120px;
+  height: 100px;
   border-radius: var(--radius-md);
 }
 
 .g-skeleton--circle {
-  width: 32px;
-  height: 32px;
+  width: 30px;
+  height: 30px;
   border-radius: 50%;
 }
 
 .g-skeleton-group {
   display: grid;
-  gap: 8px;
+  gap: 7px;
   width: 100%;
 }
 

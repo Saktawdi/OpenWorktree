@@ -1,6 +1,7 @@
 <script setup lang="ts">
 /**
  * GBadge — compact state label for tickets, agents, and health signals.
+ * Refined with subtle glow and clear contrast.
  */
 withDefaults(
   defineProps<{
@@ -25,16 +26,17 @@ withDefaults(
 .g-badge {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   max-width: 100%;
-  padding: 3px 9px;
+  padding: 2px 8px;
   border: 1px solid transparent;
-  border-radius: 999px;
+  border-radius: var(--radius-full);
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 650;
   line-height: 1.45;
   letter-spacing: 0.01em;
   white-space: nowrap;
+  user-select: none;
 }
 
 .g-badge__dot {
@@ -44,7 +46,7 @@ withDefaults(
   border-radius: 50%;
   background: currentColor;
   box-shadow: 0 0 0 2px currentColor;
-  opacity: 0.7;
+  opacity: 0.85;
 }
 
 .g-badge--neutral {
@@ -54,22 +56,42 @@ withDefaults(
 }
 
 .g-badge--accent {
+  border-color: var(--accent-border);
   background: var(--accent-soft);
+  color: var(--accent);
+}
+
+html[data-theme='dark'] .g-badge--accent {
   color: var(--accent-hover);
 }
 
 .g-badge--success {
+  border-color: var(--success-border);
   background: var(--success-soft);
   color: var(--success);
 }
 
+html[data-theme='dark'] .g-badge--success {
+  color: var(--success-hover);
+}
+
 .g-badge--warning {
+  border-color: var(--warning-border);
   background: var(--warning-soft);
   color: var(--warning);
 }
 
+html[data-theme='dark'] .g-badge--warning {
+  color: var(--warning-hover);
+}
+
 .g-badge--danger {
+  border-color: var(--danger-border);
   background: var(--danger-soft);
   color: var(--danger);
+}
+
+html[data-theme='dark'] .g-badge--danger {
+  color: var(--danger-hover);
 }
 </style>

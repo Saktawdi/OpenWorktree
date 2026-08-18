@@ -1,6 +1,7 @@
 <script setup lang="ts">
 /**
  * GModal — focused confirmation and form dialog.
+ * Enhanced with smooth backdrop, adaptive scroll bounds, and polished close button.
  */
 import { nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { focusWhenPageActive } from '@/utils/focus';
@@ -135,7 +136,7 @@ onBeforeUnmount(() => {
           <div v-if="props.title" class="g-modal__head">
             <h2 :id="titleId" class="g-modal__title">{{ props.title }}</h2>
             <button ref="closeButton" class="g-modal__close" type="button" aria-label="关闭" @click="close">
-              <GIcon name="x" :size="16" aria-hidden="true" />
+              <GIcon name="x" :size="15" aria-hidden="true" />
             </button>
           </div>
           <div :id="bodyId" class="g-modal__body">
@@ -155,24 +156,27 @@ onBeforeUnmount(() => {
   position: fixed;
   inset: 0;
   z-index: 100;
-  display: grid;
-  place-items: center;
-  padding: 20px;
-  overflow: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  overflow-y: auto;
   background: var(--overlay);
-  backdrop-filter: blur(7px);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
 }
 
 .g-modal {
   display: flex;
   flex-direction: column;
   max-width: 100%;
-  max-height: calc(100vh - 40px);
+  max-height: min(calc(100vh - 64px), 820px);
   overflow: hidden;
   background: var(--panel);
   border: 1px solid var(--overlay-border);
   border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-popover);
+  box-shadow: var(--card-highlight), var(--shadow-popover);
+  outline: none;
 }
 
 .g-modal__head {
@@ -180,43 +184,51 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  min-height: 58px;
-  padding: 15px 20px;
+  min-height: 52px;
+  padding: 14px 20px;
   border-bottom: 1px solid var(--border);
+  background: linear-gradient(180deg, var(--hover) 0%, transparent 100%);
 }
 
 .g-modal__title {
   color: var(--text);
   margin: 0;
-  font-size: 15px;
-  font-weight: 750;
+  font-size: 14.5px;
+  font-weight: 700;
   letter-spacing: -0.01em;
 }
 
 .g-modal__close {
-  display: grid;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: 28px;
   height: 28px;
-  place-items: center;
   flex: none;
-  border: 0;
-  border-radius: 7px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
-  font-size: 22px;
-  line-height: 1;
-  transition: background-color 0.14s ease, color 0.14s ease;
+  transition:
+    background-color 0.14s cubic-bezier(0.16, 1, 0.3, 1),
+    color 0.14s cubic-bezier(0.16, 1, 0.3, 1),
+    border-color 0.14s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .g-modal__close:hover {
   background: var(--hover);
+  border-color: var(--border);
   color: var(--text);
+}
+
+.g-modal__close:focus-visible {
+  box-shadow: var(--focus-ring);
 }
 
 .g-modal__body {
   min-height: 0;
-  overflow: auto;
+  overflow-y: auto;
   padding: 20px;
 }
 
@@ -224,19 +236,21 @@ onBeforeUnmount(() => {
   display: flex;
   justify-content: flex-end;
   gap: 10px;
-  padding: 14px 20px;
+  padding: 13px 20px;
   border-top: 1px solid var(--border);
   background: var(--panel-2);
 }
 
 .g-modal-enter-active,
 .g-modal-leave-active {
-  transition: opacity 0.18s ease;
+  transition: opacity 0.16s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .g-modal-enter-active .g-modal,
 .g-modal-leave-active .g-modal {
-  transition: transform 0.18s ease, opacity 0.18s ease;
+  transition:
+    transform 0.18s cubic-bezier(0.16, 1, 0.3, 1),
+    opacity 0.16s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .g-modal-enter-from,
@@ -247,6 +261,6 @@ onBeforeUnmount(() => {
 .g-modal-enter-from .g-modal,
 .g-modal-leave-to .g-modal {
   opacity: 0;
-  transform: translateY(10px) scale(0.985);
+  transform: translateY(8px) scale(0.985);
 }
 </style>

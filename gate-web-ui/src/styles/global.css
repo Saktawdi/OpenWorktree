@@ -1,144 +1,199 @@
 /*
- * Gate Web UI - a restrained developer-console foundation.
+ * Gate Web UI - Professional Developer Console System Tokens.
  *
- * The palette follows the practical side of GitHub/Primer and Plane: cool
- * neutral surfaces, one deliberate action color, and borders doing most of
- * the grouping work. Components consume these tokens instead of decorating
- * every section with a card and a shadow.
+ * Implements taste-skill (anti-slop engineering design taste):
+ * - Unified 4px-grid radius scale (4px, 6px, 8px, 12px, 16px, 9999px)
+ * - Restrained, cohesive color palette with single primary action accent
+ * - Layered hairline borders and subtle inset highlights (--card-highlight)
+ * - Dual-layer focus rings conforming to WCAG AA accessibility
+ * - Tactile micro-interactions and smooth physical transitions
  */
 :root {
   color-scheme: light;
 
+  /* Surfaces & Canvas */
   --background: #eaf0f4;
   --canvas: #f6fafb;
-  --panel: #fbfdfe;
-  --panel-2: #f0f5f7;
+  --panel: #ffffff;
+  --panel-2: #f2f6f8;
+  --panel-3: #e6eef2;
   --hover: #eaf2f5;
-  --active: rgba(11, 113, 137, 0.1);
-  --border: #d5e0e5;
-  --border-strong: #b7c8d0;
+  --active: rgba(11, 113, 137, 0.12);
+  --border: #d4e0e6;
+  --border-subtle: #e2ecf0;
+  --border-strong: #b2c5ce;
 
-  --text: #17242d;
-  --text-secondary: #40525c;
-  --text-muted: #60727d;
-  --text-faint: #8a9aa3;
+  /* Typography */
+  --text: #14222a;
+  --text-secondary: #3c505b;
+  --text-muted: #5e727e;
+  --text-faint: #889ba4;
 
+  /* Singular Tech Cyan Accent */
   --accent: #0b7189;
-  --accent-hover: #075c70;
-  --accent-soft: rgba(11, 113, 137, 0.105);
+  --accent-hover: #085a6e;
+  --accent-active: #064757;
+  --accent-soft: rgba(11, 113, 137, 0.1);
+  --accent-subtle: rgba(11, 113, 137, 0.05);
   --accent-border: rgba(11, 113, 137, 0.28);
-  --accent-focus-ring: rgba(11, 113, 137, 0.2);
+  --accent-focus-ring: rgba(11, 113, 137, 0.22);
   --accent-contrast: #f7fbfc;
 
-  --success: #21785a;
-  --success-soft: rgba(33, 120, 90, 0.11);
-  --success-hover: #195d45;
-  --warning: #9a640f;
-  --warning-soft: rgba(154, 100, 15, 0.12);
-  --danger: #b5423d;
-  --danger-soft: rgba(181, 66, 61, 0.11);
-  --danger-hover: #8c312e;
+  /* Semantic Feedback Palette */
+  --success: #1b7a58;
+  --success-hover: #146146;
+  --success-soft: rgba(27, 122, 88, 0.12);
+  --success-border: rgba(27, 122, 88, 0.28);
+  --warning: #996209;
+  --warning-hover: #7b4e06;
+  --warning-soft: rgba(153, 98, 9, 0.12);
+  --warning-border: rgba(153, 98, 9, 0.28);
+  --danger: #b53d38;
+  --danger-hover: #912e2a;
+  --danger-soft: rgba(181, 61, 56, 0.12);
+  --danger-border: rgba(181, 61, 56, 0.28);
 
-  --ink: #14242e;
-  --ink-strong: #10212a;
-  --ink-soft: #304854;
+  /* Sidebar Dark Base */
+  --ink: #12212a;
+  --ink-strong: #0c181f;
+  --ink-soft: #2c424e;
   --ink-text: #edf7f8;
-  --ink-muted: #91a8b0;
-  --sidebar-bg: #14242e;
+  --ink-muted: #8fa6af;
+  --sidebar-bg: #12212a;
   --sidebar-text: #edf7f8;
-  --sidebar-muted: #91a8b0;
-  --sidebar-icon: #8b9da4;
-  --sidebar-hover: rgba(236, 247, 248, 0.1);
-  --sidebar-border: rgba(236, 247, 248, 0.12);
-  --sidebar-active: rgba(82, 204, 225, 0.15);
-  --sidebar-active-border: rgba(128, 220, 236, 0.22);
-  --sidebar-accent: #7ed8e9;
-  --shadow-brand: inset 0 1px 0 rgba(255, 255, 255, 0.26), 0 8px 16px rgba(3, 18, 24, 0.24);
+  --sidebar-muted: #8fa6af;
+  --sidebar-icon: #7d939c;
+  --sidebar-hover: rgba(236, 247, 248, 0.09);
+  --sidebar-border: rgba(236, 247, 248, 0.1);
+  --sidebar-active: rgba(82, 204, 225, 0.16);
+  --sidebar-active-border: rgba(128, 220, 236, 0.3);
+  --sidebar-accent: #6cd0e2;
 
-  --radius-sm: 8px;
-  --radius-md: 10px;
-  --radius-lg: 14px;
-  --radius-xl: 18px;
-  --font-sans: ui-sans-serif, "Segoe UI Variable", "Avenir Next", "PingFang SC",
-    "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
-  --font-mono: ui-monospace, "Cascadia Code", "SFMono-Regular", Consolas, monospace;
-  --shadow-panel: 0 1px 2px rgba(20, 42, 54, 0.035), 0 8px 22px rgba(20, 42, 54, 0.035);
-  --shadow-popover: 0 20px 48px rgba(16, 41, 52, 0.16), 0 3px 8px rgba(16, 41, 52, 0.08);
-  --control-height: 38px;
-  --control-height-sm: 34px;
-  --focus-ring: 0 0 0 3px var(--accent-focus-ring);
-  --tooltip-bg: #14242e;
+  /* Precision Radii */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-full: 9999px;
+
+  /* Font System */
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-mono: ui-monospace, "SFMono-Regular", "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+
+  /* Elevation, Shadows & Highlights */
+  --card-highlight: inset 0 1px 0 0 rgba(255, 255, 255, 0.85);
+  --shadow-xs: 0 1px 2px rgba(18, 38, 48, 0.04);
+  --shadow-sm: 0 1px 3px rgba(18, 38, 48, 0.06), 0 1px 2px rgba(18, 38, 48, 0.03);
+  --shadow-panel: 0 1px 3px rgba(18, 38, 48, 0.04), 0 6px 16px -2px rgba(18, 38, 48, 0.03);
+  --shadow-popover: 0 16px 36px -4px rgba(14, 34, 44, 0.14), 0 4px 12px -2px rgba(14, 34, 44, 0.06);
+  --shadow-brand: inset 0 1px 0 rgba(255, 255, 255, 0.28), 0 6px 14px rgba(3, 18, 24, 0.22);
+
+  /* Unified Control Heights */
+  --control-height: 34px;
+  --control-height-sm: 28px;
+  --control-height-lg: 40px;
+  /* Multica / Linear Refined Precision Tokens */
+  --sidebar-width: 240px;
+  --sidebar-collapsed-width: 68px;
+  --topbar-height: 52px;
+  --panel-radius: 8px;
+  --badge-radius: 4px;
+
+  /* Dual-Layer Accessible Focus Ring */
+  --focus-ring: 0 0 0 2px var(--panel), 0 0 0 4px var(--accent);
+
+  /* Tooltip & Modals */
+  --tooltip-bg: #12212a;
   --tooltip-text: #edf7f8;
-  --tooltip-border: color-mix(in srgb, var(--tooltip-text) 16%, transparent);
-  --overlay: rgba(10, 27, 35, 0.48);
-  --overlay-border: rgba(10, 27, 35, 0.18);
+  --tooltip-border: rgba(255, 255, 255, 0.12);
+  --overlay: rgba(10, 24, 32, 0.52);
+  --overlay-border: rgba(255, 255, 255, 0.15);
 
-  --skeleton-base: #e3ebef;
-  --skeleton-shine: rgba(255, 255, 255, 0.85);
+  /* Skeleton Micro-Shimmer */
+  --skeleton-base: #e2ebf0;
+  --skeleton-shine: rgba(255, 255, 255, 0.7);
 }
 
 html[data-theme='dark'] {
   color-scheme: dark;
 
-  --background: #0b151b;
-  --canvas: #101e25;
-  --panel: #132129;
-  --panel-2: #1a2b34;
-  --hover: #1b2e37;
-  --active: rgba(80, 197, 223, 0.15);
-  --border: #2a424c;
-  --border-strong: #41616d;
+  /* Dark Surfaces & Canvas */
+  --background: #091319;
+  --canvas: #0e1a21;
+  --panel: #13222a;
+  --panel-2: #192b34;
+  --panel-3: #1f343f;
+  --hover: #1c303b;
+  --active: rgba(80, 197, 223, 0.16);
+  --border: #243944;
+  --border-subtle: #1a2c35;
+  --border-strong: #3b5764;
 
-  --text: #e8f3f4;
-  --text-secondary: #c4d8dc;
-  --text-muted: #8fa9b0;
-  --text-faint: #68818a;
+  /* Typography */
+  --text: #e7f2f4;
+  --text-secondary: #c1d6dc;
+  --text-muted: #8ca5ae;
+  --text-faint: #647d86;
 
+  /* Singular Tech Cyan Accent in Dark Mode */
   --accent: #50c5df;
-  --accent-hover: #8adfee;
-  --accent-soft: rgba(80, 197, 223, 0.15);
-  --accent-border: rgba(125, 222, 240, 0.32);
-  --accent-focus-ring: rgba(80, 197, 223, 0.22);
-  --accent-contrast: #06212a;
+  --accent-hover: #7be0f3;
+  --accent-active: #9eebf9;
+  --accent-soft: rgba(80, 197, 223, 0.16);
+  --accent-subtle: rgba(80, 197, 223, 0.08);
+  --accent-border: rgba(125, 222, 240, 0.34);
+  --accent-focus-ring: rgba(80, 197, 223, 0.28);
+  --accent-contrast: #061c23;
 
-  --success: #52c99b;
-  --success-soft: rgba(82, 201, 155, 0.15);
-  --success-hover: #86dfb8;
-  --warning: #e0ae55;
-  --warning-soft: rgba(224, 174, 85, 0.15);
-  --danger: #f27c75;
-  --danger-soft: rgba(242, 124, 117, 0.15);
-  --danger-hover: #ffaaa4;
+  /* Semantic Feedback Palette */
+  --success: #4ec295;
+  --success-hover: #72d8b0;
+  --success-soft: rgba(78, 194, 149, 0.16);
+  --success-border: rgba(78, 194, 149, 0.32);
+  --warning: #dfac50;
+  --warning-hover: #ebc173;
+  --warning-soft: rgba(223, 172, 80, 0.16);
+  --warning-border: rgba(223, 172, 80, 0.32);
+  --danger: #f0746d;
+  --danger-hover: #fa9791;
+  --danger-soft: rgba(240, 116, 109, 0.16);
+  --danger-border: rgba(240, 116, 109, 0.32);
 
-  --ink: #e8f3f4;
-  --ink-strong: #f4fbfc;
-  --ink-soft: #c4d8dc;
-  --ink-text: #eff9fa;
-  --ink-muted: #8fa9b0;
-  --sidebar-bg: #0b171e;
-  --sidebar-text: #eff9fa;
-  --sidebar-muted: #8fa9b0;
-  --sidebar-icon: #7f969e;
+  /* Sidebar Dark Base */
+  --ink: #e7f2f4;
+  --ink-strong: #f3fafb;
+  --ink-soft: #c1d6dc;
+  --ink-text: #eef8f9;
+  --ink-muted: #8ca5ae;
+  --sidebar-bg: #09141b;
+  --sidebar-text: #eef8f9;
+  --sidebar-muted: #8ca5ae;
+  --sidebar-icon: #768d96;
   --sidebar-hover: rgba(231, 246, 248, 0.1);
   --sidebar-border: rgba(231, 246, 248, 0.1);
-  --sidebar-active: rgba(80, 197, 223, 0.14);
-  --sidebar-active-border: rgba(138, 223, 238, 0.18);
-  --sidebar-accent: #92e3f1;
-  --shadow-brand: inset 0 1px 0 rgba(255, 255, 255, 0.22), 0 8px 16px rgba(1, 10, 14, 0.34);
+  --sidebar-active: rgba(80, 197, 223, 0.16);
+  --sidebar-active-border: rgba(138, 223, 238, 0.22);
+  --sidebar-accent: #8de4f3;
 
-  --shadow-panel: 0 1px 2px rgba(1, 10, 14, 0.32), 0 10px 26px rgba(1, 10, 14, 0.18);
-  --shadow-popover: 0 22px 52px rgba(1, 9, 12, 0.46), 0 3px 9px rgba(1, 9, 12, 0.28);
-  --control-height: 38px;
-  --control-height-sm: 34px;
-  --focus-ring: 0 0 0 3px var(--accent-focus-ring);
-  --tooltip-bg: #e8f3f4;
-  --tooltip-text: #0b151b;
-  --tooltip-border: color-mix(in srgb, var(--tooltip-text) 16%, transparent);
-  --overlay: rgba(1, 10, 14, 0.7);
+  /* Dark Mode Micro-Glow & Depth */
+  --card-highlight: inset 0 1px 0 0 rgba(255, 255, 255, 0.07);
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  --shadow-panel: 0 0 0 1px rgba(255, 255, 255, 0.04), 0 6px 20px -4px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  --shadow-popover: 0 0 0 1px rgba(255, 255, 255, 0.08), 0 18px 42px -6px rgba(0, 0, 0, 0.75), inset 0 1px 0 rgba(255, 255, 255, 0.09);
+  --shadow-brand: inset 0 1px 0 rgba(255, 255, 255, 0.24), 0 8px 18px rgba(0, 8, 12, 0.45);
+
+  --focus-ring: 0 0 0 2px var(--panel), 0 0 0 4px var(--accent);
+
+  --tooltip-bg: #e7f2f4;
+  --tooltip-text: #091319;
+  --tooltip-border: rgba(0, 0, 0, 0.14);
+  --overlay: rgba(2, 8, 11, 0.75);
   --overlay-border: rgba(231, 246, 248, 0.12);
 
-  --skeleton-base: #1c313a;
-  --skeleton-shine: rgba(255, 255, 255, 0.07);
+  --skeleton-base: #14232c;
+  --skeleton-shine: rgba(255, 255, 255, 0.04);
 }
 
 *,
@@ -163,9 +218,9 @@ body {
   background: var(--background);
   color: var(--text);
   font-family: var(--font-sans);
-  font-size: 14px;
+  font-size: 13.5px;
   line-height: 1.5;
-  letter-spacing: 0.002em;
+  letter-spacing: -0.005em;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
@@ -192,8 +247,8 @@ a:focus-visible,
 input:focus-visible,
 textarea:focus-visible,
 select:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
 
 code,
@@ -201,16 +256,17 @@ pre,
 .mono {
   font-family: var(--font-mono);
   font-variant-ligatures: none;
+  font-variant-numeric: tabular-nums;
 }
 
 ::selection {
   background: var(--accent-soft);
-  color: var(--ink-strong);
+  color: var(--text);
 }
 
 ::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: 8px;
+  height: 8px;
 }
 
 ::-webkit-scrollbar-track {
@@ -218,7 +274,7 @@ pre,
 }
 
 ::-webkit-scrollbar-thumb {
-  border: 3px solid transparent;
+  border: 2px solid transparent;
   border-radius: 999px;
   background: var(--border-strong);
   background-clip: padding-box;

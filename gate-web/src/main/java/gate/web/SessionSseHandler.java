@@ -39,18 +39,26 @@ final class SessionSseHandler {
             return 404;
         }
         exchange.getResponseHeaders().set("Content-Type", "text/event-stream; charset=utf-8");
-        exchange.getResponseHeaders().set("Cache-Control", "no-cache");
+        exchange.getResponseHeaders().set("Cache-Control", "no-cache, no-transform");
+        exchange.getResponseHeaders().set("Connection", "keep-alive");
         exchange.sendResponseHeaders(200, 0);
-        try (OutputStream os = exchange.getResponseBody();
-             Stream<AgentSessionPort.SessionEvent> events = sessions.streamEvents(sessionId)) {
-            Iterator<AgentSessionPort.SessionEvent> it = events.iterator();
-            while (it.hasNext()) {
-                AgentSessionPort.SessionEvent e = it.next();
-                String data = Json.write(sessionEventJson(e));
-                os.write(("event: " + e.kind() + "\n").getBytes(StandardCharsets.UTF_8));
-                os.write(("data: " + data + "\n\n").getBytes(StandardCharsets.UTF_8));
-                os.flush();
+        try (OutputStream os = exchange.getResponseBody()) {
+            // First emit current history snapshot
+            try (Stream<AgentSessionPort.SessionEvent> events = sessions.streamEvents(sessionId)) {
+                Iterator<AgentSessionPort.SessionEvent> it = events.iterator();
+                while (it.hasNext()) {
+                    AgentSessionPort.SessionEvent e = it.next();
+                    String data = Json.write(sessionEventJson(e));
+                    os.write(("event: " + e.kind() + "\n").getBytes(StandardCharsets.UTF_8));
+                    os.write(("data: " + data + "\n\n").getBytes(StandardCharsets.UTF_8));
+                    os.flush();
+                }
             }
+            // Send ping before closing
+            os.write(": ping\n\n".getBytes(StandardCharsets.UTF_8));
+            os.flush();
+        } catch (IOException ignored) {
+            // client disconnected
         }
         return 200;
     }

@@ -68,4 +68,6 @@ export type TicketUpdateRequest = {
   labels?: string[] | null;
   priority?: Ticket['priority'] | null;
   stage?: TicketStage;
+  /** 指派执行智能体; null = 取消指派, 回到人工处理. */
+  agentConfigId?: string | null;
 };

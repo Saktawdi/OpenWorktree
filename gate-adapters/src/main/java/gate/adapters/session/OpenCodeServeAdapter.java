@@ -57,8 +57,14 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
     private final TicketLockManager ticketLocks;
     private final Clock clock;
     private final PortAllocator ports;
+    private final Duration startTimeout;
     private final String opencodeExecutable;
-    private final HttpClient http = HttpClient.newHttpClient();
+    // PINNED TO HTTP/1.1 — the default client is HTTP/2, and its h2c cleartext upgrade stalls against
+    // opencode's (Bun) HTTP server: the listener is up ("server listening") but a /health GET never
+    // resolves, so every session start failed with "did not become healthy" and leaked a serve process.
+    private final HttpClient http = HttpClient.newBuilder()
+            .version(HttpClient.Version.HTTP_1_1)
+            .build();
     private final ExecutorService executor;
     private final Map<Integer, Process> serveProcesses = new ConcurrentHashMap<>();
     private final Map<String, Integer> sessionPorts = new ConcurrentHashMap<>();
@@ -71,7 +77,8 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                                 TicketLockManager ticketLocks,
                                 Clock clock,
                                 PortAllocator ports,
-                                String opencodeExecutable) {
+                                String opencodeExecutable,
+                                int startTimeoutSeconds) {
         this.processRunner = processRunner;
         this.agentConfigs = agentConfigs;
         this.sessions = sessions;
@@ -81,6 +88,7 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
         this.clock = clock;
         this.ports = ports;
         this.opencodeExecutable = opencodeExecutable;
+        this.startTimeout = Duration.ofSeconds(startTimeoutSeconds);
         this.executor = Executors.newSingleThreadExecutor(r -> {
             Thread t = new Thread(r, "opencode-session");
             t.setDaemon(true);
@@ -108,6 +116,10 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                 sessionPorts.put(session.id(), port);
                 return session;
             } catch (Exception e) {
+                // Never leak a half-started serve process: its port would stay occupied on disk even
+                // though the allocator's reservation is released, and every failed retry would spawn
+                // another orphan (设计 §R1 — the 10s wait used to fail on cold boot + leak each try).
+                killProcess(port);
                 ports.release(port);
                 throw e;
             }
@@ -124,6 +136,8 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
         Session session = sessions.find(request.sessionId())
                 .orElseThrow(() -> new GateException(GateErrorCode.USAGE,
                         "no such session: " + request.sessionId()));
+        sessions.insertMessage(new SessionMessage(UUID.randomUUID().toString(), session.id(),
+                Role.USER, request.message(), List.of(), null, false, clock.now()));
         GateTask task = tasks.register("session-send", session.ticketNo(), session.id());
         executor.submit(() -> runSend(task, session, request.message()));
         return task.id();
@@ -190,8 +204,16 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
     }
 
     private void waitHealthy(int port) {
-        long deadline = System.nanoTime() + Duration.ofSeconds(10).toNanos();
+        long deadline = System.nanoTime() + startTimeout.toNanos();
         while (System.nanoTime() < deadline) {
+            // If the spawned server exited (bad flags, missing runtime, port collision), fail fast with
+            // a real reason instead of polling the full window for a process that can never answer.
+            Process proc = serveProcesses.get(port);
+            if (proc != null && !proc.isAlive()) {
+                throw new GateException(GateErrorCode.GATE_ERROR_IO,
+                        "opencode serve exited before becoming healthy on port " + port
+                                + " (exit " + proc.exitValue() + ")");
+            }
             try {
                 HttpResponse<String> resp = http.send(
                         HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/health"))
@@ -211,7 +233,8 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
             }
         }
         throw new GateException(GateErrorCode.GATE_ERROR_IO,
-                "opencode serve did not become healthy on port " + port);
+                "opencode serve did not become healthy on port " + port
+                        + " within " + startTimeout.toSeconds() + "s");
     }
 
     private String createSession(int port) {
@@ -252,8 +275,6 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
             tasks.update(progress(task, 70, "解析 opencode 响应"));
             ParsedOutput parsed = parseResponse(resp.body());
             Instant now = clock.now();
-            sessions.insertMessage(new SessionMessage(UUID.randomUUID().toString(), session.id(),
-                    Role.USER, message, List.of(), null, false, now));
             if (parsed.text != null || parsed.usage != null) {
                 sessions.insertMessage(new SessionMessage(UUID.randomUUID().toString(), session.id(),
                         Role.ASSISTANT, parsed.text == null ? "" : parsed.text, List.of(),
@@ -329,7 +350,7 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                     .timeout(Duration.ofSeconds(30))
                     .POST(HttpRequest.BodyPublishers.ofString(body))
                     .build();
-            return http.send(req, HttpResponse.BodyHandlers.ofString());
+            return http.send(req, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
         } catch (IOException | InterruptedException e) {
             if (e instanceof InterruptedException ie) {
                 Thread.currentThread().interrupt();
@@ -358,25 +379,70 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
             }
             Map<String, Object> obj = (Map<String, Object>) m;
             String text = extractText(obj.get("message"), obj.get("text"), obj.get("content"));
+            if (text == null && obj.get("parts") instanceof List<?> partsList) {
+                StringBuilder sb = new StringBuilder();
+                for (Object p : partsList) {
+                    if (p instanceof Map<?, ?> pm) {
+                        Map<String, Object> pmm = (Map<String, Object>) pm;
+                        Object type = pmm.get("type");
+                        if ("text".equals(String.valueOf(type))) {
+                            Object t = pmm.get("text");
+                            if (t != null) {
+                                if (sb.length() > 0) sb.append("\n");
+                                sb.append(t);
+                            }
+                        }
+                    }
+                }
+                if (sb.length() > 0) {
+                    text = sb.toString();
+                }
+            }
             SessionUsage usage = null;
             Object usageObj = obj.get("usage");
+            if (usageObj == null && obj.get("info") instanceof Map<?, ?> infoMap) {
+                usageObj = ((Map<?, ?>) infoMap).get("tokens");
+            }
+            if (usageObj == null && obj.get("parts") instanceof List<?> partsList) {
+                for (Object p : partsList) {
+                    if (p instanceof Map<?, ?> pm) {
+                        Map<String, Object> pmm = (Map<String, Object>) pm;
+                        if (pmm.get("tokens") instanceof Map<?, ?>) {
+                            usageObj = pmm.get("tokens");
+                            break;
+                        }
+                    }
+                }
+            }
             if (usageObj instanceof Map<?, ?> um) {
                 Map<String, Object> usageMap = (Map<String, Object>) um;
                 Long prompt = longOrNull(usageMap.get("input_tokens"));
+                if (prompt == null) {
+                    prompt = longOrNull(usageMap.get("input"));
+                }
                 if (prompt == null) {
                     prompt = longOrNull(usageMap.get("prompt_tokens"));
                 }
                 Long completion = longOrNull(usageMap.get("output_tokens"));
                 if (completion == null) {
+                    completion = longOrNull(usageMap.get("output"));
+                }
+                if (completion == null) {
                     completion = longOrNull(usageMap.get("completion_tokens"));
                 }
                 Long total = longOrNull(usageMap.get("total_tokens"));
+                if (total == null) {
+                    total = longOrNull(usageMap.get("total"));
+                }
                 if (prompt != null || completion != null || total != null) {
                     usage = new SessionUsage(prompt, completion, total);
                 }
             }
-            return new ParsedOutput(text, usage, false);
-        } catch (Exception e) {
+            boolean degraded = usage == null || (text == null && (responseBody.contains("error") || responseBody.contains("FAIL")));
+            return new ParsedOutput(text, usage, degraded);
+        } catch (Throwable e) {
+            System.err.println("Failed to parse opencode response: " + e.getMessage());
+            e.printStackTrace();
             return new ParsedOutput(null, null, true);
         }
     }

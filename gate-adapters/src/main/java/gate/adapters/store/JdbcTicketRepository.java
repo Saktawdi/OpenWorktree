@@ -114,6 +114,16 @@ public final class JdbcTicketRepository implements TicketRepository {
     }
 
     @Override
+    public void updateAgentConfig(String ticketNo, String agentConfigId, Instant now) {
+        int updated = jdbc.update(
+                "UPDATE ticket SET agent_config_id = ?, updated_at = ? WHERE ticket_no = ?",
+                agentConfigId, now.toString(), ticketNo);
+        if (updated != 1) {
+            throw new IllegalStateException("no such ticket: " + ticketNo);
+        }
+    }
+
+    @Override
     public void clearProject(String projectId, Instant now) {
         jdbc.update("UPDATE ticket SET project_id = NULL, updated_at = ? WHERE project_id = ?",
                 now.toString(), projectId);

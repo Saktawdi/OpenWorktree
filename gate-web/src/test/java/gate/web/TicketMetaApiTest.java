@@ -149,6 +149,30 @@ class TicketMetaApiTest {
         assertTrue(res.body().contains("tracked.txt"), res.body());
     }
 
+    @Test
+    void patch_reassigns_and_detaches_agent_config() throws Exception {
+        post("/api/agent-configs", """
+                {"id":"agent-assign","name":"Assign Agent","cli":"CLAUDE",
+                 "system_prompt":null,"extra_flags":[],"description":"drawer assignment"}
+                """);
+        post("/api/tickets", "{\"ticket_no\":\"META-AGENT\",\"title\":\"t\"}");
+
+        HttpResponse<String> assigned = patch("/api/tickets/META-AGENT",
+                "{\"agent_config_id\":\"agent-assign\"}");
+        assertEquals(200, assigned.statusCode(), assigned.body());
+        assertTrue(assigned.body().contains("\"agent_config_id\":\"agent-assign\""), assigned.body());
+
+        // Blank string detaches — same semantics as null (back to manual handling).
+        HttpResponse<String> detached = patch("/api/tickets/META-AGENT",
+                "{\"agent_config_id\":\"\"}");
+        assertEquals(200, detached.statusCode(), detached.body());
+        assertTrue(detached.body().contains("\"agent_config_id\":null"), detached.body());
+
+        HttpResponse<String> unknown = patch("/api/tickets/META-AGENT",
+                "{\"agent_config_id\":\"ghost\"}");
+        assertTrue(unknown.statusCode() >= 400, "unknown agent config must be rejected: " + unknown.body());
+    }
+
     private String createProject(String name, String dirName) throws Exception {
         Path ws = harness.root().resolve(dirName);
         HttpResponse<String> res = post("/api/projects",

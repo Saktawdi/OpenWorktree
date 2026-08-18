@@ -25,6 +25,9 @@ doc/归档/
 # OS
 Thumbs.db
 .DS_Store
+multica-ref/
+gui-test-screenshots/
+test.json
 
 # Local development launcher & runtime home (gate.toml / auth.git / gate.db)
 /start-local.bat
