@@ -1,10 +1,11 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "as_of": "2026-08-19",
   "architecture": {
-    "status": "Reviewing",
-    "review_rounds_completed": 10,
-    "accepted": false,
+    "status": "Accepted",
+    "review_rounds_completed": 11,
+    "accepted": true,
+    "acceptance_scope": "approved implementation baseline; not a production release approval",
     "production_ready": false
   },
   "profiles": {
@@ -14,48 +15,53 @@
   },
   "phases": {
     "phase_0": "In Progress",
-    "phase_1": "Blocked",
+    "phase_1": "In Progress",
     "phase_2": "Blocked",
     "phase_3": "Blocked",
     "phase_4": "Blocked"
   },
   "adr": {
     "required": 8,
-    "draft": 8,
+    "draft": 0,
     "proposed": 0,
-    "accepted": 0,
+    "accepted": 8,
     "implemented": 0,
     "verified": 0
   },
   "exemptions": {
-    "proposed": 2,
-    "active": 0,
+    "proposed": 0,
+    "active": 2,
     "expired": 0
   },
   "governance_rules": {
     "defined": 10,
-    "implemented": 0,
-    "partial": 2,
-    "planned": 8
+    "implemented": 4,
+    "partial": 1,
+    "planned": 5
   },
   "capabilities": {
     "registered": 12,
     "instances": 12,
+    "baseline": 2,
+    "implementing": 8,
+    "planned": 2,
     "accepted": 0
   },
   "debt": {
     "p0_open": 0,
     "p1_total": 10,
-    "open": 8,
-    "in_progress": 2,
-    "resolved": 0
+    "open": 3,
+    "in_progress": 6,
+    "resolved": 1
   },
+  "l4_decision_blockers": [],
   "hard_blockers": [
-    "ADR-001..ADR-008 are not Accepted",
-    "only GOV-DOC-001/GOV-CPLX-001 have a local minimum checker; CI and remaining governance commands are not implemented",
-    "EX-001 and EX-002 are not approved or Active",
+    "EX-001 and EX-002 are Active development-only exemptions and must be retired before production",
+    "verify-contract, verify-fault, verify-capacity and five planned GOV rules are not implemented/verified",
     "team/enterprise task, event and Git CAS capabilities are not Verified",
-    "Phase exit evidence packages are incomplete"
+    "security, RBAC, sandbox, audit, HA, recovery, capacity and SLO evidence is incomplete",
+    "Phase 0..4 exit evidence packages are incomplete",
+    "nine P1 debts remain Open or In Progress"
   ],
   "sources": {
     "admission": "docs/architecture/admission-matrix.md",
@@ -63,6 +69,7 @@
     "exemptions": "docs/architecture/exemption-register.md",
     "verification": "docs/architecture/verification-contract.md",
     "capabilities": "docs/architecture/capability-registry.md",
-    "debt": "docs/debt-register.md"
+    "debt": "docs/debt-register.md",
+    "l4_approval": "docs/architecture/l4-approval-record.md"
   }
 }

@@ -1,6 +1,6 @@
 # 架构豁免注册表
 
-状态：初始注册（Reviewing）  
+状态：生效注册（Accepted；当前 2 项开发期豁免为 Active）
 规则来源：[`governance.md`](governance.md) 第 2、5 节
 
 ## 1. 豁免语义

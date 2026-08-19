@@ -13,25 +13,27 @@
 7. [能力实例目录](capabilities/README.md)：查看已登记能力的当前边界、owner 和实施状态。
 8. [准入状态矩阵](architecture/admission-matrix.md)：查看当前可以推进什么、哪些事项仍被阻断。
 9. [下一步行动清单](architecture/next-actions.md)：查看未关闭风险的 owner、截止日期和完成证据。
-10. [治理状态快照](architecture/governance-status.json)：供自动检查读取当前状态和硬阻断项。
+10. [L4 架构审批记录](architecture/l4-approval-record.md)：查看已批准范围、实施授权和明确未批准事项。
+11. [治理状态快照](architecture/governance-status.json)：供自动检查读取当前状态和硬阻断项。
 
 ## 文档状态
 
 | 文档 | 状态 | 作用 |
 | --- | --- | --- |
 | `product/product-spec.md` | 目标规格 | 描述目标用户体验；不单独证明能力已经实现 |
-| `architecture/production-architecture.md` | 评审中 | 完成评审、ADR 与治理准入后成为唯一生效架构基线 |
-| `architecture/review-log.md` | 持续更新 | 保存十轮评审证据和未决 ADR |
-| `architecture/governance.md` | 评审中 | 架构适应度、能力模板、复杂度、豁免和技术债治理 |
-| `architecture/ownership-catalog.md` | 初始目录 | 表、事件、API、对象和派生数据的唯一 owner |
-| `architecture/capability-registry.md` | 初始基线 | 能力名称、owner、目录和交付状态 |
-| `architecture/exemption-register.md` | 初始注册 | 开发期豁免、基线差量和到期动作 |
+| `architecture/production-architecture.md` | Accepted | 唯一生效重构实施基线；不单独代表生产准入 |
+| `architecture/review-log.md` | 持续更新 | 保存十一轮评审、L4 决策和遗留实施阻塞 |
+| `architecture/governance.md` | Accepted | 架构适应度、能力模板、复杂度、豁免和技术债治理 |
+| `architecture/ownership-catalog.md` | Accepted 基线 | 表、事件、API、对象和派生数据的唯一 owner |
+| `architecture/capability-registry.md` | Accepted 基线 | 能力名称、owner、目录和交付状态；能力实现成熟度见各行 |
+| `architecture/exemption-register.md` | 生效注册 | 开发期豁免、基线差量和到期动作 |
 | `architecture/complexity-baseline.json` | 初始基线 | 复杂度规则的机器可读阈值和热点基线 |
 | `architecture/admission-matrix.md` | 当前快照 | 架构、Phase 和生产准入状态 |
 | `architecture/next-actions.md` | 执行中 | 当前行动、owner、日期、证据和阻断范围 |
 | `architecture/governance-status.json` | 当前快照 | 机器可读的架构、Phase、ADR、豁免和债务状态 |
+| `architecture/l4-approval-record.md` | 已批准 | L4 决策范围、实施授权和生产保留项 |
 | `debt-register.md` | 初始台账 | P0/P1 架构与技术债及偿还证据 |
-| `adr/README.md` | 治理入口 | ADR 状态、责任人和批准要求 |
+| `adr/README.md` | 8 项 Accepted | ADR 状态、责任人、批准人与验证计划 |
 | `capabilities/README.md` | 初始实例目录 | 12 个业务能力的当前状态和边界 |
 | `archive/prism-schema-validation.md` | 历史证据 | 保留代码仍依赖的 Prism 0.5.0 实测结论 |
 

@@ -57,7 +57,7 @@ import java.util.Set;
  *
  * <p>Async operations (review/publish) are NOT here — they land in S2 as {@code GateTask} + SSE.
  */
-final class ApiRoutes {
+public final class ApiRoutes {
 
     private final GateService gateService;
     private final MetricsService metricsService;
@@ -79,6 +79,8 @@ final class ApiRoutes {
     private final ProviderModelFetcher modelFetcher;
     private final RuntimeInfoService runtimeInfo;
     private final GitCli git;
+    private final StatusRoutes statusRoutes;
+    private final gate.web.project.ProjectRoutes projectRoutes;
 
     ApiRoutes(WebComponents c) {
         this.gateService = c.gateService();
@@ -101,10 +103,12 @@ final class ApiRoutes {
         this.modelFetcher = c.modelFetcher();
         this.runtimeInfo = c.runtimeInfo();
         this.git = c.git();
+        this.statusRoutes = new StatusRoutes(gateService, config, runtimeInfo);
+        this.projectRoutes = new gate.web.project.ProjectRoutes(projects, topologyInitializer, config);
     }
 
     /** A resolved response: HTTP status + a JSON-serialisable body. */
-    record Response(int status, Object body) {
+    public record Response(int status, Object body) {
     }
 
     /**
@@ -116,29 +120,29 @@ final class ApiRoutes {
         // seg[0] == "api"
 
         if (seg.length == 2 && seg[1].equals("status") && method.equals("GET")) {
-            return status();
+            return statusRoutes.status();
         }
         // V5 web console: real runtime environment (服务状态运行环境).
         if (seg.length == 2 && seg[1].equals("runtime") && method.equals("GET")) {
-            return new Response(200, runtimeInfo.snapshot());
+            return statusRoutes.runtime();
         }
         // Agent settings: detected local CLIs plus models exposed by the CLI itself.
         if (seg.length == 2 && seg[1].equals("agent-runtimes") && method.equals("GET")) {
-            return new Response(200, runtimeInfo.agentRuntimes());
+            return statusRoutes.agentRuntimes();
         }
         // V5 web console: codex-style workspace picker (POST carries the path — no query-string seam).
         if (seg.length == 2 && seg[1].equals("workspaces")) {
             if (method.equals("GET")) {
-                return workspaces(null);
+                return projectRoutes.workspaces(null);
             }
             if (method.equals("POST")) {
-                return workspaces(str(parseObject(requestBody), "path"));
+                return projectRoutes.workspaces(str(parseObject(requestBody), "path"));
             }
         }
         // V5 web console: project registry (select workspace → create project).
         if (seg.length == 2 && seg[1].equals("projects")) {
             if (method.equals("GET")) {
-                return projectList();
+                return projectRoutes.projectList();
             }
             if (method.equals("POST")) {
                 return projectCreate(requestBody);
@@ -1165,86 +1169,22 @@ final class ApiRoutes {
     // --- V5: workspaces / projects / model fetch / working diff ---------------------------------
 
     /**
-     * Lists the immediate subdirectories of a workspace candidate (codex-style picker). A missing
-     * path is a normal response ({@code exists:false}) so the picker can render an empty state
-     * instead of an error toast.
+     * Lists the immediate subdirectories of a workspace candidate (codex-style picker).
+     * Delegated to {@link gate.web.project.ProjectRoutes#workspaces(String)}.
      */
     private Response workspaces(String rawPath) {
-        Path dir = normalizeWorkspace(rawPath == null || rawPath.isBlank()
-                ? System.getProperty("user.home") : rawPath);
-        Map<String, Object> body = new LinkedHashMap<>();
-        body.put("path", dir.toString());
-        body.put("parent", dir.getParent() == null ? null : dir.getParent().toString());
-        body.put("exists", Files.isDirectory(dir));
-        // Filesystem roots (drive letters on Windows) so the picker can jump across drives —
-        // walking "up" from C:\ would otherwise trap the picker on a single drive.
-        List<Map<String, Object>> roots = new ArrayList<>();
-        for (Path root : FileSystems.getDefault().getRootDirectories()) {
-            if (!Files.isDirectory(root)) {
-                continue; // e.g. an empty optical drive
-            }
-            Map<String, Object> r = new LinkedHashMap<>();
-            r.put("name", root.toString());
-            r.put("path", root.toString());
-            roots.add(r);
-        }
-        body.put("roots", roots);
-        List<Map<String, Object>> entries = new ArrayList<>();
-        if (Files.isDirectory(dir)) {
-            try (var stream = Files.list(dir)) {
-                stream.filter(Files::isDirectory)
-                        .filter(p -> !p.getFileName().toString().startsWith("."))
-                        .sorted(Comparator.comparing(p -> p.getFileName().toString(),
-                                String.CASE_INSENSITIVE_ORDER))
-                        .limit(500)
-                        .forEach(p -> {
-                            Map<String, Object> e = new LinkedHashMap<>();
-                            e.put("name", p.getFileName().toString());
-                            e.put("path", p.toString());
-                            e.put("is_git_repo", Files.exists(p.resolve(".git")));
-                            e.put("is_registered_project",
-                                    projects.findIdByWorkspacePath(p.toString()).isPresent());
-                            entries.add(e);
-                        });
-            } catch (IOException e) {
-                throw new GateException(GateErrorCode.GATE_ERROR_IO,
-                        "cannot list " + dir + ": " + e.getMessage(), e);
-            }
-        }
-        body.put("directories", entries);
-        return new Response(200, body);
+        return projectRoutes.workspaces(rawPath);
     }
 
-    /** Normalizes to an absolute path with separators as the platform reports them. */
     private static Path normalizeWorkspace(String raw) {
         return Path.of(raw.trim()).toAbsolutePath().normalize();
     }
 
+    /**
+     * Delegated to {@link gate.web.project.ProjectRoutes#projectList()}.
+     */
     private Response projectList() {
-        List<Ticket> all = tickets.findAll();
-        Map<String, Object> body = new LinkedHashMap<>();
-        List<Map<String, Object>> rows = new ArrayList<>();
-        for (Project p : projects.findAll()) {
-            long ticketCount = all.stream().filter(t -> p.id().equals(t.projectId())).count();
-            long activeCount = all.stream().filter(t -> p.id().equals(t.projectId())
-                    && t.stage() != TicketStage.DONE && t.stage() != TicketStage.CANCELLED).count();
-            Map<String, Object> m = new LinkedHashMap<>();
-            m.put("id", p.id());
-            m.put("name", p.name());
-            m.put("workspace_path", p.workspacePath());
-            m.put("target_ref", p.targetRef());
-            m.put("auth_repo", p.authRepo());
-            m.put("priority", p.priority());
-            m.put("size", p.size());
-            m.put("tags", p.tags());
-            m.put("ticket_count", ticketCount);
-            m.put("active_ticket_count", activeCount);
-            m.put("created_at", p.createdAt().toString());
-            m.put("updated_at", p.updatedAt().toString());
-            rows.add(m);
-        }
-        body.put("projects", rows);
-        return new Response(200, body);
+        return projectRoutes.projectList();
     }
 
     /**

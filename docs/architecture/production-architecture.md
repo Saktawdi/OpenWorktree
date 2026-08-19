@@ -1,7 +1,11 @@
 # Gate 企业级生产后端架构规范
 
-状态：评审中（Reviewing）  
-目标状态：完成评审、ADR 与治理准入后转为生效（Accepted）  
+状态：已接受为重构实施基线（Accepted）
+
+批准记录：项目负责人确认 + Codex（项目负责人授权 L4），2026-08-19；见 [`l4-approval-record.md`](l4-approval-record.md)
+
+生产状态：未准入；必须继续满足各 Phase 退出条件与第 19 节生产总验收
+
 适用范围：Gate 后端、Web API、CLI、Git/Agent 执行节点、任务系统及其生产基础设施  
 最后更新：2026-08-19
 
@@ -22,7 +26,7 @@
 
 ### 1.1 文档权威关系
 
-- 本文是后端目标架构和生产验收的唯一候选规范。
+- 本文是后端目标架构和生产验收的唯一生效规范；`Accepted` 表示决策基线已获批准，不表示实现已完成或生产已准入。
 - [`../product/product-spec.md`](../product/product-spec.md) 描述目标体验，不得覆盖本文的安全、并发和可用性约束。
 - ADR 记录重大决策的理由和替代方案。ADR 与本文冲突时，合并前必须同步修订本文，禁止形成两个同时生效的架构事实来源。
 - [`../archive/`](../archive/) 只保存仍被代码或测试引用的历史证据，不具有规范效力。
@@ -880,10 +884,10 @@ ADR 的状态、负责人、复审日期和验证证据必须在注册表中维�
 
 ## 18.1 长期治理准入
 
-架构转为 `Accepted` 前还必须满足：
+架构转为 `Accepted` 前还必须满足以下“决策与治理基线”条件；自动化实现和运行证据不足时，应如实保留为 Phase/生产阻断项，不得反向阻止已批准设计成为实施依据：
 
 - [`governance.md`](governance.md) 的架构适应度规则已映射到 CI job 或明确的人工检查点。
-- [`verification-contract.md`](verification-contract.md) 中的目标命令、基线和输出格式已落实；未实现命令只能标为 `Planned`。
+- [`verification-contract.md`](verification-contract.md) 已定义目标命令、基线和输出格式；已实现项必须通过，未实现项只能标为 `Planned` 并继续阻断对应 Phase/生产准入。
 - [`ownership-catalog.md`](ownership-catalog.md) 覆盖当前所有事实表、任务/事件、API 和对象前缀。
 - [`capability-registry.md`](capability-registry.md) 覆盖所有业务能力，并且每个能力已有目录/实例或已登记回填债务。
 - [`exemption-register.md`](exemption-register.md) 覆盖所有超预算/历史兼容豁免；每条都有 owner、批准人、复审日、到期日和退出计划。

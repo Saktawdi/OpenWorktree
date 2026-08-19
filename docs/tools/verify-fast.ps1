@@ -33,12 +33,10 @@ $govArgs = @()
 if ($StrictAdmission) { $govArgs += "-StrictAdmission" }
 & (Join-Path $PSScriptRoot 'verify-governance.ps1') @govArgs 2>&1 | ForEach-Object { Write-Host $_ }
 $govExit = $LASTEXITCODE
-if ($govExit -ne 0 -and -not $StrictAdmission) {
-    # Without StrictAdmission, non-zero means document inconsistency (real error)
-    # With strict, blockers are expected until Phase 0 closes; we surface but don't double-fail here
-    Add-Error "GOV-DOC-001/GOV-CPLX-001 governance check failed (exit $govExit)"
-} elseif ($StrictAdmission -and $govExit -ne 0) {
-    Write-Host "[GOV-DOC-001] strict admission correctly reported blockers (expected before Phase 0 Accepted)"
+if ($govExit -ne 0) {
+    # Default mode means document inconsistency; strict mode may instead mean real production blockers.
+    # Both must propagate a non-zero result so callers cannot mistake a blocked admission for success.
+    Add-Error "GOV-DOC-001/GOV-CPLX-001 governance check failed (exit $govExit, strict=$([bool]$StrictAdmission))"
 }
 
 # 3. Summary with rule contract

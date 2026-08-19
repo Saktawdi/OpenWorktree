@@ -82,6 +82,7 @@ public final class GateServiceImpl implements GateService {
     private final DbTransactionRunner tx;
     private final Clock clock;
     private final gate.ports.PublishProbe publishProbe;
+    private final gate.application.presubmit.PresubmitHandler presubmitHandler;
 
     public GateServiceImpl(GateConfig config, SnapshotCapture snapshotCapture, CommitPublisher commitPublisher,
                            RefObserver refObserver, ApprovalStore approvalStore, ReviewEngineFactory reviewEngineFactory,
@@ -116,61 +117,17 @@ public final class GateServiceImpl implements GateService {
         this.tx = tx;
         this.clock = clock;
         this.publishProbe = publishProbe;
+        this.presubmitHandler = new gate.application.presubmit.PresubmitHandler(
+                config, snapshotCapture, tickets, presubmits, blobStore, auditLog, tx, clock);
     }
 
     // ---------------------------------------------------------------------------------------------
-    // presubmit (T2 — the only transition an agent may trigger)
+    // presubmit (T2 — delegated to PresubmitHandler per EX-002)
     // ---------------------------------------------------------------------------------------------
 
     @Override
     public PresubmitResult presubmit(PresubmitCommand command) {
-        Ticket ticket = requireTicket(command.ticketNo());
-        RepoRef clone = RepoRef.of(java.nio.file.Path.of(ticket.clonePath()));
-        RepoRef auth = RepoRef.of(config.authRepo());
-        String targetRef = ticket.targetRef();
-
-        // Capture is pure git + filesystem work; it holds no DB transaction (I3).
-        Snapshot snapshot = snapshotCapture.capture(clone, auth, targetRef);
-
-        if (snapshot.integrity().hasBlockers()) {
-            audit("presubmit.blocked", ticket.ticketNo(), null, Map.of(
-                    "reason", "capture_integrity",
-                    "blockers", integrityText(snapshot.integrity())));
-            throw new GateException(GateErrorCode.REJECT_PRECONDITION,
-                    "capture integrity blockers (no review round consumed): " + integrityText(snapshot.integrity()));
-        }
-
-        // Empty diff: refuse WITHOUT allocating a round (§3.2). commit-tree would not have caught it.
-        if (snapshot.isEmptyDiff()) {
-            audit("presubmit.emptyDiff", ticket.ticketNo(), null, Map.of(
-                    "tree", snapshot.treeHash().hex(), "base_tree", snapshot.baseTree().hex()));
-            throw new GateException(GateErrorCode.REJECT_PRECONDITION,
-                    "empty diff: tree == base tree; no review round consumed");
-        }
-
-        byte[] diffBytes = snapshot.diff().getBytes(StandardCharsets.UTF_8);
-        // A round is allocated only now, after every validation passed. This is why an empty diff or
-        // a blocked capture never consumes one.
-        int round = presubmits.nextRound(ticket.ticketNo());
-        BlobRef diffBlob = blobStore.put(diffBytes,
-                "diff/" + ticket.ticketNo() + "/" + round + "/diff.patch");
-
-        var row = tx.inTransaction(() -> {
-            var inserted = presubmits.insert(ticket.ticketNo(), round, snapshot, diffBlob, clock.now());
-            tickets.updateStage(ticket.ticketNo(), TicketStage.PRESUBMITTED, clock.now());
-            return inserted;
-        });
-
-        audit("presubmit.ok", ticket.ticketNo(), round, Map.of(
-                "tree", snapshot.treeHash().hex(),
-                "base", snapshot.baseCommit().hex(),
-                "diff_bytes", String.valueOf(diffBlob.bytes()),
-                "diff_sha256", diffBlob.sha256(),
-                "changed_paths", String.valueOf(snapshot.changedPaths().size())));
-
-        return new PresubmitResult(ticket.ticketNo(), row.reviewRound(), snapshot.treeHash().hex(),
-                snapshot.baseCommit().hex(), targetRef, diffBlob.bytes(), snapshot.changedPaths(),
-                snapshot.integrity());
+        return presubmitHandler.handle(command);
     }
 
     // ---------------------------------------------------------------------------------------------

@@ -1,6 +1,6 @@
 # 架构长期治理规范
 
-状态：评审中（与生产架构规范同步）  
+状态：已接受（Accepted；治理实现成熟度以验证契约为准）
 适用范围：所有 Gate 后端模块、数据库对象、公开 API、事件、Worker 能力和基础设施适配器
 
 本文件补充 [`production-architecture.md`](production-architecture.md)，解决“第一次重构完成后，系统如何在未来两三年内不重新长成屎山”的问题。

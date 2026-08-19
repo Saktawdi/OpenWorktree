@@ -1,6 +1,6 @@
 # 数据与契约所有权目录
 
-状态：初始目录（Reviewing）  
+状态：生效目录（Accepted；后续 owner 变更仍须 L4 批准）
 规则来源：[`governance.md`](governance.md) 第 4 节  
 能力名称来源：[`capability-registry.md`](capability-registry.md)
 

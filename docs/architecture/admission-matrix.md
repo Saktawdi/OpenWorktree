@@ -1,6 +1,6 @@
 # 架构与生产准入状态矩阵
 
-状态：当前快照（Reviewing）  
+状态：架构已 `Accepted`；生产仍 `Blocked`
 更新时间：2026-08-19  
 规则：任何一项硬阻断条件未满足，都不得把系统或对应 Phase 标记为已准入。
 
@@ -8,12 +8,12 @@
 
 | 对象 | 当前状态 | 可以做什么 | 禁止做什么 | 转下一状态的证据 |
 | --- | --- | --- | --- | --- |
-| 主架构规范 | `Reviewing` | 指导重构、评审设计、登记债务 | 宣称生效生产架构 | 8 项 ADR Accepted、治理 CI、owner 覆盖、负责人批准 |
+| 主架构规范 | `Accepted` | 作为强制实施与评审基线 | 用文档批准冒充实现或生产完成 | 后续只通过 ADR/正式修订变更；实现成熟度另行验证 |
 | local profile | `Development-only` | 单机开发和离线契约测试 | 多节点 HA、企业生产承诺 | local 契约和故障测试 |
 | team profile | `Blocked` | 设计和集成测试 | 生产部署 | PostgreSQL 任务 lease/fence、持久化事件、Git 服务 CAS |
 | enterprise profile | `Blocked` | 架构设计和灾备演练 | 生产部署 | team 全部条件 + RBAC/审计/HA/RPO/RTO/SLO |
 | Phase 0 | `In Progress` | 基线、ADR、规则和契约冻结 | 以旧文档作为新决策依据 | 构建自包含、ADR 草案齐全、规则基线可复现 |
-| Phase 1 | `Blocked` | 能力拆分设计和债务偿还 | 新增无 owner 能力或扩大热点 | 组合根/能力目录/ArchUnit/能力实例/热点拆分 |
+| Phase 1 | `In Progress（受控）` | 按 ADR、owner 和 EX-001/002 开展能力/热点拆分 | 新增无 owner 能力、扩大热点或声明 Phase 已退出 | 组合根/能力目录/ArchUnit/能力实例/热点拆分证据包 |
 | Phase 2 | `Blocked` | 任务和事件底座实现 | 多节点长任务生产 | lease/fence/idempotency/outbox/SSE 故障测试 |
 | Phase 3 | `Blocked` | Worker/Git/S3/KMS 集成 | 以本地文件系统模拟 HA | 任意 Web/Worker 接管和 Git CAS 演练 |
 | Phase 4 | `Blocked` | 企业安全和运维演练 | 未达 SLO 上线 | RBAC、审计、备份恢复、SLO 和灾备证据 |
@@ -30,17 +30,19 @@
 | `Active` | 仅用于已批准且未过期的开发豁免 | 受限 | 不解除准入 | 不解除准入 |
 | `Expired`/`Rejected`/`Blocked` | 不能作为有效依据 | 否 | 否 | 否 |
 
-## 3. 主规范转为 Accepted 的硬条件
+## 3. 主规范 Accepted 决策条件
 
 以下条件必须全部为真：
 
 1. ADR-001 至 ADR-008 状态至少为 `Accepted`，并填写批准人、复审日期和验证证据计划。
-2. `verify-fast`、`verify-contract`、`verify-fault` 的目标命令至少有可执行入口；未实现规则保持 `Planned`，不能声称治理已落地。
+2. 治理规则、`verify-fast`、`verify-contract`、`verify-fault` 和 `verify-capacity` 的命令契约、输入及输出已定义；已实现项必须通过，未实现项保持 `Planned` 并阻断对应 Phase/生产，而不冒充已落地。
 3. 能力注册表、所有权目录覆盖当前所有表、列、API、事件、对象前缀和派生指标；未登记对象为阻断项。
 4. 所有 P1 债务有 owner、日历 SLA、目标版本、逾期动作和证据；逾期项不能被静默忽略。
 5. 所有超预算热点都有有效批准的开发豁免或已经下降到预算内；`Proposed`/无批准豁免不算有效。
-6. 能力实例文档覆盖全部注册能力，并链接端口、数据、权限、测试和 runbook。
+6. 能力实例文档覆盖全部注册能力；尚未完成的端口、数据、权限、测试和 runbook 如实保持 `Baseline/Implementing/Planned` 并进入债务台账。
 7. 项目负责人批准主规范状态变更，并保存评审会议/批准记录。
+
+2026-08-19 复核结果：以上决策条件均已满足，批准记录见 [`l4-approval-record.md`](l4-approval-record.md)。当前等待 L4 的架构决策项为 0；未实现治理命令和能力证据继续作为 Phase/生产阻断项。
 
 ## 4. 生产发布硬条件
 

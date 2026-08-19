@@ -2,7 +2,7 @@
 
 状态：L4 已批准按 `delta_lte_zero` 执行；不解除生产准入阻断  
 批准记录：项目负责人授权 Codex 作为 L4 技术审批人，2026-08-19  
-关联：`complexity-baseline.json` ApiRoutes 1538行 / GateServiceImpl 663行；`exemption-register.md` EX-001/002 Proposed；`debt-register.md` DEBT-001/002
+关联：`complexity-baseline.json` ApiRoutes 1538行 / GateServiceImpl 663行；`exemption-register.md` EX-001/002 Active；`debt-register.md` DEBT-001/002
 
 ## 1. 目标
 
@@ -12,8 +12,8 @@
 
 ## 2. 约束（17.1 L3 审批边界）
 
-- 热点修改必须先处理 EX-001/002：当前均为 `Proposed` → 不得合并触及热点的变更
-- 批准后执行期间，每 PR `delta <= 0`（`verify-governance.ps1` 校验），且仍阻断生产准入
+- EX-001/002 当前均为 `Active`，只授权按本计划实施热点拆分
+- 执行期间每个 PR 必须 `delta <= 0`（`verify-governance.ps1` 校验），且仍阻断生产准入
 - 数据/事件/API owner 变更需更新 `ownership-catalog.md` 并经 L4 批准（本次仅拆分，不改 owner）
 
 ## 3. 执行步骤（Phase 1）

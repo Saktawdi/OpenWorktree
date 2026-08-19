@@ -18,7 +18,7 @@
     {
       "rule": "GOV-CPLX-001",
       "path": "gate-web/src/main/java/gate/web/ApiRoutes.java",
-      "physical_lines": 1538,
+      "physical_lines": 1478,
       "measured_at": "2026-08-19",
       "enforcement": "delta_lte_zero",
       "exemption": "EX-001",
@@ -27,7 +27,7 @@
     {
       "rule": "GOV-CPLX-001",
       "path": "gate-application/src/main/java/gate/application/GateServiceImpl.java",
-      "physical_lines": 663,
+      "physical_lines": 620,
       "measured_at": "2026-08-19",
       "enforcement": "delta_lte_zero",
       "exemption": "EX-002",

@@ -1,22 +1,22 @@
 # ADR 注册表
 
-状态：8 项决策草案已建立，均待评审和批准  
+状态：8 项决策均已完成 L4 评审并达到 `Accepted`
 ADR（Architecture Decision Record）记录架构取舍、替代方案、影响和接受状态。代码中的 `ADR-1`、`ADR-8`、`ADR-9` 等历史编号目前只代表旧文档/旧执行阶段引用，不自动视为本基线下的 `Accepted` ADR。
 
 ## 1. 当前注册表
 
 | 编号 | 决策主题 | 状态 | 负责人 | 批准人 | 复审日期 | 验证证据 | 目标 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| [ADR-001](001-execution-topology.md) | Git/Agent 执行拓扑与工作区重建 | Draft | Architecture owner | 待指定 | 2026-09-02 | 尚无 | Phase 0 |
-| [ADR-002](002-task-lease-fencing.md) | PostgreSQL 任务领取、lease、fencing 和重试 | Draft | Task owner | 待指定 | 2026-09-02 | 尚无 | Phase 0 |
-| [ADR-003](003-git-ref-cas.md) | Git ref OID CAS 与服务端授权验证 | Draft | Publish owner | 待指定 | 2026-09-02 | 尚无 | Phase 0 |
-| [ADR-004](004-outbox-event-sse.md) | Transactional Outbox、事件序号和 SSE 游标 | Draft | Event owner | 待指定 | 2026-09-02 | 尚无 | Phase 0 |
-| [ADR-005](005-web-concurrency-model.md) | Web 并发模型与阻塞操作隔离 | Draft | Web owner | 待指定 | 2026-09-02 | 尚无 | Phase 0 |
-| [ADR-006](006-agent-sandbox-secrets.md) | Agent 沙箱、网络出口和 Secret 注入 | Draft | Security owner | 待指定 | 2026-09-16 | 尚无 | Phase 0 |
-| [ADR-007](007-tenancy-rbac-audit.md) | 租户、RBAC、职责分离和审计保留 | Draft | Security owner | 待指定 | 2026-09-16 | 尚无 | Phase 0 |
-| [ADR-008](008-ha-rpo-rto.md) | PostgreSQL/Git/Object Storage HA、RPO 和 RTO | Draft | Platform owner | 待指定 | 2026-09-16 | 尚无 | Phase 0 |
+| [ADR-001](001-execution-topology.md) | Git/Agent 执行拓扑与工作区重建 | Accepted | Architecture owner | Codex（项目负责人授权 L4） | 2026-11-17 | ADR 内迁移/回滚/验证计划 | Phase 0/3 |
+| [ADR-002](002-task-lease-fencing.md) | PostgreSQL 任务领取、lease、fencing 和重试 | Accepted | Task owner | Codex（项目负责人授权 L4） | 2026-10-18 | ADR 内 SQL/故障/negative test 计划 | Phase 0/2 |
+| [ADR-003](003-git-ref-cas.md) | Git ref OID CAS 与服务端授权验证 | Accepted | Publish owner | Codex（项目负责人授权 L4） | 2026-10-18 | ADR 内 CAS/重放/UNKNOWN 测试计划 | Phase 0/3 |
+| [ADR-004](004-outbox-event-sse.md) | Transactional Outbox、事件序号和 SSE 游标 | Accepted | Event owner | Codex（项目负责人授权 L4） | 2026-10-18 | ADR 内 outbox/cursor/慢消费者测试计划 | Phase 0/2 |
+| [ADR-005](005-web-concurrency-model.md) | Web 并发模型与阻塞操作隔离 | Accepted | Web owner | Codex（项目负责人授权 L4） | 2026-11-17 | ADR 内延迟/SSE/连接风暴容量计划 | Phase 0/1/4 |
+| [ADR-006](006-agent-sandbox-secrets.md) | Agent 沙箱、网络出口和 Secret 注入 | Accepted | Security owner | Codex（项目负责人授权 L4） | 2026-11-17 | ADR 内沙箱/出口/Secret negative test 计划 | Phase 0/3/4 |
+| [ADR-007](007-tenancy-rbac-audit.md) | 租户、RBAC、职责分离和审计保留 | Accepted | Security owner | Codex（项目负责人授权 L4） | 2026-11-17 | ADR 内越权/SoD/审计完整性计划 | Phase 0/4 |
+| [ADR-008](008-ha-rpo-rto.md) | PostgreSQL/Git/Object Storage HA、RPO 和 RTO | Accepted | Platform owner | Codex（项目负责人授权 L4） | 2026-11-17 | ADR 内切换/PITR/恢复演练计划 | Phase 0/3/4 |
 
-主规范第 18 节要求以上 ADR 在架构状态转为 `Accepted` 前至少达到 `Accepted`。在此之前，架构主文档保持 `Reviewing`，不得以旧编号或代码注释替代决策记录。
+上述 ADR 已满足主规范第 18 节的决策批准条件。`Accepted` 允许实施，不等于 `Implemented` 或 `Verified`；各自验证计划仍须在对应 Phase 证据包中完成。
 
 ## 2. ADR 状态机
 
@@ -38,4 +38,4 @@ Missing -> Draft -> Proposed -> Accepted -> Implemented -> Verified
 
 见 [`template.md`](template.md)。禁止只写结论不写约束、失败模式、迁移和回滚。
 
-ADR 从 Draft 转为 Proposed 前必须通过 [`review-readiness.md`](review-readiness.md)。当前 8 项均为 `Not Ready`，不得仅修改注册表状态升级。
+ADR 从 Draft 转为 Proposed 前必须通过 [`review-readiness.md`](review-readiness.md)。本轮已完成实质内容评审和 L4 批准；批准范围与生产边界见 [`../architecture/l4-approval-record.md`](../architecture/l4-approval-record.md)。

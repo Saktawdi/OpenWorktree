@@ -1,7 +1,7 @@
 # ADR 评审就绪清单
 
-状态：8 项均为 Draft，尚未达到 Proposed  
-用途：说明每项 ADR 从 Draft 转为 Proposed 前必须补齐的内容，避免“文件存在”被误解为“决策可批准”。
+状态：8 项均已通过就绪检查并由 L4 批准为 `Accepted`
+用途：保存本轮 ADR 实质评审结论，避免把 `Accepted` 误解为实现或生产验证完成。
 
 ## 通用 Proposed 门槛
 
@@ -16,15 +16,15 @@
 
 ## 当前就绪度
 
-| ADR | 当前已有 | 转 Proposed 前仍缺 | 当前结论 |
+| ADR | 已完成的决策内容 | 后续实现/验证证据 | 当前结论 |
 | --- | --- | --- | --- |
-| ADR-001 | 控制面/执行面候选拓扑、迁移方向 | 调度选项对比、节点亲和性、工作区 GC 容量、批准人 | Not Ready |
-| ADR-002 | lease/fence 候选协议、故障范围 | PostgreSQL SQL、隔离级别、租约参数、状态转换表、批准人 | Not Ready |
-| ADR-003 | Git OID CAS、nonce 和 UNKNOWN 原则 | Git 服务实现选项、规范签名载荷、密钥轮换、批准人 | Not Ready |
-| ADR-004 | outbox、sequence、SSE 游标原则 | schema、保留水位、poll/notify 参数、兼容迁移、批准人 | Not Ready |
-| ADR-005 | 阻塞隔离原则和候选 MVC/虚拟线程 | 容量实验、WebFlux 对照、框架决定、JDK 迁移、批准人 | Not Ready |
-| ADR-006 | 沙箱/Secret 基本边界 | Windows/Linux 方案对比、威胁模型、成本与回收、批准人 | Not Ready |
-| ADR-007 | tenant/RBAC/审计候选模型 | tenant 迁移、权限矩阵、保留等级、例外审批、批准人 | Not Ready |
-| ADR-008 | HA/RPO/RTO 初始目标 | 产品/基础设施选项、成本、故障域、恢复演练设计、批准人 | Not Ready |
+| ADR-001 | 拓扑选项、节点/工作区生命周期、迁移和回滚 | Phase 3 Worker 接管、重建、draining、GC 故障测试 | Ready / Accepted |
+| ADR-002 | PostgreSQL 隔离级别、原子 claim、60s/20s lease、fence 和状态条件 | claim/renew/complete、节点暂停、DB 切换、stale fence negative test | Ready / Accepted |
+| ADR-003 | Git 服务选项、Ed25519、JCS 载荷、nonce 与 ref 原子事务、UNKNOWN 收敛 | 并发 CAS、重放/篡改、超时及 Git 成功/DB 未写测试 | Ready / Accepted |
+| ADR-004 | outbox/schema、原子 sequence、DB cursor、通知定位、保留策略 | 原子性、通知丢失、Relay 重放、cursor/慢消费者/跨节点测试 | Ready / Accepted |
+| ADR-005 | MVC/WebFlux 对照、Java 21 虚拟线程决定、迁移和回滚 | API 延迟、1000 SSE、慢客户端、连接风暴和 Worker 饱和压测 | Ready / Accepted |
+| ADR-006 | Windows/Linux 对照、rootless OCI、默认拒绝出口、Secret 生命周期 | 路径/符号链接/出口/泄漏/资源耗尽/回收测试 | Ready / Accepted |
+| ADR-007 | tenant RBAC、职责分离、WORM/KMS 审计和保留策略 | 跨租户/水平越权/职责冲突/撤销/审计完整性测试 | Ready / Accepted |
+| ADR-008 | 故障域、单地域 HA、RPO/RTO、成本边界和恢复策略 | DB 切换/PITR、Git/对象恢复、KMS 故障与 reconcile 演练 | Ready / Accepted |
 
-任何 ADR 未通过本清单时只能保持 Draft。评审会议不能仅通过修改注册表状态将其升级为 Accepted。
+本轮不是仅修改状态：每项 ADR 均已补齐替代方案、决策标准、负面后果、迁移、回滚和验证计划，并由 L4 逐项批准。后续只有实际代码/基础设施落地后才能转 `Implemented`，只有对应自动化或演练证据完成后才能转 `Verified`。
