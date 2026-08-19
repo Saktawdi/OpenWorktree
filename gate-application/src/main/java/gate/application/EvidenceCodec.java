@@ -24,12 +24,12 @@ import java.util.stream.Collectors;
  * the blob stable across runs — the same evidence always serialises to the same bytes, which the
  * hash-chained audit log and the {@code diff_sha256} accounting rely on.
  */
-final class EvidenceCodec {
+public final class EvidenceCodec {
 
     private EvidenceCodec() {
     }
 
-    static String toJson(ReviewEvidence evidence) {
+    public static String toJson(ReviewEvidence evidence) {
         return evidence.accept(new EvidenceVisitor<String>() {
             @Override
             public String visit(EngineReport report) {
@@ -89,7 +89,7 @@ final class EvidenceCodec {
      * own process. A failure blob deserialises back to an {@link EngineFailure}, which the policy
      * turns into a reject — so a corrupted or truncated blob can never re-hydrate into a pass.
      */
-    static ReviewEvidence fromJson(String json, BlobRef rawOutput) {
+    public static ReviewEvidence fromJson(String json, BlobRef rawOutput) {
         Map<String, Object> root = MiniJson.parseObject(json);
         String kind = (String) root.get("kind");
         EngineDescriptor engine = new EngineDescriptor(

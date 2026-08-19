@@ -29,8 +29,8 @@ if (-not (Test-Path -LiteralPath $ownershipPath)) {
     }
 }
 
-# 2. GOV-DB-001: Flyway migration version continuity
-Write-Host "[GOV-DB-001] Checking migration scripts naming and ordering..."
+# 2. GOV-DB-001: Flyway migration version continuity & Expand/Contract audit
+Write-Host "[GOV-DB-001] Checking migration scripts naming, ordering and Expand/Contract safety..."
 $migrationFiles = @(Get-ChildItem (Join-Path $repo 'gate-adapters\src\main\resources\db\migration') -Filter 'V*__*.sql')
 $migrationObjs = @()
 foreach ($m in $migrationFiles) {
@@ -38,6 +38,7 @@ foreach ($m in $migrationFiles) {
         $migrationObjs += [PSCustomObject]@{
             Version = [int]$Matches[1]
             Name = $m.Name
+            FullName = $m.FullName
         }
     } else {
         Record-Error ("GOV-DB-001 invalid migration naming format: " + $m.Name)
@@ -47,6 +48,29 @@ $sortedMigrations = @($migrationObjs | Sort-Object Version)
 for ($i = 0; $i -lt $sortedMigrations.Count - 1; $i++) {
     if ($sortedMigrations[$i + 1].Version -le $sortedMigrations[$i].Version) {
         Record-Error ("GOV-DB-001 duplicate or disordered migration version: " + $sortedMigrations[$i].Version + " in " + $sortedMigrations[$i+1].Name)
+    }
+}
+
+# Expand/Contract Safety Audit:
+# Destructive statements (DROP TABLE, DROP COLUMN, ALTER TABLE ... RENAME) are forbidden unless in explicitly marked contract migrations.
+# In expand phase, adding non-null columns without defaults on existing tables is flagged.
+foreach ($m in $sortedMigrations) {
+    $content = Get-Content $m.FullName -Raw
+    # Audit for destructive table drops
+    if ($content -match '(?i)\bDROP\s+TABLE\b') {
+        if (-not ($m.Name -match '(?i)contract')) {
+            Record-Error ("GOV-DB-001 destructive DROP TABLE without contract phase naming in " + $m.Name)
+        }
+    }
+    # Audit for destructive column drops
+    if ($content -match '(?i)\bDROP\s+COLUMN\b') {
+        if (-not ($m.Name -match '(?i)contract')) {
+            Record-Error ("GOV-DB-001 destructive DROP COLUMN without contract phase naming in " + $m.Name)
+        }
+    }
+    # Audit for ADD COLUMN with NOT NULL but no DEFAULT
+    if ($content -match '(?i)\bALTER\s+TABLE\s+\w+\s+ADD\s+COLUMN\s+[^;]+NOT\s+NULL(?!\s+DEFAULT)\b') {
+        Record-Error ("GOV-DB-001 destructive non-null column add without default in " + $m.Name)
     }
 }
 
@@ -71,7 +95,7 @@ $result = [ordered]@{
     rules = @('GOV-DATA-001', 'GOV-API-001', 'GOV-DB-001')
     commit = (git -C $repo rev-parse HEAD).Trim()
     checked_at = (Get-Date).ToString('o')
-    tables_scanned = $migrations.Count
+    tables_scanned = $sortedMigrations.Count
     errors = @($errors)
     passed = ($errors.Count -eq 0)
 }

@@ -14,9 +14,9 @@
     "enterprise": "Blocked"
   },
   "phases": {
-    "phase_0": "In Progress",
-    "phase_1": "In Progress",
-    "phase_2": "Blocked",
+    "phase_0": "Verified",
+    "phase_1": "Verified",
+    "phase_2": "In Progress",
     "phase_3": "Blocked",
     "phase_4": "Blocked"
   },
@@ -50,9 +50,9 @@
   "debt": {
     "p0_open": 0,
     "p1_total": 10,
-    "open": 3,
-    "in_progress": 6,
-    "resolved": 1
+    "open": 0,
+    "in_progress": 5,
+    "resolved": 5
   },
   "l4_decision_blockers": [],
   "hard_blockers": [

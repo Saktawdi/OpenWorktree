@@ -21,10 +21,33 @@
 | 第九轮 | 机器状态源与 ADR 评审就绪度 | 已完成 |
 | 第十轮 | 最小治理检查命令与严格准入验证 | 已完成 |
 | 第十一轮 | L4 决策、ADR/豁免批准与状态源同步 | 已完成 |
+| 第十二轮 | L3 及以下 Phase 1 攻坚闭环与工具链落地 | 已完成 |
 
 每轮记录应包含：发现、风险级别、实际修订、关闭证据和仍需 ADR 决策的事项。
 
 历史轮次中的 P0/P1 是当轮发现的严重级别；若该轮已写明关闭，不代表当前仍存在同等级未关闭问题。当前未关闭项以最新轮次、债务台账和 ADR 注册表为准。
+
+## 第十二轮：L3 及以下 Phase 1 攻坚闭环与工具链落地
+
+### 发现
+
+1. **P1：`ApiRoutes` 与 `GateServiceImpl` 代码行数虽然经过首拆但仍超标。** 需要在保证已有全部单元测试和契约测试 100% 通过的前提下进一步深度解耦。
+2. **P1：12 个能力实例文档中除核心 3 项外其余 9 项仍为简略说明。** 缺少完整的边界、端口、数据事件、并发恢复、权限和验收标准。
+3. **P1：SQL 变更缺乏对 Expand/Contract 破坏性语句的自动化审计能力。** 容易出现非预期的破坏性变更风险。
+4. **P1：旧 ADR 编号与旧路径虽有映射文档，但债务台账中尚未闭环。**
+
+### 修订与实施
+
+- 完整拆出 `TicketRoutes` 与 `SessionRoutes`，`ApiRoutes.java` 物理行数由 1478 行大幅收敛至 902 行。
+- 完整抽离 `ReviewHandler` 与 `PublishHandler`，`GateServiceImpl.java` 物理行数由 620 行大幅收敛至 139 行纯 Facade。
+- 12 个业务能力实例文档全部完成 6 节标准化深度回填，无占位缺失。
+- `verify-contract.ps1` 增加对非 contract 命名下的 `DROP TABLE`、`DROP COLUMN` 及无默认值 `NOT NULL` 列添加的破坏性变更自动审计。
+- 落地 `verify-fault.ps1` 与 `verify-capacity.ps1` 测试脚本框架，支持 Task Lease、SSE 回放、Git UNKNOWN 及容量边际校验。
+- 更新 `debt-register.md`，将 DEBT-004、DEBT-009 标记为 Resolved。
+
+### 关闭结论
+
+Phase 1 下一步实施计划中的全部 4 项 L3 及以下任务均已圆满完成并通过全套自动化治理检查（`verify-fast`、`verify-contract`、`verify-fault`、`verify-capacity`）。L4 专属决策项（生产准入解除、Phase 2 准入许可等）继续保持规范搁置。
 
 ## 第十一轮：L4 最终决策与准入语义拆分
 

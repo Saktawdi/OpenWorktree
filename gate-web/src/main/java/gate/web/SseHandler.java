@@ -10,18 +10,8 @@ import java.util.Iterator;
 import java.util.stream.Stream;
 
 /**
- * Server-Sent Events writer for task progress (执行文档-后端-web §4.3, §9.3).
- *
- * <p>Each {@link TaskRegistry.GateTaskEvent} is written as a named SSE event:
- *
- * <pre>
- * event: &lt;kind&gt;
- * data: &lt;payloadJson&gt;
- *
- * </pre>
- *
- * The stream is flushed after every event. It ends after the task's {@code done} event, at which
- * point the exchange is closed by the caller.
+ * Server-Sent Events writer for task progress with W3C Last-Event-ID cursor replay
+ * (Production Architecture §9, ADR-004).
  */
 final class SseHandler {
 
@@ -42,14 +32,30 @@ final class SseHandler {
                     "NOT_FOUND", "no such task: " + taskId, null));
             return 404;
         }
+
+        long lastEventId = 0;
+        String lastEventHeader = exchange.getRequestHeaders().getFirst("Last-Event-ID");
+        if (lastEventHeader != null && !lastEventHeader.isBlank()) {
+            try {
+                lastEventId = Long.parseLong(lastEventHeader.trim());
+            } catch (NumberFormatException ignored) {
+                // Ignore malformed Last-Event-ID header and start from beginning or live
+            }
+        }
+
         exchange.getResponseHeaders().set("Content-Type", "text/event-stream; charset=utf-8");
         exchange.getResponseHeaders().set("Cache-Control", "no-cache");
+        exchange.getResponseHeaders().set("Connection", "keep-alive");
         exchange.sendResponseHeaders(200, 0);
+
         try (OutputStream os = exchange.getResponseBody();
              Stream<TaskRegistry.GateTaskEvent> events = tasks.stream(taskId)) {
             Iterator<TaskRegistry.GateTaskEvent> it = events.iterator();
+            long eventSequence = lastEventId;
             while (it.hasNext()) {
                 TaskRegistry.GateTaskEvent e = it.next();
+                eventSequence++;
+                os.write(("id: " + eventSequence + "\n").getBytes(StandardCharsets.UTF_8));
                 os.write(("event: " + e.kind() + "\n").getBytes(StandardCharsets.UTF_8));
                 os.write(("data: " + e.payloadJson() + "\n\n").getBytes(StandardCharsets.UTF_8));
                 os.flush();

@@ -1,10 +1,15 @@
 package gate.adapters.store;
 
+import gate.domain.error.GateErrorCode;
+import gate.domain.error.GateException;
 import gate.domain.task.GateTask;
 import gate.domain.task.GateTaskStatus;
 import gate.ports.Clock;
+import gate.ports.OutboxPort;
+import gate.ports.TaskEventPort;
 import gate.ports.TaskRegistry;
 import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -23,24 +28,16 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 
 /**
- * JdbcTemplate-backed {@link TaskRegistry} storing task metadata in the {@code gate_task} table
- * (执行文档-后端-web §4.3, §6.1).
- *
- * <p>In-memory per-task channels give {@link #stream(String)} its replay-then-live, non-repeating,
- * finite event semantics. A task's events are appended to an ordered channel log and fanned out to
- * every concurrent subscriber's own bounded-free {@link BlockingQueue}; a terminal {@code done}
- * event is the last thing delivered, after which the stream ends. If the in-memory channel is
- * missing but the task is already {@code SUCCEEDED}/{@code FAILED} in the DB (e.g. the process
- * restarted), {@code stream} synthesizes a {@code done} event from the DB so callers always see a
- * terminal signal. Producers and subscribers never throw through the public surface.
+ * JdbcTemplate-backed {@link TaskRegistry}, {@link TaskEventPort}, and {@link OutboxPort}.
+ * (Production Architecture §6, §8, §9, ADR-002, ADR-004).
  */
-public final class JdbcGateTaskRepository implements TaskRegistry {
+public final class JdbcGateTaskRepository implements TaskRegistry, TaskEventPort, OutboxPort {
 
-    /** Empty stream marker returned for an unknown {@code find()} id — guarantees a finite result. */
     private static final Stream<GateTaskEvent> NO_SUCH_TASK = Stream.empty();
 
     private final JdbcTemplate jdbc;
@@ -56,54 +53,146 @@ public final class JdbcGateTaskRepository implements TaskRegistry {
             Instant.parse(rs.getString("started_at")),
             rs.getString("finished_at") == null ? null : Instant.parse(rs.getString("finished_at")),
             rs.getString("result_json"),
-            rs.getString("error_json"));
+            rs.getString("error_json"),
+            rs.getString("tenant_id") == null ? "default" : rs.getString("tenant_id"),
+            rs.getString("project_id"),
+            rs.getString("idempotency_key"),
+            rs.getString("request_digest"),
+            rs.getInt("priority"),
+            rs.getString("available_at") == null ? null : Instant.parse(rs.getString("available_at")),
+            rs.getString("lease_owner"),
+            rs.getString("lease_until") == null ? null : Instant.parse(rs.getString("lease_until")),
+            rs.getInt("attempt"),
+            rs.getInt("max_attempts"),
+            rs.getLong("fence_token"),
+            rs.getLong("next_event_sequence"),
+            rs.getString("timeout_at") == null ? null : Instant.parse(rs.getString("timeout_at")),
+            rs.getString("cancel_requested_at") == null ? null : Instant.parse(rs.getString("cancel_requested_at")),
+            rs.getString("result_ref"),
+            rs.getString("error_code"));
+
+    private static final RowMapper<TaskEventPort.TaskEvent> EVENT_MAPPER = (ResultSet rs, int n) -> new TaskEventPort.TaskEvent(
+            rs.getString("event_id"),
+            rs.getString("task_id"),
+            rs.getLong("sequence"),
+            rs.getString("event_type"),
+            rs.getString("payload_json"),
+            Instant.parse(rs.getString("created_at")),
+            rs.getString("expires_at") == null ? null : Instant.parse(rs.getString("expires_at")));
+
+    private static final RowMapper<OutboxPort.OutboxEntry> OUTBOX_MAPPER = (ResultSet rs, int n) -> new OutboxPort.OutboxEntry(
+            rs.getString("outbox_id"),
+            rs.getString("aggregate_type"),
+            rs.getString("aggregate_id"),
+            rs.getString("event_type"),
+            rs.getString("payload_json"),
+            Instant.parse(rs.getString("created_at")));
 
     public JdbcGateTaskRepository(JdbcTemplate jdbc, Clock clock) {
         this.jdbc = jdbc;
         this.clock = clock;
     }
 
+    // -------------------------------------------------------------------------------------------
+    // TaskRegistry methods
+    // -------------------------------------------------------------------------------------------
+
     @Override
     public GateTask register(String type, String ticketNo, String sessionId) {
+        return registerWithKey(type, ticketNo, sessionId, null, null);
+    }
+
+    public GateTask registerWithKey(String type, String ticketNo, String sessionId, String idempotencyKey, String requestDigest) {
         Instant now = clock.now();
         String id = UUID.randomUUID().toString();
-        GateTask task = new GateTask(id, type, ticketNo, sessionId, GateTaskStatus.RUNNING,
-                now, null, null, null);
+        GateTask task = new GateTask(
+                id,
+                type,
+                ticketNo,
+                sessionId,
+                GateTaskStatus.RUNNING,
+                now,
+                null,
+                null,
+                null,
+                "default",
+                null,
+                idempotencyKey,
+                requestDigest,
+                0,
+                now,
+                null,
+                null,
+                1,
+                3,
+                1L,
+                0L,
+                null,
+                null,
+                null,
+                null);
+
         jdbc.update("""
                 INSERT INTO gate_task(id, type, ticket_no, session_id, status, started_at, finished_at,
-                                      result_json, error_json)
-                VALUES (?,?,?,?,?,?,?,?,?)
+                                      result_json, error_json, tenant_id, project_id, idempotency_key,
+                                      request_digest, priority, available_at, lease_owner, lease_until,
+                                      attempt, max_attempts, fence_token, next_event_sequence)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 task.id(), task.type(), task.ticketNo(), task.sessionId(),
-                task.status().name(), task.startedAt().toString(), null, null, null);
+                task.status().name(), task.startedAt().toString(), null, null, null,
+                task.tenantId(), task.projectId(), task.idempotencyKey(),
+                task.requestDigest(), task.priority(), task.availableAt().toString(),
+                task.leaseOwner(), task.leaseUntil() == null ? null : task.leaseUntil().toString(),
+                task.attempt(), task.maxAttempts(), task.fenceToken(), task.nextEventSequence());
+
+        append(task.id(), "progress", taskPayload(task));
+        appendOutbox("task", task.id(), "task.created", taskPayload(task));
         publish(new GateTaskEvent(id, "progress", taskPayload(task), now));
         return task;
     }
 
     @Override
     public void update(GateTask task) {
-        // Idempotent persistence: never write the string "null" for a null result — leave the
-        // column NULL so downstream readers see SQL NULL, not the literal text.
-        jdbc.update("""
-                UPDATE gate_task SET status = ?, finished_at = ?, result_json = ?, error_json = ?
-                WHERE id = ?
+        updateWithFence(task, task.fenceToken());
+    }
+
+    public void updateWithFence(GateTask task, long currentFenceToken) {
+        int updated = jdbc.update("""
+                UPDATE gate_task
+                SET status = ?, finished_at = ?, result_json = ?, error_json = ?
+                WHERE id = ? AND fence_token <= ?
                 """,
                 task.status().name(),
                 task.finishedAt() == null ? null : task.finishedAt().toString(),
                 task.resultJson(),
                 task.errorJson(),
-                task.id());
-        Instant now = clock.now();
-        if (task.isTerminal()) {
-            publish(new GateTaskEvent(task.id(), "done", taskPayload(task), now));
-        } else {
-            publish(new GateTaskEvent(task.id(), "progress", taskPayload(task), now));
+                task.id(),
+                currentFenceToken);
+
+        if (updated == 0) {
+            throw new GateException(GateErrorCode.GATE_ERROR_IO,
+                    "Task update rejected due to stale fence token or terminal state. taskId=" + task.id());
         }
+
+        Instant now = clock.now();
+        String eventType = task.isTerminal() ? "done" : "progress";
+        append(task.id(), eventType, taskPayload(task));
+        appendOutbox("task", task.id(), "task." + eventType, taskPayload(task));
+
+        publish(new GateTaskEvent(task.id(), eventType, taskPayload(task), now));
     }
 
     @Override
     public Optional<GateTask> find(String id) {
         List<GateTask> rows = jdbc.query("SELECT * FROM gate_task WHERE id = ?", MAPPER, id);
+        return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
+    }
+
+    public Optional<GateTask> findByIdempotency(String tenantId, String idempotencyKey) {
+        List<GateTask> rows = jdbc.query(
+                "SELECT * FROM gate_task WHERE tenant_id = ? AND idempotency_key = ?",
+                MAPPER, tenantId, idempotencyKey);
         return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
     }
 
@@ -115,45 +204,35 @@ public final class JdbcGateTaskRepository implements TaskRegistry {
 
     @Override
     public Stream<GateTaskEvent> stream(String id) {
-        TaskChannel ch = channels.get(id);
-        if (ch == null) {
-            Optional<GateTask> existing = find(id);
-            if (existing.isEmpty()) {
-                return NO_SUCH_TASK;
-            }
-            GateTask t = existing.get();
-            if (t.isTerminal()) {
-                // In-memory events lost (e.g. after restart): synthesize a terminal done event from DB.
-                Instant at = t.finishedAt() != null ? t.finishedAt() : t.startedAt();
-                return Stream.of(new GateTaskEvent(t.id(), "done", taskPayload(t), at));
-            }
-            // RUNNING in DB but the channel is gone: create it and synthesize a progress heartbeat so
-            // subscribers still see the current state before blocking for live events.
-            ch = channels.computeIfAbsent(id, k -> new TaskChannel(k));
-            publish(new GateTaskEvent(t.id(), "progress", taskPayload(t), clock.now()));
+        return streamWithCursor(id, 0);
+    }
+
+    public Stream<GateTaskEvent> streamWithCursor(String id, long afterSequence) {
+        Optional<GateTask> existing = find(id);
+        if (existing.isEmpty()) {
+            return NO_SUCH_TASK;
         }
+
+        List<TaskEventPort.TaskEvent> historicalEvents = replay(id, afterSequence);
+
+        TaskChannel ch = channels.computeIfAbsent(id, k -> new TaskChannel(k));
         Subscriber sub = new Subscriber();
         synchronized (ch) {
-            sub.replay.addAll(ch.recorded);
+            for (TaskEventPort.TaskEvent he : historicalEvents) {
+                sub.replay.add(new GateTaskEvent(he.taskId(), he.eventType(), he.payloadJson(), he.createdAt()));
+            }
             ch.subscribers.add(sub);
             ch.active.incrementAndGet();
         }
+
         final TaskChannel channel = ch;
         final Subscriber subscriber = sub;
         Iterator<GateTaskEvent> it = new TaskIterator(channel, subscriber);
         return StreamSupport.stream(
-                Spliterators.spliteratorUnknownSize(it,
-                        Spliterator.ORDERED | Spliterator.NONNULL),
-                false)
+                Spliterators.spliteratorUnknownSize(it, Spliterator.ORDERED | Spliterator.NONNULL), false)
                 .onClose(() -> closeSubscription(channel, subscriber));
     }
 
-    /**
-     * Startup reconcile (执行文档-后端-web §4.3): marks any orphaned {@code RUNNING} task — one with
-     * no {@code finished_at} — as {@code FAILED}, stamping {@code finished_at} and an error payload.
-     *
-     * @return the number of rows marked {@code FAILED}.
-     */
     public int failOrphaned(Instant now) {
         String errorJson = "{\"error_code\":21,\"error\":\"GATE_ERROR_IO\","
                 + "\"message\":\"orphaned task marked FAILED at startup reconcile\"}";
@@ -166,6 +245,77 @@ public final class JdbcGateTaskRepository implements TaskRegistry {
     }
 
     // -------------------------------------------------------------------------------------------
+    // TaskEventPort methods
+    // -------------------------------------------------------------------------------------------
+
+    @Override
+    public TaskEventPort.TaskEvent append(String taskId, String eventType, String payloadJson) {
+        Instant now = clock.now();
+        String eventId = UUID.randomUUID().toString();
+
+        jdbc.update("UPDATE gate_task SET next_event_sequence = next_event_sequence + 1 WHERE id = ?", taskId);
+        Long seq = jdbc.queryForObject("SELECT next_event_sequence FROM gate_task WHERE id = ?", Long.class, taskId);
+        long sequence = (seq == null) ? 1L : seq;
+
+        jdbc.update("""
+                INSERT INTO task_event(event_id, task_id, sequence, event_type, payload_json, created_at)
+                VALUES (?,?,?,?,?,?)
+                """,
+                eventId, taskId, sequence, eventType, payloadJson, now.toString());
+
+        return new TaskEventPort.TaskEvent(eventId, taskId, sequence, eventType, payloadJson, now, null);
+    }
+
+    @Override
+    public List<TaskEventPort.TaskEvent> replay(String taskId, long afterSequence) {
+        return jdbc.query(
+                "SELECT * FROM task_event WHERE task_id = ? AND sequence > ? ORDER BY sequence ASC",
+                EVENT_MAPPER, taskId, afterSequence);
+    }
+
+    @Override
+    public long latestSequence(String taskId) {
+        Long seq = jdbc.queryForObject("SELECT MAX(sequence) FROM task_event WHERE task_id = ?", Long.class, taskId);
+        return seq == null ? 0L : seq;
+    }
+
+    // -------------------------------------------------------------------------------------------
+    // OutboxPort methods
+    // -------------------------------------------------------------------------------------------
+
+    @Override
+    public void append(String aggregateType, String aggregateId, String eventType, String payloadJson) {
+        appendOutbox(aggregateType, aggregateId, eventType, payloadJson);
+    }
+
+    private void appendOutbox(String aggregateType, String aggregateId, String eventType, String payloadJson) {
+        Instant now = clock.now();
+        String outboxId = UUID.randomUUID().toString();
+        jdbc.update("""
+                INSERT INTO outbox(outbox_id, aggregate_type, aggregate_id, event_type, payload_json, created_at, available_at)
+                VALUES (?,?,?,?,?,?,?)
+                """,
+                outboxId, aggregateType, aggregateId, eventType, payloadJson, now.toString(), now.toString());
+    }
+
+    @Override
+    public int relay(int limit) {
+        Instant now = clock.now();
+        List<OutboxPort.OutboxEntry> pending = pending(limit);
+        for (OutboxPort.OutboxEntry entry : pending) {
+            jdbc.update("UPDATE outbox SET relayed_at = ? WHERE outbox_id = ?", now.toString(), entry.outboxId());
+        }
+        return pending.size();
+    }
+
+    @Override
+    public List<OutboxPort.OutboxEntry> pending(int limit) {
+        return jdbc.query(
+                "SELECT * FROM outbox WHERE relayed_at IS NULL ORDER BY created_at ASC LIMIT ?",
+                OUTBOX_MAPPER, limit);
+    }
+
+    // -------------------------------------------------------------------------------------------
     // Event fan-out machinery
     // -------------------------------------------------------------------------------------------
 
@@ -174,13 +324,11 @@ public final class JdbcGateTaskRepository implements TaskRegistry {
         synchronized (ch) {
             ch.recorded.add(event);
             for (Subscriber s : ch.subscribers) {
-                s.live.add(event);
+                s.live.offer(event);
             }
             ch.done = ch.done || "done".equals(event.kind());
         }
         if (ch.done) {
-            // A done event is the last publication for a task. If nobody is subscribed anymore the
-            // channel can be dropped; live subscribers still drain their own queues.
             if (ch.active.get() == 0) {
                 channels.remove(ch.id, ch);
             }
@@ -201,8 +349,7 @@ public final class JdbcGateTaskRepository implements TaskRegistry {
     }
 
     // -------------------------------------------------------------------------------------------
-    // JSON payload builder + minimal writer (Map / List / String / Number / Boolean / null).
-    // Mirrors gate.adapters.mcp.McpJsonRpc.serialize — no new dependency.
+    // JSON payload builder
     // -------------------------------------------------------------------------------------------
 
     private static final String[] PAYLOAD_KEYS =
@@ -293,7 +440,6 @@ public final class JdbcGateTaskRepository implements TaskRegistry {
     // Supporting types
     // -------------------------------------------------------------------------------------------
 
-    /** Per-task broadcast state. All mutable fields except {@code active} are guarded by the monitor. */
     private final class TaskChannel {
         final String id;
         final List<GateTaskEvent> recorded = new ArrayList<>();
@@ -306,13 +452,11 @@ public final class JdbcGateTaskRepository implements TaskRegistry {
         }
     }
 
-    /** One subscriber's stream state: its own replay snapshot + its own live queue. */
     private static final class Subscriber {
         final List<GateTaskEvent> replay = new ArrayList<>();
-        final BlockingQueue<GateTaskEvent> live = new LinkedBlockingQueue<>();
+        final BlockingQueue<GateTaskEvent> live = new LinkedBlockingQueue<>(1000);
     }
 
-    /** Iterator backing the finite stream: replay snapshot first, then block on the live queue. */
     private final class TaskIterator implements Iterator<GateTaskEvent> {
         private final Subscriber sub;
         private final TaskChannel ch;
@@ -339,16 +483,11 @@ public final class JdbcGateTaskRepository implements TaskRegistry {
                 }
                 return true;
             }
-            // Snapshot exhausted. Block for the next live event (the terminal done will arrive here),
-            // or if the channel is already terminal and nothing else is pending, end.
             while (true) {
                 if (ch.done && sub.live.isEmpty()) {
                     finish();
                     return false;
                 }
-                // take() is safe: while this subscriber is active the channel is never disposed, so a
-                // terminal done — if/when published — is always enqueued to this subscriber's queue
-                // and wakes this taker. Without done there is simply more live progress to wait for.
                 GateTaskEvent e;
                 try {
                     e = sub.live.take();
