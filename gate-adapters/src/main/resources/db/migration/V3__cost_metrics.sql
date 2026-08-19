@@ -4,7 +4,7 @@
 -- All columns are nullable — if token data is unavailable (the common case), the row still exists
 -- and the metric basis is marked 'degraded'.
 --
--- prism JSON (confirmed in doc/p2-schema-核对.md §3) exposes timing.gitMs/llmMs/totalMs but NO
+-- prism JSON (confirmed in docs/archive/prism-schema-validation.md) exposes timing.gitMs/llmMs/totalMs but NO
 -- usage/token field. exec_token_cost depends on the agent CLI emitting usage, which this project
 -- does not control (it does not spawn the agent). So:
 --   - review_token_cost: usually NULL (prism JSON has no usage); source = 'unavailable'

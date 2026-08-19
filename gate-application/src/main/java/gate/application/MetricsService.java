@@ -30,7 +30,7 @@ import java.util.Map;
  *
  * <h3>Honest degradation</h3>
  * prism JSON exposes {@code timing.totalMs/llmMs} but <b>no usage/token field</b>
- * (doc/p2-schema-核对.md §3). exec_token depends on the agent CLI, which this project does not
+ * (docs/archive/prism-schema-validation.md). exec_token depends on the agent CLI, which this project does not
  * spawn. So the export explicitly annotates {@code token_source} per row, and the verdict's
  * {@code metricBasis} is {@code "degraded"} when token data is missing.
  */

@@ -24,6 +24,7 @@
     <module>gate-ports</module>
     <module>gate-application</module>
     <module>gate-adapters</module>
+    <module>gate-bootstrap</module>
     <module>gate-cli</module>
     <module>gate-web</module>
   </modules>
@@ -75,6 +76,11 @@
       <dependency>
         <groupId>gate</groupId>
         <artifactId>gate-adapters</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>gate</groupId>
+        <artifactId>gate-bootstrap</artifactId>
         <version>${project.version}</version>
       </dependency>
     </dependencies>

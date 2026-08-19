@@ -19,7 +19,7 @@ import static org.junit.jupiter.api.Assertions.*;
  *
  * <p>Uses the manual review engine (no prism) so it runs without a live newapi link. The point is to
  * prove the export machinery and field completeness, not the real prism token data (which is
- * unavailable anyway — doc/p2-schema-核对.md §3).
+ * unavailable anyway — docs/archive/prism-schema-validation.md).
  */
 class MetricsExportTest {
 

@@ -5,6 +5,7 @@ import gate.application.PublishCommand;
 import gate.application.PublishResult;
 import gate.application.ReviewCommand;
 import gate.application.ReviewResult;
+import gate.adapters.runtime.BoundedWorkDispatcher;
 import gate.domain.error.GateErrorCode;
 import gate.domain.error.GateException;
 import gate.domain.task.GateTask;
@@ -12,16 +13,14 @@ import gate.domain.task.GateTaskStatus;
 import gate.ports.Clock;
 import gate.ports.TaskRegistry;
 import gate.ports.TicketLockManager;
+import gate.ports.WorkDispatcher;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 
 /**
- * Runs long gate operations (review / publish) asynchronously behind a single-thread executor
- * (执行文档-后端-web §4.3, §10 S2).
+ * Runs long gate operations (review / publish) asynchronously behind a bounded dispatcher.
  *
  * <p>Each operation is registered in {@link TaskRegistry} first; the HTTP layer returns the task id
  * immediately (202). This runner updates progress, then persists a terminal {@code SUCCEEDED} or
@@ -29,7 +28,7 @@ import java.util.concurrent.Executors;
  */
 final class TaskRunner {
 
-    private final ExecutorService executor;
+    private final WorkDispatcher dispatcher;
     private final TaskRegistry tasks;
     private final GateService gateService;
     private final TicketLockManager ticketLocks;
@@ -40,27 +39,38 @@ final class TaskRunner {
         this.gateService = gateService;
         this.clock = clock;
         this.ticketLocks = ticketLocks;
-        this.executor = Executors.newSingleThreadExecutor(r -> {
-            Thread t = new Thread(r, "gate-task-runner");
-            t.setDaemon(true);
-            return t;
-        });
+        this.dispatcher = new BoundedWorkDispatcher();
+    }
+
+    TaskRunner(TaskRegistry tasks, GateService gateService, Clock clock,
+               TicketLockManager ticketLocks, WorkDispatcher dispatcher) {
+        this.tasks = tasks;
+        this.gateService = gateService;
+        this.clock = clock;
+        this.ticketLocks = ticketLocks;
+        this.dispatcher = dispatcher;
     }
 
     String submitReview(String ticketNo, Integer round, boolean humanPass, String note) {
         GateTask task = tasks.register("review", ticketNo, null);
-        executor.submit(() -> runReview(task, ticketNo, round, humanPass, note));
+        if (!dispatcher.trySubmit(() -> runReview(task, ticketNo, round, humanPass, note))) {
+            fail(task, new GateException(GateErrorCode.GATE_ERROR_IO,
+                    "review capacity exhausted; retry after workers drain"));
+        }
         return task.id();
     }
 
     String submitPublish(String ticketNo, Integer round) {
         GateTask task = tasks.register("publish", ticketNo, null);
-        executor.submit(() -> runPublish(task, ticketNo, round));
+        if (!dispatcher.trySubmit(() -> runPublish(task, ticketNo, round))) {
+            fail(task, new GateException(GateErrorCode.GATE_ERROR_IO,
+                    "publish capacity exhausted; retry after workers drain"));
+        }
         return task.id();
     }
 
     void close() {
-        executor.shutdown();
+        dispatcher.close();
     }
 
     private void runReview(GateTask task, String ticketNo, Integer round, boolean humanPass, String note) {

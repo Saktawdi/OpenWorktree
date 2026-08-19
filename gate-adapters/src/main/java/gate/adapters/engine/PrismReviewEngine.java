@@ -57,7 +57,7 @@ import java.util.Set;
  *
  * <h3>coveredPaths (N6)</h3>
  * prism's JSON has <em>no</em> "files actually reviewed" field (verified against real output,
- * doc/p2-schema-核对.md §5). The adapter therefore sets {@code coveredPaths = changedPaths} (the full
+ * docs/archive/prism-schema-validation.md). The adapter therefore sets {@code coveredPaths = changedPaths} (the full
  * input set) and {@code degraded = true}, per spike-结论 §4.4 #2 / N6. It never assumes full coverage.
  * {@code degraded=true} forces GatePolicy to reject — which is the correct fail-closed behaviour
  * until prism can prove coverage.
@@ -70,7 +70,7 @@ import java.util.Set;
  * The API key is injected via the {@code OPENAI_API_KEY} environment variable and never appears in
  * argv (which is globally readable via {@code /proc/<pid>/cmdline}). The newapi gateway endpoint is
  * injected via {@code PRISM_OPENAI_BASE_URL} (prism 0.5.0's actual variable — see
- * doc/p2-schema-核对.md §2 deviation 3).
+ * docs/archive/prism-schema-validation.md).
  */
 public final class PrismReviewEngine implements ReviewEngine {
 
@@ -114,7 +114,7 @@ public final class PrismReviewEngine implements ReviewEngine {
 
     /**
      * P4 cost telemetry: extracts {@code timing.totalMs}/{@code llmMs} from prism's JSON output.
-     * prism does NOT expose usage/token fields (confirmed in doc/p2-schema-核对.md §3), so the
+     * prism does NOT expose usage/token fields (confirmed in docs/archive/prism-schema-validation.md), so the
      * token source is always {@code "unavailable"} and token counts are null. The timing data
      * provides the degraded basis for the H1 verdict (review_round + diff_size + wall-clock).
      *
@@ -231,7 +231,7 @@ public final class PrismReviewEngine implements ReviewEngine {
     private Map<String, String> buildEnv() {
         // Keys are injected via env, never argv (/proc/<pid>/cmdline is world-readable — §6.1).
         // prism 0.5.0 reads PRISM_OPENAI_BASE_URL (full endpoint) + OPENAI_API_KEY
-        // (doc/p2-schema-核对.md §2 deviation 3).
+        // (docs/archive/prism-schema-validation.md).
         Map<String, String> env = new LinkedHashMap<>();
         env.put("OPENAI_API_KEY", apiKey);
         env.put("PRISM_OPENAI_BASE_URL", baseUrl + "/chat/completions");

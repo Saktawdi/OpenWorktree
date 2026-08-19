@@ -24,7 +24,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * (engine_json / gateway_usage / unavailable), plus the honest degradation path
  * (执行文档 §4 P4, §15).
  *
- * <p>prism's JSON output (confirmed in doc/p2-schema-核对.md §3) has a {@code timing} object with
+ * <p>prism's JSON output (confirmed in docs/archive/prism-schema-validation.md) has a {@code timing} object with
  * {@code totalMs} and {@code llmMs} but <b>no usage/token field</b>. So the token source is always
  * {@code "unavailable"} for prism, but timing data is extracted as the degraded basis. The manual
  * review engine returns {@link CostHint#EMPTY} (no telemetry at all).

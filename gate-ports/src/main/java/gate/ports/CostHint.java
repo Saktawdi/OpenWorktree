@@ -9,7 +9,7 @@ import java.util.Optional;
  * affect the verdict or block publish (执行文档 §4 P4 hard constraint: "成本记录失败不能让 publish 失败").
  *
  * <p><b>Honest degradation</b> (执行文档 §4 P4 footnote): prism's JSON output does NOT expose
- * usage/token fields (confirmed in doc/p2-schema-核对.md §3). exec_token_cost depends on the agent
+ * usage/token fields (confirmed in docs/archive/prism-schema-validation.md). exec_token_cost depends on the agent
  * CLI emitting usage, which this project does not control (it does not spawn the agent). So:
  * <ul>
  *   <li>{@code tokenSource} = {@code "unavailable"} when the engine gives no token data (the common

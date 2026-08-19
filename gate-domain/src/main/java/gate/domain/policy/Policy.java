@@ -11,7 +11,7 @@ package gate.domain.policy;
  * @param engineAcceptDegraded allow a degraded engine report to proceed; {@code false} (default)
  *                             keeps the fail-closed behaviour of rejection. This is a data-collection
  *                             escape hatch for prism whose JSON has no "files actually reviewed" field
- *                             (N6 / doc/p2-schema-核对.md §5) — it must stay {@code false} in production.
+ *                             (docs/archive/prism-schema-validation.md) — it must stay {@code false} in production.
  */
 public record Policy(Strictness strictness, boolean requireCoverage, long maxDiffBytes, long maxDiffLines,
                      boolean engineAcceptDegraded) {

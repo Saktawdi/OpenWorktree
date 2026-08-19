@@ -101,9 +101,39 @@ class ArchitectureTest {
 
     @Test
     void spring_only_in_adapters_and_cli() {
-        ArchRule rule = noClasses().that().resideOutsideOfPackages("gate.adapters..", "gate.cli..")
+        // GOV-BOOT-001: bootstrap may use Spring internally (unique composition root) and web is a driver;
+        // the invariant is that bootstrap does NOT expose framework types (see bootstrap_does_not_expose_spring_types).
+        ArchRule rule = noClasses().that().resideOutsideOfPackages(
+                        "gate.adapters..", "gate.cli..", "gate.bootstrap..", "gate.web..")
                 .should().dependOnClassesThat().resideInAPackage("org.springframework..")
-                .because("Spring annotations/usage live only in the adapter and wiring layers (ADR-8)");
+                .because("Spring usage is confined to adapters, bootstrap (internal), cli and web drivers (production-architecture §5, GOV-BOOT-001)");
         rule.check(GATE);
+    }
+
+    @Test
+    void bootstrap_does_not_expose_spring_types() {
+        // GOV-BOOT-001: bootstrap may use Spring internally but must not expose framework types in public API.
+        // Lightweight check: ensure GateRuntime has no public method/field returning Spring type.
+        com.tngtech.archunit.core.domain.JavaClass gateRuntime = GATE.get(gate.bootstrap.GateRuntime.class);
+        gateRuntime.getMethods().stream()
+                .filter(m -> m.getModifiers().contains(com.tngtech.archunit.core.domain.JavaModifier.PUBLIC))
+                .forEach(m -> {
+                    String ret = m.getRawReturnType().getName();
+                    if (ret.startsWith("org.springframework.")) {
+                        throw new AssertionError("GOV-BOOT-001 violation: GateRuntime public method " + m.getName() + " exposes Spring type " + ret);
+                    }
+                    m.getRawParameterTypes().forEach(p -> {
+                        if (p.getName().startsWith("org.springframework.")) {
+                            throw new AssertionError("GOV-BOOT-001 violation: GateRuntime public method " + m.getName() + " has Spring parameter " + p.getName());
+                        }
+                    });
+                });
+        gateRuntime.getFields().stream()
+                .filter(f -> f.getModifiers().contains(com.tngtech.archunit.core.domain.JavaModifier.PUBLIC))
+                .forEach(f -> {
+                    if (f.getRawType().getName().startsWith("org.springframework.")) {
+                        throw new AssertionError("GOV-BOOT-001 violation: GateRuntime public field " + f.getName() + " exposes Spring type " + f.getRawType().getName());
+                    }
+                });
     }
 }

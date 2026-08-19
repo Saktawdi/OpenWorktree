@@ -243,7 +243,7 @@ class PrismReviewEngineTest {
         }
     }
 
-    /** Real prism output (doc/p2-schema-核对.md §3), trimmed to the fields the parser reads. */
+    /** Real prism output (docs/archive/prism-schema-validation.md), trimmed to fields the parser reads. */
     private static final String SAMPLE_JSON = """
             {
               "tool": "prism",

@@ -332,7 +332,7 @@ public final class DefaultPreflightChecker implements PreflightChecker {
     /**
      * F5 + N4: the engine binary must be runnable and its flag surface must still expose what the
      * adapter needs. prism 0.5.0 has no {@code --version} flag; {@code prism version} is the probe
-     * (doc/p2-schema-核对.md §2 deviation 2). The {@code review commit --help} output is checked for
+     * (docs/archive/prism-schema-validation.md). The {@code review commit --help} output is checked for
      * the exact flags the adapter builds its argv with, so a flag drift across versions becomes a
      * startup failure (exit 22) rather than a runtime exit 2 that looks like a transient reject.
      */

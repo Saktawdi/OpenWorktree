@@ -21,7 +21,8 @@ import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 /**
- * Validates the {@code policy.engineAcceptDegraded} escape hatch (N6 / doc/p2-schema-核对.md §5).
+ * Validates the {@code policy.engineAcceptDegraded} escape hatch
+ * (docs/archive/prism-schema-validation.md).
  *
  * <p>prism's JSON has no "files actually reviewed" field, so the adapter always raises the
  * {@code degraded} flag on a successful parse. The production default

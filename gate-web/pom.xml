@@ -37,6 +37,10 @@
       <groupId>gate</groupId>
       <artifactId>gate-adapters</artifactId>
     </dependency>
+    <dependency>
+      <groupId>gate</groupId>
+      <artifactId>gate-bootstrap</artifactId>
+    </dependency>
 
     <!-- Adapter wiring (SqliteDataSourceFactory, JdbcTemplate, TransactionTemplate) needs Spring
          JDBC on the classpath at runtime; the web layer itself uses none of it directly. -->

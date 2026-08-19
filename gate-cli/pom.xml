@@ -36,6 +36,10 @@
       <groupId>gate</groupId>
       <artifactId>gate-adapters</artifactId>
     </dependency>
+    <dependency>
+      <groupId>gate</groupId>
+      <artifactId>gate-bootstrap</artifactId>
+    </dependency>
 
     <dependency>
       <groupId>org.springframework.boot</groupId>

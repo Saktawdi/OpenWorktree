@@ -1,0 +1,68 @@
+{
+  "schema_version": 1,
+  "as_of": "2026-08-19",
+  "architecture": {
+    "status": "Reviewing",
+    "review_rounds_completed": 10,
+    "accepted": false,
+    "production_ready": false
+  },
+  "profiles": {
+    "local": "Development-only",
+    "team": "Blocked",
+    "enterprise": "Blocked"
+  },
+  "phases": {
+    "phase_0": "In Progress",
+    "phase_1": "Blocked",
+    "phase_2": "Blocked",
+    "phase_3": "Blocked",
+    "phase_4": "Blocked"
+  },
+  "adr": {
+    "required": 8,
+    "draft": 8,
+    "proposed": 0,
+    "accepted": 0,
+    "implemented": 0,
+    "verified": 0
+  },
+  "exemptions": {
+    "proposed": 2,
+    "active": 0,
+    "expired": 0
+  },
+  "governance_rules": {
+    "defined": 10,
+    "implemented": 0,
+    "partial": 2,
+    "planned": 8
+  },
+  "capabilities": {
+    "registered": 12,
+    "instances": 12,
+    "accepted": 0
+  },
+  "debt": {
+    "p0_open": 0,
+    "p1_total": 10,
+    "open": 8,
+    "in_progress": 2,
+    "resolved": 0
+  },
+  "hard_blockers": [
+    "ADR-001..ADR-008 are not Accepted",
+    "only GOV-DOC-001/GOV-CPLX-001 have a local minimum checker; CI and remaining governance commands are not implemented",
+    "EX-001 and EX-002 are not approved or Active",
+    "team/enterprise task, event and Git CAS capabilities are not Verified",
+    "Phase exit evidence packages are incomplete"
+  ],
+  "sources": {
+    "admission": "docs/architecture/admission-matrix.md",
+    "adr": "docs/adr/README.md",
+    "exemptions": "docs/architecture/exemption-register.md",
+    "verification": "docs/architecture/verification-contract.md",
+    "capabilities": "docs/architecture/capability-registry.md",
+    "debt": "docs/debt-register.md"
+  }
+}

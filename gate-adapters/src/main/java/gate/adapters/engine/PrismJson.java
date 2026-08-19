@@ -6,7 +6,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Minimal JSON parser specialised for prism's output shape (doc/p2-schema-核对.md §3).
+ * Minimal JSON parser specialised for prism's output shape (docs/archive/prism-schema-validation.md).
  *
  * <p>This is deliberately self-contained rather than reusing {@code gate.application.MiniJson}: that
  * class is package-private to the application layer, the adapter must not reach across, and the

@@ -1,0 +1,42 @@
+# 架构与技术债台账
+
+状态：初始台账（Reviewing）  
+维护规则：[`architecture/governance.md`](architecture/governance.md) 第 6 节  
+日期口径：所有 SLA 使用明确日历日期；“Phase 1/2”只能作为关联目标，不能替代到期日。
+
+本台账记录会提高未来修改成本、故障风险或架构漂移风险的事项。普通待办事项不替代本台账。
+
+## 1. 台账字段
+
+| 字段 | 含义 |
+| --- | --- |
+| `interest/risk` | 技术债利息：继续拖延会增加什么故障概率、修改成本或迁移成本 |
+| `SLA-30/60/90` | 创建后 30/60/90 天对应的具体日历日期和检查点；P1 至少填写 |
+| `target_version` | 计划偿还的版本/Phase |
+| `overdue_action` | 到期未完成时的动作：阻断、升级、降级发布或重新批准 |
+| `evidence` | 代码、测试、指标、迁移或演练证据链接 |
+| `exemption` | 关联的 `EX-NNN`；没有豁免不能绕过阻断规则 |
+
+## 2. 当前债务
+
+| ID | 级别 | 债务 | 影响能力 | `interest/risk` | Owner | 创建日 | SLA-30 | SLA-60 | SLA-90 | `target_version` | `overdue_action` | 状态 | 豁免/证据 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| DEBT-001 | P1 | `ApiRoutes` 约 1,538 行，按资源/能力拆分 | `ticket/project/status` | 路由分支耦合、修改半径大、契约回归风险高 | Web owner | 2026-08-19 | 2026-09-18：完成路由 owner 盘点 | 2026-10-18：拆出 2 个资源 handler | 2026-11-17：facade 只转发且降至预算内 | Phase 1 | 超过基线 delta 阻断合并并升级 | Open | EX-001 / 待补 |
+| DEBT-002 | P1 | `GateServiceImpl` 约 663 行，按 use case 拆分 | `presubmit/review/publish` | 事务、Git、策略和审计职责混杂 | Application owner | 2026-08-19 | 2026-09-18：列出 use case 边界 | 2026-10-18：拆出 presubmit/review handler | 2026-11-17：publish/reconcile 独立且 facade 只转发 | Phase 1 | 阻断新增业务分支 | Open | EX-002 / 待补 |
+| DEBT-003 | P1 | ArchUnit 规则与 gate-bootstrap/Spring 边界未完全同步 | `architecture` | 规则失败或错误放行，依赖方向失去自动守护 | Architecture owner | 2026-08-19 | 2026-09-18：修订规则矩阵 | 2026-10-18：增加 bootstrap 边界测试 | 2026-11-17：CI 规则全绿且无基线误报 | Phase 0/1 | 阻断架构合并 | Open | 待补 |
+| DEBT-004 | P1 | 旧 ADR 编号和旧文档路径仍散落在代码注释/构建说明 | `documentation` | 知识漂移导致实现依据不可追溯 | Documentation owner | 2026-08-19 | 2026-09-18：建立 Legacy 映射 | 2026-10-18：清理旧路径引用 | 2026-11-17：关键 ADR 引用指向新注册表/文档 | Phase 0 | 阻断文档治理检查 | Open | 待补 |
+| DEBT-005 | P1 | `gate_task` 尚无生产所需 lease/fence/idempotency/event 完整字段 | `task` | 多节点接管可能双写，阻断 team 模式 | Task owner | 2026-08-19 | 2026-09-18：完成 schema/状态机 | 2026-10-18：完成 claim/renew/complete 契约 | 2026-11-17：完成节点暂停和 stale fence 故障测试 | Phase 2 | 禁止进入 team/enterprise | Open | 待补 |
+| DEBT-006 | P1 | 当前 SSE 仍有进程内监听语义，未完成跨节点持久化事件 | `event/session` | 跨节点丢事件、重连不可证明 | Event owner | 2026-08-19 | 2026-09-18：定义 event/outbox schema | 2026-10-18：完成 cursor/replay | 2026-11-17：完成慢消费者和节点切换测试 | Phase 2 | 禁止多 Web 节点生产 | Open | 待补 |
+| DEBT-007 | P1 | 8 项生产 ADR 尚未完成 Accepted/Verified | `architecture` | 关键实现决策仍未获批准，不能成为强制实现依据 | Architecture owner | 2026-08-19 | 2026-09-18：8 项全部 Draft/Proposed（已达到 Draft） | 2026-10-18：至少 4 项 Accepted | 2026-11-17：8 项达到 Accepted，关键项 Verified | Phase 0 | 主规范保持 Reviewing | In Progress | `docs/adr/README.md` |
+| DEBT-008 | P1 | 复杂度、豁免、数据 owner 的 CI 自动检查尚未落地 | `governance` | 规则只能靠人工执行，容易回归 | Platform owner | 2026-08-19 | 2026-09-18：规则编号和基线入库 | 2026-10-18：verify-fast 输出规则结果 | 2026-11-17：过期豁免/无 owner 对象自动阻断 | Phase 0/1 | 阻断治理准入 | Open | `GOV-*` / 待补 |
+| DEBT-009 | P1 | 12 个能力实例已建立，但详细端口、权限、测试和 runbook 尚未完全回填 | `all capabilities` | 实例过于简化时仍可能遗漏交付物和 owner 边界 | Architecture owner | 2026-08-19 | 2026-09-18：建立目录和初始实例（已完成） | 2026-10-18：详细回填 ticket/project/review | 2026-11-17：全部 Implementing 能力有完整实例和验收包 | Phase 1 | 禁止新增未登记能力 | In Progress | `docs/capabilities/README.md` |
+| DEBT-010 | P1 | 物理表中 review_result/ticket 混有 metrics 派生列 | `review/metrics` | 所有权语义混淆、派生回写和迁移耦合 | Review/Metrics owners | 2026-08-19 | 2026-09-18：冻结新列增长 | 2026-10-18：定义 projection schema | 2026-11-17：完成 expand/contract 或 Accepted ADR | Phase 1/2 | 禁止新增列级 owner | Open | ownership catalog |
+
+## 3. 状态和治理规则
+
+- 债务状态只能是 `Open / Planned / In Progress / Blocked / Resolved / Accepted Risk`。
+- 新增 P0/P1 债务必须在同一 PR 建立记录；没有 owner、日期和利息字段的记录无效。
+- P1 必须有 30/60/90 天检查点；逾期自动升级到架构负责人并阻断对应 Phase 准入。
+- `Resolved` 必须附代码、测试、指标或迁移证据；关闭 Issue 不等于偿还完成。
+- `Accepted Risk` 必须同时存在有效豁免，且不能用于核心不变量或 team/enterprise 阻断项。
+- 每两周更新 owner、目标日期、利息和证据；逾期项进入架构周报。
