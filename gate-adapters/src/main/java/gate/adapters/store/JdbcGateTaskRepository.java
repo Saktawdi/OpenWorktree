@@ -64,8 +64,9 @@ public final class JdbcGateTaskRepository implements TaskRegistry, TaskEventPort
     public JdbcGateTaskRepository(JdbcTemplate jdbc, Clock clock) { this.jdbc = jdbc; this.clock = clock; }
     @Override public GateTask register(String type, String ticketNo, String sessionId) { return registerWithKey(type, ticketNo, sessionId, null, null); }
     public GateTask registerWithKey(String type, String ticketNo, String sessionId, String idempotencyKey, String requestDigest) {
+        String tenant = currentTenant();
         if (idempotencyKey != null) {
-            Optional<GateTask> existing = findByIdempotency("default", idempotencyKey);
+            Optional<GateTask> existing = findByIdempotency(tenant, idempotencyKey);
             if (existing.isPresent()) {
                 GateTask ex = existing.get();
                 if (requestDigest != null && ex.requestDigest() != null && !requestDigest.equals(ex.requestDigest())) {
@@ -77,7 +78,7 @@ public final class JdbcGateTaskRepository implements TaskRegistry, TaskEventPort
         Instant now = clock.now();
         String id = UUID.randomUUID().toString();
         GateTask task = new GateTask(id, type, ticketNo, sessionId, GateTaskStatus.RUNNING, now, null, null, null,
-                "default", null, idempotencyKey, requestDigest, 0, now, null, null, 1, 3, 1L, 0L, null, null, null, null);
+                tenant, null, idempotencyKey, requestDigest, 0, now, null, null, 1, 3, 1L, 0L, null, null, null, null);
         try {
             jdbc.update("INSERT INTO gate_task(id, type, ticket_no, session_id, status, started_at, finished_at, result_json, error_json, tenant_id, project_id, idempotency_key, request_digest, priority, available_at, lease_owner, lease_until, attempt, max_attempts, fence_token, next_event_sequence) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     task.id(), task.type(), task.ticketNo(), task.sessionId(), task.status().name(), task.startedAt().toString(), null, null, null,

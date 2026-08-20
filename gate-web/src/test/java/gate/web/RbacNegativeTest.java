@@ -48,22 +48,15 @@ class RbacNegativeTest {
 
     @Test
     void developer_cannot_publish_403() throws Exception {
-        // Create a ticket via the privileged humanToken (has PUBLISHER)
-        String ticketNo = "T-RBAC-" + System.nanoTime();
-        // Use harness's privileged token to create ticket via ApiRoutes directly
-        var api = new ApiRoutes(harness.components());
-        // Simulate SecurityContext for privileged user
-        var privilegedCtx = harness.components().securityResolver().resolve(harness.humanToken());
-        gate.ports.security.SecurityContextHolder.set(privilegedCtx);
+        var limitedCtx = new gate.domain.security.SecurityContext(limitedUser, "default", null, java.util.Set.of(RbacRole.DEVELOPER), limitedToken.substring(0,16));
+        gate.ports.security.SecurityContextHolder.set(limitedCtx);
         try {
-            var createResp = api.route("POST", "/api/tickets", "{\"title\":\"rbac\",\"target_ref\":\"refs/heads/main\",\"clone_path\":\"" + harness.root().resolve("clone-"+ticketNo).toString().replace("\\","/") + "\"}");
-            // Ticket creation may succeed or fail depending on clone, but we just need a ticketNo for publish attempt
-            // Instead, directly test RbacService deny
-            var limitedCtx = new gate.domain.security.SecurityContext(limitedUser, "default", null, java.util.Set.of(RbacRole.DEVELOPER), limitedToken.substring(0,16));
-            gate.ports.security.SecurityContextHolder.set(limitedCtx);
             assertThrows(gate.domain.error.GateException.class, () -> {
                 new gate.application.security.RbacService(harness.components().rbacPort()).require(limitedCtx, gate.domain.security.Permission.PUBLISH_RUN, "default", null);
             });
+            // Also test via ApiRoutes: publish should be denied
+            var api = new ApiRoutes(harness.components());
+            assertThrows(gate.domain.error.GateException.class, () -> api.route("POST", "/api/tickets/T-UNKNOWN/publish", "{}"));
         } finally {
             gate.ports.security.SecurityContextHolder.clear();
         }

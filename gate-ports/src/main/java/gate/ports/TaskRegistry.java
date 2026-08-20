@@ -74,6 +74,10 @@ public interface TaskRegistry extends TaskClaimPort {
     /** Phase4: record task creator for SoD and tenant audit (V17). No-op for in-memory impl. */
     default void setCreator(String taskId, String creator) {}
     default String findCreator(String taskId) { return null; }
+    default java.util.Optional<GateTask> findByIdempotency(String tenantId, String key) { return java.util.Optional.empty(); }
+    default GateTask registerWithKey(String type, String ticketNo, String sessionId, String idempotencyKey, String requestDigest) {
+        return register(type, ticketNo, sessionId);
+    }
 
     /** One immutable element of a task's event stream. */
     record GateTaskEvent(String taskId, String kind, String payloadJson, Instant at) {}

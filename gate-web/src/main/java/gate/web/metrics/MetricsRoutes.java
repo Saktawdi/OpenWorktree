@@ -45,7 +45,7 @@ public final class MetricsRoutes {
         double avail;
         String availSource;
         if (total == 0) { avail = 1.0; availSource = "no_traffic_no_eval"; }
-        else avail = 1.0 - ((double) errors / Math.max(1, total));
+        else { avail = 1.0 - ((double) errors / Math.max(1, total)); availSource = "real_metrics"; }
         Map<String, Double> availMap = Map.of("control_plane", avail);
         List<SloService.SloResult> results = slo.evaluate(latency, availMap, Map.of());
         Map<String,Object> body = new LinkedHashMap<>();

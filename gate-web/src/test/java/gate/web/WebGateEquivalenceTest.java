@@ -12,6 +12,7 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterEach;
@@ -150,9 +151,11 @@ class WebGateEquivalenceTest {
 
     private void waitForStatus(String taskId, String expected) throws Exception {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
+        String lastBody = "";
         while (System.nanoTime() < deadline) {
             HttpResponse<String> res = get("/api/tasks/" + taskId);
             assertEquals(200, res.statusCode(), res.body());
+            lastBody = res.body();
             String status = taskStatus(res.body());
             if (expected.equals(status)) {
                 return;
@@ -162,7 +165,7 @@ class WebGateEquivalenceTest {
             }
             Thread.sleep(50);
         }
-        fail("timed out waiting for task " + taskId + " to reach " + expected);
+        fail("timed out waiting for task " + taskId + " to reach " + expected + " last=" + lastBody);
     }
 
     @SuppressWarnings("unchecked")

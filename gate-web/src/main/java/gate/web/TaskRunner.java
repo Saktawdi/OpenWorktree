@@ -56,11 +56,10 @@ final class TaskRunner {
         var ctx = gate.ports.security.SecurityContextHolder.get();
         String tenant = ctx != null && ctx.tenantId() != null ? ctx.tenantId() : "default";
         String creator = ctx != null ? ctx.userId() : null;
-        // Stable idempotency: tenant + ticket + round + humanPass + note hash (without nanoTime) – satisfies I3
         String noteHash = note == null ? "null" : Integer.toHexString(note.hashCode());
         String idempotencyKey = "review:" + tenant + ":" + ticketNo + ":" + round + ":" + humanPass + ":" + noteHash;
         String requestDigest = noteHash;
-        GateTask task = tasks.enqueue("review", ticketNo, null, tenant, null, idempotencyKey, requestDigest, 5, clock.now());
+        GateTask task = tasks.registerWithKey("review", ticketNo, null, idempotencyKey, requestDigest);
         tasks.setCreator(task.id(), creator);
         GateTask taskFinal = task;
         if (!dispatcher.trySubmit(() -> {
@@ -82,18 +81,16 @@ final class TaskRunner {
         var ctx = gate.ports.security.SecurityContextHolder.get();
         String tenant = ctx != null && ctx.tenantId() != null ? ctx.tenantId() : "default";
         String creator = ctx != null ? ctx.userId() : null;
-        // Idempotency: stable for same ticket/round, but if previous attempt terminal FAILED, allow retry with new key
         String baseKey = "publish:" + tenant + ":" + ticketNo + ":" + round;
         String requestDigest = String.valueOf(round);
         GateTask existing = null;
         try { existing = tasks.findByIdempotency(tenant, baseKey).orElse(null); } catch (Exception ignored) {}
         String idempotencyKey = baseKey;
         if (existing != null && existing.isTerminal() && existing.status() == GateTaskStatus.FAILED) {
-            // Previous FAILED terminal: allow retry with distinct key (attempt suffix) – does not break I3 for non-terminal
             idempotencyKey = baseKey + ":retry:" + (existing.attempt() + 1);
             requestDigest = requestDigest + ":retry:" + (existing.attempt() + 1);
         }
-        GateTask task = tasks.enqueue("publish", ticketNo, null, tenant, null, idempotencyKey, requestDigest, 10, clock.now());
+        GateTask task = tasks.registerWithKey("publish", ticketNo, null, idempotencyKey, requestDigest);
         tasks.setCreator(task.id(), creator);
         GateTask taskFinal = task;
         if (!dispatcher.trySubmit(() -> {
@@ -158,13 +155,25 @@ final class TaskRunner {
         Map<String, Object> p = new LinkedHashMap<>();
         p.put("percent", percent);
         p.put("label", label);
-        tasks.update(new GateTask(task.id(), task.type(), task.ticketNo(), task.sessionId(),
-                GateTaskStatus.RUNNING, task.startedAt(), null, null, null));
+        var latest = tasks.find(task.id()).orElse(task);
+        GateTask toUpdate = new GateTask(latest.id(), latest.type(), latest.ticketNo(), latest.sessionId(),
+                GateTaskStatus.RUNNING, latest.startedAt(), null, null, null,
+                latest.tenantId(), latest.projectId(), latest.idempotencyKey(), latest.requestDigest(),
+                latest.priority(), latest.availableAt(), latest.leaseOwner(), latest.leaseUntil(),
+                latest.attempt(), latest.maxAttempts(), latest.fenceToken(), latest.nextEventSequence(),
+                latest.timeoutAt(), latest.cancelRequestedAt(), latest.resultRef(), latest.errorCode());
+        tasks.update(toUpdate);
     }
 
     private void success(GateTask task, String resultJson) {
-        tasks.update(new GateTask(task.id(), task.type(), task.ticketNo(), task.sessionId(),
-                GateTaskStatus.SUCCEEDED, task.startedAt(), clock.now(), resultJson, null));
+        var latest = tasks.find(task.id()).orElse(task);
+        GateTask toUpdate = new GateTask(latest.id(), latest.type(), latest.ticketNo(), latest.sessionId(),
+                GateTaskStatus.SUCCEEDED, latest.startedAt(), clock.now(), resultJson, null,
+                latest.tenantId(), latest.projectId(), latest.idempotencyKey(), latest.requestDigest(),
+                latest.priority(), latest.availableAt(), latest.leaseOwner(), latest.leaseUntil(),
+                latest.attempt(), latest.maxAttempts(), latest.fenceToken(), latest.nextEventSequence(),
+                latest.timeoutAt(), latest.cancelRequestedAt(), latest.resultRef(), latest.errorCode());
+        tasks.update(toUpdate);
     }
 
     private void fail(GateTask task, Throwable e) {
@@ -185,7 +194,13 @@ final class TaskRunner {
         err.put("error", name);
         err.put("message", message == null ? "" : message);
         err.put("detail", List.of());
-        tasks.update(new GateTask(task.id(), task.type(), task.ticketNo(), task.sessionId(),
-                GateTaskStatus.FAILED, task.startedAt(), clock.now(), null, Json.write(err)));
+        var latest = tasks.find(task.id()).orElse(task);
+        GateTask toUpdate = new GateTask(latest.id(), latest.type(), latest.ticketNo(), latest.sessionId(),
+                GateTaskStatus.FAILED, latest.startedAt(), clock.now(), null, Json.write(err),
+                latest.tenantId(), latest.projectId(), latest.idempotencyKey(), latest.requestDigest(),
+                latest.priority(), latest.availableAt(), latest.leaseOwner(), latest.leaseUntil(),
+                latest.attempt(), latest.maxAttempts(), latest.fenceToken(), latest.nextEventSequence(),
+                latest.timeoutAt(), latest.cancelRequestedAt(), latest.resultRef(), latest.errorCode());
+        tasks.update(toUpdate);
     }
 }
