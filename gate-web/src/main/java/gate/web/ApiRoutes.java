@@ -85,7 +85,7 @@ public final class ApiRoutes {
         this.modelFetcher = c.modelFetcher();
         this.git = c.git();
         this.statusRoutes = new StatusRoutes(gateService, config, c.runtimeInfo());
-        this.projectRoutes = new gate.web.project.ProjectRoutes(projects, topologyInitializer, config);
+        this.projectRoutes = new gate.web.project.ProjectRoutes(projects, tickets, topologyInitializer, config);
         this.ticketRoutes = new gate.web.ticket.TicketRoutes(tickets, projects, c.agentConfigRepository(),
                 topologyInitializer, config, clock);
         this.sessionRoutes = new gate.web.session.SessionRoutes(c.agentConfigRepository(),

@@ -57,6 +57,15 @@ public interface TaskRegistry {
      */
     Stream<GateTaskEvent> stream(String id);
 
+    /**
+     * W3C SSE Last-Event-ID cursor variant: replay DB events with {@code sequence > afterSequence}
+     * then attach live. Default delegates to {@link #stream(String)} for adapters that have not yet
+     * wired cursor filtering; JDBC impl overrides to eliminate replay gap.
+     */
+    default Stream<GateTaskEvent> streamWithCursor(String id, long afterSequence) {
+        return stream(id);
+    }
+
     /** Count of tasks currently in one status ("RUNNING" for the runtime status endpoint, V5). */
     default long countByStatus(String status) {
         throw new UnsupportedOperationException("countByStatus is not supported");

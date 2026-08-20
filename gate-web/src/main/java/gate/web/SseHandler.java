@@ -72,8 +72,9 @@ final class SseHandler {
         AtomicLong droppedEvents = new AtomicLong(0);
         AtomicLong lastFlushedSequence = new AtomicLong(lastEventId);
 
+        // Use cursor-aware stream so Last-Event-ID is actually filtered at DB, not just local counter
         try (OutputStream os = exchange.getResponseBody();
-             Stream<TaskRegistry.GateTaskEvent> events = tasks.stream(taskId)) {
+             Stream<TaskRegistry.GateTaskEvent> events = tasks.streamWithCursor(taskId, lastEventId)) {
 
             Thread producer = new Thread(() -> {
                 try {

@@ -18,13 +18,16 @@ import gate.adapters.process.ProcessRunnerImpl;
 import gate.adapters.git.LocalAuthoritativeGitService;
 import gate.adapters.kms.LocalKmsService;
 import gate.adapters.s3.FsS3Store;
+import gate.adapters.store.JdbcAgentConfigRepository;
 import gate.adapters.store.JdbcCredentialRepository;
 import gate.adapters.store.JdbcGateTaskRepository;
 import gate.adapters.store.JdbcNonceStore;
 import gate.adapters.store.JdbcPresubmitRepository;
+import gate.adapters.store.JdbcProjectRepository;
 import gate.adapters.store.JdbcProviderRepository;
 import gate.adapters.store.JdbcPublishIntentRepository;
 import gate.adapters.store.JdbcReviewResultRepository;
+import gate.adapters.store.JdbcSessionRepository;
 import gate.adapters.store.JdbcTicketRepository;
 import gate.adapters.store.SpringDbTransactionRunner;
 import gate.adapters.store.SqliteDataSourceFactory;
@@ -99,6 +102,9 @@ public final class GateRuntime {
     private final EphemeralWorkspaceManager ephemeralWorkspaceManager;
     private final S3Store s3Store;
     private final KmsService kmsService;
+    private final gate.ports.AgentConfigRepository agentConfigRepository;
+    private final gate.ports.SessionRepository sessionRepository;
+    private final gate.ports.ProjectRepository projectRepository;
 
     public GateRuntime(GateConfig config, String gitExecutable, Path envFile) {
         this.config = config;
@@ -142,6 +148,9 @@ public final class GateRuntime {
         this.ephemeralWorkspaceManager = new FsEphemeralWorkspaceManager(config.clonesRoot(), config.authRepo(), git);
         this.s3Store = new FsS3Store(config.blobRoot().resolve("s3"));
         this.kmsService = new LocalKmsService("local-key-1", "local-secret-for-phase3-hmac");
+        this.agentConfigRepository = new JdbcAgentConfigRepository(jdbc);
+        this.sessionRepository = new JdbcSessionRepository(jdbc, blobStore);
+        this.projectRepository = new JdbcProjectRepository(jdbc);
 
         ReviewEngineFactory reviewEngineFactory = config.engineConfigured()
                 ? new GateReviewEngineFactory(blobStore, config, processRunner, providerRepository, this.envFile)
@@ -156,7 +165,10 @@ public final class GateRuntime {
     public Clock clock() { return clock; }
     public ProcessRunner processRunner() { return processRunner; }
     public GitCli git() { return git; }
-    public DataSource dataSource() { return dataSource; }
+    /** @deprecated drivers should consume ports, not DataSource directly */
+    @Deprecated public DataSource dataSource() { return dataSource; }
+    GateRuntime.JdbcAccess jdbcAccess() { return new JdbcAccess(dataSource); }
+    public static final class JdbcAccess { private final DataSource ds; JdbcAccess(DataSource ds){this.ds=ds;} DataSource ds(){return ds;} }
     public GateService gateService() { return gateService; }
     public TopologyInitializer topologyInitializer() { return topologyInitializer; }
     public PreflightChecker preflightChecker() { return preflightChecker; }
@@ -167,14 +179,18 @@ public final class GateRuntime {
     public PublishIntentRepository publishIntentRepository() { return publishIntentRepository; }
     public BlobStore blobStore() { return blobStore; }
     public CredentialRepository credentials() { return credentials; }
-    // Phase3 getters
+    // Phase3 getters – expose PORT types, not implementation, to keep composition root sealed
     public JdbcGateTaskRepository gateTaskRepository() { return gateTaskRepository; }
+    public gate.ports.TaskRegistry taskRegistry() { return gateTaskRepository; }
     public TaskClaimPort taskClaimPort() { return taskClaimPort; }
     public gate.ports.NonceStore nonceStore() { return nonceStore; }
     public AuthoritativeGitService authoritativeGitService() { return authoritativeGitService; }
     public EphemeralWorkspaceManager ephemeralWorkspaceManager() { return ephemeralWorkspaceManager; }
     public S3Store s3Store() { return s3Store; }
     public KmsService kmsService() { return kmsService; }
+    public gate.ports.AgentConfigRepository agentConfigRepository() { return agentConfigRepository; }
+    public gate.ports.SessionRepository sessionRepository() { return sessionRepository; }
+    public gate.ports.ProjectRepository projectRepository() { return projectRepository; }
 
     /** Seeds a provider required by the review-result foreign key. Safe to call repeatedly. */
     public void seedProvider(String id, String name, String baseUrl, String apiKeyRef, String type) {

@@ -127,9 +127,10 @@ class TaskRegistryTest {
         JdbcGateTaskRepository restarted = new JdbcGateTaskRepository(new JdbcTemplate(ds), new SystemClock());
 
         List<TaskRegistry.GateTaskEvent> events = restarted.stream(t.id()).toList();
-        assertEquals(1, events.size());
-        assertEquals("done", events.get(0).kind());
-        assertTrue(events.get(0).payloadJson().contains("\"status\":\"FAILED\""));
+        // After fence fix, register (progress) + update (done) both persist, so restarted replay has 2 events
+        assertEquals(2, events.size(), "restarted repo must replay persisted progress+done, not synthesize single done");
+        assertEquals("done", events.get(events.size() - 1).kind());
+        assertTrue(events.get(events.size() - 1).payloadJson().contains("\"status\":\"FAILED\""));
     }
 
     @Test

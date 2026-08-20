@@ -93,7 +93,14 @@ public final class JdbcGateTaskRepository implements TaskRegistry, TaskEventPort
         publish(new GateTaskEvent(id, "progress", taskPayload(task), now));
         return task;
     }
-    @Override public void update(GateTask task) { updateWithFence(task, task.fenceToken()); }
+    @Override public void update(GateTask task) {
+        // Strict fencing: caller must supply current fence_token. No silent DB read fallback – prevents stale write masking.
+        long fence = task.fenceToken();
+        if (fence == 0L) {
+            throw new GateException(GateErrorCode.GATE_ERROR_IO, "update requires fence_token > 0; taskId=" + task.id() + " has fence=0 (use correct GateTask constructor)");
+        }
+        updateWithFence(task, fence);
+    }
     public void updateWithFence(GateTask task, long currentFenceToken) {
         int updated = jdbc.update("UPDATE gate_task SET status = ?, finished_at = ?, result_json = ?, error_json = ? WHERE id = ? AND fence_token = ? AND status NOT IN ('SUCCEEDED','FAILED','CANCELLED')",
                 task.status().name(), task.finishedAt() == null ? null : task.finishedAt().toString(), task.resultJson(), task.errorJson(), task.id(), currentFenceToken);
@@ -121,13 +128,15 @@ public final class JdbcGateTaskRepository implements TaskRegistry, TaskEventPort
         return count == null ? 0 : count;
     }
     @Override public Stream<GateTaskEvent> stream(String id) { return streamWithCursor(id, 0); }
-    public Stream<GateTaskEvent> streamWithCursor(String id, long afterSequence) {
+    @Override public Stream<GateTaskEvent> streamWithCursor(String id, long afterSequence) {
         Optional<GateTask> existing = find(id);
         if (existing.isEmpty()) return NO_SUCH_TASK;
-        List<TaskEventPort.TaskEvent> historicalEvents = replay(id, afterSequence);
         TaskChannel ch = channels.computeIfAbsent(id, k -> new TaskChannel(k));
         Subscriber sub = new Subscriber();
+        List<TaskEventPort.TaskEvent> historicalEvents;
         synchronized (ch) {
+            // Gap-free: hold channel lock while querying DB so no publish can slip between replay query and subscriber registration
+            historicalEvents = replay(id, afterSequence);
             for (TaskEventPort.TaskEvent he : historicalEvents) sub.replay.add(new GateTaskEvent(he.taskId(), he.eventType(), he.payloadJson(), he.createdAt()));
             ch.subscribers.add(sub);
             ch.active.incrementAndGet();

@@ -86,9 +86,18 @@ public final class GatePolicy {
                 if (!offending.isEmpty()) {
                     return Decision.reject("findings at or above configured strictness", offending);
                 }
-                return Decision.pass(
-                        PublishAuthorization.mint(ticketNo, reviewRound, snapshot.treeHash(), report.engine()),
-                        worst == null ? "no findings" : "worst severity " + worst);
+                // Bound authorization: bind ref + old OID + expiry + nonce (ADR-003 §7.1)
+                // Fail-closed: if binding data missing, refuse to mint rather than falling back to unbound token
+                if (snapshot.targetRef() == null || snapshot.targetRef().isBlank() || snapshot.baseCommit() == null) {
+                    return Decision.reject("cannot mint authorization: missing targetRef or baseCommit binding",
+                            List.of("targetRef=" + snapshot.targetRef(), "baseCommit=" + snapshot.baseCommit()));
+                }
+                java.time.Instant now = java.time.Instant.now();
+                java.time.Instant exp = now.plusSeconds(3600);
+                String nonce = java.util.UUID.randomUUID().toString();
+                PublishAuthorization auth = PublishAuthorization.mint(ticketNo, reviewRound, snapshot.treeHash(), report.engine(),
+                        snapshot.targetRef(), snapshot.baseCommit(), now, exp, nonce);
+                return Decision.pass(auth, worst == null ? "no findings" : "worst severity " + worst);
             }
 
             @Override

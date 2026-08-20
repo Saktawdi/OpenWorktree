@@ -228,6 +228,8 @@ public final class PublishHandler {
         intent = intent.withCommitSha(commit);
 
         commitPublisher.pinGateRef(clone, ticket.ticketNo(), row.reviewRound(), commit);
+        // Ensure object reachable in auth before CAS (local file: push dangling commit)
+        commitPublisher.ensureObjectInAuth(clone, auth, commit);
 
         publishProbe.at("AFTER_COMMIT_TREE");
 
@@ -242,10 +244,27 @@ public final class PublishHandler {
         PublishStatus status;
         String refAfter;
         if (authoritativeGitService != null) {
-            // CAS via authoritative service: validates expected_old_oid + nonce atomically
-            ObjectId expectedOld = refObserver.tip(auth, targetRef).orElse(null);
-            // Use expectedOld from intent's base? For Phase3 we use actual tip as expected
-            // But intent stores baseCommit; CAS must use current tip per I2
+            // ADR-003: expectedOld must be the OID bound at review time (what was approved), not current tip.
+            // Using current tip would silently allow "reviewed on old base, published on new base" laundering.
+            if (authorization != null && authorization.targetRef() != null && !authorization.targetRef().equals(targetRef)) {
+                throw new GateException(GateErrorCode.REJECT_FINDINGS, "authorization ref mismatch: authorized " + authorization.targetRef() + " but publish to " + targetRef);
+            }
+            if (authorization != null && authorization.baseCommit() != null && !authorization.baseCommit().equals(intent.baseCommit())) {
+                throw new GateException(GateErrorCode.REJECT_FINDINGS, "authorization old OID mismatch: authorized " + authorization.baseCommit().hex() + " but intent base " + intent.baseCommit().hex());
+            }
+            if (authorization != null && !authorization.treeHash().equals(row.treeHash())) {
+                throw new GateException(GateErrorCode.REJECT_FINDINGS, "authorization tree mismatch");
+            }
+            if (authorization != null && authorization.expiresAt() != null && clock.now().isAfter(authorization.expiresAt())) {
+                throw new GateException(GateErrorCode.REJECT_FINDINGS, "authorization expired at " + authorization.expiresAt());
+            }
+            if (authorization != null && !authorization.authorises(ticket.ticketNo(), row.reviewRound(), row.treeHash())) {
+                throw new GateException(GateErrorCode.REJECT_FINDINGS, "authorization does not authorise this ticket/round/tree");
+            }
+            ObjectId expectedOld = authorization != null && authorization.baseCommit() != null
+                    ? authorization.baseCommit()
+                    : intent.baseCommit();
+            // Legacy fallback: if auth has no bound old, still use intent base (never tip)
             AuthoritativeGitService.CasResult cas = authoritativeGitService.casPublish(auth, targetRef, expectedOld, commit, row.treeHash(), authorization);
             outcome = new CommitPublisher.PublishOutcome(cas.success(), cas.success() ? 0 : 1, cas.reason(), cas.reason());
             publishProbe.at("AFTER_PUSH");

@@ -111,20 +111,22 @@ public final class WebComponents {
         this.credentials = runtime.credentials();
         this.ticketLockManager = new FileChannelTicketLockManager(config.locksDir().resolve("tickets"));
 
-        JdbcTemplate jdbc = new JdbcTemplate(runtime.dataSource());
         TicketRepository tickets = this.ticketRepository;
         BlobStore blobStore = this.blobStore;
         seedCliDefaultProvider();
-        JdbcGateTaskRepository gateTasks = new JdbcGateTaskRepository(jdbc, clock);
+        // Composition root: reuse ports from GateRuntime, do not recreate DataSource/JdbcTemplate here
+        gate.adapters.store.JdbcGateTaskRepository gateTasks = runtime.gateTaskRepository();
         gateTasks.failOrphaned(clock.now());
-        this.taskRegistry = gateTasks;
+        this.taskRegistry = runtime.taskRegistry();
 
-        JdbcAgentConfigRepository agentConfigs = new JdbcAgentConfigRepository(jdbc);
-        this.agentConfigRepository = agentConfigs;
-        this.projectRepository = new JdbcProjectRepository(jdbc);
+        this.agentConfigRepository = runtime.agentConfigRepository();
+        this.projectRepository = runtime.projectRepository();
         this.modelFetcher = new ProviderModelFetcher(envFile);
-        JdbcSessionRepository sessionRepo = new JdbcSessionRepository(jdbc, blobStore);
-        sessionRepo.abortOrphanedActive(clock.now());
+        gate.ports.SessionRepository sessionRepo = runtime.sessionRepository();
+        // abort orphaned via concrete type if available
+        if (sessionRepo instanceof gate.adapters.store.JdbcSessionRepository jsr) {
+            jsr.abortOrphanedActive(clock.now());
+        }
         this.sessionRepository = sessionRepo;
 
         this.metricsService = new MetricsService(reviewResultRepository, presubmitRepository, ticketRepository);
@@ -144,13 +146,13 @@ public final class WebComponents {
             // cannot launch a bare .cmd name, which would break every session start on Windows.
             String claudeCmd = cliLocator.locate("claude").map(Path::toString).orElse("claude");
             String opencodeCmd = cliLocator.locate("opencode").map(Path::toString).orElse("opencode");
-            this.claudeAdapter = new ClaudeHeadlessAdapter(processRunner, agentConfigs, sessionRepo,
+            this.claudeAdapter = new ClaudeHeadlessAdapter(processRunner, this.agentConfigRepository, sessionRepo,
                     tickets, taskRegistry, ticketLockManager, clock, claudeCmd);
             int startTimeout = config.session() == null ? 60 : config.session().startTimeoutSeconds();
-            this.opencodeAdapter = new OpenCodeServeAdapter(processRunner, agentConfigs, sessionRepo,
+            this.opencodeAdapter = new OpenCodeServeAdapter(processRunner, this.agentConfigRepository, sessionRepo,
                     tickets, taskRegistry, ticketLockManager, clock, portAllocator, opencodeCmd,
                     startTimeout);
-            this.agentSessionPort = new DispatchAgentSessionPort(agentConfigs, sessionRepo,
+            this.agentSessionPort = new DispatchAgentSessionPort(this.agentConfigRepository, sessionRepo,
                     claudeAdapter, opencodeAdapter);
         }
     }

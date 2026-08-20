@@ -31,6 +31,9 @@ public interface CommitPublisher {
     /** Recomputes the worktree tree with the same pinned git config, for the TOCTOU re-check. */
     ObjectId recomputeTree(RepoRef cloneRepo);
 
+    /** Ensure commit object reachable in auth bare repo (push to tmp ref) before CAS update-ref. */
+    default void ensureObjectInAuth(RepoRef cloneRepo, RepoRef authRepo, ObjectId commit) {}
+
     record PublishOutcome(boolean accepted, int exitCode, String stdout, String stderr) {
     }
 }

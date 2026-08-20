@@ -53,12 +53,31 @@ if (Test-Path -LiteralPath $faultTestPath) {
     Record-Error "GOV-CON-001 missing TaskEventOutboxFaultTest.java"
 }
 
+# REAL EXECUTION: run fault tests (not just file-name check) – prevents fake green when logic regresses
+if (-not $Mock) {
+    Write-Host "[GOV-CON-001] Running real fault tests: TaskEventOutboxFaultTest + Phase3HaFaultTest + TaskRegistryTest..."
+    $mvnArgs = @("-pl","gate-adapters,gate-web","-am","-Dtest=TaskEventOutboxFaultTest,Phase3HaFaultTest,TaskRegistryTest","-DfailIfNoTests=false","test")
+    # Use --no-transfer-progress to keep logs tidy; capture exit code
+    $proc = Start-Process -FilePath "mvn" -ArgumentList $mvnArgs -WorkingDirectory $repo -Wait -PassThru -NoNewWindow
+    if ($proc.ExitCode -ne 0) {
+        Record-Error "GOV-CON-001 fault tests failed (mvn exit=$($proc.ExitCode)); see surefire-reports"
+        # Dump surefire summary for evidence
+        Get-ChildItem -Recurse -Filter "*.txt" (Join-Path $repo "gate-adapters/target/surefire-reports") -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "--- $($_.Name)"; Get-Content $_.FullName -Head 40 }
+        Get-ChildItem -Recurse -Filter "*.txt" (Join-Path $repo "gate-web/target/surefire-reports") -ErrorAction SilentlyContinue | Where-Object { $_.Name -like "*TaskRegistry*" -or $_.Name -like "*Phase3*" } | ForEach-Object { Write-Host "--- $($_.Name)"; Get-Content $_.FullName -Head 40 }
+    } else {
+        Write-Host "  - Fault tests passed (mvn exit 0)"
+    }
+} else {
+    Write-Host "[MOCK] Skipping real mvn execution (Mock flag)"
+}
+
 $result = [ordered]@{
     profile = 'verify-fault'
     rules = @('GOV-CON-001', 'GOV-TX-001')
     commit = (git -C $repo rev-parse HEAD).Trim()
     checked_at = (Get-Date).ToString('o')
     scenarios_evaluated = 6
+    scenarios_executed = (-not $Mock)
     errors = @($errors)
     passed = ($errors.Count -eq 0)
 }

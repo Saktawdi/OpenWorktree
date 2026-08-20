@@ -25,11 +25,17 @@ import java.util.Map;
  */
 public final class ProjectRoutes {
     private final ProjectRepository projects;
+    private final gate.ports.TicketRepository tickets;
     private final TopologyInitializer topologyInitializer;
     private final GateConfig config;
 
     public ProjectRoutes(ProjectRepository projects, TopologyInitializer topologyInitializer, GateConfig config) {
+        this(projects, null, topologyInitializer, config);
+    }
+
+    public ProjectRoutes(ProjectRepository projects, gate.ports.TicketRepository tickets, TopologyInitializer topologyInitializer, GateConfig config) {
         this.projects = projects;
+        this.tickets = tickets;
         this.topologyInitializer = topologyInitializer;
         this.config = config;
     }
@@ -46,6 +52,20 @@ public final class ProjectRoutes {
             m.put("priority", p.priority());
             m.put("size", p.size());
             m.put("tags", p.tags());
+            if (tickets != null) {
+                try {
+                    var list = tickets.findAllByProject(p.id());
+                    m.put("ticket_count", list.size());
+                    long active = list.stream().filter(t -> t.stage() != null && !t.stage().isTerminal()).count();
+                    m.put("active_ticket_count", (int) active);
+                } catch (Exception e) {
+                    m.put("ticket_count", 0);
+                    m.put("active_ticket_count", 0);
+                }
+            } else {
+                m.put("ticket_count", 0);
+                m.put("active_ticket_count", 0);
+            }
             m.put("created_at", p.createdAt().toString());
             m.put("updated_at", p.updatedAt().toString());
             rows.add(m);
