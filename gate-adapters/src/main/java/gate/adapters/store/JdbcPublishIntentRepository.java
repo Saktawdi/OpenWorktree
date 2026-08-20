@@ -62,6 +62,9 @@ public final class JdbcPublishIntentRepository implements PublishIntentRepositor
                 RepoRef.of(authRepoPath));
     }
 
+    private String currentTenant() {
+        try { return gate.ports.security.SecurityContextHolder.currentTenant(); } catch (Exception e) { return "default"; }
+    }
     private static final String SELECT = """
             SELECT pi.*, t.clone_path AS clone_path
               FROM publish_intent pi
@@ -80,6 +83,11 @@ public final class JdbcPublishIntentRepository implements PublishIntentRepositor
             Instant now,
             RepoRef cloneRepo,
             RepoRef authRepo) {
+        String tenant = currentTenant();
+        try {
+            String t = jdbc.queryForObject("SELECT tenant_id FROM ticket WHERE ticket_no=?", String.class, ticketNo);
+            if (t != null && !t.isBlank()) tenant = t;
+        } catch (Exception ignored) {}
         jdbc.update("""
                 INSERT INTO publish_intent(ticket_no, review_round, tree_hash, base_commit, target_ref,
                                            commit_message,
@@ -87,8 +95,8 @@ public final class JdbcPublishIntentRepository implements PublishIntentRepositor
                                            committer_name, committer_email, committer_date,
                                            approval_id, commit_sha, status,
                                            observed_ref_before, observed_ref_after,
-                                           created_at, finished_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,?,?,NULL,?,NULL)
+                                           created_at, finished_at, tenant_id)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,?,?,NULL,?,NULL,?)
                 """,
                 ticketNo, reviewRound, snapshot.treeHash().hex(), snapshot.baseCommit().hex(), snapshot.targetRef(),
                 commitMessage,
@@ -96,7 +104,7 @@ public final class JdbcPublishIntentRepository implements PublishIntentRepositor
                 committer.name(), committer.email(), committer.date(),
                 approvalId.value(), PublishStatus.PENDING.name(),
                 snapshot.baseCommit().hex(),
-                now.toString());
+                now.toString(), tenant);
         return find(ticketNo, reviewRound, snapshot.treeHash()).orElseThrow(
                 () -> new IllegalStateException("publish_intent row vanished right after insert"));
     }
@@ -106,13 +114,26 @@ public final class JdbcPublishIntentRepository implements PublishIntentRepositor
         List<PublishIntent> rows = jdbc.query(
                 SELECT + " WHERE pi.ticket_no = ? AND pi.review_round = ? AND pi.tree_hash = ?",
                 mapper(), ticketNo, reviewRound, treeHash.hex());
-        return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
+        if (rows.isEmpty()) return Optional.empty();
+        // Tenant check: must match current
+        try {
+            String rowTenant = jdbc.queryForObject("SELECT tenant_id FROM publish_intent WHERE ticket_no=? AND review_round=? AND tree_hash=?", String.class, ticketNo, reviewRound, treeHash.hex());
+            String rt = rowTenant == null || rowTenant.isBlank() ? "default" : rowTenant;
+            if (!currentTenant().equals(rt)) return Optional.empty();
+        } catch (Exception e) { return Optional.empty(); }
+        return Optional.of(rows.get(0));
     }
 
     @Override
     public Optional<PublishIntent> findById(long id) {
         List<PublishIntent> rows = jdbc.query(SELECT + " WHERE pi.id = ?", mapper(), id);
-        return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
+        if (rows.isEmpty()) return Optional.empty();
+        try {
+            String rowTenant = jdbc.queryForObject("SELECT tenant_id FROM publish_intent WHERE id=?", String.class, id);
+            String rt = rowTenant == null || rowTenant.isBlank() ? "default" : rowTenant;
+            if (!currentTenant().equals(rt)) return Optional.empty();
+        } catch (Exception e) { return Optional.empty(); }
+        return Optional.of(rows.get(0));
     }
 
     @Override
@@ -139,12 +160,32 @@ public final class JdbcPublishIntentRepository implements PublishIntentRepositor
 
     @Override
     public List<PublishIntent> findPending() {
-        return jdbc.query(SELECT + " WHERE pi.status = ? ORDER BY pi.id",
+        List<PublishIntent> all = jdbc.query(SELECT + " WHERE pi.status = ? ORDER BY pi.id",
                 mapper(), PublishStatus.PENDING.name());
+        String ctxTenant = currentTenant();
+        java.util.List<PublishIntent> filtered = new java.util.ArrayList<>();
+        for (PublishIntent pi : all) {
+            try {
+                String rowTenant = jdbc.queryForObject("SELECT tenant_id FROM publish_intent WHERE id=?", String.class, pi.id());
+                String rt = rowTenant == null || rowTenant.isBlank() ? "default" : rowTenant;
+                if (ctxTenant.equals(rt)) filtered.add(pi);
+            } catch (Exception e) { /* skip */ }
+        }
+        return java.util.List.copyOf(filtered);
     }
 
     @Override
     public List<PublishIntent> findByTicket(String ticketNo) {
-        return jdbc.query(SELECT + " WHERE pi.ticket_no = ? ORDER BY pi.id", mapper(), ticketNo);
+        List<PublishIntent> all = jdbc.query(SELECT + " WHERE pi.ticket_no = ? ORDER BY pi.id", mapper(), ticketNo);
+        String ctxTenant = currentTenant();
+        java.util.List<PublishIntent> filtered = new java.util.ArrayList<>();
+        for (PublishIntent pi : all) {
+            try {
+                String rowTenant = jdbc.queryForObject("SELECT tenant_id FROM publish_intent WHERE id=?", String.class, pi.id());
+                String rt = rowTenant == null || rowTenant.isBlank() ? "default" : rowTenant;
+                if (ctxTenant.equals(rt)) filtered.add(pi);
+            } catch (Exception e) { /* skip */ }
+        }
+        return java.util.List.copyOf(filtered);
     }
 }

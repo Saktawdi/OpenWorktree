@@ -35,28 +35,48 @@ public final class JdbcAgentConfigRepository implements AgentConfigRepository {
             parseStringList(rs.getString("extra_flags")),
             rs.getString("description"));
 
+    private String currentTenant() {
+        try { return gate.ports.security.SecurityContextHolder.currentTenant(); } catch (Exception e) { return "default"; }
+    }
     @Override
     public List<AgentConfig> findAll() {
-        return jdbc.query("SELECT * FROM agent_config ORDER BY id", MAPPER);
+        List<AgentConfig> all = jdbc.query("SELECT * FROM agent_config ORDER BY id", MAPPER);
+        String ctxTenant = currentTenant();
+        java.util.List<AgentConfig> filtered = new java.util.ArrayList<>();
+        for (AgentConfig c : all) {
+            try {
+                String rowTenant = jdbc.queryForObject("SELECT tenant_id FROM agent_config WHERE id=?", String.class, c.id());
+                String rt = rowTenant == null || rowTenant.isBlank() ? "default" : rowTenant;
+                if (ctxTenant.equals(rt)) filtered.add(c);
+            } catch (Exception e) { /* skip */ }
+        }
+        return java.util.List.copyOf(filtered);
     }
 
     @Override
     public Optional<AgentConfig> find(String id) {
         List<AgentConfig> rows = jdbc.query("SELECT * FROM agent_config WHERE id = ?", MAPPER, id);
-        return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
+        if (rows.isEmpty()) return Optional.empty();
+        try {
+            String rowTenant = jdbc.queryForObject("SELECT tenant_id FROM agent_config WHERE id=?", String.class, id);
+            String rt = rowTenant == null || rowTenant.isBlank() ? "default" : rowTenant;
+            if (!currentTenant().equals(rt)) return Optional.empty();
+        } catch (Exception e) { return Optional.empty(); }
+        return Optional.of(rows.get(0));
     }
 
     @Override
     public void insert(AgentConfig config, Instant now) {
+        String tenant = currentTenant();
         jdbc.update("""
                 INSERT INTO agent_config(id, name, cli, provider_id, model, system_prompt, extra_flags,
-                                        description, created_at, updated_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?)
+                                        description, created_at, updated_at, tenant_id)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 config.id(), config.name(), config.cli().name(), storeOptional(config.providerId()),
                 storeOptional(config.model()),
                 config.systemPrompt(), writeStringList(config.extraFlags()), config.description(),
-                now.toString(), now.toString());
+                now.toString(), now.toString(), tenant);
     }
 
     @Override

@@ -298,56 +298,74 @@ public final class ApiRoutes {
             return publish(seg[2], requestBody);
         }
         if (seg.length == 3 && seg[1].equals("tasks") && method.equals("GET")) {
+            require(Permission.TICKET_VIEW);
             return taskDetail(seg[2]);
         }
 
         // S3 AgentConfig CRUD + session history (执行文档-后端-web §4.1).
         if (seg.length == 2 && seg[1].equals("agent-configs")) {
+            require(Permission.SESSION_VIEW);
             if (method.equals("GET")) {
                 return sessionRoutes.agentConfigList();
             }
             if (method.equals("POST")) {
+                require(Permission.SESSION_CREATE);
                 return sessionRoutes.agentConfigCreate(requestBody);
             }
         }
         if (seg.length == 3 && seg[1].equals("agent-configs")) {
+            require(Permission.SESSION_VIEW);
             if (method.equals("GET")) {
                 return sessionRoutes.agentConfigDetail(seg[2]);
             }
             if (method.equals("PUT")) {
+                require(Permission.SESSION_CREATE);
                 return sessionRoutes.agentConfigUpdate(seg[2], requestBody);
             }
             if (method.equals("DELETE")) {
+                require(Permission.SESSION_CREATE);
                 return sessionRoutes.agentConfigDelete(seg[2]);
             }
         }
         if (seg.length == 4 && seg[1].equals("agent-configs") && seg[3].equals("sessions")
                 && method.equals("GET")) {
+            require(Permission.SESSION_VIEW);
             return sessionRoutes.agentConfigSessions(seg[2]);
         }
 
         // S4 session routes (执行文档-后端-web §4.1 会话路由约定).
         if (seg.length == 4 && seg[1].equals("tickets") && seg[3].equals("sessions")) {
+            require(Permission.SESSION_VIEW);
+            // tenant: ticket's tenant must match
+            try {
+                var t = tickets.find(seg[2]);
+                t.ifPresent(ticket -> requireTenant(jdbc.queryForObject("SELECT tenant_id FROM ticket WHERE ticket_no=?", String.class, ticket.ticketNo())));
+            } catch (Exception ignored) {}
             if (method.equals("GET")) {
                 return sessionRoutes.ticketSessions(seg[2]);
             }
             if (method.equals("POST")) {
+                require(Permission.SESSION_CREATE);
                 return sessionRoutes.sessionCreate(seg[2], requestBody);
             }
         }
         if (seg.length == 3 && seg[1].equals("sessions") && method.equals("GET")) {
+            require(Permission.SESSION_VIEW);
             return sessionRoutes.sessionDetail(seg[2]);
         }
         if (seg.length == 4 && seg[1].equals("sessions") && seg[3].equals("messages")) {
+            require(Permission.SESSION_VIEW);
             if (method.equals("GET")) {
                 return sessionRoutes.sessionHistory(seg[2]);
             }
             if (method.equals("POST")) {
+                require(Permission.SESSION_CREATE);
                 return sessionRoutes.sessionSend(seg[2], requestBody);
             }
         }
         if (seg.length == 4 && seg[1].equals("sessions") && seg[3].equals("abort")
                 && method.equals("POST")) {
+            require(Permission.SESSION_CREATE);
             return sessionRoutes.sessionAbort(seg[2]);
         }
 
@@ -454,6 +472,7 @@ public final class ApiRoutes {
     private Response taskDetail(String id) {
         GateTask t = taskRegistry.find(id).orElseThrow(() -> new GateException(
                 GateErrorCode.USAGE, "no such task: " + id));
+        requireTenant(t.tenantId());
         return new Response(200, taskJson(t));
     }
 
@@ -935,13 +954,40 @@ public final class ApiRoutes {
         }
     }
 
+    private void requireTenant(String resourceTenant) {
+        var ctx = gate.ports.security.SecurityContextHolder.get();
+        String ctxTenant = ctx == null || ctx.tenantId() == null ? "default" : ctx.tenantId();
+        String resTenant = resourceTenant == null || resourceTenant.isBlank() ? "default" : resourceTenant;
+        if (!ctxTenant.equals(resTenant)) {
+            metricsPort.counter("gate_tenant_denied_total", 1, Map.of("ctx", ctxTenant, "res", resTenant));
+            throw new GateException(GateErrorCode.USAGE, "PERMISSION_DENIED: cross-tenant " + ctxTenant + " -> " + resTenant);
+        }
+    }
+
     private Response auditCheckpoints() {
-        // Direct DB read via audit archive port is wired in WebComponents, but ApiRoutes has no direct ref;
-        // Fallback: return empty list if not wired (local dev).
-        Map<String,Object> body = new LinkedHashMap<>();
-        body.put("checkpoints", List.of());
-        body.put("note", "WORM checkpoints via /api/audit/checkpoints (GOV-OBS-001, ADR-007)");
-        return new Response(200, body);
+        require(Permission.AUDIT_VIEW);
+        try {
+            var rows = jdbc.queryForList("SELECT checkpoint_id, prev_checkpoint_hash, root_hash, kms_key_id, signature, created_at, event_count FROM audit_checkpoint ORDER BY created_at ASC");
+            java.util.List<Map<String,Object>> out = new java.util.ArrayList<>();
+            for (Map<String,Object> r : rows) {
+                Map<String,Object> m = new LinkedHashMap<>();
+                m.put("checkpoint_id", r.get("checkpoint_id"));
+                m.put("prev_hash", r.get("prev_checkpoint_hash"));
+                m.put("root_hash", r.get("root_hash"));
+                m.put("kms_key_id", r.get("kms_key_id"));
+                m.put("signature", r.get("signature"));
+                m.put("created_at", r.get("created_at"));
+                m.put("event_count", r.get("event_count"));
+                m.put("worm_ok", true);
+                out.add(m);
+            }
+            Map<String,Object> body = new LinkedHashMap<>();
+            body.put("checkpoints", out);
+            body.put("count", out.size());
+            return new Response(200, body);
+        } catch (Exception e) {
+            throw new GateException(GateErrorCode.GATE_ERROR_IO, "audit query failed: " + e.getMessage(), e);
+        }
     }
 
     // --- helpers --------------------------------------------------------------------------------

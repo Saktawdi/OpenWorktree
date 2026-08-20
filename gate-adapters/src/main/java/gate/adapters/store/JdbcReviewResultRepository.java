@@ -82,37 +82,64 @@ public final class JdbcReviewResultRepository implements ReviewResultRepository 
             Instant now,
             CostRecord cost) {
         String reviewer = null;
+        String tenant = currentTenant();
         try {
             var ctx = gate.ports.security.SecurityContextHolder.get();
             if (ctx != null) reviewer = ctx.userId();
+            // Derive tenant from presubmit's ticket if available
+            String t = jdbc.queryForObject("SELECT tenant_id FROM presubmit WHERE id=?", String.class, presubmitId);
+            if (t != null && !t.isBlank()) tenant = t;
+            else {
+                String ticketNo = jdbc.queryForObject("SELECT ticket_no FROM presubmit WHERE id=?", String.class, presubmitId);
+                String tt = jdbc.queryForObject("SELECT tenant_id FROM ticket WHERE ticket_no=?", String.class, ticketNo);
+                if (tt != null && !tt.isBlank()) tenant = tt;
+            }
         } catch (Exception ignored) {}
-        // Fallback: try ticket presubmit's tenant context? Keep null if no context (e.g., test without auth)
         jdbc.update("""
                 INSERT INTO review_result(presubmit_id, engine_id, engine_version, provider_id, model_name,
                                           verdict, findings_blob, covered_ok, degraded, raw_blob, created_at,
                                           prompt_tokens, completion_tokens, total_tokens, token_source,
-                                          review_wall_ms, llm_wall_ms, diff_bytes, diff_lines, reviewer_user_id)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                                          review_wall_ms, llm_wall_ms, diff_bytes, diff_lines, reviewer_user_id, tenant_id)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 presubmitId, engine.engineId(), engine.engineVersion(), engine.providerId(), engine.modelName(),
                 verdict.name(), findings.relPath(), coveredOk ? 1 : 0, degraded ? 1 : 0, raw.relPath(),
                 now.toString(),
                 cost.promptTokens(), cost.completionTokens(), cost.totalTokens(), cost.tokenSource(),
-                cost.reviewWallMs(), cost.llmWallMs(), cost.diffBytes(), cost.diffLines(), reviewer);
+                cost.reviewWallMs(), cost.llmWallMs(), cost.diffBytes(), cost.diffLines(), reviewer, tenant);
         return findLatestForPresubmit(presubmitId).orElseThrow(
                 () -> new IllegalStateException("review_result row vanished right after insert"));
     }
 
+    private String currentTenant() {
+        try { return gate.ports.security.SecurityContextHolder.currentTenant(); } catch (Exception e) { return "default"; }
+    }
     @Override
     public Optional<ReviewResultRow> findLatestForPresubmit(long presubmitId) {
         List<ReviewResultRow> rows = jdbc.query(
                 "SELECT * FROM review_result WHERE presubmit_id = ? ORDER BY id DESC LIMIT 1", MAPPER, presubmitId);
-        return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
+        if (rows.isEmpty()) return Optional.empty();
+        try {
+            String rowTenant = jdbc.queryForObject("SELECT tenant_id FROM review_result WHERE id=?", String.class, rows.get(0).id());
+            String rt = rowTenant == null || rowTenant.isBlank() ? "default" : rowTenant;
+            if (!currentTenant().equals(rt)) return Optional.empty();
+        } catch (Exception e) { return Optional.empty(); }
+        return Optional.of(rows.get(0));
     }
 
     @Override
     public List<ReviewResultRow> findAllForMetrics() {
-        return jdbc.query("SELECT * FROM review_result ORDER BY id ASC", MAPPER);
+        List<ReviewResultRow> all = jdbc.query("SELECT * FROM review_result ORDER BY id ASC", MAPPER);
+        String ctxTenant = currentTenant();
+        java.util.List<ReviewResultRow> filtered = new java.util.ArrayList<>();
+        for (ReviewResultRow r : all) {
+            try {
+                String rowTenant = jdbc.queryForObject("SELECT tenant_id FROM review_result WHERE id=?", String.class, r.id());
+                String rt = rowTenant == null || rowTenant.isBlank() ? "default" : rowTenant;
+                if (ctxTenant.equals(rt)) filtered.add(r);
+            } catch (Exception e) { /* skip */ }
+        }
+        return java.util.List.copyOf(filtered);
     }
 
     private static Long getNullableLong(ResultSet rs, String column) {

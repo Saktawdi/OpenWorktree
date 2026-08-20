@@ -82,11 +82,14 @@ public final class JdbcTicketRepository implements TicketRepository {
     public Optional<Ticket> find(String ticketNo) {
         List<Ticket> rows = jdbc.query("SELECT * FROM ticket WHERE ticket_no = ?", MAPPER, ticketNo);
         if (rows.isEmpty()) return Optional.empty();
-        // Tenant isolation: verify row tenant matches context
+        // Tenant isolation: verify row tenant matches context, fail-closed on error
+        String rowTenant;
         try {
-            String rowTenant = jdbc.queryForObject("SELECT tenant_id FROM ticket WHERE ticket_no = ?", String.class, ticketNo);
-            if (!tenantMatches(rowTenant)) return Optional.empty();
-        } catch (Exception ignored) {}
+            rowTenant = jdbc.queryForObject("SELECT tenant_id FROM ticket WHERE ticket_no = ?", String.class, ticketNo);
+        } catch (Exception e) {
+            return Optional.empty();
+        }
+        if (!tenantMatches(rowTenant)) return Optional.empty();
         return Optional.of(rows.get(0));
     }
 
@@ -154,14 +157,14 @@ public final class JdbcTicketRepository implements TicketRepository {
     @Override
     public List<Ticket> findByStage(TicketStage stage) {
         List<Ticket> all = jdbc.query("SELECT * FROM ticket WHERE stage = ? ORDER BY ticket_no", MAPPER, stage.name());
-        // Tenant filter: keep only matching tenant rows
         String ctxTenant = currentTenant();
         java.util.List<Ticket> filtered = new java.util.ArrayList<>();
         for (Ticket t : all) {
+            String rowTenant;
             try {
-                String rowTenant = jdbc.queryForObject("SELECT tenant_id FROM ticket WHERE ticket_no = ?", String.class, t.ticketNo());
-                if (ctxTenant.equals(rowTenant == null || rowTenant.isBlank() ? "default" : rowTenant)) filtered.add(t);
-            } catch (Exception e) { filtered.add(t); }
+                rowTenant = jdbc.queryForObject("SELECT tenant_id FROM ticket WHERE ticket_no = ?", String.class, t.ticketNo());
+            } catch (Exception e) { continue; }
+            if (ctxTenant.equals(rowTenant == null || rowTenant.isBlank() ? "default" : rowTenant)) filtered.add(t);
         }
         return java.util.List.copyOf(filtered);
     }
@@ -172,10 +175,11 @@ public final class JdbcTicketRepository implements TicketRepository {
         String ctxTenant = currentTenant();
         java.util.List<Ticket> filtered = new java.util.ArrayList<>();
         for (Ticket t : all) {
+            String rowTenant;
             try {
-                String rowTenant = jdbc.queryForObject("SELECT tenant_id FROM ticket WHERE ticket_no = ?", String.class, t.ticketNo());
-                if (ctxTenant.equals(rowTenant == null || rowTenant.isBlank() ? "default" : rowTenant)) filtered.add(t);
-            } catch (Exception e) { filtered.add(t); }
+                rowTenant = jdbc.queryForObject("SELECT tenant_id FROM ticket WHERE ticket_no = ?", String.class, t.ticketNo());
+            } catch (Exception e) { continue; }
+            if (ctxTenant.equals(rowTenant == null || rowTenant.isBlank() ? "default" : rowTenant)) filtered.add(t);
         }
         return java.util.List.copyOf(filtered);
     }
@@ -186,10 +190,11 @@ public final class JdbcTicketRepository implements TicketRepository {
         String ctxTenant = currentTenant();
         java.util.List<Ticket> filtered = new java.util.ArrayList<>();
         for (Ticket t : all) {
+            String rowTenant;
             try {
-                String rowTenant = jdbc.queryForObject("SELECT tenant_id FROM ticket WHERE ticket_no = ?", String.class, t.ticketNo());
-                if (ctxTenant.equals(rowTenant == null || rowTenant.isBlank() ? "default" : rowTenant)) filtered.add(t);
-            } catch (Exception e) { filtered.add(t); }
+                rowTenant = jdbc.queryForObject("SELECT tenant_id FROM ticket WHERE ticket_no = ?", String.class, t.ticketNo());
+            } catch (Exception e) { continue; }
+            if (ctxTenant.equals(rowTenant == null || rowTenant.isBlank() ? "default" : rowTenant)) filtered.add(t);
         }
         return java.util.List.copyOf(filtered);
     }

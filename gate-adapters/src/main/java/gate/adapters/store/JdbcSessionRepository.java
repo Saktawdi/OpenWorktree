@@ -49,43 +49,87 @@ public final class JdbcSessionRepository implements SessionRepository {
                     rs.getObject("completion_tokens") == null ? null : rs.getLong("completion_tokens"),
                     rs.getObject("total_tokens") == null ? null : rs.getLong("total_tokens")));
 
+    private String currentTenant() {
+        try { return gate.ports.security.SecurityContextHolder.currentTenant(); } catch (Exception e) { return "default"; }
+    }
     @Override
     public Optional<Session> find(String id) {
         List<Session> rows = jdbc.query("SELECT * FROM agent_session WHERE id = ?", SESSION_MAPPER, id);
-        return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
+        if (rows.isEmpty()) return Optional.empty();
+        try {
+            String rowTenant = jdbc.queryForObject("SELECT tenant_id FROM agent_session WHERE id=?", String.class, id);
+            String rt = rowTenant == null || rowTenant.isBlank() ? "default" : rowTenant;
+            if (!currentTenant().equals(rt)) return Optional.empty();
+        } catch (Exception e) { return Optional.empty(); }
+        return Optional.of(rows.get(0));
     }
 
     @Override
     public List<Session> findByTicket(String ticketNo) {
-        return jdbc.query("SELECT * FROM agent_session WHERE ticket_no = ? ORDER BY started_at", SESSION_MAPPER, ticketNo);
+        List<Session> all = jdbc.query("SELECT * FROM agent_session WHERE ticket_no = ? ORDER BY started_at", SESSION_MAPPER, ticketNo);
+        String ctxTenant = currentTenant();
+        java.util.List<Session> filtered = new java.util.ArrayList<>();
+        for (Session s : all) {
+            try {
+                String rowTenant = jdbc.queryForObject("SELECT tenant_id FROM agent_session WHERE id=?", String.class, s.id());
+                String rt = rowTenant == null || rowTenant.isBlank() ? "default" : rowTenant;
+                if (ctxTenant.equals(rt)) filtered.add(s);
+            } catch (Exception e) { /* skip */ }
+        }
+        return java.util.List.copyOf(filtered);
     }
 
     @Override
     public List<Session> findByAgentConfig(String agentConfigId) {
-        return jdbc.query("SELECT * FROM agent_session WHERE agent_config_id = ? ORDER BY started_at",
+        List<Session> all = jdbc.query("SELECT * FROM agent_session WHERE agent_config_id = ? ORDER BY started_at",
                 SESSION_MAPPER, agentConfigId);
+        String ctxTenant = currentTenant();
+        java.util.List<Session> filtered = new java.util.ArrayList<>();
+        for (Session s : all) {
+            try {
+                String rowTenant = jdbc.queryForObject("SELECT tenant_id FROM agent_session WHERE id=?", String.class, s.id());
+                String rt = rowTenant == null || rowTenant.isBlank() ? "default" : rowTenant;
+                if (ctxTenant.equals(rt)) filtered.add(s);
+            } catch (Exception e) { /* skip */ }
+        }
+        return java.util.List.copyOf(filtered);
     }
 
     @Override
     public List<Session> findByStatus(SessionStatus status) {
-        return jdbc.query("SELECT * FROM agent_session WHERE status = ? ORDER BY started_at",
+        List<Session> all = jdbc.query("SELECT * FROM agent_session WHERE status = ? ORDER BY started_at",
                 SESSION_MAPPER, status.name());
+        String ctxTenant = currentTenant();
+        java.util.List<Session> filtered = new java.util.ArrayList<>();
+        for (Session s : all) {
+            try {
+                String rowTenant = jdbc.queryForObject("SELECT tenant_id FROM agent_session WHERE id=?", String.class, s.id());
+                String rt = rowTenant == null || rowTenant.isBlank() ? "default" : rowTenant;
+                if (ctxTenant.equals(rt)) filtered.add(s);
+            } catch (Exception e) { /* skip */ }
+        }
+        return java.util.List.copyOf(filtered);
     }
 
     @Override
     public void insert(Session session) {
         SessionUsage u = session.cumulativeUsage() == null ? SessionUsage.EMPTY : session.cumulativeUsage();
+        String tenant = currentTenant();
+        try {
+            String ticketTenant = jdbc.queryForObject("SELECT tenant_id FROM ticket WHERE ticket_no=?", String.class, session.ticketNo());
+            if (ticketTenant != null && !ticketTenant.isBlank()) tenant = ticketTenant;
+        } catch (Exception ignored) {}
         jdbc.update("""
                 INSERT INTO agent_session(id, ticket_no, agent_config_id, cli, status, cli_session_id,
                                           clone_path, allocated_port, prompt_tokens, completion_tokens,
-                                          total_tokens, started_at, finished_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+                                          total_tokens, started_at, finished_at, tenant_id)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 session.id(), session.ticketNo(), session.agentConfigId(), session.cli().name(),
                 session.status().name(), session.cliSessionId(), session.clonePath(),
                 session.allocatedPort(), u.promptTokens(), u.completionTokens(), u.totalTokens(),
                 session.startedAt().toString(),
-                session.finishedAt() == null ? null : session.finishedAt().toString());
+                session.finishedAt() == null ? null : session.finishedAt().toString(), tenant);
     }
 
     @Override

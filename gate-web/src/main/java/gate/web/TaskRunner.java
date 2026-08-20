@@ -52,8 +52,25 @@ final class TaskRunner {
     }
 
     String submitReview(String ticketNo, Integer round, boolean humanPass, String note) {
-        GateTask task = tasks.register("review", ticketNo, null);
-        if (!dispatcher.trySubmit(() -> runReview(task, ticketNo, round, humanPass, note))) {
+        var ctx = gate.ports.security.SecurityContextHolder.get();
+        String tenant = ctx != null && ctx.tenantId() != null ? ctx.tenantId() : "default";
+        String creator = ctx != null ? ctx.userId() : null;
+        GateTask task;
+        if (tasks instanceof gate.adapters.store.JdbcGateTaskRepository j) {
+            task = j.enqueue("review", ticketNo, null, tenant, null, "review:"+ticketNo+":"+round+":"+System.nanoTime(), null, 5, clock.now());
+            // Also set created_by if column exists
+            try { j.setCreator(task.id(), creator); } catch (Exception ignored) {}
+        } else {
+            task = tasks.register("review", ticketNo, null);
+        }
+        GateTask taskFinal = task;
+        String tenantFinal = tenant;
+        String creatorFinal = creator;
+        if (!dispatcher.trySubmit(() -> {
+            // Propagate security context to worker thread for SoD and tenant
+            gate.ports.security.SecurityContextHolder.set(new gate.domain.security.SecurityContext(creatorFinal, tenantFinal, null, ctx != null ? ctx.roles() : Set.of(), ctx != null ? ctx.tokenHash() : null));
+            try { runReview(taskFinal, ticketNo, round, humanPass, note); } finally { gate.ports.security.SecurityContextHolder.clear(); }
+        })) {
             fail(task, new GateException(GateErrorCode.GATE_ERROR_IO,
                     "review capacity exhausted; retry after workers drain"));
         }
@@ -61,8 +78,23 @@ final class TaskRunner {
     }
 
     String submitPublish(String ticketNo, Integer round) {
-        GateTask task = tasks.register("publish", ticketNo, null);
-        if (!dispatcher.trySubmit(() -> runPublish(task, ticketNo, round))) {
+        var ctx = gate.ports.security.SecurityContextHolder.get();
+        String tenant = ctx != null && ctx.tenantId() != null ? ctx.tenantId() : "default";
+        String creator = ctx != null ? ctx.userId() : null;
+        GateTask task;
+        if (tasks instanceof gate.adapters.store.JdbcGateTaskRepository j) {
+            task = j.enqueue("publish", ticketNo, null, tenant, null, "publish:"+ticketNo+":"+round+":"+System.nanoTime(), null, 10, clock.now());
+            try { j.setCreator(task.id(), creator); } catch (Exception ignored) {}
+        } else {
+            task = tasks.register("publish", ticketNo, null);
+        }
+        GateTask taskFinal = task;
+        String tenantFinal = tenant;
+        String creatorFinal = creator;
+        if (!dispatcher.trySubmit(() -> {
+            gate.ports.security.SecurityContextHolder.set(new gate.domain.security.SecurityContext(creatorFinal, tenantFinal, null, ctx != null ? ctx.roles() : Set.of(), ctx != null ? ctx.tokenHash() : null));
+            try { runPublish(taskFinal, ticketNo, round); } finally { gate.ports.security.SecurityContextHolder.clear(); }
+        })) {
             fail(task, new GateException(GateErrorCode.GATE_ERROR_IO,
                     "publish capacity exhausted; retry after workers drain"));
         }

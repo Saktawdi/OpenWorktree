@@ -34,22 +34,32 @@ public final class JdbcProjectRepository implements ProjectRepository {
             Instant.parse(rs.getString("created_at")),
             Instant.parse(rs.getString("updated_at")));
 
+    private String currentTenant() {
+        try { return gate.ports.security.SecurityContextHolder.currentTenant(); } catch (Exception e) { return "default"; }
+    }
     @Override
     public void insert(Project project) {
+        String tenant = currentTenant();
         jdbc.update("""
                 INSERT INTO project(id, name, workspace_path, target_ref, auth_repo, priority, size, tags,
-                                    created_at, updated_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?)
+                                    created_at, updated_at, tenant_id)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 project.id(), project.name(), project.workspacePath(), project.targetRef(),
                 project.authRepo(), project.priority(), project.size(), encodeTags(project.tags()),
-                project.createdAt().toString(), project.updatedAt().toString());
+                project.createdAt().toString(), project.updatedAt().toString(), tenant);
     }
 
     @Override
     public Optional<Project> find(String id) {
         List<Project> rows = jdbc.query("SELECT * FROM project WHERE id = ?", MAPPER, id);
-        return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
+        if (rows.isEmpty()) return Optional.empty();
+        try {
+            String rowTenant = jdbc.queryForObject("SELECT tenant_id FROM project WHERE id=?", String.class, id);
+            String rt = rowTenant == null || rowTenant.isBlank() ? "default" : rowTenant;
+            if (!currentTenant().equals(rt)) return Optional.empty();
+        } catch (Exception e) { return Optional.empty(); }
+        return Optional.of(rows.get(0));
     }
 
     @Override
@@ -57,12 +67,29 @@ public final class JdbcProjectRepository implements ProjectRepository {
         List<String> rows = jdbc.query(
                 "SELECT id FROM project WHERE workspace_path = ?",
                 (rs, n) -> rs.getString("id"), workspacePath);
-        return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
+        if (rows.isEmpty()) return Optional.empty();
+        String id = rows.get(0);
+        try {
+            String rowTenant = jdbc.queryForObject("SELECT tenant_id FROM project WHERE id=?", String.class, id);
+            String rt = rowTenant == null || rowTenant.isBlank() ? "default" : rowTenant;
+            if (!currentTenant().equals(rt)) return Optional.empty();
+        } catch (Exception e) { return Optional.empty(); }
+        return Optional.of(id);
     }
 
     @Override
     public List<Project> findAll() {
-        return jdbc.query("SELECT * FROM project ORDER BY name", MAPPER);
+        List<Project> all = jdbc.query("SELECT * FROM project ORDER BY name", MAPPER);
+        String ctxTenant = currentTenant();
+        java.util.List<Project> filtered = new java.util.ArrayList<>();
+        for (Project p : all) {
+            try {
+                String rowTenant = jdbc.queryForObject("SELECT tenant_id FROM project WHERE id=?", String.class, p.id());
+                String rt = rowTenant == null || rowTenant.isBlank() ? "default" : rowTenant;
+                if (ctxTenant.equals(rt)) filtered.add(p);
+            } catch (Exception e) { /* skip */ }
+        }
+        return java.util.List.copyOf(filtered);
     }
 
     @Override

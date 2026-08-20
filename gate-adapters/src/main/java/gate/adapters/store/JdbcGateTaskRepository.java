@@ -114,9 +114,21 @@ public final class JdbcGateTaskRepository implements TaskRegistry, TaskEventPort
         appendOutbox("task", task.id(), "task." + eventType, taskPayload(task));
         publish(new GateTaskEvent(task.id(), eventType, taskPayload(task), now));
     }
+    private String currentTenant() {
+        try { return gate.ports.security.SecurityContextHolder.currentTenant(); } catch (Exception e) { return "default"; }
+    }
+    public void setCreator(String taskId, String creator) {
+        if (creator == null) return;
+        try { jdbc.update("UPDATE gate_task SET created_by=? WHERE id=?", creator, taskId); } catch (Exception ignored) {}
+    }
     @Override public Optional<GateTask> find(String id) {
         List<GateTask> rows = jdbc.query("SELECT * FROM gate_task WHERE id = ?", MAPPER, id);
-        return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
+        if (rows.isEmpty()) return Optional.empty();
+        GateTask t = rows.get(0);
+        String ctxTenant = currentTenant();
+        String rowTenant = t.tenantId() == null || t.tenantId().isBlank() ? "default" : t.tenantId();
+        if (!ctxTenant.equals(rowTenant)) return Optional.empty();
+        return Optional.of(t);
     }
     public Optional<GateTask> findByIdempotency(String tenantId, String idempotencyKey) {
         if (idempotencyKey == null) return Optional.empty();

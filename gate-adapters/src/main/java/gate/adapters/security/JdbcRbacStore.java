@@ -33,12 +33,6 @@ public final class JdbcRbacStore implements RbacPort {
             RbacRole role = RbacRole.parse(r);
             if (role != null) out.add(role);
         }
-        // Default developer for legacy local user "gate" if no rows
-        if (out.isEmpty() && "default".equals(tid) && userId.equals("gate")) {
-            out.add(RbacRole.DEVELOPER);
-            out.add(RbacRole.REVIEWER);
-            out.add(RbacRole.PUBLISHER);
-        }
         return Set.copyOf(out);
     }
 
