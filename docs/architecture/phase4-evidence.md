@@ -1,7 +1,7 @@
 # Phase4 企业安全与生产运维 验收证据包
 
-状态：Verified（本地验证，P0/P1 已修复，infra mock）  
-基线提交：`72b2fc9` → `fix`（见本分支 HEAD）  
+状态：Candidate, Not Verified — P0/P1 修复中，待 L4 复审（原 72b2fc9 已过时，当前 HEAD 见 git log）  
+基线提交：`54625cc` + `fbc9eb7` + 当前 HEAD（每次修复后更新，见 `git log --oneline phase4`）  
 范围：Tenant/RBAC/SoD · WORM审计 · OTel/Metrics/SLO · 健康探针 · 备份恢复
 
 ## 1. 交付清单

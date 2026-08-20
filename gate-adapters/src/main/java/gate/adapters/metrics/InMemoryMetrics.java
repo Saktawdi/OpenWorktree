@@ -14,7 +14,7 @@ public final class InMemoryMetrics implements MetricsPort {
 
     private final ConcurrentHashMap<String, AtomicLong> counters = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, DoubleAdder> gauges = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<String, AtomicLong> histP95 = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, java.util.List<Long>> histograms = new ConcurrentHashMap<>();
 
     @Override
     public void counter(String name, long delta, Map<String, String> labels) {
@@ -27,9 +27,8 @@ public final class InMemoryMetrics implements MetricsPort {
     @Override
     public void histogram(String name, long valueMs, Map<String, String> labels) {
         String key = name + labels;
-        // naive p95: keep max as proxy for p99 in local tests
-        histP95.computeIfAbsent(name, k -> new AtomicLong()).updateAndGet(prev -> Math.max(prev, valueMs));
-        histP95.computeIfAbsent(key, k -> new AtomicLong()).updateAndGet(prev -> Math.max(prev, valueMs));
+        histograms.computeIfAbsent(name, k -> java.util.Collections.synchronizedList(new java.util.ArrayList<>())).add(valueMs);
+        histograms.computeIfAbsent(key, k -> java.util.Collections.synchronizedList(new java.util.ArrayList<>())).add(valueMs);
     }
 
     @Override
@@ -45,19 +44,39 @@ public final class InMemoryMetrics implements MetricsPort {
         return out;
     }
 
+    private long percentile(String name, double p) {
+        var list = histograms.get(name);
+        if (list == null || list.isEmpty()) return 0;
+        var copy = new java.util.ArrayList<>(list);
+        copy.sort(Long::compare);
+        int idx = (int) Math.ceil(p * copy.size()) - 1;
+        idx = Math.max(0, Math.min(idx, copy.size()-1));
+        return copy.get(idx);
+    }
+    public long getP95(String name) { return percentile(name, 0.95); }
+    public long getP99(String name) { return percentile(name, 0.99); }
+    // legacy alias for slow migration
+    public long getHistogramMax(String name) { return getP99(name); }
     public String prometheusText() {
         StringBuilder sb = new StringBuilder();
         counters.forEach((k,v) -> sb.append("# TYPE ").append(k).append(" counter\n").append(k).append(" ").append(v.get()).append("\n"));
-        histP95.forEach((k,v) -> sb.append("# TYPE ").append(k).append(" histogram\n").append(k).append("_p95 ").append(v.get()).append("\n"));
+        histograms.forEach((k,list) -> {
+            if (!list.isEmpty()) {
+                long p95 = percentile(k, 0.95);
+                long p99 = percentile(k, 0.99);
+                sb.append("# TYPE ").append(k).append(" histogram\n");
+                sb.append(k).append("_p95 ").append(p95).append("\n");
+                sb.append(k).append("_p99 ").append(p99).append("\n");
+            }
+        });
         gauges.forEach((k,v) -> sb.append("# TYPE ").append(k).append(" gauge\n").append(k).append(" ").append(v.sum()).append("\n"));
         return sb.toString();
     }
 
     public long getCounter(String name) { return counters.getOrDefault(name, new AtomicLong()).get(); }
-    public long getHistogramMax(String name) { return histP95.getOrDefault(name, new AtomicLong(0)).get(); }
     public Map<String, Long> snapshotHistograms() {
         java.util.Map<String, Long> out = new java.util.HashMap<>();
-        histP95.forEach((k,v) -> out.put(k, v.get()));
+        histograms.forEach((k,list) -> out.put(k, (long) percentile(k, 0.95)));
         return out;
     }
 }

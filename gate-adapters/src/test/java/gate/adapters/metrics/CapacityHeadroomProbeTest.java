@@ -70,12 +70,10 @@ class CapacityHeadroomProbeTest {
         long p95 = latencies.get((int)(latencies.size()*0.95));
         System.out.printf("capacity probe: elapsed=%dms p95=%dms p99=%dms size=%d%n", elapsedMs, p95, p99, latencies.size());
 
-        // Headroom: 200 appends+100 reads is a bulk throughput probe, not a single API latency.
-        // For local SQLite, 300 DB ops typically 6-7s on CI; allow <10000ms and check per-op P99.
+        // Headroom: bulk 200+100 must be <10000ms, per-op P99 with 30% headroom => p99*1.3 <100 => p99 <77
         assertTrue(elapsedMs < 10000, "200 appends+100 reads must be <10000ms, was "+elapsedMs+"ms");
-        // Per-op P99 with 30% headroom to 100ms target: p99 < 100ms (local SQLite p99 ~5ms)
-        assertTrue(p99 < 100, "P99 must be <100ms, was "+p99+"ms");
-        assertTrue(p95 < 100, "P95 must be <100ms, was "+p95+"ms");
+        assertTrue(p99 * 1.3 < 100, "P99 with 30% headroom must be <77ms (p99*1.3<100), was p99="+p99+"ms");
+        assertTrue(p95 * 1.3 < 100, "P95 with 30% headroom must be <77ms (p95*1.3<100), was p95="+p95+"ms");
         // Also verify bounded buffer still holds: latest sequence = 1 + 200
         assertEquals(201, repo.latestSequence(taskId));
     }

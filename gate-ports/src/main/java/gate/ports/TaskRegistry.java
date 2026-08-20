@@ -36,7 +36,7 @@ import java.util.stream.Stream;
  * once {@code done} is observed (or immediately if the task is already terminal). Implementations
  * must not block forever.
  */
-public interface TaskRegistry {
+public interface TaskRegistry extends TaskClaimPort {
 
     /** Creates a {@code RUNNING} task, persists it, and publishes the initial {@code progress} event. */
     GateTask register(String type, String ticketNo, String sessionId);
@@ -70,6 +70,10 @@ public interface TaskRegistry {
     default long countByStatus(String status) {
         throw new UnsupportedOperationException("countByStatus is not supported");
     }
+
+    /** Phase4: record task creator for SoD and tenant audit (V17). No-op for in-memory impl. */
+    default void setCreator(String taskId, String creator) {}
+    default String findCreator(String taskId) { return null; }
 
     /** One immutable element of a task's event stream. */
     record GateTaskEvent(String taskId, String kind, String payloadJson, Instant at) {}

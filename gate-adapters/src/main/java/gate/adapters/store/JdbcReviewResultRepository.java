@@ -116,30 +116,16 @@ public final class JdbcReviewResultRepository implements ReviewResultRepository 
     }
     @Override
     public Optional<ReviewResultRow> findLatestForPresubmit(long presubmitId) {
+        String tenant = currentTenant();
         List<ReviewResultRow> rows = jdbc.query(
-                "SELECT * FROM review_result WHERE presubmit_id = ? ORDER BY id DESC LIMIT 1", MAPPER, presubmitId);
-        if (rows.isEmpty()) return Optional.empty();
-        try {
-            String rowTenant = jdbc.queryForObject("SELECT tenant_id FROM review_result WHERE id=?", String.class, rows.get(0).id());
-            String rt = rowTenant == null || rowTenant.isBlank() ? "default" : rowTenant;
-            if (!currentTenant().equals(rt)) return Optional.empty();
-        } catch (Exception e) { return Optional.empty(); }
-        return Optional.of(rows.get(0));
+                "SELECT * FROM review_result WHERE presubmit_id = ? AND tenant_id = ? ORDER BY id DESC LIMIT 1", MAPPER, presubmitId, tenant);
+        return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
     }
 
     @Override
     public List<ReviewResultRow> findAllForMetrics() {
-        List<ReviewResultRow> all = jdbc.query("SELECT * FROM review_result ORDER BY id ASC", MAPPER);
-        String ctxTenant = currentTenant();
-        java.util.List<ReviewResultRow> filtered = new java.util.ArrayList<>();
-        for (ReviewResultRow r : all) {
-            try {
-                String rowTenant = jdbc.queryForObject("SELECT tenant_id FROM review_result WHERE id=?", String.class, r.id());
-                String rt = rowTenant == null || rowTenant.isBlank() ? "default" : rowTenant;
-                if (ctxTenant.equals(rt)) filtered.add(r);
-            } catch (Exception e) { /* skip */ }
-        }
-        return java.util.List.copyOf(filtered);
+        String tenant = currentTenant();
+        return jdbc.query("SELECT * FROM review_result WHERE tenant_id = ? ORDER BY id ASC", MAPPER, tenant);
     }
 
     private static Long getNullableLong(ResultSet rs, String column) {

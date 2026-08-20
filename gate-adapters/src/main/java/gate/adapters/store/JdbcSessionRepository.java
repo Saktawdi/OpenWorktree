@@ -66,49 +66,22 @@ public final class JdbcSessionRepository implements SessionRepository {
 
     @Override
     public List<Session> findByTicket(String ticketNo) {
-        List<Session> all = jdbc.query("SELECT * FROM agent_session WHERE ticket_no = ? ORDER BY started_at", SESSION_MAPPER, ticketNo);
-        String ctxTenant = currentTenant();
-        java.util.List<Session> filtered = new java.util.ArrayList<>();
-        for (Session s : all) {
-            try {
-                String rowTenant = jdbc.queryForObject("SELECT tenant_id FROM agent_session WHERE id=?", String.class, s.id());
-                String rt = rowTenant == null || rowTenant.isBlank() ? "default" : rowTenant;
-                if (ctxTenant.equals(rt)) filtered.add(s);
-            } catch (Exception e) { /* skip */ }
-        }
-        return java.util.List.copyOf(filtered);
+        String tenant = currentTenant();
+        return jdbc.query("SELECT * FROM agent_session WHERE ticket_no = ? AND tenant_id = ? ORDER BY started_at", SESSION_MAPPER, ticketNo, tenant);
     }
 
     @Override
     public List<Session> findByAgentConfig(String agentConfigId) {
-        List<Session> all = jdbc.query("SELECT * FROM agent_session WHERE agent_config_id = ? ORDER BY started_at",
-                SESSION_MAPPER, agentConfigId);
-        String ctxTenant = currentTenant();
-        java.util.List<Session> filtered = new java.util.ArrayList<>();
-        for (Session s : all) {
-            try {
-                String rowTenant = jdbc.queryForObject("SELECT tenant_id FROM agent_session WHERE id=?", String.class, s.id());
-                String rt = rowTenant == null || rowTenant.isBlank() ? "default" : rowTenant;
-                if (ctxTenant.equals(rt)) filtered.add(s);
-            } catch (Exception e) { /* skip */ }
-        }
-        return java.util.List.copyOf(filtered);
+        String tenant = currentTenant();
+        return jdbc.query("SELECT * FROM agent_session WHERE agent_config_id = ? AND tenant_id = ? ORDER BY started_at",
+                SESSION_MAPPER, agentConfigId, tenant);
     }
 
     @Override
     public List<Session> findByStatus(SessionStatus status) {
-        List<Session> all = jdbc.query("SELECT * FROM agent_session WHERE status = ? ORDER BY started_at",
-                SESSION_MAPPER, status.name());
-        String ctxTenant = currentTenant();
-        java.util.List<Session> filtered = new java.util.ArrayList<>();
-        for (Session s : all) {
-            try {
-                String rowTenant = jdbc.queryForObject("SELECT tenant_id FROM agent_session WHERE id=?", String.class, s.id());
-                String rt = rowTenant == null || rowTenant.isBlank() ? "default" : rowTenant;
-                if (ctxTenant.equals(rt)) filtered.add(s);
-            } catch (Exception e) { /* skip */ }
-        }
-        return java.util.List.copyOf(filtered);
+        String tenant = currentTenant();
+        return jdbc.query("SELECT * FROM agent_session WHERE status = ? AND tenant_id = ? ORDER BY started_at",
+                SESSION_MAPPER, status.name(), tenant);
     }
 
     @Override

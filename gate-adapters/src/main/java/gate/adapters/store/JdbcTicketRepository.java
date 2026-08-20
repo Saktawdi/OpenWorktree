@@ -156,47 +156,20 @@ public final class JdbcTicketRepository implements TicketRepository {
 
     @Override
     public List<Ticket> findByStage(TicketStage stage) {
-        List<Ticket> all = jdbc.query("SELECT * FROM ticket WHERE stage = ? ORDER BY ticket_no", MAPPER, stage.name());
-        String ctxTenant = currentTenant();
-        java.util.List<Ticket> filtered = new java.util.ArrayList<>();
-        for (Ticket t : all) {
-            String rowTenant;
-            try {
-                rowTenant = jdbc.queryForObject("SELECT tenant_id FROM ticket WHERE ticket_no = ?", String.class, t.ticketNo());
-            } catch (Exception e) { continue; }
-            if (ctxTenant.equals(rowTenant == null || rowTenant.isBlank() ? "default" : rowTenant)) filtered.add(t);
-        }
-        return java.util.List.copyOf(filtered);
+        String tenant = currentTenant();
+        return jdbc.query("SELECT * FROM ticket WHERE stage = ? AND tenant_id = ? ORDER BY ticket_no", MAPPER, stage.name(), tenant);
     }
 
     @Override
     public List<Ticket> findAll() {
-        List<Ticket> all = jdbc.query("SELECT * FROM ticket ORDER BY ticket_no", MAPPER);
-        String ctxTenant = currentTenant();
-        java.util.List<Ticket> filtered = new java.util.ArrayList<>();
-        for (Ticket t : all) {
-            String rowTenant;
-            try {
-                rowTenant = jdbc.queryForObject("SELECT tenant_id FROM ticket WHERE ticket_no = ?", String.class, t.ticketNo());
-            } catch (Exception e) { continue; }
-            if (ctxTenant.equals(rowTenant == null || rowTenant.isBlank() ? "default" : rowTenant)) filtered.add(t);
-        }
-        return java.util.List.copyOf(filtered);
+        String tenant = currentTenant();
+        return jdbc.query("SELECT * FROM ticket WHERE tenant_id = ? ORDER BY ticket_no", MAPPER, tenant);
     }
 
     @Override
     public List<Ticket> findAllByProject(String projectId) {
-        List<Ticket> all = jdbc.query("SELECT * FROM ticket WHERE project_id = ? ORDER BY ticket_no", MAPPER, projectId);
-        String ctxTenant = currentTenant();
-        java.util.List<Ticket> filtered = new java.util.ArrayList<>();
-        for (Ticket t : all) {
-            String rowTenant;
-            try {
-                rowTenant = jdbc.queryForObject("SELECT tenant_id FROM ticket WHERE ticket_no = ?", String.class, t.ticketNo());
-            } catch (Exception e) { continue; }
-            if (ctxTenant.equals(rowTenant == null || rowTenant.isBlank() ? "default" : rowTenant)) filtered.add(t);
-        }
-        return java.util.List.copyOf(filtered);
+        String tenant = currentTenant();
+        return jdbc.query("SELECT * FROM ticket WHERE project_id = ? AND tenant_id = ? ORDER BY ticket_no", MAPPER, projectId, tenant);
     }
 
     private static Long getNullableLong(ResultSet rs, String column) {

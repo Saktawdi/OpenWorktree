@@ -69,60 +69,32 @@ public final class JdbcPresubmitRepository implements PresubmitRepository {
 
     @Override
     public Optional<PresubmitRow> find(String ticketNo, int round) {
+        String tenant = currentTenant();
         List<PresubmitRow> rows = jdbc.query(
-                "SELECT * FROM presubmit WHERE ticket_no = ? AND review_round = ?", MAPPER, ticketNo, round);
-        if (rows.isEmpty()) return Optional.empty();
-        // Tenant check: presubmit's ticket tenant must match current
-        try {
-            String rowTenant = jdbc.queryForObject("SELECT tenant_id FROM presubmit WHERE ticket_no=? AND review_round=?", String.class, ticketNo, round);
-            String ctxTenant = currentTenant();
-            String rt = rowTenant == null || rowTenant.isBlank() ? "default" : rowTenant;
-            if (!ctxTenant.equals(rt)) return Optional.empty();
-        } catch (Exception e) { return Optional.empty(); }
-        return Optional.of(rows.get(0));
+                "SELECT * FROM presubmit WHERE ticket_no = ? AND review_round = ? AND tenant_id = ?", MAPPER, ticketNo, round, tenant);
+        return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
     }
 
     @Override
     public Optional<PresubmitRow> findLatest(String ticketNo) {
+        String tenant = currentTenant();
         List<PresubmitRow> rows = jdbc.query(
-                "SELECT * FROM presubmit WHERE ticket_no = ? ORDER BY review_round DESC LIMIT 1", MAPPER, ticketNo);
-        if (rows.isEmpty()) return Optional.empty();
-        try {
-            String rowTenant = jdbc.queryForObject("SELECT tenant_id FROM presubmit WHERE id=?", String.class, rows.get(0).id());
-            String ctxTenant = currentTenant();
-            String rt = rowTenant == null || rowTenant.isBlank() ? "default" : rowTenant;
-            if (!ctxTenant.equals(rt)) return Optional.empty();
-        } catch (Exception e) { return Optional.empty(); }
-        return Optional.of(rows.get(0));
+                "SELECT * FROM presubmit WHERE ticket_no = ? AND tenant_id = ? ORDER BY review_round DESC LIMIT 1", MAPPER, ticketNo, tenant);
+        return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
     }
 
     @Override
     public List<PresubmitRow> findAllByTicket(String ticketNo) {
-        List<PresubmitRow> all = jdbc.query(
-                "SELECT * FROM presubmit WHERE ticket_no = ? ORDER BY review_round ASC", MAPPER, ticketNo);
-        String ctxTenant = currentTenant();
-        java.util.List<PresubmitRow> filtered = new java.util.ArrayList<>();
-        for (PresubmitRow r : all) {
-            try {
-                String rowTenant = jdbc.queryForObject("SELECT tenant_id FROM presubmit WHERE id=?", String.class, r.id());
-                String rt = rowTenant == null || rowTenant.isBlank() ? "default" : rowTenant;
-                if (ctxTenant.equals(rt)) filtered.add(r);
-            } catch (Exception e) { /* fail-closed: skip */ }
-        }
-        return java.util.List.copyOf(filtered);
+        String tenant = currentTenant();
+        return jdbc.query(
+                "SELECT * FROM presubmit WHERE ticket_no = ? AND tenant_id = ? ORDER BY review_round ASC", MAPPER, ticketNo, tenant);
     }
 
     @Override
     public Optional<PresubmitRow> findById(long id) {
+        String tenant = currentTenant();
         List<PresubmitRow> rows = jdbc.query(
-                "SELECT * FROM presubmit WHERE id = ?", MAPPER, id);
-        if (rows.isEmpty()) return Optional.empty();
-        try {
-            String rowTenant = jdbc.queryForObject("SELECT tenant_id FROM presubmit WHERE id=?", String.class, id);
-            String ctxTenant = currentTenant();
-            String rt = rowTenant == null || rowTenant.isBlank() ? "default" : rowTenant;
-            if (!ctxTenant.equals(rt)) return Optional.empty();
-        } catch (Exception e) { return Optional.empty(); }
-        return Optional.of(rows.get(0));
+                "SELECT * FROM presubmit WHERE id = ? AND tenant_id = ?", MAPPER, id, tenant);
+        return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
     }
 }

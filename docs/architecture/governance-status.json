@@ -11,14 +11,14 @@
   "profiles": {
     "local": "Development-only",
     "team": "Verified",
-    "enterprise": "Verified"
+    "enterprise": "Blocked"
   },
   "phases": {
     "phase_0": "Verified",
     "phase_1": "Verified",
     "phase_2": "Verified",
     "phase_3": "Verified",
-    "phase_4": "Verified"
+    "phase_4": "Blocked"
   },
   "adr": {
     "required": 8,
@@ -54,9 +54,18 @@
     "in_progress": 2,
     "resolved": 8
   },
-  "l4_decision_blockers": [],
+  "l4_decision_blockers": [
+    "P0-1 verification scope incomplete: phase4-evidence lag, no RBAC seed in contract tests, surefire not configured",
+    "P0-2 SLO headroom clamped (Math.min) and running-max histogram"
+  ],
   "hard_blockers": [
-    "EX-001 and EX-002 are Active development-only exemptions and must be retired before production (Phase4 Verified with delta_lte_zero, still blocks production)",
+    "P0-1 verification scope: phase4 candidate not yet L4 Verified, contract tests lack gate_user_role seed, surefire excludedGroups not set",
+    "P0-2 SLO evidence clamped: MetricsRoutes Math.min + running-max histogram still present before fix",
+    "P1 claimNext tenant-filtered find live-lock (JdbcGateTaskRepository:190)",
+    "P1 idempotency degraded: TaskRunner nanoTime key breaks I3",
+    "P1 module boundary: TaskRunner instanceof adapter + setCreator dead data",
+    "P1 implicit tenant via ThreadLocal + N+1 + fail-open catch",
+    "EX-001 and EX-002 are Active development-only exemptions and must be retired before production",
     "enterprise HA production infra (Patroni/PGBouncer/Git HA/S3 ObjectLock) remains local mock - not a production deployment",
     "two P1 debts remain In Progress (DEBT-001/002 ApiRoutes/GateServiceImpl delta_lte_zero)"
   ],

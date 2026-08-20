@@ -117,9 +117,16 @@ public final class JdbcGateTaskRepository implements TaskRegistry, TaskEventPort
     private String currentTenant() {
         try { return gate.ports.security.SecurityContextHolder.currentTenant(); } catch (Exception e) { return "default"; }
     }
+    @Override
     public void setCreator(String taskId, String creator) {
         if (creator == null) return;
-        try { jdbc.update("UPDATE gate_task SET created_by=? WHERE id=?", creator, taskId); } catch (Exception ignored) {}
+        int updated = jdbc.update("UPDATE gate_task SET created_by=? WHERE id=?", creator, taskId);
+        if (updated != 1) throw new IllegalStateException("setCreator failed for " + taskId);
+    }
+    @Override
+    public String findCreator(String taskId) {
+        try { return jdbc.queryForObject("SELECT created_by FROM gate_task WHERE id=?", String.class, taskId); }
+        catch (Exception e) { return null; }
     }
     @Override public Optional<GateTask> find(String id) {
         List<GateTask> rows = jdbc.query("SELECT * FROM gate_task WHERE id = ?", MAPPER, id);
@@ -187,6 +194,10 @@ public final class JdbcGateTaskRepository implements TaskRegistry, TaskEventPort
         appendOutbox("task", task.id(), "task.created", taskPayload(task));
         return task;
     }
+    private Optional<GateTask> findInternal(String id) {
+        List<GateTask> rows = jdbc.query("SELECT * FROM gate_task WHERE id = ?", MAPPER, id);
+        return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
+    }
     @Override public Optional<GateTask> claimNext(String workerId, Duration lease, Instant now) {
         String nowStr = now.toString();
         String leaseUntilStr = now.plus(lease).toString();
@@ -195,7 +206,8 @@ public final class JdbcGateTaskRepository implements TaskRegistry, TaskEventPort
         String candidateId = candidates.get(0);
         int updated = jdbc.update("UPDATE gate_task SET status = ?, lease_owner = ?, lease_until = ?, attempt = attempt + 1, fence_token = fence_token + 1 WHERE id = ? AND status IN ('QUEUED','RETRY_WAIT')", GateTaskStatus.RUNNING.name(), workerId, leaseUntilStr, candidateId);
         if (updated == 0) return Optional.empty();
-        Optional<GateTask> claimed = find(candidateId);
+        // Use unfiltered find for worker: must not be tenant-filtered, otherwise non-default tenant tasks hang (P1 live-lock)
+        Optional<GateTask> claimed = findInternal(candidateId);
         claimed.ifPresent(t -> {
             append(t.id(), "progress", taskPayload(t));
             appendOutbox("task", t.id(), "task.claimed", taskPayload(t));

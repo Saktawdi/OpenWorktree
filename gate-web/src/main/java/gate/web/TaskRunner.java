@@ -18,6 +18,7 @@ import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Runs long gate operations (review / publish) asynchronously behind a bounded dispatcher.
@@ -55,20 +56,20 @@ final class TaskRunner {
         var ctx = gate.ports.security.SecurityContextHolder.get();
         String tenant = ctx != null && ctx.tenantId() != null ? ctx.tenantId() : "default";
         String creator = ctx != null ? ctx.userId() : null;
-        GateTask task;
-        if (tasks instanceof gate.adapters.store.JdbcGateTaskRepository j) {
-            task = j.enqueue("review", ticketNo, null, tenant, null, "review:"+ticketNo+":"+round+":"+System.nanoTime(), null, 5, clock.now());
-            // Also set created_by if column exists
-            try { j.setCreator(task.id(), creator); } catch (Exception ignored) {}
-        } else {
-            task = tasks.register("review", ticketNo, null);
-        }
+        // Stable idempotency: tenant + ticket + round + humanPass + note hash (without nanoTime) – satisfies I3
+        String noteHash = note == null ? "null" : Integer.toHexString(note.hashCode());
+        String idempotencyKey = "review:" + tenant + ":" + ticketNo + ":" + round + ":" + humanPass + ":" + noteHash;
+        String requestDigest = noteHash;
+        GateTask task = tasks.enqueue("review", ticketNo, null, tenant, null, idempotencyKey, requestDigest, 5, clock.now());
+        tasks.setCreator(task.id(), creator);
         GateTask taskFinal = task;
-        String tenantFinal = tenant;
-        String creatorFinal = creator;
         if (!dispatcher.trySubmit(() -> {
-            // Propagate security context to worker thread for SoD and tenant
-            gate.ports.security.SecurityContextHolder.set(new gate.domain.security.SecurityContext(creatorFinal, tenantFinal, null, ctx != null ? ctx.roles() : Set.of(), ctx != null ? ctx.tokenHash() : null));
+            String effectiveCreator = creator;
+            try {
+                String dbCreator = tasks.findCreator(taskFinal.id());
+                if (dbCreator != null) effectiveCreator = dbCreator;
+            } catch (Exception ignored) {}
+            gate.ports.security.SecurityContextHolder.set(new gate.domain.security.SecurityContext(effectiveCreator, tenant, null, ctx != null ? ctx.roles() : Set.of(), ctx != null ? ctx.tokenHash() : null));
             try { runReview(taskFinal, ticketNo, round, humanPass, note); } finally { gate.ports.security.SecurityContextHolder.clear(); }
         })) {
             fail(task, new GateException(GateErrorCode.GATE_ERROR_IO,
@@ -81,18 +82,18 @@ final class TaskRunner {
         var ctx = gate.ports.security.SecurityContextHolder.get();
         String tenant = ctx != null && ctx.tenantId() != null ? ctx.tenantId() : "default";
         String creator = ctx != null ? ctx.userId() : null;
-        GateTask task;
-        if (tasks instanceof gate.adapters.store.JdbcGateTaskRepository j) {
-            task = j.enqueue("publish", ticketNo, null, tenant, null, "publish:"+ticketNo+":"+round+":"+System.nanoTime(), null, 10, clock.now());
-            try { j.setCreator(task.id(), creator); } catch (Exception ignored) {}
-        } else {
-            task = tasks.register("publish", ticketNo, null);
-        }
+        String idempotencyKey = "publish:" + tenant + ":" + ticketNo + ":" + round;
+        String requestDigest = String.valueOf(round);
+        GateTask task = tasks.enqueue("publish", ticketNo, null, tenant, null, idempotencyKey, requestDigest, 10, clock.now());
+        tasks.setCreator(task.id(), creator);
         GateTask taskFinal = task;
-        String tenantFinal = tenant;
-        String creatorFinal = creator;
         if (!dispatcher.trySubmit(() -> {
-            gate.ports.security.SecurityContextHolder.set(new gate.domain.security.SecurityContext(creatorFinal, tenantFinal, null, ctx != null ? ctx.roles() : Set.of(), ctx != null ? ctx.tokenHash() : null));
+            String effectiveCreator = creator;
+            try {
+                String dbCreator = tasks.findCreator(taskFinal.id());
+                if (dbCreator != null) effectiveCreator = dbCreator;
+            } catch (Exception ignored) {}
+            gate.ports.security.SecurityContextHolder.set(new gate.domain.security.SecurityContext(effectiveCreator, tenant, null, ctx != null ? ctx.roles() : Set.of(), ctx != null ? ctx.tokenHash() : null));
             try { runPublish(taskFinal, ticketNo, round); } finally { gate.ports.security.SecurityContextHolder.clear(); }
         })) {
             fail(task, new GateException(GateErrorCode.GATE_ERROR_IO,

@@ -336,11 +336,9 @@ public final class ApiRoutes {
         // S4 session routes (执行文档-后端-web §4.1 会话路由约定).
         if (seg.length == 4 && seg[1].equals("tickets") && seg[3].equals("sessions")) {
             require(Permission.SESSION_VIEW);
-            // tenant: ticket's tenant must match
-            try {
-                var t = tickets.find(seg[2]);
-                t.ifPresent(ticket -> requireTenant(jdbc.queryForObject("SELECT tenant_id FROM ticket WHERE ticket_no=?", String.class, ticket.ticketNo())));
-            } catch (Exception ignored) {}
+            var t = tickets.find(seg[2]).orElseThrow(() -> new GateException(GateErrorCode.USAGE, "no such ticket: " + seg[2]));
+            String rowTenant = jdbc.queryForObject("SELECT tenant_id FROM ticket WHERE ticket_no=?", String.class, t.ticketNo());
+            requireTenant(rowTenant);
             if (method.equals("GET")) {
                 return sessionRoutes.ticketSessions(seg[2]);
             }

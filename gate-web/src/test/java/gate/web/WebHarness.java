@@ -67,6 +67,18 @@ final class WebHarness implements AutoCloseable {
                     config.primaryTargetRef(), config.approvalsDir());
 
             this.humanToken = components.credentials().issueHumanToken(components.clock().now());
+            // Seed RBAC for the human test user (Phase4) – otherwise ApiRoutes require() will deny all
+            try {
+                String userId = "human:" + humanToken.substring(0, Math.min(8, humanToken.length()));
+                for (gate.domain.security.RbacRole role : gate.domain.security.RbacRole.values()) {
+                    try { components.rbacPort().assignRole(userId, "default", null, role, "test-seed"); } catch (Exception ignored) {}
+                }
+                // Also ensure gate user has roles for backup/health tests that use "gate" identity
+                for (gate.domain.security.RbacRole role : gate.domain.security.RbacRole.values()) {
+                    try { components.rbacPort().assignRole("gate", "default", null, role, "test-seed"); } catch (Exception ignored) {}
+                    try { components.rbacPort().assignRole("human:gate", "default", null, role, "test-seed"); } catch (Exception ignored) {}
+                }
+            } catch (Exception ignored) {}
         } catch (IOException e) {
             throw new RuntimeException(e);
         }

@@ -108,6 +108,7 @@
             <!-- Tests shell out to real git; keep output decodable on Windows. -->
             <argLine>-Dfile.encoding=UTF-8</argLine>
             <trimStackTrace>false</trimStackTrace>
+            <excludedGroups>smoke</excludedGroups>
           </configuration>
         </plugin>
         <plugin>
