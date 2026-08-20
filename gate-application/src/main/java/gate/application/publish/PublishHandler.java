@@ -26,6 +26,7 @@ import gate.ports.ApprovalStore;
 import gate.ports.AuditLog;
 import gate.ports.BlobStore;
 import gate.ports.Clock;
+import gate.ports.AuthoritativeGitService;
 import gate.ports.CommitPublisher;
 import gate.ports.DbTransactionRunner;
 import gate.ports.LockManager;
@@ -64,6 +65,7 @@ public final class PublishHandler {
     private final DbTransactionRunner tx;
     private final Clock clock;
     private final PublishProbe publishProbe;
+    private final AuthoritativeGitService authoritativeGitService;
 
     public PublishHandler(GateConfig config, SnapshotCapture snapshotCapture, CommitPublisher commitPublisher,
                           RefObserver refObserver, ApprovalStore approvalStore, GatePolicy gatePolicy,
@@ -71,6 +73,17 @@ public final class PublishHandler {
                           ReviewResultRepository reviewResults, PublishIntentRepository intents,
                           BlobStore blobStore, AuditLog auditLog, LockManager lockManager,
                           DbTransactionRunner tx, Clock clock, PublishProbe publishProbe) {
+        this(config, snapshotCapture, commitPublisher, refObserver, approvalStore, gatePolicy, tickets, presubmits,
+                reviewResults, intents, blobStore, auditLog, lockManager, tx, clock, publishProbe, null);
+    }
+
+    public PublishHandler(GateConfig config, SnapshotCapture snapshotCapture, CommitPublisher commitPublisher,
+                          RefObserver refObserver, ApprovalStore approvalStore, GatePolicy gatePolicy,
+                          TicketRepository tickets, PresubmitRepository presubmits,
+                          ReviewResultRepository reviewResults, PublishIntentRepository intents,
+                          BlobStore blobStore, AuditLog auditLog, LockManager lockManager,
+                          DbTransactionRunner tx, Clock clock, PublishProbe publishProbe,
+                          AuthoritativeGitService authoritativeGitService) {
         this.config = config;
         this.snapshotCapture = snapshotCapture;
         this.commitPublisher = commitPublisher;
@@ -87,6 +100,7 @@ public final class PublishHandler {
         this.tx = tx;
         this.clock = clock;
         this.publishProbe = publishProbe;
+        this.authoritativeGitService = authoritativeGitService;
     }
 
     public PublishResult handle(PublishCommand command) {
@@ -222,12 +236,39 @@ public final class PublishHandler {
             approvalStore.issue(intent.approvalId(), grant);
         }
 
-        CommitPublisher.PublishOutcome outcome = commitPublisher.publish(intent, authorization);
-        publishProbe.at("AFTER_PUSH");
-        String refAfter = refToString(refObserver.tip(auth, targetRef));
-
-        boolean published = refObserver.published(auth, targetRef, commit);
-        PublishStatus status = published ? PublishStatus.PUBLISHED : PublishStatus.PENDING;
+        // Phase3: authoritative CAS if available, otherwise fallback to direct push
+        CommitPublisher.PublishOutcome outcome;
+        boolean published;
+        PublishStatus status;
+        String refAfter;
+        if (authoritativeGitService != null) {
+            // CAS via authoritative service: validates expected_old_oid + nonce atomically
+            ObjectId expectedOld = refObserver.tip(auth, targetRef).orElse(null);
+            // Use expectedOld from intent's base? For Phase3 we use actual tip as expected
+            // But intent stores baseCommit; CAS must use current tip per I2
+            AuthoritativeGitService.CasResult cas = authoritativeGitService.casPublish(auth, targetRef, expectedOld, commit, row.treeHash(), authorization);
+            outcome = new CommitPublisher.PublishOutcome(cas.success(), cas.success() ? 0 : 1, cas.reason(), cas.reason());
+            publishProbe.at("AFTER_PUSH");
+            refAfter = refToString(refObserver.tip(auth, targetRef));
+            published = cas.success();
+            if (cas.success() && cas.alreadyPublished()) {
+                status = PublishStatus.PUBLISHED;
+            } else if (cas.success()) {
+                status = PublishStatus.PUBLISHED;
+            } else if (cas.reason() != null && cas.reason().contains("CAS conflict")) {
+                status = PublishStatus.REJECTED;
+            } else if (cas.reason() != null && cas.reason().contains("nonce")) {
+                status = PublishStatus.REJECTED;
+            } else {
+                status = PublishStatus.UNKNOWN;
+            }
+        } else {
+            outcome = commitPublisher.publish(intent, authorization);
+            publishProbe.at("AFTER_PUSH");
+            refAfter = refToString(refObserver.tip(auth, targetRef));
+            published = refObserver.published(auth, targetRef, commit);
+            status = published ? PublishStatus.PUBLISHED : PublishStatus.PENDING;
+        }
         long id = intent.id();
         tx.inTransaction(() -> {
             intents.updateOutcome(id, status, refBefore, refAfter, published ? clock.now() : null);

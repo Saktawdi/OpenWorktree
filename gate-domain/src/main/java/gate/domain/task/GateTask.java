@@ -78,8 +78,8 @@ public record GateTask(
         return status == GateTaskStatus.RUNNING;
     }
 
-    /** True when {@code status} is {@code SUCCEEDED} or {@code FAILED} (a permanent terminal state). */
+    /** True when {@code status} is a permanent terminal state. */
     public boolean isTerminal() {
-        return status == GateTaskStatus.SUCCEEDED || status == GateTaskStatus.FAILED;
+        return status.isTerminal();
     }
 }

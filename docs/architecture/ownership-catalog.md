@@ -27,7 +27,10 @@
 | `ticket_metrics_projection`（目标） | 尚未落地 | `metrics` | Metrics projector/query port | 从 ticket/session 事件重建 |
 | `review_metrics_projection`（目标） | 尚未落地 | `metrics` | Metrics projector/query port | 从 review/presubmit 事件重建 |
 | `publish_intent` | GateService/JdbcPublishIntentRepository | `publish` | Publish ports/reconcile | publish 是唯一状态 owner |
-| `gate_task` | TaskRunner/session adapters/JdbcGateTaskRepository | `task` | Task command/query ports | 目标补 lease/fence/idempotency |
+| `gate_nonce` | LocalAuthoritativeGitService/JdbcNonceStore | `publish` | Nonce CAS port | Phase3 V11: nonce 单次消费，与 ref 原子 |
+| `s3_object` | FsS3Store/JdbcS3Adapter | `presubmit`（Blob） | S3Store port | Phase3 V12: S3 digest 条件写，版本化 |
+| `kms_key` | LocalKmsService | `security` | KmsService port | Phase3 V12: HMAC 本地 mock，KMS 轮换 |
+| `gate_task` | TaskRunner/session adapters/JdbcGateTaskRepository | `task` | Task command/query ports | Phase3 V11 PG兼容 claim 索引 |
 | `task_event`（目标） | 尚未落地 | `event`（存储） | Event append/cursor ports | 语义 owner 由具体事件前缀决定 |
 | `outbox`（目标） | 尚未落地 | `event`（存储） | Outbox append/relay ports | 业务 owner 在自身事务写 outbox；event owner 负责 relay，不能改业务语义 |
 | `agent_config` | Web routes/Jdbc repositories | `session` | Agent config ports | Provider/Secret 只存引用 |

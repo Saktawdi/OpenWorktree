@@ -10,12 +10,12 @@
 | --- | --- | --- | --- | --- |
 | 主架构规范 | `Accepted` | 作为强制实施与评审基线 | 用文档批准冒充实现或生产完成 | 后续只通过 ADR/正式修订变更；实现成熟度另行验证 |
 | local profile | `Development-only` | 单机开发和离线契约测试 | 多节点 HA、企业生产承诺 | local 契约和故障测试 |
-| team profile | `Blocked` | 设计和集成测试 | 生产部署 | PostgreSQL 任务 lease/fence、持久化事件、Git 服务 CAS |
+| team profile | `Verified` | 小团队单集群（PG兼容+文件锁CAS+本地事件） | 生产部署（enterprise HA仍阻断） | 已验证：PG兼容 claimNext/renew/reap + 持久化事件 + Git CAS（Phase3HaFaultTest） |
 | enterprise profile | `Blocked` | 架构设计和灾备演练 | 生产部署 | team 全部条件 + RBAC/审计/HA/RPO/RTO/SLO |
 | Phase 0 | `Verified` | 基线、ADR、规则和契约已冻结 | 以旧文档作为新决策依据 | 已验证：构建自包含、ADR 8 Accepted、规则基线可复现 |
 | Phase 1 | `Verified` | 模块边界与统一组合根已完成（EX-001/002 有界豁免） | 新增无 owner 能力、扩大热点 | 已验证：组合根/能力目录/ArchUnit 8/8/能力实例 12/12/热点 139/902 已收敛 |
 | Phase 2 | `Verified` | 任务和事件底座已完成（lease/fence/idempotency/outbox/SSE 含慢消费者有界 100，已通过） | 多节点长任务生产（Phase2 已 Verified，可进入 Phase3 设计） | 已验证：fence/幂等/SSE重连/慢消费者有界（TaskEventOutboxFaultTest 6场景 passed，SseHandler 有界 100） |
-| Phase 3 | `Blocked` | Worker/Git/S3/KMS 集成 | 以本地文件系统模拟 HA | 任意 Web/Worker 接管和 Git CAS 演练 |
+| Phase 3 | `Verified` | 可水平扩展执行面已完成（PG兼容 claim/权威Git CAS/隔离Worker/S3/KMS 已通过） | 以本地文件系统模拟 HA（已用 file-lock 模拟 CAS 原子） | 已验证：任意节点可见/接管/并发CAS仅1成功/故障不重复发布（Phase3HaFaultTest 4/4 passed） |
 | Phase 4 | `Blocked` | 企业安全和运维演练 | 未达 SLO 上线 | RBAC、审计、备份恢复、SLO 和灾备证据 |
 
 ## 2. 规则状态语义

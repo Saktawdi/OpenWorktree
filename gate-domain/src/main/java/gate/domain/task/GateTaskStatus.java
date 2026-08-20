@@ -3,13 +3,21 @@ package gate.domain.task;
 /**
  * Lifecycle status of an asynchronous {@link GateTask}.
  *
- * <p>Executing document 执行文档-后端-web §4.3 defines exactly three states. A task begins
- * {@code RUNNING} when {@code register()} inserts it, and transitions to a terminal state
- * ({@code SUCCEEDED} or {@code FAILED}) exactly once when it finishes. Terminal states are
- * permanent — {@code update()} of a terminal task publishes no further events.
+ * <p>Phase 3: full state machine per production-architecture §6.1.
+ * Legacy 3-state view (RUNNING/SUCCEEDED/FAILED) is retained as the core,
+ * extended with QUEUED/RETRY_WAIT/CANCEL_REQUESTED/CANCELLED for team
+ * multi-worker and HA execution. Terminal states are permanent.
  */
 public enum GateTaskStatus {
+    QUEUED,
     RUNNING,
+    RETRY_WAIT,
+    CANCEL_REQUESTED,
+    CANCELLED,
     SUCCEEDED,
-    FAILED
+    FAILED;
+
+    public boolean isTerminal() {
+        return this == SUCCEEDED || this == FAILED || this == CANCELLED;
+    }
 }

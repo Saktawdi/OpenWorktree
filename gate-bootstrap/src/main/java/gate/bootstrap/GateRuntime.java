@@ -15,7 +15,12 @@ import gate.adapters.hook.FileHookInstaller;
 import gate.adapters.lock.FileChannelLockManager;
 import gate.adapters.preflight.DefaultPreflightChecker;
 import gate.adapters.process.ProcessRunnerImpl;
+import gate.adapters.git.LocalAuthoritativeGitService;
+import gate.adapters.kms.LocalKmsService;
+import gate.adapters.s3.FsS3Store;
 import gate.adapters.store.JdbcCredentialRepository;
+import gate.adapters.store.JdbcGateTaskRepository;
+import gate.adapters.store.JdbcNonceStore;
 import gate.adapters.store.JdbcPresubmitRepository;
 import gate.adapters.store.JdbcProviderRepository;
 import gate.adapters.store.JdbcPublishIntentRepository;
@@ -23,18 +28,22 @@ import gate.adapters.store.JdbcReviewResultRepository;
 import gate.adapters.store.JdbcTicketRepository;
 import gate.adapters.store.SpringDbTransactionRunner;
 import gate.adapters.store.SqliteDataSourceFactory;
+import gate.adapters.workspace.FsEphemeralWorkspaceManager;
 import gate.application.GateService;
 import gate.application.GateServiceImpl;
 import gate.domain.config.GateConfig;
 import gate.domain.policy.GatePolicy;
 import gate.ports.ApprovalStore;
 import gate.ports.AuditLog;
+import gate.ports.AuthoritativeGitService;
 import gate.ports.BlobStore;
 import gate.ports.Clock;
 import gate.ports.CommitPublisher;
 import gate.ports.CredentialRepository;
 import gate.ports.DbTransactionRunner;
+import gate.ports.EphemeralWorkspaceManager;
 import gate.ports.HookInstaller;
+import gate.ports.KmsService;
 import gate.ports.LockManager;
 import gate.ports.PreflightChecker;
 import gate.ports.PresubmitRepository;
@@ -44,7 +53,9 @@ import gate.ports.PublishIntentRepository;
 import gate.ports.RefObserver;
 import gate.ports.ReviewEngineFactory;
 import gate.ports.ReviewResultRepository;
+import gate.ports.S3Store;
 import gate.ports.SnapshotCapture;
+import gate.ports.TaskClaimPort;
 import gate.ports.TicketRepository;
 import gate.ports.TopologyInitializer;
 import java.nio.file.Path;
@@ -80,6 +91,14 @@ public final class GateRuntime {
     private final PublishIntentRepository publishIntentRepository;
     private final BlobStore blobStore;
     private final CredentialRepository credentials;
+    // Phase3
+    private final JdbcGateTaskRepository gateTaskRepository;
+    private final TaskClaimPort taskClaimPort;
+    private final gate.ports.NonceStore nonceStore;
+    private final AuthoritativeGitService authoritativeGitService;
+    private final EphemeralWorkspaceManager ephemeralWorkspaceManager;
+    private final S3Store s3Store;
+    private final KmsService kmsService;
 
     public GateRuntime(GateConfig config, String gitExecutable, Path envFile) {
         this.config = config;
@@ -115,12 +134,21 @@ public final class GateRuntime {
         this.providerRepository = new JdbcProviderRepository(jdbc);
         this.credentials = new JdbcCredentialRepository(jdbc);
 
+        // Phase3 stores
+        this.gateTaskRepository = new JdbcGateTaskRepository(jdbc, clock);
+        this.taskClaimPort = this.gateTaskRepository;
+        this.nonceStore = new JdbcNonceStore(jdbc);
+        this.authoritativeGitService = new LocalAuthoritativeGitService(git, refObserver, nonceStore, lockManager);
+        this.ephemeralWorkspaceManager = new FsEphemeralWorkspaceManager(config.clonesRoot(), config.authRepo(), git);
+        this.s3Store = new FsS3Store(config.blobRoot().resolve("s3"));
+        this.kmsService = new LocalKmsService("local-key-1", "local-secret-for-phase3-hmac");
+
         ReviewEngineFactory reviewEngineFactory = config.engineConfigured()
                 ? new GateReviewEngineFactory(blobStore, config, processRunner, providerRepository, this.envFile)
                 : new ManualReviewEngineFactory(blobStore);
         this.gateService = new GateServiceImpl(config, snapshotCapture, commitPublisher, refObserver,
                 approvalStore, reviewEngineFactory, new GatePolicy(), ticketRepository, presubmitRepository,
-                reviewResultRepository, publishIntentRepository, blobStore, auditLog, lockManager, txRunner, clock);
+                reviewResultRepository, publishIntentRepository, blobStore, auditLog, lockManager, txRunner, clock, gate.ports.PublishProbe.NOOP, authoritativeGitService);
     }
 
     public GateConfig config() { return config; }
@@ -139,6 +167,14 @@ public final class GateRuntime {
     public PublishIntentRepository publishIntentRepository() { return publishIntentRepository; }
     public BlobStore blobStore() { return blobStore; }
     public CredentialRepository credentials() { return credentials; }
+    // Phase3 getters
+    public JdbcGateTaskRepository gateTaskRepository() { return gateTaskRepository; }
+    public TaskClaimPort taskClaimPort() { return taskClaimPort; }
+    public gate.ports.NonceStore nonceStore() { return nonceStore; }
+    public AuthoritativeGitService authoritativeGitService() { return authoritativeGitService; }
+    public EphemeralWorkspaceManager ephemeralWorkspaceManager() { return ephemeralWorkspaceManager; }
+    public S3Store s3Store() { return s3Store; }
+    public KmsService kmsService() { return kmsService; }
 
     /** Seeds a provider required by the review-result foreign key. Safe to call repeatedly. */
     public void seedProvider(String id, String name, String baseUrl, String apiKeyRef, String type) {

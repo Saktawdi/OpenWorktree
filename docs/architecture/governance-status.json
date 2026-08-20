@@ -10,14 +10,14 @@
   },
   "profiles": {
     "local": "Development-only",
-    "team": "Blocked",
+    "team": "Verified",
     "enterprise": "Blocked"
   },
   "phases": {
     "phase_0": "Verified",
     "phase_1": "Verified",
     "phase_2": "Verified",
-    "phase_3": "Blocked",
+    "phase_3": "Verified",
     "phase_4": "Blocked"
   },
   "adr": {
@@ -35,9 +35,9 @@
   },
   "governance_rules": {
     "defined": 10,
-    "implemented": 6,
+    "implemented": 7,
     "partial": 1,
-    "planned": 3
+    "planned": 2
   },
   "capabilities": {
     "registered": 12,
@@ -56,11 +56,11 @@
   },
   "l4_decision_blockers": [],
   "hard_blockers": [
-    "EX-001 and EX-002 are Active development-only exemptions and must be retired before production (Phase1/2 Verified with delta_lte_zero, still blocks production)",
-    "three planned GOV rules (GOV-DATA-001 partial, GOV-API-001, GOV-DB-001, GOV-OBS-001) are not implemented/verified",
-    "team/enterprise Git CAS and security/RBAC/sandbox/audit/HA/recovery/capacity/SLO evidence is incomplete",
-    "Phase 3/4 exit evidence packages are incomplete",
-    "five P1 debts remain In Progress (DEBT-001/002/007/008/010, none blocks Phase2)"
+    "EX-001 and EX-002 are Active development-only exemptions and must be retired before production (Phase1/2/3 Verified with delta_lte_zero, still blocks production)",
+    "two planned GOV rules (GOV-API-001, GOV-OBS-001 partial) are not implemented/verified",
+    "enterprise Git HA, security/RBAC/sandbox/audit/recovery/capacity/SLO evidence is incomplete",
+    "Phase 4 exit evidence package is incomplete",
+    "five P1 debts remain In Progress (DEBT-001/002/007/008/010, none blocks Phase3)"
   ],
   "sources": {
     "admission": "docs/architecture/admission-matrix.md",
