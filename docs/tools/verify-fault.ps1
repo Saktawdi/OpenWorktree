@@ -55,15 +55,16 @@ if (Test-Path -LiteralPath $faultTestPath) {
 
 # REAL EXECUTION: run fault tests (not just file-name check) – prevents fake green when logic regresses
 if (-not $Mock) {
-    Write-Host "[GOV-CON-001] Running real fault tests: TaskEventOutboxFaultTest + Phase3HaFaultTest + TaskRegistryTest..."
-    $mvnArgs = @("-pl","gate-adapters,gate-web","-am","-Dtest=TaskEventOutboxFaultTest,Phase3HaFaultTest,TaskRegistryTest","-DfailIfNoTests=false","test")
-    # Use --no-transfer-progress to keep logs tidy; capture exit code
-    $proc = Start-Process -FilePath "mvn" -ArgumentList $mvnArgs -WorkingDirectory $repo -Wait -PassThru -NoNewWindow
-    if ($proc.ExitCode -ne 0) {
-        Record-Error "GOV-CON-001 fault tests failed (mvn exit=$($proc.ExitCode)); see surefire-reports"
-        # Dump surefire summary for evidence
+    Write-Host "[GOV-CON-001] Running real fault tests: TaskEventOutboxFaultTest + Phase3HaFaultTest + Phase4SecurityAndHaTest + TaskRegistryTest..."
+    # Phase4: split into adapter and web to respect per-module Surefire scoping
+    $adapterArgs = @("-Dtest=TaskEventOutboxFaultTest,Phase3HaFaultTest,Phase4SecurityAndHaTest","-Dsurefire.failIfNoSpecifiedTests=false","-pl","gate-adapters","-am","test")
+    $webArgs = @("-Dtest=TaskRegistryTest","-Dsurefire.failIfNoSpecifiedTests=false","-pl","gate-web","-am","test")
+    $procA = Start-Process -FilePath "mvn" -ArgumentList $adapterArgs -WorkingDirectory $repo -Wait -PassThru -NoNewWindow
+    $procW = Start-Process -FilePath "mvn" -ArgumentList $webArgs -WorkingDirectory $repo -Wait -PassThru -NoNewWindow
+    if ($procA.ExitCode -ne 0 -or $procW.ExitCode -ne 0) {
+        Record-Error "GOV-CON-001 fault tests failed (adapter exit=$($procA.ExitCode) web exit=$($procW.ExitCode)); see surefire-reports"
         Get-ChildItem -Recurse -Filter "*.txt" (Join-Path $repo "gate-adapters/target/surefire-reports") -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "--- $($_.Name)"; Get-Content $_.FullName -Head 40 }
-        Get-ChildItem -Recurse -Filter "*.txt" (Join-Path $repo "gate-web/target/surefire-reports") -ErrorAction SilentlyContinue | Where-Object { $_.Name -like "*TaskRegistry*" -or $_.Name -like "*Phase3*" } | ForEach-Object { Write-Host "--- $($_.Name)"; Get-Content $_.FullName -Head 40 }
+        Get-ChildItem -Recurse -Filter "*.txt" (Join-Path $repo "gate-web/target/surefire-reports") -ErrorAction SilentlyContinue | Where-Object { $_.Name -like "*TaskRegistry*" } | ForEach-Object { Write-Host "--- $($_.Name)"; Get-Content $_.FullName -Head 40 }
     } else {
         Write-Host "  - Fault tests passed (mvn exit 0)"
     }

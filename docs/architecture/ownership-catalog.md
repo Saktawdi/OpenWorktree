@@ -24,15 +24,23 @@
 | `presubmit` | GateService/JdbcPresubmitRepository | `presubmit` | Presubmit ports | tree/base/diff 为 presubmit 事实 |
 | `review_result` 核心证据字段 | GateService/JdbcReviewResultRepository | `review` | Review ports | verdict/evidence 为 review 事实 |
 | `review_result.*tokens/*wall_ms/*diff_*`（当前物理列） | Review/metrics 路径 | `review`（迁移期物理写入控制） | Review owner 接收 projector command | 目标删除这些列并写入 `review_metrics_projection`，其 owner 为 `metrics` |
-| `ticket_metrics_projection`（目标） | 尚未落地 | `metrics` | Metrics projector/query port | 从 ticket/session 事件重建 |
-| `review_metrics_projection`（目标） | 尚未落地 | `metrics` | Metrics projector/query port | 从 review/presubmit 事件重建 |
+| `ticket_metrics_projection` | Metrics projector/Worm | `metrics` | Metrics projector/query port | Phase4 V10 已落地，独立投影 |
+| `review_metrics_projection` | Metrics projector | `metrics` | Metrics projector/query port | Phase4 V10 已落地，独立投影 |
 | `publish_intent` | GateService/JdbcPublishIntentRepository | `publish` | Publish ports/reconcile | publish 是唯一状态 owner |
 | `gate_nonce` | LocalAuthoritativeGitService/JdbcNonceStore | `publish` | Nonce CAS port | Phase3 V11: nonce 单次消费，与 ref 原子 |
 | `s3_object` | FsS3Store/JdbcS3Adapter | `presubmit`（Blob） | S3Store port | Phase3 V12: S3 digest 条件写，版本化 |
 | `kms_key` | LocalKmsService | `security` | KmsService port | Phase3 V12: HMAC 本地 mock，KMS 轮换 |
 | `gate_task` | TaskRunner/session adapters/JdbcGateTaskRepository | `task` | Task command/query ports | Phase3 V11 PG兼容 claim 索引 |
-| `task_event`（目标） | 尚未落地 | `event`（存储） | Event append/cursor ports | 语义 owner 由具体事件前缀决定 |
-| `outbox`（目标） | 尚未落地 | `event`（存储） | Outbox append/relay ports | 业务 owner 在自身事务写 outbox；event owner 负责 relay，不能改业务语义 |
+| `task_event` | JdbcGateTaskRepository | `event`（存储） | Event append/cursor ports | Phase2 已落地，W3C SSE cursor |
+| `outbox` | JdbcGateTaskRepository | `event`（存储） | Outbox append/relay ports | Phase2 已落地，at-least-once relay |
+| `gate_tenant` | TenantIsolationService | `security` | TenantPort | Phase4 V13: tenant registry, default backfill |
+| `gate_user_role` | JdbcRbacStore | `security` | RbacPort | Phase4 V13: RBAC, SoD, tenant/project scoped |
+| `audit_checkpoint` | WormAuditArchive | `security` | AuditArchivePort | Phase4 V13: WORM KMS checkpoint |
+| `sod_exception` | RbacService | `security` | SoDPort | Phase4 V13: dual-approval exception |
+| `slo_history` | SloService | `metrics` | MetricsPort | Phase4 V14: SLO evaluate |
+| `backup_manifest` | BackupService | `status` | BackupPort | Phase4 V14: backup/restore manifest WORM |
+| `health_probe` | HealthService | `status` | HealthPort | Phase4 V14: /livez /readyz probe |
+| `alert_rule` | Metrics/InMemoryMetrics | `metrics` | AlertPort | Phase4 V14: alert thresholds (§13.4) |
 | `agent_config` | Web routes/Jdbc repositories | `session` | Agent config ports | Provider/Secret 只存引用 |
 | `agent_session` | Session adapters/repository | `session` | Session lifecycle ports | 状态与恢复等级归 session |
 | `session_message` | Session adapters/repository | `session` | Message ports | 大消息使用 Blob 引用 |
@@ -49,7 +57,10 @@
 | 路由/资源 | 语义 owner | 驱动实现 | 目标访问协议 |
 | --- | --- | --- | --- |
 | `/api/health`, `/api/runtime`, `/api/status`, `/api/config` | `status` | gate-web | Read-only status ports；配置敏感字段脱敏 |
+| `/livez`, `/readyz` | `status` | gate-web | HealthService livez/readyz (§13.3) |
+| `/status/dependencies`, `/status/slo`, `/metrics` | `status`/`metrics` | gate-web | HealthService + SloService + InMemoryMetrics (§13-14) |
 | `/api/auth/**` | `security` | gate-web | Auth command/query ports |
+| `/api/audit/checkpoints` | `security` | gate-web | WormAuditArchive checkpoints (KMS, WORM) |
 | `/api/agent-runtimes` | `status`（运行环境只读视图） | gate-web | Runtime/status query port；不得写入 Agent 配置事实 |
 | `/api/projects/**`, `/api/workspaces/**` | `project` | gate-web | Project ports |
 | `/api/tickets/**` | `ticket`；子资源按 `presubmit/review/publish` | gate-web | 各能力 command/query ports，不由巨型 router 实现业务 |
@@ -61,6 +72,7 @@
 | `/api/sessions/{id}/events` | `session` 语义 + `event` 传输 | SSE handler | Event cursor/session stream port |
 | `/api/metrics/**`、成本/容量视图 | `metrics` | gate-web | Metrics query ports，只读投影 |
 | `/api/reconcile` | `publish` | gate-web | Reconcile command port；只触发可恢复收敛，不直接修改状态 |
+| `/api/backup` | `status` | gate-web | BackupService backup/restore (§15) |
 
 API owner 决定契约和授权；Web 只是驱动适配器。新增路由必须先登记本表，未知 `/api/*` 路径触发 `GOV-DATA-001/GOV-DOC-001`。
 

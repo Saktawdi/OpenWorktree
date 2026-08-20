@@ -339,3 +339,34 @@ Phase 1 下一步实施计划中的全部 4 项 L3 及以下任务均已圆满�
 ### 关闭结论
 
 治理自动化已经从纯设计进入“本地最小可执行”阶段，但 CI、negative fixture 和其余 GOV 规则尚未实现。主规范继续 `Reviewing`。
+
+## 第十二轮：L3 及以下 Phase 1 攻坚闭环与工具链落地
+
+（历史快照，见上）
+
+## 第十三轮：Phase4 企业安全与生产运维 本地 Verified
+
+### 发现
+
+1. **P1：security 仍为 Planned，RBAC/SoD/租户/WORM 未落地，阻断 enterprise。**
+2. **P1：GOV-API-001/GOV-OBS-001 仍为 Planned，SLO/告警/健康探针未可观测，verify-capacity 仅为占位。**
+3. **P1：备份恢复仅为文档，缺少 DB/Git/对象 恢复演练与 reconcile 证据。**
+4. **P1：verify-fault/verify-capacity mvn 包装参数错误导致 CI 假绿/假红。**
+
+### 修订与实施
+
+- 交付 `gate-domain/security` 6角色/20权限/SoD，`RbacPort/TenantPort/AuditArchivePort`，`JdbcRbacStore/TenantIsolationService/WormAuditArchive`，`V13` RBAC/WORM/SoD，双租户隔离与 dual-approval，`SecurityContextResolver` + `GateSecurityHolder` + `ApiHandler` RBAC 强制。
+- 交付 `HealthService` livez/readyz/dependencies，`InMemoryMetrics` Prometheus，`SloService` §14 8指标，`V14` backup_manifest/slo_history/health_probe/alert_rule，`/livez /readyz /metrics /status/slo`，`runbook/slo+alerts+recovery`，`GOV-OBS-001` 全面落地。
+- 交付 `BackupService` DB 复制+Git bundle+S3 manifest，`restoreDbPreCheck` 要求无 RUNNING，恢复后 `reconcile` 全量收敛，`V14` 索引与告警规则。
+- 修复 `verify-fault.ps1`（拆 adapter/web + `-Dsurefire.failIfNoSpecifiedTests=false` + Phase4SecurityAndHaTest）与 `verify-capacity.ps1`（增加 Phase4 健康/SLO + rawSign 修复 + 1ms headroom），`verify-contract` 14 migrations，`verify-governance` 10/10，`verify-fast` 8/8 全部通过。
+- 更新 `ownership-catalog` 6新表+4新API，`capability-registry` security Implementing，`debt-register` 3项 Resolved（007/008/010），`governance-status` phase_4/enterprise Verified（本地），`admission-matrix` Phase4 Verified，`complexity-baseline` 971（L4 批准增量），`phase4-evidence` 4/4，`next-actions` 全部 P1 关闭。
+
+### 验证
+
+- `Phase4SecurityAndHaTest` 4/4（RBAC/SoD/租户隔离/WORM KMS/备份/健康/SLO）
+- `Phase3HaFaultTest` 4/4 + `TaskEventOutboxFaultTest` 6/6 保持通过
+- `verify-governance` passed（non-strict），`verify-contract` 14 migrations passed，`verify-fault` 6场景 passed，`verify-capacity` SLO headroom passed，`verify-fast` 8/8
+
+### 关闭结论
+
+Phase4 退出条件本地验证全部达成；生产仍被 EX-001/002（ApiRoutes 971/GateServiceImpl 149）与 DEBT-001/002（热点拆分）物理阻断，企业真实 HA（Patroni/Git HA/S3 ObjectLock/JMH 压测）待后续 infra 替换。L4 批准 Phase4 本地 Verified 为下一阶段实施基线。

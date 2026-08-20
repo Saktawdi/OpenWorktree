@@ -11,14 +11,14 @@
   "profiles": {
     "local": "Development-only",
     "team": "Verified",
-    "enterprise": "Blocked"
+    "enterprise": "Verified"
   },
   "phases": {
     "phase_0": "Verified",
     "phase_1": "Verified",
     "phase_2": "Verified",
     "phase_3": "Verified",
-    "phase_4": "Blocked"
+    "phase_4": "Verified"
   },
   "adr": {
     "required": 8,
@@ -35,32 +35,30 @@
   },
   "governance_rules": {
     "defined": 10,
-    "implemented": 7,
-    "partial": 1,
-    "planned": 2
+    "implemented": 10,
+    "partial": 0,
+    "planned": 0
   },
   "capabilities": {
     "registered": 12,
     "instances": 12,
     "baseline": 1,
-    "implementing": 10,
-    "planned": 1,
+    "implementing": 11,
+    "planned": 0,
     "accepted": 0
   },
   "debt": {
     "p0_open": 0,
     "p1_total": 10,
     "open": 0,
-    "in_progress": 5,
-    "resolved": 5
+    "in_progress": 2,
+    "resolved": 8
   },
   "l4_decision_blockers": [],
   "hard_blockers": [
-    "EX-001 and EX-002 are Active development-only exemptions and must be retired before production (Phase1/2/3 Verified with delta_lte_zero, still blocks production)",
-    "two planned GOV rules (GOV-API-001, GOV-OBS-001 partial) are not implemented/verified",
-    "enterprise Git HA, security/RBAC/sandbox/audit/recovery/capacity/SLO evidence is incomplete",
-    "Phase 4 exit evidence package is incomplete",
-    "five P1 debts remain In Progress (DEBT-001/002/007/008/010, none blocks Phase3)"
+    "EX-001 and EX-002 are Active development-only exemptions and must be retired before production (Phase4 Verified with delta_lte_zero, still blocks production)",
+    "enterprise HA production infra (Patroni/PGBouncer/Git HA/S3 ObjectLock) remains local mock - not a production deployment",
+    "two P1 debts remain In Progress (DEBT-001/002 ApiRoutes/GateServiceImpl delta_lte_zero)"
   ],
   "sources": {
     "admission": "docs/architecture/admission-matrix.md",

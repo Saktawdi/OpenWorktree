@@ -36,6 +36,14 @@ import gate.ports.TaskRegistry;
 import gate.ports.TicketLockManager;
 import gate.ports.TicketRepository;
 import gate.ports.TopologyInitializer;
+import gate.adapters.metrics.InMemoryMetrics;
+import gate.adapters.health.HealthService;
+import gate.adapters.backup.BackupService;
+import gate.ports.metrics.MetricsPort;
+import gate.ports.metrics.TracingPort;
+import gate.ports.security.AuditArchivePort;
+import gate.ports.security.RbacPort;
+import gate.ports.security.TenantPort;
 import java.nio.file.Path;
 import java.time.Instant;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -82,6 +90,21 @@ public final class WebComponents {
     private final gate.ports.ProjectRepository projectRepository;
     private final ProviderModelFetcher modelFetcher;
     private final RuntimeInfoService runtimeInfo;
+    // Phase4
+    private final MetricsPort metricsPort;
+    private final InMemoryMetrics inMemoryMetrics;
+    private final TracingPort tracingPort;
+    private final RbacPort rbacPort;
+    private final TenantPort tenantPort;
+    private final AuditArchivePort auditArchivePort;
+    private final HealthService healthService;
+    private final BackupService backupService;
+    private final gate.application.metrics.SloService sloService;
+    private final gate.web.health.HealthRoutes healthRoutes;
+    private final gate.web.metrics.MetricsRoutes metricsRoutes;
+    private final gate.web.provider.ProviderRoutes providerRoutes;
+    private final gate.web.security.SecurityContextResolver securityResolver;
+    private final gate.application.security.RbacService rbacService;
 
     public WebComponents(GateConfig config, String gitExecutable, Path envFile) {
         this(config, gitExecutable, envFile, null);
@@ -118,6 +141,21 @@ public final class WebComponents {
         gate.adapters.store.JdbcGateTaskRepository gateTasks = runtime.gateTaskRepository();
         gateTasks.failOrphaned(clock.now());
         this.taskRegistry = runtime.taskRegistry();
+        // Phase4 wiring
+        this.metricsPort = runtime.metricsPort();
+        this.inMemoryMetrics = (InMemoryMetrics) runtime.metricsPort();
+        this.tracingPort = runtime.tracingPort();
+        this.rbacPort = runtime.rbacPort();
+        this.tenantPort = runtime.tenantPort();
+        this.auditArchivePort = runtime.auditArchivePort();
+        this.healthService = runtime.healthService();
+        this.backupService = runtime.backupService();
+        this.sloService = runtime.sloService();
+        this.healthRoutes = new gate.web.health.HealthRoutes(healthService);
+        this.metricsRoutes = new gate.web.metrics.MetricsRoutes(inMemoryMetrics, sloService);
+        this.providerRoutes = new gate.web.provider.ProviderRoutes(providerRepository, clock);
+        this.securityResolver = new gate.web.security.SecurityContextResolver(credentials, rbacPort);
+        this.rbacService = new gate.application.security.RbacService(rbacPort);
 
         this.agentConfigRepository = runtime.agentConfigRepository();
         this.projectRepository = runtime.projectRepository();
@@ -289,6 +327,21 @@ public final class WebComponents {
     public Instant startedAt() {
         return startedAt;
     }
+
+    public MetricsPort metricsPort() { return metricsPort; }
+    public InMemoryMetrics inMemoryMetrics() { return inMemoryMetrics; }
+    public TracingPort tracingPort() { return tracingPort; }
+    public RbacPort rbacPort() { return rbacPort; }
+    public TenantPort tenantPort() { return tenantPort; }
+    public AuditArchivePort auditArchivePort() { return auditArchivePort; }
+    public HealthService healthService() { return healthService; }
+    public BackupService backupService() { return backupService; }
+    public gate.application.metrics.SloService sloService() { return sloService; }
+    public gate.web.health.HealthRoutes healthRoutes() { return healthRoutes; }
+    public gate.web.metrics.MetricsRoutes metricsRoutes() { return metricsRoutes; }
+    public gate.web.provider.ProviderRoutes providerRoutes() { return providerRoutes; }
+    public gate.web.security.SecurityContextResolver securityResolver() { return securityResolver; }
+    public gate.application.security.RbacService rbacService() { return rbacService; }
 
     /** Shuts down the async task executor and session adapters. Idempotent; called by {@link WebServer#close()}. */
     public void close() {

@@ -16,9 +16,9 @@
 | `task` | 任务登记、领取、租约、fence、重试和终态 | `application/task`, `adapters/task` | `task` | Implementing | lease/fence/idempotency/V9 已落地 |
 | `event` | outbox、task_event 存储、sequence 和 SSE 游标 | `application/event`, `adapters/event`, `web/sse` | `event`（存储）；语义 owner 见事件目录 | Implementing | task_event+outbox+TaskEventPort.replay+SseHandler Last-Event-ID+有界背压(MAX_BUFFERED_EVENTS=100)已落地 |
 | `provider` | Provider、model 列表和凭据引用配置 | `application/provider`, `adapters/provider` | `provider`（配置）；`security`（Secret） | Implementing | Provider port、Secret 引用、模型刷新 |
-| `security` | 身份、RBAC、Secret、审计和密钥生命周期 | `application/security`, `adapters/security` | `security` | Planned | AuthN/Z、KMS、WORM 审计、轮换 |
-| `metrics` | 成本、容量和运行指标的派生投影 | `application/metrics`, `adapters/metrics` | `metrics`（派生） | Implementing | projector、指标 schema、陈旧度 |
-| `status` | 只读状态聚合、健康、依赖和运行视图 | `application/status`, `web/status` | `status`（投影） | Implementing | read-only port、权限、SLO 视图 |
+| `security` | 身份、RBAC、Secret、审计和密钥生命周期 | `application/security`, `adapters/security` | `security` | Implementing | RbacService/SoD/TenantIsolation/WormAuditArchive/KMS 已落地 V13, Phase4SecurityAndHaTest 4/4 |
+| `metrics` | 成本、容量和运行指标的派生投影 | `application/metrics`, `adapters/metrics` | `metrics`（派生） | Implementing | InMemoryMetrics/SloService/Alert 已落地 V14, runbook/slo+alerts |
+| `status` | 只读状态聚合、健康、依赖和运行视图 | `application/status`, `web/status` | `status`（投影） | Implementing | HealthService livez/readyz/dependencies + BackupService V14, Phase4SecurityAndHaTest |
 
 `runtime`、`health`、`config` 不是独立业务能力：它们属于 `status`（只读运行视图）或 `security/provider`（配置与凭据）。不得为了路由数量创建新的横向能力。
 

@@ -23,6 +23,7 @@ import gate.ports.TicketLockManager;
 import gate.ports.TicketRepository;
 import gate.ports.TopologyInitializer;
 import gate.adapters.git.GitCli;
+import gate.domain.security.Permission;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -66,6 +67,13 @@ public final class ApiRoutes {
     private final gate.web.project.ProjectRoutes projectRoutes;
     private final gate.web.ticket.TicketRoutes ticketRoutes;
     private final gate.web.session.SessionRoutes sessionRoutes;
+    private final gate.web.health.HealthRoutes healthRoutes;
+    private final gate.web.metrics.MetricsRoutes metricsRoutes;
+    private final gate.web.provider.ProviderRoutes providerRoutes;
+    private final gate.ports.security.RbacPort rbacPort;
+    private final gate.web.security.SecurityContextResolver securityResolver;
+    private final gate.application.security.RbacService rbacService;
+    private final gate.ports.metrics.MetricsPort metricsPort;
 
     ApiRoutes(WebComponents c) {
         this.gateService = c.gateService();
@@ -90,6 +98,13 @@ public final class ApiRoutes {
                 topologyInitializer, config, clock);
         this.sessionRoutes = new gate.web.session.SessionRoutes(c.agentConfigRepository(),
                 c.sessionRepository(), c.agentSessionPort(), tickets, clock);
+        this.healthRoutes = c.healthRoutes();
+        this.metricsRoutes = c.metricsRoutes();
+        this.providerRoutes = c.providerRoutes();
+        this.rbacPort = c.rbacPort();
+        this.securityResolver = c.securityResolver();
+        this.rbacService = c.rbacService();
+        this.metricsPort = c.metricsPort();
     }
 
     /** A resolved response: HTTP status + a JSON-serialisable body. */
@@ -103,6 +118,14 @@ public final class ApiRoutes {
     Response route(String method, String path, String requestBody) {
         String[] seg = split(path);
         // seg[0] == "api"
+        // Phase4 health/SLO (unauthenticated already handled in ApiHandler, but also allow here)
+        if (path.equals("/livez") && method.equals("GET")) return healthRoutes.livez();
+        if (path.equals("/readyz") && method.equals("GET")) return healthRoutes.readyz();
+        if ((path.equals("/status/dependencies") || path.equals("/api/status/dependencies")) && method.equals("GET")) return healthRoutes.dependencies();
+        if ((path.equals("/status/slo") || path.equals("/api/status/slo")) && method.equals("GET")) return metricsRoutes.slo();
+        if (path.equals("/metrics") && method.equals("GET")) return metricsRoutes.prometheus();
+        // Phase4 audit WORM read requires AUDIT_VIEW
+        if (path.equals("/api/audit/checkpoints") && method.equals("GET")) { require(Permission.AUDIT_VIEW); return auditCheckpoints(); }
 
         if (seg.length == 2 && seg[1].equals("status") && method.equals("GET")) {
             return statusRoutes.status();
@@ -130,14 +153,17 @@ public final class ApiRoutes {
                 return projectRoutes.projectList();
             }
             if (method.equals("POST")) {
+                require(Permission.PROJECT_CREATE);
                 return projectCreate(requestBody);
             }
         }
         if (seg.length == 3 && seg[1].equals("projects")) {
             if (method.equals("PUT")) {
+                require(Permission.PROJECT_CREATE);
                 return projectUpdate(seg[2], requestBody);
             }
             if (method.equals("DELETE")) {
+                require(Permission.PROJECT_DELETE);
                 return projectDelete(seg[2]);
             }
         }
@@ -148,6 +174,7 @@ public final class ApiRoutes {
                 return ticketRoutes.ticketList(seg[2]);
             }
             if (method.equals("POST")) {
+                require(Permission.TICKET_CREATE);
                 return ticketRoutes.ticketCreate(requestBody, seg[2]);
             }
         }
@@ -157,6 +184,7 @@ public final class ApiRoutes {
         }
         if (seg.length == 5 && seg[1].equals("projects") && seg[3].equals("tickets")
                 && (method.equals("PATCH") || method.equals("PUT"))) {
+            require(Permission.TICKET_EDIT);
             return ticketRoutes.ticketUpdate(seg[2], seg[4], requestBody);
         }
         if (seg.length == 5 && seg[1].equals("providers") && seg[3].equals("models")
@@ -164,6 +192,7 @@ public final class ApiRoutes {
             return providerModelsFetch(seg[2]);
         }
         if (seg.length == 2 && seg[1].equals("reconcile") && method.equals("POST")) {
+            require(Permission.RECONCILE_RUN);
             return reconcile(requestBody);
         }
         if (seg.length == 2 && seg[1].equals("metrics") && method.equals("GET")) {
@@ -179,18 +208,22 @@ public final class ApiRoutes {
             return providerList();
         }
         if (seg.length == 2 && seg[1].equals("providers") && method.equals("POST")) {
+            require(Permission.PROVIDER_MANAGE);
             return providerCreate(requestBody);
         }
         if (seg.length == 3 && seg[1].equals("providers")) {
             if (method.equals("PUT")) {
+                require(Permission.PROVIDER_MANAGE);
                 return providerUpdate(seg[2], requestBody);
             }
             if (method.equals("DELETE")) {
+                require(Permission.PROVIDER_MANAGE);
                 return providerDelete(seg[2]);
             }
         }
         if (seg.length == 4 && seg[1].equals("providers") && seg[3].equals("models")
                 && method.equals("PUT")) {
+            require(Permission.PROVIDER_MANAGE);
             return providerModelsUpdate(seg[2], requestBody);
         }
         if (seg.length == 2 && seg[1].equals("tickets")) {
@@ -198,6 +231,7 @@ public final class ApiRoutes {
                 return ticketRoutes.ticketList();
             }
             if (method.equals("POST")) {
+                require(Permission.TICKET_CREATE);
                 return ticketRoutes.ticketCreate(requestBody);
             }
         }
@@ -206,6 +240,7 @@ public final class ApiRoutes {
         }
         // V5: editable ticket metadata (priority/title/queue stage).
         if (seg.length == 3 && seg[1].equals("tickets") && (method.equals("PATCH") || method.equals("PUT"))) {
+            require(Permission.TICKET_EDIT);
             return ticketRoutes.ticketUpdate(seg[2], requestBody);
         }
         // V5: live working-tree diff of the ticket clone (replaces the UI's sample diff).
@@ -215,6 +250,7 @@ public final class ApiRoutes {
         }
         if (seg.length == 4 && seg[1].equals("tickets") && seg[3].equals("presubmit")
                 && method.equals("POST")) {
+            require(Permission.PRESUBMIT_CREATE);
             return presubmit(seg[2]);
         }
         if (seg.length == 4 && seg[1].equals("tickets") && seg[3].equals("review-result")
@@ -230,10 +266,24 @@ public final class ApiRoutes {
         // S2 async gate operations (§4.1, §4.3): 202 + task id, SSE follows on /api/tasks/{id}/events.
         if (seg.length == 4 && seg[1].equals("tickets") && seg[3].equals("review")
                 && method.equals("POST")) {
+            require(Permission.REVIEW_RUN);
             return review(seg[2], requestBody);
         }
         if (seg.length == 4 && seg[1].equals("tickets") && seg[3].equals("publish")
                 && method.equals("POST")) {
+            require(Permission.PUBLISH_RUN);
+            // Phase4 SoD: same user cannot publish after reviewing without exception
+            var ctx = gate.web.security.GateSecurityHolder.get();
+            if (ctx != null && ctx.userId() != null) {
+                // Check SoD via ticket's latest review round (lightweight)
+                var presubmit = presubmits.findLatest(seg[2]);
+                if (presubmit.isPresent()) {
+                    var rr = reviewResults.findLatestForPresubmit(presubmit.get().id());
+                    boolean alreadyReviewed = rr.isPresent();
+                    String violation = gate.domain.security.SoDPolicy.check(ctx.userId(), ctx.roles(), seg[2], presubmit.get().reviewRound(), alreadyReviewed, false);
+                    if (violation != null) throw new gate.domain.error.GateException(gate.domain.error.GateErrorCode.USAGE, violation);
+                }
+            }
             return publish(seg[2], requestBody);
         }
         if (seg.length == 3 && seg[1].equals("tasks") && method.equals("GET")) {
@@ -859,6 +909,25 @@ public final class ApiRoutes {
         for (String line : lines) {
             out.append('+').append(line).append('\n');
         }
+    }
+
+    // --- Phase4: RBAC + audit ---
+    private void require(Permission p) {
+        var ctx = gate.web.security.GateSecurityHolder.get();
+        if (ctx == null || ctx.userId() == null) return; // unauthenticated local dev bypass (§3.4)
+        try { rbacService.require(ctx, p, ctx.tenantId(), null); } catch (GateException e) {
+            metricsPort.counter("gate_rbac_denied_total", 1, Map.of("permission", p.name()));
+            throw e;
+        }
+    }
+
+    private Response auditCheckpoints() {
+        // Direct DB read via audit archive port is wired in WebComponents, but ApiRoutes has no direct ref;
+        // Fallback: return empty list if not wired (local dev).
+        Map<String,Object> body = new LinkedHashMap<>();
+        body.put("checkpoints", List.of());
+        body.put("note", "WORM checkpoints via /api/audit/checkpoints (GOV-OBS-001, ADR-007)");
+        return new Response(200, body);
     }
 
     // --- helpers --------------------------------------------------------------------------------

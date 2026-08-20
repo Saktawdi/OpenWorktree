@@ -17,7 +17,14 @@ import gate.adapters.preflight.DefaultPreflightChecker;
 import gate.adapters.process.ProcessRunnerImpl;
 import gate.adapters.git.LocalAuthoritativeGitService;
 import gate.adapters.kms.LocalKmsService;
+import gate.adapters.metrics.InMemoryMetrics;
+import gate.adapters.metrics.NoopTracing;
 import gate.adapters.s3.FsS3Store;
+import gate.adapters.health.HealthService;
+import gate.adapters.security.JdbcRbacStore;
+import gate.adapters.security.TenantIsolationService;
+import gate.adapters.audit.WormAuditArchive;
+import gate.adapters.backup.BackupService;
 import gate.adapters.store.JdbcAgentConfigRepository;
 import gate.adapters.store.JdbcCredentialRepository;
 import gate.adapters.store.JdbcGateTaskRepository;
@@ -61,6 +68,11 @@ import gate.ports.SnapshotCapture;
 import gate.ports.TaskClaimPort;
 import gate.ports.TicketRepository;
 import gate.ports.TopologyInitializer;
+import gate.ports.metrics.MetricsPort;
+import gate.ports.metrics.TracingPort;
+import gate.ports.security.AuditArchivePort;
+import gate.ports.security.RbacPort;
+import gate.ports.security.TenantPort;
 import java.nio.file.Path;
 import java.time.Duration;
 import javax.sql.DataSource;
@@ -105,6 +117,15 @@ public final class GateRuntime {
     private final gate.ports.AgentConfigRepository agentConfigRepository;
     private final gate.ports.SessionRepository sessionRepository;
     private final gate.ports.ProjectRepository projectRepository;
+    // Phase4
+    private final MetricsPort metricsPort;
+    private final TracingPort tracingPort;
+    private final RbacPort rbacPort;
+    private final TenantPort tenantPort;
+    private final AuditArchivePort auditArchivePort;
+    private final HealthService healthService;
+    private final BackupService backupService;
+    private final gate.application.metrics.SloService sloService;
 
     public GateRuntime(GateConfig config, String gitExecutable, Path envFile) {
         this.config = config;
@@ -152,6 +173,16 @@ public final class GateRuntime {
         this.sessionRepository = new JdbcSessionRepository(jdbc, blobStore);
         this.projectRepository = new JdbcProjectRepository(jdbc);
 
+        // Phase4 observability & HA
+        this.metricsPort = new InMemoryMetrics();
+        this.tracingPort = new NoopTracing();
+        this.rbacPort = new JdbcRbacStore(jdbc);
+        this.tenantPort = new TenantIsolationService(jdbc);
+        this.auditArchivePort = new WormAuditArchive(config.auditPath(), jdbc, this.kmsService);
+        this.healthService = new HealthService(dataSource, config.authRepo(), this.s3Store, this.kmsService, refObserver);
+        this.backupService = new BackupService(dataSource, config.authRepo(), config.gateHome(), this.s3Store);
+        this.sloService = new gate.application.metrics.SloService();
+
         ReviewEngineFactory reviewEngineFactory = config.engineConfigured()
                 ? new GateReviewEngineFactory(blobStore, config, processRunner, providerRepository, this.envFile)
                 : new ManualReviewEngineFactory(blobStore);
@@ -191,6 +222,16 @@ public final class GateRuntime {
     public gate.ports.AgentConfigRepository agentConfigRepository() { return agentConfigRepository; }
     public gate.ports.SessionRepository sessionRepository() { return sessionRepository; }
     public gate.ports.ProjectRepository projectRepository() { return projectRepository; }
+    // Phase4 getters
+    public MetricsPort metricsPort() { return metricsPort; }
+    public TracingPort tracingPort() { return tracingPort; }
+    public RbacPort rbacPort() { return rbacPort; }
+    public TenantPort tenantPort() { return tenantPort; }
+    public AuditArchivePort auditArchivePort() { return auditArchivePort; }
+    public HealthService healthService() { return healthService; }
+    public BackupService backupService() { return backupService; }
+    public gate.application.metrics.SloService sloService() { return sloService; }
+    public AuditLog auditLog() { return new HashChainAuditLog(config.auditPath()); }
 
     /** Seeds a provider required by the review-result foreign key. Safe to call repeatedly. */
     public void seedProvider(String id, String name, String baseUrl, String apiKeyRef, String type) {

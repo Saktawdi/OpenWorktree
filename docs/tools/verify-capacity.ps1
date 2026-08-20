@@ -42,13 +42,25 @@ if (Test-Path -LiteralPath $faultTestPath) {
 # Keep benchmarks_checked = 3 for capacity SLO metrics; fault scenarios = 6 is verified in verify-fault.ps1 (counts are intentionally distinct per profile)
 Write-Host "[SYNC] verify-fault scenarios_evaluated=6 <-> verify-capacity benchmarks_checked=3 (profiles distinct, both enforced)"
 
+# Phase4 SLO/Health files must exist
+$phase4Test = Join-Path $repo 'gate-adapters\src\test\java\gate\adapters\phase4\Phase4SecurityAndHaTest.java'
+if (-not (Test-Path -LiteralPath $phase4Test)) { Record-Error "GOV-OBS-001 missing Phase4SecurityAndHaTest.java" } else { Write-Host "  - Found Phase4SecurityAndHaTest (RBAC/WORM/Backup/Health/SLO)" }
+$healthPath = Join-Path $repo 'gate-adapters\src\main\java\gate\adapters\health\HealthService.java'
+if (-not (Test-Path -LiteralPath $healthPath)) { Record-Error "GOV-OBS-001 HealthService missing" }
+$sloPath = Join-Path $repo 'gate-application\src\main\java\gate\application\metrics\SloService.java'
+if (-not (Test-Path -LiteralPath $sloPath)) { Record-Error "GOV-OBS-001 SloService missing" }
+
 # REAL EXECUTION: run capacity evidence (not just file-name check)
 if (-not $Mock) {
     Write-Host "[GOV-OBS-001] Running real capacity evidence: TaskEventOutboxFaultTest (slow consumer), rough P99 headroom probe..."
     # 1) Fault backpressure test must pass – it proves bounded 100 and DB replay recovers
-    $proc = Start-Process -FilePath "mvn" -ArgumentList @("-pl","gate-adapters","-am","-Dtest=TaskEventOutboxFaultTest#testSlowConsumerDoesNotGrowUnbounded,TaskEventOutboxFaultTest#testCursorReplayStream","-DfailIfNoTests=false","test") -WorkingDirectory $repo -Wait -PassThru -NoNewWindow
+    $proc = Start-Process -FilePath "mvn" -ArgumentList @("-pl","gate-adapters","-am","-Dtest=TaskEventOutboxFaultTest#testSlowConsumerDoesNotGrowUnbounded+testCursorReplayStream","-Dsurefire.failIfNoSpecifiedTests=false","-DfailIfNoTests=false","test") -WorkingDirectory $repo -Wait -PassThru -NoNewWindow
     if ($proc.ExitCode -ne 0) { Record-Error "GOV-OBS-001 capacity evidence failed: bounded-buffer/throughput tests mvn exit=$($proc.ExitCode)" }
     else { Write-Host "  - Bounded buffer + replay tests passed" }
+    # 1b) Phase4 health/SLO test must pass
+    $proc2 = Start-Process -FilePath "mvn" -ArgumentList @("-pl","gate-adapters","-am","-Dtest=Phase4SecurityAndHaTest#testHealthAndMetricsAndSlo+testBackupAndRestore","-Dsurefire.failIfNoSpecifiedTests=false","-DfailIfNoTests=false","test") -WorkingDirectory $repo -Wait -PassThru -NoNewWindow
+    if ($proc2.ExitCode -ne 0) { Record-Error "GOV-OBS-001 Phase4 SLO/health evidence failed mvn exit=$($proc2.ExitCode)" }
+    else { Write-Host "  - Phase4 SLO/health/backup tests passed" }
 
     # 2) Rough P99 headroom probe: 200 appends + 100 reads via task_event under 5s (fails if P99 > 100ms or throughput collapsed)
     $benchFailed = $false

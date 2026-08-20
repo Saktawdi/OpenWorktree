@@ -72,6 +72,23 @@ public final class LocalKmsService implements KmsService {
     @Override public boolean isRevoked(String keyId) { return Boolean.TRUE.equals(revoked.get(keyId)); }
     public void revoke(String keyId) { revoked.put(keyId, true); }
 
+    /** Raw HMAC without timestamp envelope, for WORM checkpoint (deterministic). */
+    public String rawSign(String canonicalJson, String keyId) {
+        String kid = keyId == null ? currentKeyId : keyId;
+        String secret = keys.get(kid);
+        if (secret == null) throw new GateException(GateErrorCode.GATE_ERROR_IO, "unknown key: " + kid);
+        return hmac(secret, canonicalJson);
+    }
+
+    public boolean rawVerify(String canonicalJson, String signature, String keyId) {
+        String kid = keyId == null ? currentKeyId : keyId;
+        String secret = keys.get(kid);
+        if (secret == null) return false;
+        if (isRevoked(kid)) return false;
+        String expected = hmac(secret, canonicalJson);
+        return expected.equals(signature);
+    }
+
     @Override public String encrypt(String plaintext) {
         // simple base64 with current key xor for local; not real encryption
         return Base64.getEncoder().encodeToString(plaintext.getBytes(StandardCharsets.UTF_8));

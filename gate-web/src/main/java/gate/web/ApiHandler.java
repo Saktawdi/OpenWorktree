@@ -6,6 +6,7 @@ import gate.domain.error.GateErrorCode;
 import gate.domain.error.GateException;
 import gate.ports.CredentialRepository;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -25,10 +26,12 @@ final class ApiHandler implements HttpHandler {
     private final ApiRoutes routes;
     private final SseHandler sseHandler;
     private final SessionSseHandler sessionSseHandler;
+    private final WebComponents components;
 
     ApiHandler(WebComponents components, AuthFilter authFilter) {
         this.credentials = components.credentials();
         this.authFilter = authFilter;
+        this.components = components;
         this.routes = new ApiRoutes(components);
         this.sseHandler = new SseHandler(components.taskRegistry());
         this.sessionSseHandler = new SessionSseHandler(components.agentSessionPort(),
@@ -37,14 +40,31 @@ final class ApiHandler implements HttpHandler {
 
     @Override
     public void handle(HttpExchange exchange) throws IOException {
+        long startNanos = System.nanoTime();
         int status = 200;
         try {
             String path = exchange.getRequestURI().getPath();
             String method = exchange.getRequestMethod();
 
-            // §3.4 whitelist: no token required.
-            if (path.equals("/api/health")) {
+            // §3.4 whitelist + Phase4 health: no token required for liveness/readyz (§13.3)
+            if (path.equals("/api/health") || path.equals("/livez")) {
                 status = health(exchange);
+                return;
+            }
+            if (path.equals("/readyz")) {
+                status = readyz(exchange);
+                return;
+            }
+            if (path.equals("/metrics") || path.equals("/api/metrics/prometheus")) {
+                status = metrics(exchange);
+                return;
+            }
+            if (path.equals("/status/dependencies") || path.equals("/api/status/dependencies")) {
+                status = dependencies(exchange);
+                return;
+            }
+            if (path.equals("/status/slo") || path.equals("/api/status/slo")) {
+                status = slo(exchange);
                 return;
             }
             if (path.equals("/api/auth/verify")) {
@@ -58,6 +78,14 @@ final class ApiHandler implements HttpHandler {
                 status = 401; // AuthFilter already wrote the body.
                 return;
             }
+            // Phase4: resolve SecurityContext for RBAC/tenant/SoD (§12.1, ADR-007)
+            try {
+                String token = extractBearer(exchange, sse);
+                var ctx = components.securityResolver().resolve(token);
+                gate.web.security.GateSecurityHolder.set(ctx);
+            } catch (Exception ignored) { gate.web.security.GateSecurityHolder.set(gate.domain.security.SecurityContext.anonymous()); }
+            // Phase4: record metrics + tracing per request (§13.1)
+            try { components.metricsPort().counter("gate_http_requests_total",1, Map.of("route", path)); } catch (Exception ignored) {}
 
             // SSE endpoints do not read a request body and do not use the normal JSON envelope.
             if (sse) {
@@ -92,6 +120,8 @@ final class ApiHandler implements HttpHandler {
             Http.json(exchange, 500, Json.error(GateErrorCode.INTERNAL.code(),
                     "INTERNAL", "internal error", null));
         } finally {
+            try { long elapsedMs = (System.nanoTime() - startNanos) / 1_000_000; components.metricsPort().histogram("gate_http_request_duration_ms", elapsedMs, Map.of("route", exchange != null ? exchange.getRequestURI().getPath() : "unknown")); } catch (Exception ignored) {}
+            gate.web.security.GateSecurityHolder.clear();
             System.err.println("gate-web: " + Http.accessLine(exchange, status));
             exchange.close();
         }
@@ -120,11 +150,36 @@ final class ApiHandler implements HttpHandler {
     }
 
     private int health(HttpExchange exchange) throws IOException {
-        Map<String, Object> body = new LinkedHashMap<>();
-        body.put("status", "ok");
-        body.put("service", "gate-web");
+        Map<String, Object> body = components.healthRoutes().livez().body() instanceof Map ? (Map<String,Object>) components.healthRoutes().livez().body() : new LinkedHashMap<>(Map.of("status","ok","service","gate-web"));
         Http.json(exchange, 200, Json.write(body));
         return 200;
+    }
+
+    private int readyz(HttpExchange exchange) throws IOException {
+        var res = components.healthRoutes().readyz();
+        Http.json(exchange, res.status(), Json.write(res.body()));
+        return res.status();
+    }
+
+    private int dependencies(HttpExchange exchange) throws IOException {
+        var res = components.healthRoutes().dependencies();
+        Http.json(exchange, res.status(), Json.write(res.body()));
+        return res.status();
+    }
+
+    private int metrics(HttpExchange exchange) throws IOException {
+        String text = components.metricsRoutes().prometheusText();
+        byte[] body = text.getBytes(StandardCharsets.UTF_8);
+        exchange.getResponseHeaders().set("Content-Type", "text/plain; version=0.0.4; charset=utf-8");
+        exchange.sendResponseHeaders(200, body.length);
+        try (var os = exchange.getResponseBody()) { os.write(body); }
+        return 200;
+    }
+
+    private int slo(HttpExchange exchange) throws IOException {
+        var res = components.metricsRoutes().slo();
+        Http.json(exchange, res.status(), Json.write(res.body()));
+        return res.status();
     }
 
     private int authVerify(HttpExchange exchange, String method) throws IOException {
@@ -148,6 +203,22 @@ final class ApiHandler implements HttpHandler {
         body.put("domain", "HUMAN");
         Http.json(exchange, 200, Json.write(body));
         return 200;
+    }
+
+    private static String extractBearer(HttpExchange exchange, boolean allowQueryToken) {
+        String auth = exchange.getRequestHeaders().getFirst("Authorization");
+        if (auth != null) {
+            String prefix = "Bearer ";
+            if (auth.regionMatches(true, 0, prefix, 0, prefix.length())) return auth.substring(prefix.length()).trim();
+        }
+        if (allowQueryToken) {
+            String query = exchange.getRequestURI().getRawQuery();
+            if (query != null) for (String pair : query.split("&")) {
+                int eq = pair.indexOf('='); String name = eq < 0 ? pair : pair.substring(0, eq);
+                if (name.equals("token")) return eq < 0 ? "" : java.net.URLDecoder.decode(pair.substring(eq+1), StandardCharsets.UTF_8);
+            }
+        }
+        return null;
     }
 
     /** Extracts the {@code token} field from a small JSON body {@code {"token":"..."}}. */

@@ -32,6 +32,7 @@
 | `architecture/next-actions.md` | 执行中 | 当前行动、owner、日期、证据和阻断范围 |
 | `architecture/governance-status.json` | 当前快照 | 机器可读的架构、Phase、ADR、豁免和债务状态 |
 | `architecture/l4-approval-record.md` | 已批准 | L4 决策范围、实施授权和生产保留项 |
+| `architecture/phase4-evidence.md` | Verified（本地） | Phase4 企业安全/观测/备份恢复 本地演练证据包 |
 | `debt-register.md` | 初始台账 | P0/P1 架构与技术债及偿还证据 |
 | `adr/README.md` | 8 项 Accepted | ADR 状态、责任人、批准人与验证计划 |
 | `capabilities/README.md` | 初始实例目录 | 12 个业务能力的当前状态和边界 |
