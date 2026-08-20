@@ -24,11 +24,15 @@ public final class InMemoryMetrics implements MetricsPort {
         counters.computeIfAbsent(name, k -> new AtomicLong()).addAndGet(delta);
     }
 
+    private static final int HISTOGRAM_CAPACITY = 1024; // P2 B: bounded ring buffer to avoid slow leak, keeps GOV-CPLX-001 red line #4
+
     @Override
     public void histogram(String name, long valueMs, Map<String, String> labels) {
         String key = name + labels;
-        histograms.computeIfAbsent(name, k -> java.util.Collections.synchronizedList(new java.util.ArrayList<>())).add(valueMs);
-        histograms.computeIfAbsent(key, k -> java.util.Collections.synchronizedList(new java.util.ArrayList<>())).add(valueMs);
+        var agg = histograms.computeIfAbsent(name, k -> java.util.Collections.synchronizedList(new java.util.ArrayList<>()));
+        synchronized (agg) { agg.add(valueMs); if (agg.size() > HISTOGRAM_CAPACITY) agg.remove(0); }
+        var perLabel = histograms.computeIfAbsent(key, k -> java.util.Collections.synchronizedList(new java.util.ArrayList<>()));
+        synchronized (perLabel) { perLabel.add(valueMs); if (perLabel.size() > HISTOGRAM_CAPACITY) perLabel.remove(0); }
     }
 
     @Override

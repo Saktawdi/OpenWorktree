@@ -82,8 +82,17 @@ final class TaskRunner {
         var ctx = gate.ports.security.SecurityContextHolder.get();
         String tenant = ctx != null && ctx.tenantId() != null ? ctx.tenantId() : "default";
         String creator = ctx != null ? ctx.userId() : null;
-        String idempotencyKey = "publish:" + tenant + ":" + ticketNo + ":" + round;
+        // Idempotency: stable for same ticket/round, but if previous attempt terminal FAILED, allow retry with new key
+        String baseKey = "publish:" + tenant + ":" + ticketNo + ":" + round;
         String requestDigest = String.valueOf(round);
+        GateTask existing = null;
+        try { existing = tasks.findByIdempotency(tenant, baseKey).orElse(null); } catch (Exception ignored) {}
+        String idempotencyKey = baseKey;
+        if (existing != null && existing.isTerminal() && existing.status() == GateTaskStatus.FAILED) {
+            // Previous FAILED terminal: allow retry with distinct key (attempt suffix) – does not break I3 for non-terminal
+            idempotencyKey = baseKey + ":retry:" + (existing.attempt() + 1);
+            requestDigest = requestDigest + ":retry:" + (existing.attempt() + 1);
+        }
         GateTask task = tasks.enqueue("publish", ticketNo, null, tenant, null, idempotencyKey, requestDigest, 10, clock.now());
         tasks.setCreator(task.id(), creator);
         GateTask taskFinal = task;

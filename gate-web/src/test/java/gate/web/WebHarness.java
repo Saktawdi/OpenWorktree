@@ -67,17 +67,29 @@ final class WebHarness implements AutoCloseable {
                     config.primaryTargetRef(), config.approvalsDir());
 
             this.humanToken = components.credentials().issueHumanToken(components.clock().now());
-            // Seed RBAC for the human test user (Phase4) – otherwise ApiRoutes require() will deny all
+            // Seed minimal RBAC for happy-path web tests (Phase4) – not all roles, to keep deny-path testable
             try {
                 String userId = "human:" + humanToken.substring(0, Math.min(8, humanToken.length()));
-                for (gate.domain.security.RbacRole role : gate.domain.security.RbacRole.values()) {
+                // For equivalence happy path we need a single token that can do ticket+review+publish.
+                // To avoid SoD block, we will NOT seed both REVIEWER and PUBLISHER on same user for that test;
+                // instead we seed REVIEWER+PUBLISHER but also pre-seed sod_exception via DB for EQ tickets (see below).
+                // For general harness, seed DEVELOPER/PROJECT_ADMIN only; review/publish will be done via separate tokens in tests that need SoD
+                for (gate.domain.security.RbacRole role : List.of(
+                        gate.domain.security.RbacRole.DEVELOPER,
+                        gate.domain.security.RbacRole.PROJECT_ADMIN)) {
                     try { components.rbacPort().assignRole(userId, "default", null, role, "test-seed"); } catch (Exception ignored) {}
                 }
-                // Also ensure gate user has roles for backup/health tests that use "gate" identity
-                for (gate.domain.security.RbacRole role : gate.domain.security.RbacRole.values()) {
-                    try { components.rbacPort().assignRole("gate", "default", null, role, "test-seed"); } catch (Exception ignored) {}
-                    try { components.rbacPort().assignRole("human:gate", "default", null, role, "test-seed"); } catch (Exception ignored) {}
+                // Also create a dedicated publisher token for SoD dual-token tests
+                String publisherToken = components.credentials().issueHumanToken(components.clock().now());
+                String publisherUser = "human:" + publisherToken.substring(0, Math.min(8, publisherToken.length()));
+                for (gate.domain.security.RbacRole role : List.of(
+                        gate.domain.security.RbacRole.DEVELOPER,
+                        gate.domain.security.RbacRole.PUBLISHER,
+                        gate.domain.security.RbacRole.PROJECT_ADMIN)) {
+                    try { components.rbacPort().assignRole(publisherUser, "default", null, role, "test-seed"); } catch (Exception ignored) {}
                 }
+                // Store publisher token for tests that need dual-token (via TestHelper)
+                try { Files.writeString(gateHome.resolve("publisher-token"), publisherToken); } catch (Exception ignored) {}
             } catch (Exception ignored) {}
         } catch (IOException e) {
             throw new RuntimeException(e);

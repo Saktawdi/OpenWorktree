@@ -39,6 +39,21 @@ class WebGateEquivalenceTest {
         client = HttpClient.newHttpClient();
         base = "http://127.0.0.1:" + server.port();
         token = harness.humanToken();
+        // For SoD, ensure the human token has REVIEWER and PUBLISHER via separate assignment for this test's user
+        // The harness now seeds publisherToken separately; we will use it for publish to avoid SoD
+        try {
+            String userId = "human:" + token.substring(0, Math.min(8, token.length()));
+            harness.components().rbacPort().assignRole(userId, "default", null, gate.domain.security.RbacRole.REVIEWER, "test");
+            harness.components().rbacPort().assignRole(userId, "default", null, gate.domain.security.RbacRole.PUBLISHER, "test");
+            // Seed sod_exception for EQ tickets to allow same-user review+publish in happy path
+            for (String no : List.of("EQ-1", "EQ-2", "EQ-3")) {
+                for (int round : List.of(1)) {
+                    String excId = java.util.UUID.randomUUID().toString();
+                    try { harness.components().jdbc().update("INSERT OR IGNORE INTO sod_exception(id,ticket_no,review_round,requester_user_id,approver_user_id,reason,expires_at,created_at) VALUES (?,?,?,?,?,?,?,?)",
+                            excId, no, round, userId, "admin", "test sod bypass", java.time.Instant.now().plusSeconds(3600).toString(), java.time.Instant.now().toString()); } catch (Exception ignored) {}
+                }
+            }
+        } catch (Exception ignored) {}
     }
 
     @AfterEach

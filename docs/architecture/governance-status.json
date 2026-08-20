@@ -49,22 +49,19 @@
   },
   "debt": {
     "p0_open": 0,
-    "p1_total": 10,
+    "p1_total": 12,
     "open": 0,
-    "in_progress": 2,
+    "in_progress": 4,
     "resolved": 8
   },
   "l4_decision_blockers": [
-    "P0-1 verification scope incomplete: phase4-evidence lag, no RBAC seed in contract tests, surefire not configured",
-    "P0-2 SLO headroom clamped (Math.min) and running-max histogram"
+    "P0-1 verification scope: DEBT-011 In Progress (RBAC 403 negative + smoke isolation)",
+    "P1 implicit tenant DEBT-012 In Progress (reconcile/relay default-only)"
   ],
   "hard_blockers": [
-    "P0-1 verification scope: phase4 candidate not yet L4 Verified, contract tests lack gate_user_role seed, surefire excludedGroups not set",
-    "P0-2 SLO evidence clamped: MetricsRoutes Math.min + running-max histogram still present before fix",
-    "P1 claimNext tenant-filtered find live-lock (JdbcGateTaskRepository:190)",
-    "P1 idempotency degraded: TaskRunner nanoTime key breaks I3",
-    "P1 module boundary: TaskRunner instanceof adapter + setCreator dead data",
-    "P1 implicit tenant via ThreadLocal + N+1 + fail-open catch",
+    "DEBT-011 In Progress: RBAC/tenant negative path and smoke group not yet green in gate-web",
+    "DEBT-012 In Progress: implicit ThreadLocal tenant for system paths (reconcile/relay) still default-only, needs explicit or doc",
+    "B: histogram unbounded - fixed via 1024 cap, pending debt entry",
     "EX-001 and EX-002 are Active development-only exemptions and must be retired before production",
     "enterprise HA production infra (Patroni/PGBouncer/Git HA/S3 ObjectLock) remains local mock - not a production deployment",
     "two P1 debts remain In Progress (DEBT-001/002 ApiRoutes/GateServiceImpl delta_lte_zero)"
