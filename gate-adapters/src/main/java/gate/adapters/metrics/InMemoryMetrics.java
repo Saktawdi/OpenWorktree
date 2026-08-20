@@ -54,4 +54,10 @@ public final class InMemoryMetrics implements MetricsPort {
     }
 
     public long getCounter(String name) { return counters.getOrDefault(name, new AtomicLong()).get(); }
+    public long getHistogramMax(String name) { return histP95.getOrDefault(name, new AtomicLong(0)).get(); }
+    public Map<String, Long> snapshotHistograms() {
+        java.util.Map<String, Long> out = new java.util.HashMap<>();
+        histP95.forEach((k,v) -> out.put(k, v.get()));
+        return out;
+    }
 }

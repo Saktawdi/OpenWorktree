@@ -4,15 +4,15 @@ import gate.domain.security.SecurityContext;
 
 /**
  * ThreadLocal holder for authenticated SecurityContext (Phase4 ADR-007).
- * Set by ApiHandler after AuthFilter, read by ApiRoutes for RBAC/SoD.
+ * Delegates to ports holder so adapters can read tenant without depending on web.
+ * @deprecated use gate.ports.security.SecurityContextHolder
  */
+@Deprecated
 public final class GateSecurityHolder {
-
-    private static final ThreadLocal<SecurityContext> CTX = new ThreadLocal<>();
 
     private GateSecurityHolder() {}
 
-    public static void set(SecurityContext ctx) { CTX.set(ctx); }
-    public static SecurityContext get() { return CTX.get(); }
-    public static void clear() { CTX.remove(); }
+    public static void set(SecurityContext ctx) { gate.ports.security.SecurityContextHolder.set(ctx); }
+    public static SecurityContext get() { return gate.ports.security.SecurityContextHolder.get(); }
+    public static void clear() { gate.ports.security.SecurityContextHolder.clear(); }
 }

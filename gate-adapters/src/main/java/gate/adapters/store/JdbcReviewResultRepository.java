@@ -54,7 +54,8 @@ public final class JdbcReviewResultRepository implements ReviewResultRepository 
             getNullableLong(rs, "review_wall_ms"),
             getNullableLong(rs, "llm_wall_ms"),
             getNullableLong(rs, "diff_bytes"),
-            getNullableLong(rs, "diff_lines"));
+            getNullableLong(rs, "diff_lines"),
+            rs.getString("reviewer_user_id"));
 
     @Override
     public ReviewResultRow insert(
@@ -80,18 +81,24 @@ public final class JdbcReviewResultRepository implements ReviewResultRepository 
             BlobRef raw,
             Instant now,
             CostRecord cost) {
+        String reviewer = null;
+        try {
+            var ctx = gate.ports.security.SecurityContextHolder.get();
+            if (ctx != null) reviewer = ctx.userId();
+        } catch (Exception ignored) {}
+        // Fallback: try ticket presubmit's tenant context? Keep null if no context (e.g., test without auth)
         jdbc.update("""
                 INSERT INTO review_result(presubmit_id, engine_id, engine_version, provider_id, model_name,
                                           verdict, findings_blob, covered_ok, degraded, raw_blob, created_at,
                                           prompt_tokens, completion_tokens, total_tokens, token_source,
-                                          review_wall_ms, llm_wall_ms, diff_bytes, diff_lines)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                                          review_wall_ms, llm_wall_ms, diff_bytes, diff_lines, reviewer_user_id)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 presubmitId, engine.engineId(), engine.engineVersion(), engine.providerId(), engine.modelName(),
                 verdict.name(), findings.relPath(), coveredOk ? 1 : 0, degraded ? 1 : 0, raw.relPath(),
                 now.toString(),
                 cost.promptTokens(), cost.completionTokens(), cost.totalTokens(), cost.tokenSource(),
-                cost.reviewWallMs(), cost.llmWallMs(), cost.diffBytes(), cost.diffLines());
+                cost.reviewWallMs(), cost.llmWallMs(), cost.diffBytes(), cost.diffLines(), reviewer);
         return findLatestForPresubmit(presubmitId).orElseThrow(
                 () -> new IllegalStateException("review_result row vanished right after insert"));
     }

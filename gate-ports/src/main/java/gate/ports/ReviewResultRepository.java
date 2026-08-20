@@ -38,14 +38,16 @@ public interface ReviewResultRepository {
             Long reviewWallMs,
             Long llmWallMs,
             Long diffBytes,
-            Long diffLines) {
+            Long diffLines,
+            // Phase4 SoD: reviewer user
+            String reviewerUserId) {
 
         /** Backward-compatible constructor for callers that don't have cost data (legacy/P1/P2 paths). */
         public ReviewResultRow(long id, long presubmitId, EngineDescriptor engine,
                                Decision.Verdict verdict, String findingsBlobPath,
                                boolean coveredOk, boolean degraded, String rawBlobPath, Instant createdAt) {
             this(id, presubmitId, engine, verdict, findingsBlobPath, coveredOk, degraded, rawBlobPath,
-                    createdAt, null, null, null, null, null, null, null, null);
+                    createdAt, null, null, null, null, null, null, null, null, null);
         }
     }
 

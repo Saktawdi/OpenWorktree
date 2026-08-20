@@ -15,9 +15,14 @@ public final class SecurityContextResolver {
 
     private final CredentialRepository credentials;
     private final RbacPort rbac;
+    private final org.springframework.jdbc.core.JdbcTemplate jdbc;
 
     public SecurityContextResolver(CredentialRepository credentials, RbacPort rbac) {
-        this.credentials = credentials; this.rbac = rbac;
+        this(credentials, rbac, null);
+    }
+
+    public SecurityContextResolver(CredentialRepository credentials, RbacPort rbac, org.springframework.jdbc.core.JdbcTemplate jdbc) {
+        this.credentials = credentials; this.rbac = rbac; this.jdbc = jdbc;
     }
 
     public SecurityContext resolve(String token) {
@@ -26,23 +31,33 @@ public final class SecurityContextResolver {
         if (!domain.isValid()) return SecurityContext.anonymous();
         // Derive userId: for HUMAN token, use hash prefix; for AGENT, ticket binding
         String userId = domain.isHuman() ? "human:" + token.substring(0, Math.min(8, token.length())) : "agent:" + domain.ticketNo();
-        // Resolve tenant: try credential.tenant_id via DB peek (if V13 migrated), else default
+        // Tenant is resolved from credential.tenant_id (V13) via DB; fallback to default if column missing
         String tenantId = "default";
+        if (jdbc != null) {
+            try {
+                String hash = sha256Hex(token);
+                java.util.List<String> rows = jdbc.queryForList("SELECT tenant_id FROM credential WHERE token_hash = ?", String.class, hash);
+                if (!rows.isEmpty() && rows.get(0) != null && !rows.get(0).isBlank()) tenantId = rows.get(0);
+            } catch (Exception ignored) {}
+        }
         Set<RbacRole> roles = new HashSet<>();
         try {
-            // Best-effort: ask rbac store for roles; if none, default to HUMAN full access for local dev
             Set<RbacRole> resolved = rbac.resolveRoles(userId, tenantId, null);
-            if (!resolved.isEmpty()) roles.addAll(resolved);
-            else if (domain.isHuman()) {
-                roles.add(RbacRole.DEVELOPER);
-                roles.add(RbacRole.REVIEWER);
-                roles.add(RbacRole.PUBLISHER);
-                roles.add(RbacRole.PROJECT_ADMIN);
-            }
-        } catch (Exception ignored) {
-            if (domain.isHuman()) roles.add(RbacRole.DEVELOPER);
+            if (resolved != null && !resolved.isEmpty()) roles.addAll(resolved);
+            // else remain empty -> fail-closed. No auto-grant for HUMAN.
+        } catch (Exception e) {
+            // Fail-closed: do not grant Developer on error. Log and keep empty.
+            System.err.println("[RBAC] resolveRoles failed for " + userId + ": " + e.getMessage());
         }
         String hash = token.length() > 16 ? token.substring(0,16) : token;
         return new SecurityContext(userId, tenantId, null, Set.copyOf(roles), hash);
+    }
+
+    private static String sha256Hex(String input) {
+        try {
+            java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
+            byte[] h = md.digest(input.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            return java.util.HexFormat.of().formatHex(h);
+        } catch (Exception e) { throw new RuntimeException(e); }
     }
 }

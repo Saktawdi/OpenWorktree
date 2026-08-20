@@ -36,6 +36,7 @@ import gate.ports.TaskRegistry;
 import gate.ports.TicketLockManager;
 import gate.ports.TicketRepository;
 import gate.ports.TopologyInitializer;
+import gate.adapters.metrics.AlertService;
 import gate.adapters.metrics.InMemoryMetrics;
 import gate.adapters.health.HealthService;
 import gate.adapters.backup.BackupService;
@@ -100,11 +101,13 @@ public final class WebComponents {
     private final HealthService healthService;
     private final BackupService backupService;
     private final gate.application.metrics.SloService sloService;
+    private final AlertService alertService;
     private final gate.web.health.HealthRoutes healthRoutes;
     private final gate.web.metrics.MetricsRoutes metricsRoutes;
     private final gate.web.provider.ProviderRoutes providerRoutes;
     private final gate.web.security.SecurityContextResolver securityResolver;
     private final gate.application.security.RbacService rbacService;
+    private final org.springframework.jdbc.core.JdbcTemplate jdbc;
 
     public WebComponents(GateConfig config, String gitExecutable, Path envFile) {
         this(config, gitExecutable, envFile, null);
@@ -151,10 +154,13 @@ public final class WebComponents {
         this.healthService = runtime.healthService();
         this.backupService = runtime.backupService();
         this.sloService = runtime.sloService();
+        this.alertService = runtime.alertService();
         this.healthRoutes = new gate.web.health.HealthRoutes(healthService);
         this.metricsRoutes = new gate.web.metrics.MetricsRoutes(inMemoryMetrics, sloService);
         this.providerRoutes = new gate.web.provider.ProviderRoutes(providerRepository, clock);
-        this.securityResolver = new gate.web.security.SecurityContextResolver(credentials, rbacPort);
+        // Tenant-aware resolver needs DB for credential.tenant_id lookup (V13)
+        this.jdbc = new org.springframework.jdbc.core.JdbcTemplate(runtime.dataSource());
+        this.securityResolver = new gate.web.security.SecurityContextResolver(credentials, rbacPort, this.jdbc);
         this.rbacService = new gate.application.security.RbacService(rbacPort);
 
         this.agentConfigRepository = runtime.agentConfigRepository();
@@ -337,11 +343,13 @@ public final class WebComponents {
     public HealthService healthService() { return healthService; }
     public BackupService backupService() { return backupService; }
     public gate.application.metrics.SloService sloService() { return sloService; }
+    public AlertService alertService() { return alertService; }
     public gate.web.health.HealthRoutes healthRoutes() { return healthRoutes; }
     public gate.web.metrics.MetricsRoutes metricsRoutes() { return metricsRoutes; }
     public gate.web.provider.ProviderRoutes providerRoutes() { return providerRoutes; }
     public gate.web.security.SecurityContextResolver securityResolver() { return securityResolver; }
     public gate.application.security.RbacService rbacService() { return rbacService; }
+    public org.springframework.jdbc.core.JdbcTemplate jdbc() { return jdbc; }
 
     /** Shuts down the async task executor and session adapters. Idempotent; called by {@link WebServer#close()}. */
     public void close() {

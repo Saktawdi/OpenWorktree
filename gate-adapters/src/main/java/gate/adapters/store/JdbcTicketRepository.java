@@ -20,6 +20,9 @@ public final class JdbcTicketRepository implements TicketRepository {
         this.jdbc = jdbc;
     }
 
+    private static String tenantOrDefault(ResultSet rs) {
+        try { String t = rs.getString("tenant_id"); return t == null || t.isBlank() ? "default" : t; } catch (Exception e) { return "default"; }
+    }
     private static final RowMapper<Ticket> MAPPER = (ResultSet rs, int n) -> new Ticket(
             rs.getString("ticket_no"),
             rs.getString("title"),
@@ -41,8 +44,21 @@ public final class JdbcTicketRepository implements TicketRepository {
             rs.getString("note"),
             decodeLabels(rs.getString("labels")));
 
+    private String currentTenant() {
+        try {
+            return gate.ports.security.SecurityContextHolder.currentTenant();
+        } catch (Exception ignored) {}
+        return "default";
+    }
+    private boolean tenantMatches(String rowTenant) {
+        String ctxTenant = currentTenant();
+        String rt = rowTenant == null || rowTenant.isBlank() ? "default" : rowTenant;
+        return ctxTenant.equals(rt);
+    }
+
     @Override
     public void insert(Ticket ticket) {
+        String tenantId = currentTenant();
         jdbc.update("""
                 INSERT INTO ticket(ticket_no, title, target_ref, clone_path,
                                    executor_provider_id, executor_model,
@@ -50,8 +66,8 @@ public final class JdbcTicketRepository implements TicketRepository {
                                    stage, created_at, updated_at,
                                    exec_token_total, exec_token_source,
                                    agent_config_id, priority, project_id,
-                                   description, note, labels)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                                   description, note, labels, tenant_id)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 ticket.ticketNo(), ticket.title(), ticket.targetRef(), ticket.clonePath(),
                 ticket.executorProviderId(), ticket.executorModel(),
@@ -59,13 +75,19 @@ public final class JdbcTicketRepository implements TicketRepository {
                 ticket.stage().name(), ticket.createdAt().toString(), ticket.updatedAt().toString(),
                 ticket.execTokenTotal(), ticket.execTokenSource(),
                 ticket.agentConfigId(), ticket.priority(), ticket.projectId(),
-                ticket.description(), ticket.note(), encodeLabels(ticket.labels()));
+                ticket.description(), ticket.note(), encodeLabels(ticket.labels()), tenantId);
     }
 
     @Override
     public Optional<Ticket> find(String ticketNo) {
         List<Ticket> rows = jdbc.query("SELECT * FROM ticket WHERE ticket_no = ?", MAPPER, ticketNo);
-        return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
+        if (rows.isEmpty()) return Optional.empty();
+        // Tenant isolation: verify row tenant matches context
+        try {
+            String rowTenant = jdbc.queryForObject("SELECT tenant_id FROM ticket WHERE ticket_no = ?", String.class, ticketNo);
+            if (!tenantMatches(rowTenant)) return Optional.empty();
+        } catch (Exception ignored) {}
+        return Optional.of(rows.get(0));
     }
 
     @Override
@@ -131,18 +153,45 @@ public final class JdbcTicketRepository implements TicketRepository {
 
     @Override
     public List<Ticket> findByStage(TicketStage stage) {
-        return jdbc.query("SELECT * FROM ticket WHERE stage = ? ORDER BY ticket_no", MAPPER, stage.name());
+        List<Ticket> all = jdbc.query("SELECT * FROM ticket WHERE stage = ? ORDER BY ticket_no", MAPPER, stage.name());
+        // Tenant filter: keep only matching tenant rows
+        String ctxTenant = currentTenant();
+        java.util.List<Ticket> filtered = new java.util.ArrayList<>();
+        for (Ticket t : all) {
+            try {
+                String rowTenant = jdbc.queryForObject("SELECT tenant_id FROM ticket WHERE ticket_no = ?", String.class, t.ticketNo());
+                if (ctxTenant.equals(rowTenant == null || rowTenant.isBlank() ? "default" : rowTenant)) filtered.add(t);
+            } catch (Exception e) { filtered.add(t); }
+        }
+        return java.util.List.copyOf(filtered);
     }
 
     @Override
     public List<Ticket> findAll() {
-        return jdbc.query("SELECT * FROM ticket ORDER BY ticket_no", MAPPER);
+        List<Ticket> all = jdbc.query("SELECT * FROM ticket ORDER BY ticket_no", MAPPER);
+        String ctxTenant = currentTenant();
+        java.util.List<Ticket> filtered = new java.util.ArrayList<>();
+        for (Ticket t : all) {
+            try {
+                String rowTenant = jdbc.queryForObject("SELECT tenant_id FROM ticket WHERE ticket_no = ?", String.class, t.ticketNo());
+                if (ctxTenant.equals(rowTenant == null || rowTenant.isBlank() ? "default" : rowTenant)) filtered.add(t);
+            } catch (Exception e) { filtered.add(t); }
+        }
+        return java.util.List.copyOf(filtered);
     }
 
     @Override
     public List<Ticket> findAllByProject(String projectId) {
-        return jdbc.query("SELECT * FROM ticket WHERE project_id = ? ORDER BY ticket_no", MAPPER,
-                projectId);
+        List<Ticket> all = jdbc.query("SELECT * FROM ticket WHERE project_id = ? ORDER BY ticket_no", MAPPER, projectId);
+        String ctxTenant = currentTenant();
+        java.util.List<Ticket> filtered = new java.util.ArrayList<>();
+        for (Ticket t : all) {
+            try {
+                String rowTenant = jdbc.queryForObject("SELECT tenant_id FROM ticket WHERE ticket_no = ?", String.class, t.ticketNo());
+                if (ctxTenant.equals(rowTenant == null || rowTenant.isBlank() ? "default" : rowTenant)) filtered.add(t);
+            } catch (Exception e) { filtered.add(t); }
+        }
+        return java.util.List.copyOf(filtered);
     }
 
     private static Long getNullableLong(ResultSet rs, String column) {

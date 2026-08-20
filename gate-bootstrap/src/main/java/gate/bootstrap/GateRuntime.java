@@ -73,6 +73,7 @@ import gate.ports.metrics.TracingPort;
 import gate.ports.security.AuditArchivePort;
 import gate.ports.security.RbacPort;
 import gate.ports.security.TenantPort;
+import gate.adapters.metrics.AlertService;
 import java.nio.file.Path;
 import java.time.Duration;
 import javax.sql.DataSource;
@@ -126,6 +127,7 @@ public final class GateRuntime {
     private final HealthService healthService;
     private final BackupService backupService;
     private final gate.application.metrics.SloService sloService;
+    private final AlertService alertService;
 
     public GateRuntime(GateConfig config, String gitExecutable, Path envFile) {
         this.config = config;
@@ -178,10 +180,11 @@ public final class GateRuntime {
         this.tracingPort = new NoopTracing();
         this.rbacPort = new JdbcRbacStore(jdbc);
         this.tenantPort = new TenantIsolationService(jdbc);
-        this.auditArchivePort = new WormAuditArchive(config.auditPath(), jdbc, this.kmsService);
+        this.auditArchivePort = new WormAuditArchive(config.auditPath(), jdbc, this.kmsService, this.s3Store);
         this.healthService = new HealthService(dataSource, config.authRepo(), this.s3Store, this.kmsService, refObserver);
         this.backupService = new BackupService(dataSource, config.authRepo(), config.gateHome(), this.s3Store);
         this.sloService = new gate.application.metrics.SloService();
+        this.alertService = new AlertService(this.metricsPort, new org.springframework.jdbc.core.JdbcTemplate(dataSource));
 
         ReviewEngineFactory reviewEngineFactory = config.engineConfigured()
                 ? new GateReviewEngineFactory(blobStore, config, processRunner, providerRepository, this.envFile)
@@ -231,6 +234,7 @@ public final class GateRuntime {
     public HealthService healthService() { return healthService; }
     public BackupService backupService() { return backupService; }
     public gate.application.metrics.SloService sloService() { return sloService; }
+    public AlertService alertService() { return alertService; }
     public AuditLog auditLog() { return new HashChainAuditLog(config.auditPath()); }
 
     /** Seeds a provider required by the review-result foreign key. Safe to call repeatedly. */

@@ -74,6 +74,7 @@ public final class ApiRoutes {
     private final gate.web.security.SecurityContextResolver securityResolver;
     private final gate.application.security.RbacService rbacService;
     private final gate.ports.metrics.MetricsPort metricsPort;
+    private final org.springframework.jdbc.core.JdbcTemplate jdbc;
 
     ApiRoutes(WebComponents c) {
         this.gateService = c.gateService();
@@ -105,6 +106,7 @@ public final class ApiRoutes {
         this.securityResolver = c.securityResolver();
         this.rbacService = c.rbacService();
         this.metricsPort = c.metricsPort();
+        this.jdbc = c.jdbc();
     }
 
     /** A resolved response: HTTP status + a JSON-serialisable body. */
@@ -272,16 +274,25 @@ public final class ApiRoutes {
         if (seg.length == 4 && seg[1].equals("tickets") && seg[3].equals("publish")
                 && method.equals("POST")) {
             require(Permission.PUBLISH_RUN);
-            // Phase4 SoD: same user cannot publish after reviewing without exception
-            var ctx = gate.web.security.GateSecurityHolder.get();
+            // Phase4 SoD: same user cannot publish after reviewing without dual-approval (ADR-007)
+            var ctx = gate.ports.security.SecurityContextHolder.get();
             if (ctx != null && ctx.userId() != null) {
-                // Check SoD via ticket's latest review round (lightweight)
                 var presubmit = presubmits.findLatest(seg[2]);
                 if (presubmit.isPresent()) {
                     var rr = reviewResults.findLatestForPresubmit(presubmit.get().id());
-                    boolean alreadyReviewed = rr.isPresent();
-                    String violation = gate.domain.security.SoDPolicy.check(ctx.userId(), ctx.roles(), seg[2], presubmit.get().reviewRound(), alreadyReviewed, false);
+                    String reviewerUserId = rr.map(r -> r.reviewerUserId()).orElse(null);
+                    boolean hasException = false;
+                    try {
+                        var rows = jdbc.queryForList("SELECT 1 FROM sod_exception WHERE ticket_no=? AND review_round=? AND requester_user_id=? AND expires_at > datetime('now')", String.class, seg[2], presubmit.get().reviewRound(), ctx.userId());
+                        hasException = !rows.isEmpty();
+                    } catch (Exception ignored) {}
+                    String violation = gate.domain.security.SoDPolicy.check(ctx.userId(), ctx.roles(), seg[2], presubmit.get().reviewRound(), reviewerUserId, hasException);
                     if (violation != null) throw new gate.domain.error.GateException(gate.domain.error.GateErrorCode.USAGE, violation);
+                    // Also check legacy alreadyReviewed path for roles that contain both
+                    if (reviewerUserId == null && rr.isPresent()) {
+                        String legacy = gate.domain.security.SoDPolicy.check(ctx.userId(), ctx.roles(), seg[2], presubmit.get().reviewRound(), true, hasException);
+                        if (legacy != null) throw new gate.domain.error.GateException(gate.domain.error.GateErrorCode.USAGE, legacy);
+                    }
                 }
             }
             return publish(seg[2], requestBody);
@@ -914,7 +925,10 @@ public final class ApiRoutes {
     // --- Phase4: RBAC + audit ---
     private void require(Permission p) {
         var ctx = gate.web.security.GateSecurityHolder.get();
-        if (ctx == null || ctx.userId() == null) return; // unauthenticated local dev bypass (§3.4)
+        if (ctx == null || ctx.userId() == null) {
+            metricsPort.counter("gate_rbac_denied_total", 1, Map.of("permission", p.name()));
+            throw new GateException(GateErrorCode.USAGE, "UNAUTHENTICATED: missing security context for " + p);
+        }
         try { rbacService.require(ctx, p, ctx.tenantId(), null); } catch (GateException e) {
             metricsPort.counter("gate_rbac_denied_total", 1, Map.of("permission", p.name()));
             throw e;

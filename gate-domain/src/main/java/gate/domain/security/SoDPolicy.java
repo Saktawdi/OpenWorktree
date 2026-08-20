@@ -13,22 +13,35 @@ public final class SoDPolicy {
 
     /**
      * Returns violation message if SoD is breached, null if allowed.
-     * Rule: same userId must not hold both REVIEWER and PUBLISHER for same ticket+round
-     * unless exceptionApproved == true (dual approval recorded in audit).
+     * Rule: same userId must not publish ticket that they reviewed without dual-approval.
+     * Checks explicit reviewerUserId, not just alreadyReviewed flag, and consults sod_exception.
      */
     public static String check(String userId, Set<RbacRole> roles, String ticketNo, int round,
                                boolean alreadyReviewed, boolean exceptionApproved) {
+        // Backward compat: if alreadyReviewed true but reviewer unknown, assume self-review if roles contain both
         if (userId == null) return null;
         if (roles == null) return null;
+        if (!alreadyReviewed) return null;
+        if (exceptionApproved) return null;
         boolean isReviewer = roles.contains(RbacRole.REVIEWER);
         boolean isPublisher = roles.contains(RbacRole.PUBLISHER);
-        // If user is both, require exception
-        if (isReviewer && isPublisher && alreadyReviewed && !exceptionApproved) {
+        if (isReviewer && isPublisher) {
             return "SoD violation: user " + userId + " cannot publish ticket " + ticketNo
                     + " round " + round + " after reviewing it without dual-approval exception";
         }
-        // ProjectAdmin + SystemOperator are allowed to bypass only with audit (still check)
+        // Even if current roles no longer contain REVIEWER, still check self-review via reviewerUserId path below
         return null;
+    }
+
+    public static String check(String currentUserId, Set<RbacRole> roles, String ticketNo, int round,
+                               String reviewerUserId, boolean exceptionApproved) {
+        if (currentUserId == null) return null;
+        if (reviewerUserId == null) return null;
+        if (exceptionApproved) return null;
+        if (!currentUserId.equals(reviewerUserId)) return null;
+        // Same user published after reviewing -> require exception
+        return "SoD violation: user " + currentUserId + " cannot publish ticket " + ticketNo
+                + " round " + round + " reviewed by self without sod_exception dual-approval";
     }
 
     /** Policy version check must be part of PublishAuthorization evidence. */

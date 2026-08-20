@@ -53,25 +53,21 @@ if (-not (Test-Path -LiteralPath $sloPath)) { Record-Error "GOV-OBS-001 SloServi
 # REAL EXECUTION: run capacity evidence (not just file-name check)
 if (-not $Mock) {
     Write-Host "[GOV-OBS-001] Running real capacity evidence: TaskEventOutboxFaultTest (slow consumer), rough P99 headroom probe..."
-    # 1) Fault backpressure test must pass – it proves bounded 100 and DB replay recovers
+    # 1) Fault backpressure test must pass – it proves bounded 100 and DB replay recovers (200 appends + 100 reads)
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
     $proc = Start-Process -FilePath "mvn" -ArgumentList @("-pl","gate-adapters","-am","-Dtest=TaskEventOutboxFaultTest#testSlowConsumerDoesNotGrowUnbounded+testCursorReplayStream","-Dsurefire.failIfNoSpecifiedTests=false","-DfailIfNoTests=false","test") -WorkingDirectory $repo -Wait -PassThru -NoNewWindow
+    $sw.Stop()
     if ($proc.ExitCode -ne 0) { Record-Error "GOV-OBS-001 capacity evidence failed: bounded-buffer/throughput tests mvn exit=$($proc.ExitCode)" }
-    else { Write-Host "  - Bounded buffer + replay tests passed" }
-    # 1b) Phase4 health/SLO test must pass
+    else { Write-Host ("  - Bounded buffer + replay tests passed (elapsed " + $sw.ElapsedMilliseconds + "ms)") }
+    if ($sw.ElapsedMilliseconds -gt 5000) { Record-Error "GOV-OBS-001 P99 headroom exceeded 5000ms (elapsed $($sw.ElapsedMilliseconds)ms)" }
+    else { Write-Host "  - Headroom probe passed: 200 appends + 100 reads under 5s (actual $($sw.ElapsedMilliseconds)ms)" }
+    # 1b) Phase4 health/SLO test must pass (real InMemoryMetrics + SloService with measured histogram)
+    $sw2 = [System.Diagnostics.Stopwatch]::StartNew()
     $proc2 = Start-Process -FilePath "mvn" -ArgumentList @("-pl","gate-adapters","-am","-Dtest=Phase4SecurityAndHaTest#testHealthAndMetricsAndSlo+testBackupAndRestore","-Dsurefire.failIfNoSpecifiedTests=false","-DfailIfNoTests=false","test") -WorkingDirectory $repo -Wait -PassThru -NoNewWindow
+    $sw2.Stop()
     if ($proc2.ExitCode -ne 0) { Record-Error "GOV-OBS-001 Phase4 SLO/health evidence failed mvn exit=$($proc2.ExitCode)" }
-    else { Write-Host "  - Phase4 SLO/health/backup tests passed" }
-
-    # 2) Rough P99 headroom probe: 200 appends + 100 reads via task_event under 5s (fails if P99 > 100ms or throughput collapsed)
-    $benchFailed = $false
-    try {
-        $sw = [System.Diagnostics.Stopwatch]::StartNew()
-        # invoke a tiny Java bench via mvn exec or fallback to mvn test timing already captured
-        $sw.Stop()
-        Write-Host ("  - Headroom probe elapsed=" + $sw.ElapsedMilliseconds + "ms (threshold 5000ms)")
-        if ($sw.ElapsedMilliseconds -gt 5000) { $benchFailed = $true; Record-Error "GOV-OBS-001 P99 headroom exceeded 5000ms" }
-    } catch { $benchFailed=$true; Record-Error "GOV-OBS-001 headroom probe error: $_" }
-    if (-not $benchFailed) { Write-Host "  - Headroom probe passed: bounded queue P99 within SLO" }
+    else { Write-Host ("  - Phase4 SLO/health/backup tests passed (elapsed " + $sw2.ElapsedMilliseconds + "ms)") }
+    if ($sw2.ElapsedMilliseconds -gt 5000) { Record-Error "GOV-OBS-001 Phase4 headroom exceeded 5000ms" }
 
     # 3) Check that SseHandler comment does not claim P99 without measurement – warn if no JMH/benchmark module
     $hasBench = (Get-ChildItem $repo -Recurse -Filter "*Benchmark*.java" -ErrorAction SilentlyContinue | Measure-Object).Count -gt 0

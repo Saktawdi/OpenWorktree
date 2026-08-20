@@ -54,10 +54,27 @@ public final class HealthService {
 
     public Map<String, Object> dependencies() {
         Map<String, Object> m = new LinkedHashMap<>();
-        m.put("auth_repo_exists", Files.isDirectory(authRepo));
-        try { m.put("auth_ref_ok", refObserver.tip(gate.domain.git.RepoRef.of(authRepo), "refs/heads/main").isPresent() || true); } catch (Exception e) { m.put("auth_ref_ok", false); m.put("auth_ref_error", e.getMessage()); }
-        try { s3.head("health-check"); m.put("s3_ok", true); } catch (Exception e) { m.put("s3_ok", true); } // local mock always ok
-        try { m.put("kms_ok", kms.keyRing() != null); } catch (Exception e) { m.put("kms_ok", false); }
+        boolean authExists = Files.isDirectory(authRepo);
+        m.put("auth_repo_exists", authExists);
+        try {
+            boolean tipOk = refObserver.tip(gate.domain.git.RepoRef.of(authRepo), "refs/heads/main").isPresent();
+            // tip may be empty for empty repo, but repo exists is still ok; we report actual
+            m.put("auth_ref_ok", tipOk);
+            if (!tipOk) m.put("auth_ref_note", "no refs/heads/main yet");
+        } catch (Exception e) { m.put("auth_ref_ok", false); m.put("auth_ref_error", e.getMessage()); }
+        try {
+            // S3 liveness: try put+head+delete probe, not just head of missing key
+            String probeKey = "health/probe-" + Instant.now().toEpochMilli();
+            byte[] probe = "ok".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            String probeSha = java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(probe));
+            var put = s3.put(probeKey, probe, probeSha);
+            var head = s3.head(probeKey);
+            boolean s3Ok = head.isPresent() && head.get().size() == probe.length;
+            m.put("s3_ok", s3Ok);
+            if (s3Ok) s3.delete(probeKey, put.versionId());
+            else m.put("s3_error", "probe head missing or size mismatch");
+        } catch (Exception e) { m.put("s3_ok", false); m.put("s3_error", e.getMessage()); }
+        try { m.put("kms_ok", kms.keyRing() != null && kms.keyRing().currentKeyId() != null); } catch (Exception e) { m.put("kms_ok", false); m.put("kms_error", e.getMessage()); }
         m.put("now", Instant.now().toString());
         return m;
     }
@@ -69,6 +86,6 @@ public final class HealthService {
 
     private boolean checkDisk() {
         try { long usable = Files.getFileStore(authRepo.getParent() != null ? authRepo.getParent() : Path.of(".")).getUsableSpace(); return usable > 50 * 1024 * 1024; }
-        catch (Exception e) { return true; }
+        catch (Exception e) { return false; }
     }
 }
