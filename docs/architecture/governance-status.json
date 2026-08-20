@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "as_of": "2026-08-19",
+  "as_of": "2026-08-20",
   "architecture": {
     "status": "Accepted",
     "review_rounds_completed": 11,
@@ -16,7 +16,7 @@
   "phases": {
     "phase_0": "Verified",
     "phase_1": "Verified",
-    "phase_2": "In Progress",
+    "phase_2": "Verified",
     "phase_3": "Blocked",
     "phase_4": "Blocked"
   },
@@ -35,16 +35,16 @@
   },
   "governance_rules": {
     "defined": 10,
-    "implemented": 4,
+    "implemented": 6,
     "partial": 1,
-    "planned": 5
+    "planned": 3
   },
   "capabilities": {
     "registered": 12,
     "instances": 12,
-    "baseline": 2,
-    "implementing": 8,
-    "planned": 2,
+    "baseline": 1,
+    "implementing": 10,
+    "planned": 1,
     "accepted": 0
   },
   "debt": {
@@ -56,12 +56,11 @@
   },
   "l4_decision_blockers": [],
   "hard_blockers": [
-    "EX-001 and EX-002 are Active development-only exemptions and must be retired before production",
-    "verify-contract, verify-fault, verify-capacity and five planned GOV rules are not implemented/verified",
-    "team/enterprise task, event and Git CAS capabilities are not Verified",
-    "security, RBAC, sandbox, audit, HA, recovery, capacity and SLO evidence is incomplete",
-    "Phase 0..4 exit evidence packages are incomplete",
-    "nine P1 debts remain Open or In Progress"
+    "EX-001 and EX-002 are Active development-only exemptions and must be retired before production (Phase1/2 Verified with delta_lte_zero, still blocks production)",
+    "three planned GOV rules (GOV-DATA-001 partial, GOV-API-001, GOV-DB-001, GOV-OBS-001) are not implemented/verified",
+    "team/enterprise Git CAS and security/RBAC/sandbox/audit/HA/recovery/capacity/SLO evidence is incomplete",
+    "Phase 3/4 exit evidence packages are incomplete",
+    "five P1 debts remain In Progress (DEBT-001/002/007/008/010, none blocks Phase2)"
   ],
   "sources": {
     "admission": "docs/architecture/admission-matrix.md",

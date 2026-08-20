@@ -6,7 +6,7 @@
 技术 owner：Application owner  
 最低实施等级：L3  
 复核/批准等级：L4  
-状态：Planned
+状态：Implementing
 
 ## 1. 边界
 
@@ -53,4 +53,6 @@
 - 故障测试：客户端断线重连与事件补发测试。
 - 容量测试：高并发 SSE 广播长连接稳定性测试。
 - API/事件兼容证据：标准 W3C SSE 格式（`id: ...\nevent: ...\ndata: ...\n\n`）。
-- 数据库迁移和回滚证据：待随 DEBT-006 接入 V9/V10 migration。
+- 数据库迁移和回滚证据：`V9__task_event_outbox.sql` 已落地 `task_event`/`outbox` 及有界背压设计。
+- 已落地实施证据：`TaskEventPort.replay` + `SseHandler MAX_BUFFERED_EVENTS=100 有界队列(drop-oldest)+droppedEvents计数` + `TaskEventOutboxFaultTest 慢消费者/节点切换` 全部通过，持久回放基于 DB 无丢终态。
+- Phase2 退出条件：持久化事件/游标/Outbox/慢消费者有界全部满足。

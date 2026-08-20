@@ -6,7 +6,7 @@
 技术 owner：Application owner  
 最低实施等级：L3  
 复核/批准等级：L4  
-状态：Baseline
+状态：Implementing
 
 ## 1. 边界
 
@@ -53,4 +53,6 @@
 - 故障测试：Worker 假死与 Lease 抢占测试。
 - 容量测试：高并发任务入队与调度测试。
 - API/事件兼容证据：`/api/tasks/{id}` 响应契约稳定。
-- 数据库迁移和回滚证据：`V2__tasks.sql`，后续规划 V9 扩展迁移（DEBT-005）。
+- 数据库迁移和回滚证据：`V2__tasks.sql`；`V9__task_event_outbox.sql` 已落地 lease/fence/幂等/outbox 扩展。
+- 已落地实施证据：`JdbcGateTaskRepository.updateWithFence/registerWithKey`、`TaskEventOutboxFaultTest` 6 场景（stale fence/幂等/outbox/replay/慢消费者有界/节点切换）全部通过。
+- Phase2 退出条件：4 项全部满足（fence/幂等/SSE重连/慢消费者有界 100 已验证）。

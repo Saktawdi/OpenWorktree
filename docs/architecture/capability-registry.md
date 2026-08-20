@@ -13,8 +13,8 @@
 | `review` | 审核编排、证据、策略判定和 review result | `application/review`, `adapters/engine` | `review` | Implementing | Engine port、证据、Fail-Closed、故障测试 |
 | `publish` | intent、授权、Git CAS、发布和 reconcile | `application/publish`, `adapters/git` | `publish` | Implementing | PublishAuthorization、CAS、恢复演练 |
 | `session` | Agent 配置、会话、消息和恢复等级 | `application/session`, `adapters/session` | `session` | Implementing | Session port、事件、取消、沙箱 |
-| `task` | 任务登记、领取、租约、fence、重试和终态 | `application/task`, `adapters/task` | `task` | Baseline | task schema、claim SQL、reaper、指标 |
-| `event` | outbox、task_event 存储、sequence 和 SSE 游标 | `application/event`, `adapters/event`, `web/sse` | `event`（存储）；语义 owner 见事件目录 | Planned | Outbox、事件协议、背压、回放 |
+| `task` | 任务登记、领取、租约、fence、重试和终态 | `application/task`, `adapters/task` | `task` | Implementing | lease/fence/idempotency/V9 已落地 |
+| `event` | outbox、task_event 存储、sequence 和 SSE 游标 | `application/event`, `adapters/event`, `web/sse` | `event`（存储）；语义 owner 见事件目录 | Implementing | task_event+outbox+TaskEventPort.replay+SseHandler Last-Event-ID+有界背压(MAX_BUFFERED_EVENTS=100)已落地 |
 | `provider` | Provider、model 列表和凭据引用配置 | `application/provider`, `adapters/provider` | `provider`（配置）；`security`（Secret） | Implementing | Provider port、Secret 引用、模型刷新 |
 | `security` | 身份、RBAC、Secret、审计和密钥生命周期 | `application/security`, `adapters/security` | `security` | Planned | AuthN/Z、KMS、WORM 审计、轮换 |
 | `metrics` | 成本、容量和运行指标的派生投影 | `application/metrics`, `adapters/metrics` | `metrics`（派生） | Implementing | projector、指标 schema、陈旧度 |
