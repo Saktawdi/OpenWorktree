@@ -1,10 +1,11 @@
-import { GitBranch, Sparkle } from "@phosphor-icons/react";
-import { NO_CHAT, useApp } from "../lib/store";
+import { GitBranch, NotePencil, Sparkle } from "@phosphor-icons/react";
+import { NO_CHAT, openTicketEditor, useApp } from "../lib/store";
 import { ChatStream } from "./ChatStream";
 import { Composer } from "./Composer";
 import { DiffView } from "./DiffView";
 import { FindingsView } from "./FindingsView";
 import { GatePanel } from "./GatePanel";
+import { TicketEditDialog } from "./TicketEditDialog";
 import { TicketList } from "./TicketList";
 import { StageBadge } from "./ui";
 import { setCenterTab } from "../lib/store";
@@ -18,9 +19,29 @@ function ContextStrip({ ticketNo }: { ticketNo: string }) {
       <span className="font-mono text-[12.5px] text-accent bg-accent/10 border border-accent/25 rounded-md px-2 py-0.5">
         {ticket.ticketNo}
       </span>
-      <span className="text-[13.5px] font-medium truncate max-w-[380px]">{ticket.title}</span>
+      <span
+        className="text-[13.5px] font-medium truncate max-w-[360px]"
+        title={ticket.description ?? ticket.title}
+      >
+        {ticket.title}
+      </span>
+      {(ticket.description || ticket.note) && (
+        <span
+          className="w-1.5 h-1.5 rounded-full bg-info/70 shrink-0"
+          title={[ticket.description, ticket.note].filter(Boolean).join("\n——\n")}
+        />
+      )}
       <StageBadge stage={ticket.stage} />
       <span className="flex-1" />
+      {ticket.labels.length > 0 && (
+        <span className="hidden xl:flex gap-1">
+          {ticket.labels.slice(0, 3).map((l) => (
+            <span key={l} className="chip border border-edge-strong bg-raised text-faint">
+              {l}
+            </span>
+          ))}
+        </span>
+      )}
       <span className="hidden lg:inline-flex items-center gap-1.5 text-[12px] text-dim">
         <GitBranch size={13} className="text-faint" />
         <span className="font-mono">main</span>
@@ -31,6 +52,14 @@ function ContextStrip({ ticketNo }: { ticketNo: string }) {
           {agent.name} · <span className="font-mono text-[11px] text-faint">{agent.model}</span>
         </span>
       )}
+      <button
+        className="icon-btn shrink-0"
+        title="编辑工单"
+        aria-label="编辑工单"
+        onClick={() => openTicketEditor(ticketNo)}
+      >
+        <NotePencil size={14} />
+      </button>
     </div>
   );
 }
@@ -102,6 +131,7 @@ export function Workbench() {
         {tab === "chat" && <Composer ticketNo={selectedNo} />}
       </main>
       <GatePanel ticketNo={selectedNo} />
+      <TicketEditDialog />
     </div>
   );
 }

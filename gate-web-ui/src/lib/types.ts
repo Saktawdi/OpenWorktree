@@ -20,6 +20,14 @@ export interface Project {
   name: string;
   workspacePath: string;
   targetRef: string;
+  authRepo: string;
+  priority: Priority | null;
+  size: "small" | "medium" | "large" | null;
+  tags: string[];
+  ticketCount: number;
+  activeTicketCount: number;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface Ticket {
@@ -30,9 +38,62 @@ export interface Ticket {
   projectId: string;
   labels: string[];
   description?: string;
-  agentName?: string;
+  note?: string;
+  targetRef: string;
+  clonePath: string;
+  agentConfigId?: string | null;
+  execTokenTotal: number;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface AgentConfig {
+  id: string;
+  name: string;
+  cli: "claude" | "opencode";
+  providerId: string | null;
+  model: string;
+  systemPrompt: string | null;
+  extraFlags: string[];
+  description: string | null;
+}
+
+export interface AgentRuntime {
+  name: "claude" | "opencode";
+  available: boolean;
+  version?: string | null;
+  note?: string | null;
+  models: string[];
+  modelSource: string;
+}
+
+export interface GitCommit {
+  sha: string;
+  parents: string[];
+  message: string;
+  author: string;
+  time: string;
+  refs: string[];
+  lane: number;
+}
+
+export interface GitBranchInfo {
+  name: string;
+  tip: string;
+  lane: number;
+}
+
+export interface GitRepoView {
+  branches: GitBranchInfo[];
+  commits: GitCommit[];
+}
+
+export interface GitTreeEntry {
+  path: string;
+  type: "dir" | "file";
+  size?: number;
+  lastCommitShort: string;
+  lastMessage: string;
 }
 
 export type ToolStatus = "running" | "ok" | "error";

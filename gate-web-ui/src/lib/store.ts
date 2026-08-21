@@ -1,9 +1,12 @@
 import { create } from "zustand";
 import type {
-  AgentConfigOption,
+  AgentConfig,
+  AgentRuntime,
   ChatItem,
   DiffFile,
   Finding,
+  GitRepoView,
+  GitTreeEntry,
   Project,
   PublishOutcome,
   Snapshot,
@@ -15,8 +18,13 @@ import type {
 } from "./types";
 import {
   DEMO_AGENTS,
-  DEMO_PROJECT,
+  DEMO_PROJECTS,
+  DEMO_RUNTIMES,
   DEMO_TICKETS,
+  GIT_ACME,
+  GIT_NEXUS,
+  TREE_ACME,
+  TREE_NEXUS,
   t102Diff,
 } from "./scenario";
 import { uid } from "./format";
@@ -30,7 +38,7 @@ export interface AppState {
   backendUrl: string;
   token: string;
   connectOpen: boolean;
-  view: "workbench" | "kanban";
+  view: "workbench" | "kanban" | "projects" | "agents";
   projects: Project[];
   activeProjectId: string;
   tickets: Ticket[];
@@ -46,11 +54,16 @@ export interface AppState {
   gateBusy: Record<string, boolean>;
   usage: Record<string, UsageView>;
   centerTab: CenterTab;
-  agents: AgentConfigOption[];
+  agents: AgentConfig[];
+  runtimes: AgentRuntime[];
+  gitViews: Record<string, GitRepoView>;
+  treeViews: Record<string, GitTreeEntry[]>;
+  editingTicketNo: string | null;
   agentId: string;
   toast: { id: number; nonce: number; text: string } | null;
   highlight: { path: string; line: number; nonce: number } | null;
   cancelSeq: Record<string, number>;
+  order: Record<string, number>;
 }
 
 export const appStore = create<AppState>(() => ({
@@ -77,10 +90,15 @@ export const appStore = create<AppState>(() => ({
   usage: {},
   centerTab: "chat",
   agents: DEMO_AGENTS,
+  runtimes: DEMO_RUNTIMES,
+  gitViews: { "acme-checkout": GIT_ACME, "nexus-docs": GIT_NEXUS },
+  treeViews: { "acme-checkout": TREE_ACME, "nexus-docs": TREE_NEXUS },
+  editingTicketNo: null,
   agentId: DEMO_AGENTS[0].id,
   toast: null,
   highlight: null,
   cancelSeq: {},
+  order: {},
 }));
 
 const s = () => appStore.getState();
@@ -119,13 +137,22 @@ export function seedDemo(force = false) {
       text: "上一轮会话已归档 · 继续对话将追加到本工单",
     },
   ];
+  chats["T-201"] = [
+    {
+      kind: "system",
+      id: uid("sys"),
+      tone: "info",
+      ts: Date.now(),
+      text: "工单沙箱已就绪 · 独立克隆已创建，Agent 的全部改动不会触碰主分支",
+    },
+  ];
   diffs["T-102"] = t102Diff();
   patch({
     booted: true,
     mode: "demo",
     conn: "ok",
-    projects: [DEMO_PROJECT],
-    activeProjectId: DEMO_PROJECT.id,
+    projects: DEMO_PROJECTS.map((p) => ({ ...p })),
+    activeProjectId: "acme-checkout",
     tickets: DEMO_TICKETS.map((t) => ({ ...t })),
     selectedNo: "T-104",
     chats,
@@ -139,12 +166,16 @@ export function seedDemo(force = false) {
     gateBusy: {},
     usage: {},
     centerTab: "chat",
-    agents: DEMO_AGENTS,
+    agents: DEMO_AGENTS.map((a) => ({ ...a })),
+    runtimes: DEMO_RUNTIMES.map((r) => ({ ...r })),
+    gitViews: { "acme-checkout": GIT_ACME, "nexus-docs": GIT_NEXUS },
+    treeViews: { "acme-checkout": TREE_ACME, "nexus-docs": TREE_NEXUS },
+    editingTicketNo: null,
     agentId: DEMO_AGENTS[0].id,
   });
 }
 
-const SNAPSHOT_KEY = "gate-ui-state-v1";
+const SNAPSHOT_KEY = "gate-ui-state-v2";
 
 function tryRestore(): boolean {
   try {
@@ -152,7 +183,9 @@ function tryRestore(): boolean {
     if (!raw) return false;
     const saved = JSON.parse(raw) as AppState & { _v?: number };
     if (saved._v !== 1 || !saved.tickets?.length) return false;
+    const cur = appStore.getState();
     const clean: AppState = {
+      ...cur,
       ...saved,
       booted: true,
       toast: null,
@@ -161,6 +194,10 @@ function tryRestore(): boolean {
       busy: {},
       gateBusy: {},
       tasks: {},
+      runtimes: saved.runtimes ?? cur.runtimes,
+      gitViews: saved.gitViews ?? cur.gitViews,
+      treeViews: saved.treeViews ?? cur.treeViews,
+      editingTicketNo: null,
     };
     appStore.setState(clean);
     return true;
@@ -349,26 +386,44 @@ export function requestCancel(no: string) {
   set((st) => ({ cancelSeq: { ...st.cancelSeq, [no]: (st.cancelSeq[no] ?? 0) + 1 } }));
 }
 
+export function setTicketOrder(no: string, order: number) {
+  set((st) => ({ order: { ...st.order, [no]: order } }));
+}
+
+export function laneOrders(st: AppState, nos: string[]): number[] {
+  return nos.map((n) => st.order[n] ?? 0);
+}
+
 export function currentCancelSeq(no: string): number {
   return s().cancelSeq[no] ?? 0;
 }
 
 export function createTicket(title: string, priority: Ticket["priority"]) {
-  const existing = s().tickets.length;
-  const no = `T-${105 + existing}`;
+  const st = s();
+  const projectTickets = st.tickets.filter((t) => t.projectId === st.activeProjectId);
+  const maxNum = Math.max(
+    100,
+    ...st.tickets.map((t) => parseInt(t.ticketNo.replace(/\D/g, ""), 10) || 100),
+  );
+  const no = `T-${maxNum + 1}`;
+  void projectTickets;
   const t: Ticket = {
     ticketNo: no,
     title,
     stage: "IN_PROGRESS",
     priority,
-    projectId: s().activeProjectId,
+    projectId: st.activeProjectId,
     labels: [],
+    targetRef: "refs/heads/main",
+    clonePath: `local-run/clones/${no}`,
+    agentConfigId: st.agentId,
+    execTokenTotal: 0,
     createdAt: nowIso(),
     updatedAt: nowIso(),
   };
-  set((st) => ({
-    tickets: [t, ...st.tickets],
-    chats: { ...st.chats, [no]: [
+  set((st2) => ({
+    tickets: [t, ...st2.tickets],
+    chats: { ...st2.chats, [no]: [
       {
         kind: "system" as const,
         id: uid("sys"),
@@ -381,6 +436,69 @@ export function createTicket(title: string, priority: Ticket["priority"]) {
   selectTicket(no);
   showToast(`工单 ${no} 已创建`);
   return no;
+}
+
+export function updateTicket(no: string, p: Partial<Ticket>) {
+  set((st) => ({
+    tickets: st.tickets.map((t) =>
+      t.ticketNo === no ? { ...t, ...p, updatedAt: nowIso() } : t,
+    ),
+  }));
+}
+
+export function cancelTicket(no: string) {
+  setStage(no, "CANCELLED");
+}
+
+export function switchProject(id: string) {
+  patch({ activeProjectId: id });
+  const first = s().tickets.find((t) => t.projectId === id && !isTerminalStage(t.stage));
+  patch({ selectedNo: first?.ticketNo ?? null });
+}
+
+function isTerminalStage(stage: Stage): boolean {
+  return stage === "DONE" || stage === "CANCELLED";
+}
+
+export function upsertProject(p: Project) {
+  set((st) => {
+    const exists = st.projects.some((x) => x.id === p.id);
+    return {
+      projects: exists
+        ? st.projects.map((x) => (x.id === p.id ? p : x))
+        : [...st.projects, p],
+      activeProjectId: exists ? st.activeProjectId : p.id,
+    };
+  });
+}
+
+export function removeProject(id: string) {
+  set((st) => ({
+    projects: st.projects.filter((p) => p.id !== id),
+    tickets: st.tickets.map((t) =>
+      t.projectId === id ? { ...t, projectId: "" } : t,
+    ),
+    activeProjectId: st.activeProjectId === id ? (st.projects.find((p) => p.id !== id)?.id ?? "") : st.activeProjectId,
+  }));
+}
+
+export function upsertAgentConfig(c: AgentConfig) {
+  set((st) => ({
+    agents: st.agents.some((x) => x.id === c.id)
+      ? st.agents.map((x) => (x.id === c.id ? c : x))
+      : [...st.agents, c],
+  }));
+}
+
+export function removeAgentConfig(id: string) {
+  set((st) => ({
+    agents: st.agents.filter((a) => a.id !== id),
+    agentId: st.agentId === id ? (st.agents.find((a) => a.id !== id)?.id ?? "") : st.agentId,
+  }));
+}
+
+export function openTicketEditor(no: string | null) {
+  patch({ editingTicketNo: no });
 }
 
 export function useApp<T>(selector: (st: AppState) => T): T {
