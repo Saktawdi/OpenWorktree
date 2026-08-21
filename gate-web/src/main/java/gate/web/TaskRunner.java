@@ -51,7 +51,7 @@ final class TaskRunner {
         this.dispatcher = dispatcher;
     }
 
-    String submitReview(String ticketNo, Integer round, boolean humanPass, String note) {
+    String submitReview(String ticketNo, Integer round, Boolean humanPass, String note) {
         GateTask task = tasks.register("review", ticketNo, null);
         if (!dispatcher.trySubmit(() -> runReview(task, ticketNo, round, humanPass, note))) {
             fail(task, new GateException(GateErrorCode.GATE_ERROR_IO,
@@ -73,7 +73,7 @@ final class TaskRunner {
         dispatcher.close();
     }
 
-    private void runReview(GateTask task, String ticketNo, Integer round, boolean humanPass, String note) {
+    private void runReview(GateTask task, String ticketNo, Integer round, Boolean humanPass, String note) {
         try {
             progress(task, 10, "准备审核");
             ReviewResult r = gateService.review(new ReviewCommand(ticketNo, round, humanPass, note));

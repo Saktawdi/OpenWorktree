@@ -47,7 +47,9 @@ public final class JdbcSessionRepository implements SessionRepository {
             new SessionUsage(
                     rs.getObject("prompt_tokens") == null ? null : rs.getLong("prompt_tokens"),
                     rs.getObject("completion_tokens") == null ? null : rs.getLong("completion_tokens"),
-                    rs.getObject("total_tokens") == null ? null : rs.getLong("total_tokens")));
+                    rs.getObject("total_tokens") == null ? null : rs.getLong("total_tokens")),
+            rs.getString("title"),
+            rs.getInt("archived") != 0);
 
     @Override
     public Optional<Session> find(String id) {
@@ -78,14 +80,16 @@ public final class JdbcSessionRepository implements SessionRepository {
         jdbc.update("""
                 INSERT INTO agent_session(id, ticket_no, agent_config_id, cli, status, cli_session_id,
                                           clone_path, allocated_port, prompt_tokens, completion_tokens,
-                                          total_tokens, started_at, finished_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+                                          total_tokens, started_at, finished_at, title, archived)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 session.id(), session.ticketNo(), session.agentConfigId(), session.cli().name(),
                 session.status().name(), session.cliSessionId(), session.clonePath(),
                 session.allocatedPort(), u.promptTokens(), u.completionTokens(), u.totalTokens(),
                 session.startedAt().toString(),
-                session.finishedAt() == null ? null : session.finishedAt().toString());
+                session.finishedAt() == null ? null : session.finishedAt().toString(),
+                session.title(),
+                session.archived() ? 1 : 0);
     }
 
     @Override
@@ -93,12 +97,15 @@ public final class JdbcSessionRepository implements SessionRepository {
         SessionUsage u = session.cumulativeUsage() == null ? SessionUsage.EMPTY : session.cumulativeUsage();
         jdbc.update("""
                 UPDATE agent_session SET status = ?, cli_session_id = ?, allocated_port = ?,
-                       prompt_tokens = ?, completion_tokens = ?, total_tokens = ?, finished_at = ?
+                       prompt_tokens = ?, completion_tokens = ?, total_tokens = ?, finished_at = ?,
+                       title = ?, archived = ?
                 WHERE id = ?
                 """,
                 session.status().name(), session.cliSessionId(), session.allocatedPort(),
                 u.promptTokens(), u.completionTokens(), u.totalTokens(),
                 session.finishedAt() == null ? null : session.finishedAt().toString(),
+                session.title(),
+                session.archived() ? 1 : 0,
                 session.id());
     }
 
@@ -153,6 +160,16 @@ public final class JdbcSessionRepository implements SessionRepository {
                     rs.getInt("degraded") != 0,
                     Instant.parse(rs.getString("created_at")));
         }, sessionId);
+    }
+
+    @Override
+    public void delete(String id) {
+        jdbc.update("DELETE FROM agent_session WHERE id = ?", id);
+    }
+
+    @Override
+    public void deleteMessages(String sessionId) {
+        jdbc.update("DELETE FROM session_message WHERE session_id = ?", sessionId);
     }
 
     // -------------------------------------------------------------------------------------------

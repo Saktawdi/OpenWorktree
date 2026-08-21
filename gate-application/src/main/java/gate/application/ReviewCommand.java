@@ -13,10 +13,12 @@ package gate.application;
  * The verdict itself is always derived by {@code GatePolicy}.
  *
  * @param round     round to review; {@code null} means "the latest presubmit round"
- * @param humanPass manual verdict (manual mode only)
+ * @param humanPass manual verdict (manual mode only): {@code null} means nobody has decided yet —
+ *                  with no engine configured the round degrades fail-closed to REQUIRES_HUMAN
+ *                  (架构规范 I7), never a guessed pass/reject
  * @param note      recorded as the finding message when {@code humanPass} is false (manual mode only)
  */
-public record ReviewCommand(String ticketNo, Integer round, boolean humanPass, String note) {
+public record ReviewCommand(String ticketNo, Integer round, Boolean humanPass, String note) {
 
     public ReviewCommand {
         if (ticketNo == null || ticketNo.isBlank()) {
@@ -24,8 +26,8 @@ public record ReviewCommand(String ticketNo, Integer round, boolean humanPass, S
         }
     }
 
-    /** Convenience for prism mode: no human verdict is carried. */
+    /** Convenience for engine mode: no human verdict is carried ({@code null}, not a silent false). */
     public static ReviewCommand forEngine(String ticketNo, Integer round) {
-        return new ReviewCommand(ticketNo, round, false, null);
+        return new ReviewCommand(ticketNo, round, null, null);
     }
 }

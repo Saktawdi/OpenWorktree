@@ -16,6 +16,8 @@ import java.time.Instant;
  * @param startedAt       creation time
  * @param finishedAt      nullable terminal time
  * @param cumulativeUsage cumulative token usage
+ * @param title           user-facing title, nullable (workbench session list)
+ * @param archived        soft-archive flag for the workbench list; not a runtime state
  */
 public record Session(
         String id,
@@ -28,7 +30,9 @@ public record Session(
         int allocatedPort,
         Instant startedAt,
         Instant finishedAt,
-        SessionUsage cumulativeUsage) {
+        SessionUsage cumulativeUsage,
+        String title,
+        boolean archived) {
 
     public Session {
         if (id == null || id.isBlank()) {
@@ -61,21 +65,31 @@ public record Session(
 
     public Session withStatus(SessionStatus newStatus) {
         return new Session(id, ticketNo, agentConfigId, cli, newStatus, cliSessionId, clonePath,
-                allocatedPort, startedAt, finishedAt, cumulativeUsage);
+                allocatedPort, startedAt, finishedAt, cumulativeUsage, title, archived);
     }
 
     public Session withFinishedAt(Instant newFinishedAt) {
         return new Session(id, ticketNo, agentConfigId, cli, status, cliSessionId, clonePath,
-                allocatedPort, startedAt, newFinishedAt, cumulativeUsage);
+                allocatedPort, startedAt, newFinishedAt, cumulativeUsage, title, archived);
     }
 
     public Session withCliSessionId(String newCliSessionId) {
         return new Session(id, ticketNo, agentConfigId, cli, status, newCliSessionId, clonePath,
-                allocatedPort, startedAt, finishedAt, cumulativeUsage);
+                allocatedPort, startedAt, finishedAt, cumulativeUsage, title, archived);
     }
 
     public Session withCumulativeUsage(SessionUsage newUsage) {
         return new Session(id, ticketNo, agentConfigId, cli, status, cliSessionId, clonePath,
-                allocatedPort, startedAt, finishedAt, newUsage);
+                allocatedPort, startedAt, finishedAt, newUsage, title, archived);
+    }
+
+    public Session withTitle(String newTitle) {
+        return new Session(id, ticketNo, agentConfigId, cli, status, cliSessionId, clonePath,
+                allocatedPort, startedAt, finishedAt, cumulativeUsage, newTitle, archived);
+    }
+
+    public Session withArchived(boolean newArchived) {
+        return new Session(id, ticketNo, agentConfigId, cli, status, cliSessionId, clonePath,
+                allocatedPort, startedAt, finishedAt, cumulativeUsage, title, newArchived);
     }
 }

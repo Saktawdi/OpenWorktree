@@ -1,8 +1,12 @@
 package gate.web;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import gate.domain.error.GateException;
 import gate.domain.session.AgentCli;
 import gate.domain.session.Role;
 import gate.domain.session.Session;
@@ -111,6 +115,130 @@ class SessionOrchestrationTest {
         assertTrue(after.body().contains("\"status\":\"ABORTED\""), after.body());
     }
 
+    @Test
+    void session_create_without_prompt_creates_idle_session() throws Exception {
+        HttpResponse<String> cfg = post("/api/agent-configs", """
+                {"id":"claude-idle","name":"Claude Idle","cli":"CLAUDE","provider_id":"manual",
+                 "model":"claude-test","extra_flags":[],"description":"test"}
+                """);
+        assertEquals(201, cfg.statusCode(), cfg.body());
+        assertEquals(201, post("/api/tickets", "{\"ticket_no\":\"SESS-2\",\"title\":\"idle\"}").statusCode());
+
+        // No initial_prompt -> idle session: created, ACTIVE, no first message sent.
+        HttpResponse<String> created = post("/api/tickets/SESS-2/sessions",
+                "{\"agent_config_id\":\"claude-idle\"}");
+        assertEquals(201, created.statusCode(), created.body());
+        assertTrue(created.body().contains("\"status\":\"ACTIVE\""), created.body());
+        assertTrue(created.body().contains("\"title\":null"), created.body());
+        assertTrue(created.body().contains("\"archived\":false"), created.body());
+        String sid = sessionId(created.body());
+
+        HttpResponse<String> history = get("/api/sessions/" + sid + "/messages");
+        assertEquals(200, history.statusCode(), history.body());
+        assertEquals(0, harness.components().sessionRepository().findMessages(sid).size(),
+                "idle session must not have a first message");
+    }
+
+    @Test
+    void session_patch_and_delete_manage_metadata() throws Exception {
+        assertEquals(201, post("/api/agent-configs", """
+                {"id":"claude-meta","name":"Claude Meta","cli":"CLAUDE","provider_id":"manual",
+                 "model":"claude-test","extra_flags":[],"description":"test"}
+                """).statusCode());
+        assertEquals(201, post("/api/tickets",
+                "{\"ticket_no\":\"SESS-3\",\"title\":\"meta\"}").statusCode());
+
+        // ApiRoutes dispatch for PATCH/DELETE sessions is wired in a later phase; drive the
+        // route methods directly (same contract the dispatcher will call).
+        gate.web.session.SessionRoutes routes = new gate.web.session.SessionRoutes(
+                harness.components().agentConfigRepository(), harness.components().sessionRepository(),
+                fake, harness.components().ticketRepository(), harness.components().clock());
+        ApiRoutes.Response created = routes.sessionCreate("SESS-3", "{\"agent_config_id\":\"claude-meta\"}");
+        assertEquals(201, created.status());
+        String sid = String.valueOf(((Map<String, Object>) created.body()).get("id"));
+
+        // Patch title only.
+        ApiRoutes.Response titled = routes.sessionPatch(sid, "{\"title\":\"my session\"}");
+        assertEquals(200, titled.status());
+        Map<String, Object> titledJson = (Map<String, Object>) titled.body();
+        assertEquals("my session", titledJson.get("title"));
+        assertEquals(false, titledJson.get("archived"));
+
+        // Patch archived only — title must survive.
+        ApiRoutes.Response archived = routes.sessionPatch(sid, "{\"archived\":true}");
+        assertEquals(200, archived.status());
+        Map<String, Object> archivedJson = (Map<String, Object>) archived.body();
+        assertEquals("my session", archivedJson.get("title"));
+        assertEquals(true, archivedJson.get("archived"));
+
+        // Persisted roundtrip through the real (SQLite) repository.
+        Session persisted = harness.components().sessionRepository().find(sid).orElseThrow();
+        assertEquals("my session", persisted.title());
+        assertTrue(persisted.archived());
+
+        // Empty patch body is rejected.
+        GateException noFields = assertThrows(GateException.class, () -> routes.sessionPatch(sid, "{}"));
+        assertEquals(64, noFields.code().code());
+        GateException unknown = assertThrows(GateException.class,
+                () -> routes.sessionPatch("no-such-session", "{\"title\":\"x\"}"));
+        assertEquals(64, unknown.code().code());
+
+        // Blank title clears it to null.
+        ApiRoutes.Response cleared = routes.sessionPatch(sid, "{\"title\":\"\"}");
+        assertEquals(200, cleared.status());
+        assertNull(((Map<String, Object>) cleared.body()).get("title"));
+
+        // Delete: ACTIVE session -> abort first, then messages + session row gone.
+        routes.sessionSend(sid, "{\"message\":\"hello\"}");
+        assertEquals(2, harness.components().sessionRepository().findMessages(sid).size());
+        ApiRoutes.Response deleted = routes.sessionDelete(sid);
+        assertEquals(200, deleted.status());
+        assertEquals(true, ((Map<String, Object>) deleted.body()).get("ok"));
+        assertTrue(harness.components().sessionRepository().find(sid).isEmpty(), "session row must be gone");
+        assertTrue(harness.components().sessionRepository().findMessages(sid).isEmpty(),
+                "messages must be gone");
+        assertTrue(fake.aborted.contains(sid), "ACTIVE session must be aborted before delete");
+        GateException gone = assertThrows(GateException.class, () -> routes.sessionDelete(sid));
+        assertEquals(64, gone.code().code());
+    }
+
+    @Test
+    void session_repository_roundtrips_title_and_archived() throws Exception {
+        assertEquals(201, post("/api/agent-configs", """
+                {"id":"claude-rt","name":"Claude RT","cli":"CLAUDE","provider_id":"manual",
+                 "model":"claude-test","extra_flags":[],"description":"test"}
+                """).statusCode());
+        assertEquals(201, post("/api/tickets", "{\"ticket_no\":\"SESS-4\",\"title\":\"rt\"}").statusCode());
+
+        SessionRepository repo = harness.components().sessionRepository();
+        Session s = new Session("sess-rt-1", "SESS-4", "claude-rt", AgentCli.CLAUDE,
+                SessionStatus.ACTIVE, null, rootClonePath(), -1, Instant.now(), null,
+                SessionUsage.EMPTY, "roundtrip title", true);
+        repo.insert(s);
+        Session loaded = repo.find("sess-rt-1").orElseThrow();
+        assertEquals("roundtrip title", loaded.title());
+        assertTrue(loaded.archived());
+
+        // update() must carry the metadata columns too.
+        repo.update(loaded.withArchived(false));
+        Session reloaded = repo.find("sess-rt-1").orElseThrow();
+        assertEquals("roundtrip title", reloaded.title());
+        assertFalse(reloaded.archived());
+
+        // deleteMessages + delete removes the row set.
+        repo.insertMessage(new SessionMessage("msg-rt-1", "sess-rt-1", Role.USER,
+                "hello", List.of(), null, false, Instant.now()));
+        assertEquals(1, repo.findMessages("sess-rt-1").size());
+        repo.deleteMessages("sess-rt-1");
+        repo.delete("sess-rt-1");
+        assertTrue(repo.find("sess-rt-1").isEmpty());
+        assertTrue(repo.findMessages("sess-rt-1").isEmpty());
+    }
+
+    private static String rootClonePath() {
+        return java.nio.file.Path.of("clones", "SESS-4").toString();
+    }
+
     private HttpResponse<String> get(String path) throws Exception {
         HttpRequest req = HttpRequest.newBuilder(URI.create(base + path))
                 .header("Authorization", "Bearer " + token)
@@ -138,6 +266,7 @@ class SessionOrchestrationTest {
 
         private SessionRepository sessions;
         private Clock clock;
+        private final List<String> aborted = new ArrayList<>();
 
         void bind(SessionRepository sessions, Clock clock) {
             this.sessions = sessions;
@@ -149,11 +278,14 @@ class SessionOrchestrationTest {
             String id = UUID.randomUUID().toString();
             Session s = new Session(id, request.ticketNo(), request.agentConfigId(), AgentCli.CLAUDE,
                     SessionStatus.ACTIVE, "cli-" + id, request.clonePath(), -1, clock.now(), null,
-                    SessionUsage.EMPTY);
+                    SessionUsage.EMPTY, null, false);
             sessions.insert(s);
+            // Mirrors the adapter contract: blank initial_prompt creates an idle session (no first send).
+            if (request.initialPrompt() == null || request.initialPrompt().isBlank()) {
+                return sessions.find(id).orElse(s);
+            }
             sessions.insertMessage(new SessionMessage(UUID.randomUUID().toString(), id, Role.USER,
-                    request.initialPrompt() == null ? "" : request.initialPrompt(), List.of(), null,
-                    false, clock.now()));
+                    request.initialPrompt(), List.of(), null, false, clock.now()));
             sessions.insertMessage(new SessionMessage(UUID.randomUUID().toString(), id, Role.ASSISTANT,
                     "fake assistant", List.of(), new SessionUsage(1L, 2L, 3L), false, clock.now()));
             return sessions.find(id).orElse(s);
@@ -171,6 +303,7 @@ class SessionOrchestrationTest {
 
         @Override
         public void abort(String sessionId) {
+            aborted.add(sessionId);
             sessions.find(sessionId).ifPresent(s ->
                     sessions.update(s.withStatus(SessionStatus.ABORTED).withFinishedAt(clock.now())));
         }
@@ -191,7 +324,20 @@ class SessionOrchestrationTest {
 
         @Override
         public AutoCloseable attachListener(String sessionId, java.util.function.Consumer<gate.domain.session.SessionStreamChunk> listener) {
-            return () -> {};
+            // SSE stays open until a terminal chunk arrives; deliver done shortly after attach so
+            // stream consumers (and the SSE assertion in session_lifecycle_over_http) terminate.
+            Thread done = new Thread(() -> {
+                try {
+                    Thread.sleep(100);
+                    listener.accept(new gate.domain.session.SessionStreamChunk.DoneChunk(
+                            sessionId, "fake-message-id", clock.now()));
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            });
+            done.setDaemon(true);
+            done.start();
+            return done::interrupt;
         }
     }
 }

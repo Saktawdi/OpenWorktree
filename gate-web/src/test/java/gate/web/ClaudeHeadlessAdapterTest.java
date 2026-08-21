@@ -2,6 +2,7 @@ package gate.web;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import gate.adapters.clock.SystemClock;
@@ -134,6 +135,33 @@ class ClaudeHeadlessAdapterTest {
         assertEquals(gate.domain.session.SessionStatus.ABORTED, session.status());
         List<SessionMessage> history = sessions.findMessages(session.id());
         assertTrue(history.stream().anyMatch(m -> m.role() == gate.domain.session.Role.ERROR));
+    }
+
+    @Test
+    void start_with_blank_prompt_creates_idle_session_without_spawning_claude() throws Exception {
+        Path script = root.resolve("idle-claude.cmd");
+        Files.writeString(script, """
+                @echo off
+                echo {"type":"session","session_id":"should-not-appear"}
+                """, StandardCharsets.UTF_8);
+
+        AgentConfig config = new AgentConfig("claude-idle", "Claude Idle", AgentCli.CLAUDE,
+                "manual", "claude-idle", null, List.of(), "test");
+        agentConfigs.insert(config, Instant.now());
+        Path clone = root.resolve("clone3");
+        Files.createDirectories(clone.resolve(".git"));
+        insertTicket("T-3");
+
+        ClaudeHeadlessAdapter adapter = new ClaudeHeadlessAdapter(processRunner, agentConfigs,
+                sessions, ticketRepository, tasks, ticketLocks, clock, "cmd.exe",
+                List.of("/c", script.toString()));
+        Session session = adapter.start(new AgentSessionPort.StartRequest(
+                "T-3", "claude-idle", clone.toString(), "refs/heads/main", "", Map.of()));
+
+        assertEquals(gate.domain.session.SessionStatus.ACTIVE, session.status());
+        assertNull(session.cliSessionId(), "claude must not be spawned for an idle session");
+        assertTrue(sessions.findMessages(session.id()).isEmpty(),
+                "idle session must not record a first user message");
     }
 
     private void insertTicket(String ticketNo) {

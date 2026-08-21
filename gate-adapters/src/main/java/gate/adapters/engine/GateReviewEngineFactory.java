@@ -48,7 +48,7 @@ public final class GateReviewEngineFactory implements ReviewEngineFactory {
     }
 
     @Override
-    public ReviewEngine forManualVerdict(boolean pass, String note) {
+    public ReviewEngine forManualVerdict(Boolean pass, String note) {
         return manual.forManualVerdict(pass, note);
     }
 

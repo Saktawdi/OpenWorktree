@@ -102,6 +102,11 @@ public final class ReviewHandler {
         ObjectId dangling = commitPublisher.buildCommit(scratchIntent);
         commitPublisher.pinGateRef(clone, ticket.ticketNo(), row.reviewRound(), dangling);
 
+        // No engine configured → the manual adapter speaks for the round. humanPass == null means
+        // nobody has decided yet: the adapter emits "undecided" evidence (empty coverage) that the
+        // policy's coverage invariant routes to REQUIRES_HUMAN — Fail-Closed (架构规范 I7), never a
+        // guessed pass/reject and never a 4xx at the driver layer.
+        boolean manualUndecided = !config.engineConfigured() && command.humanPass() == null;
         ReviewEngine engine = config.engineConfigured()
                 ? reviewEngineFactory.forPrism()
                 : reviewEngineFactory.forManualVerdict(command.humanPass(), command.note());
@@ -127,7 +132,10 @@ public final class ReviewHandler {
                 return false;
             }
         });
-        boolean degraded = evidence.accept(new EvidenceVisitor<Boolean>() {
+        // An undecided manual round ran with neither engine nor human verdict — record it as a
+        // degraded round. The report itself must stay degraded=false (a true flag auto-rejects under
+        // the default engineAcceptDegraded=false policy); the handler owns this bookkeeping instead.
+        boolean degraded = manualUndecided || evidence.accept(new EvidenceVisitor<Boolean>() {
             @Override
             public Boolean visit(EngineReport report) {
                 return report.degraded();
