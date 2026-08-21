@@ -365,13 +365,12 @@ public final class ApiRoutes {
         if (req.containsKey("round") && req.get("round") != null) {
             round = Integer.parseInt(req.get("round").toString());
         }
-        boolean humanPass = req.containsKey("human_pass")
-                && Boolean.parseBoolean(req.get("human_pass").toString());
+        // Tri-state: absent/null human_pass stays null ("nobody decided yet"), so with no engine
+        // configured the round degrades fail-closed to REQUIRES_HUMAN instead of collapsing a
+        // missing decision into a false → auto-reject (架构规范 I7; handled in ReviewHandler).
+        Boolean humanPass = req.get("human_pass") == null ? null
+                : Boolean.parseBoolean(req.get("human_pass").toString());
         String note = str(req, "note");
-        if (!config.engineConfigured() && !req.containsKey("human_pass")) {
-            throw new GateException(GateErrorCode.USAGE,
-                    "no engine configured: review requires body.human_pass (or configure engine.cmd in gate.toml)");
-        }
         String taskId = taskRunner.submitReview(ticketNo, round, humanPass, note);
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("task_id", taskId);

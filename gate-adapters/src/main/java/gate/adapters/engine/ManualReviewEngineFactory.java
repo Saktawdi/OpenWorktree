@@ -14,7 +14,7 @@ public final class ManualReviewEngineFactory implements ReviewEngineFactory {
     }
 
     @Override
-    public ReviewEngine forManualVerdict(boolean pass, String note) {
+    public ReviewEngine forManualVerdict(Boolean pass, String note) {
         return new ManualReviewEngine(blobStore, pass, note);
     }
 

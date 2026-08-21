@@ -24,15 +24,32 @@ import java.util.stream.Stream;
  *
  * <p>Emits initial message history snapshot, attaches a real-time listener for live SessionStreamChunks,
  * and flushes SSE data frames (`event: token | thinking | tool_call | usage | done | error`).
+ *
+ * <p>The connection stays open until a terminal done/error chunk arrives (or the client disconnects);
+ * while idle, a `: ping` comment frame is written every heartbeat interval (15s by default) so
+ * proxies / load balancer read timeouts do not cut the stream.
+ *
+ * <p>Current limitation: the session stream carries no per-event sequence numbers, so the SSE
+ * Last-Event-ID reconnect cursor is unsupported; after a reconnect the client recovers by replaying
+ * the full history snapshot.
  */
 final class SessionSseHandler {
 
+    /** Default idle heartbeat interval; package-visible so tests can pick a shorter value. */
+    static final long DEFAULT_HEARTBEAT_MILLIS = 15_000L;
+
     private final AgentSessionPort sessions;
     private final SessionRepository sessionRepository;
+    private final long heartbeatMillis;
 
     SessionSseHandler(AgentSessionPort sessions, SessionRepository sessionRepository) {
+        this(sessions, sessionRepository, DEFAULT_HEARTBEAT_MILLIS);
+    }
+
+    SessionSseHandler(AgentSessionPort sessions, SessionRepository sessionRepository, long heartbeatMillis) {
         this.sessions = sessions;
         this.sessionRepository = sessionRepository;
+        this.heartbeatMillis = heartbeatMillis;
     }
 
     int handle(HttpExchange exchange, String sessionId) throws IOException {
@@ -88,8 +105,17 @@ final class SessionSseHandler {
                     doneLatch.countDown();
                 }
             })) {
-                // Wait up to 5 seconds if live streaming or quick done
-                doneLatch.await(5, TimeUnit.SECONDS);
+                // Keep the stream open until a terminal done/error chunk arrives or the client
+                // disconnects. Every heartbeat interval with no terminal chunk, write a `: ping`
+                // comment frame so idle periods do not trip proxy read timeouts. A client
+                // disconnect makes the ping write throw IOException, which propagates to the
+                // outer catch below.
+                while (!doneLatch.await(heartbeatMillis, TimeUnit.MILLISECONDS)) {
+                    synchronized (os) {
+                        os.write(": ping\n\n".getBytes(StandardCharsets.UTF_8));
+                        os.flush();
+                    }
+                }
             } catch (Exception ignored) {
             }
 

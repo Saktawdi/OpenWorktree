@@ -169,6 +169,49 @@ public final class SessionRoutes {
         return new ApiRoutes.Response(200, body);
     }
 
+    /**
+     * PATCH /api/sessions/{id} — workbench session-list metadata. Body may carry {@code title}
+     * (string; empty string clears it to null) and/or {@code archived} (boolean); at least one
+     * of the two is required.
+     */
+    public ApiRoutes.Response sessionPatch(String sessionId, String requestBody) {
+        Session s = sessionRepository.find(sessionId).orElseThrow(() -> new GateException(
+                GateErrorCode.USAGE, "no such session: " + sessionId));
+        Map<String, Object> req = parseObject(requestBody);
+        if (!req.containsKey("title") && !req.containsKey("archived")) {
+            throw new GateException(GateErrorCode.USAGE,
+                    "at least one of title/archived is required");
+        }
+        Session updated = s;
+        if (req.containsKey("title")) {
+            String title = str(req, "title");
+            updated = updated.withTitle(title == null || title.isBlank() ? null : title);
+        }
+        if (req.containsKey("archived")) {
+            Object archived = req.get("archived");
+            if (!(archived instanceof Boolean b)) {
+                throw new GateException(GateErrorCode.USAGE, "archived must be a boolean");
+            }
+            updated = updated.withArchived(b);
+        }
+        sessionRepository.update(updated);
+        return new ApiRoutes.Response(200, sessionJson(updated));
+    }
+
+    /** DELETE /api/sessions/{id} — drops the session and its messages; aborts first if ACTIVE. */
+    public ApiRoutes.Response sessionDelete(String sessionId) {
+        Session s = sessionRepository.find(sessionId).orElseThrow(() -> new GateException(
+                GateErrorCode.USAGE, "no such session: " + sessionId));
+        if (s.status() == gate.domain.session.SessionStatus.ACTIVE) {
+            agentSessionPort.abort(sessionId);
+        }
+        sessionRepository.deleteMessages(sessionId);
+        sessionRepository.delete(sessionId);
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("ok", true);
+        return new ApiRoutes.Response(200, body);
+    }
+
     public static Map<String, Object> agentConfigJson(AgentConfig c) {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("id", c.id());
@@ -189,6 +232,8 @@ public final class SessionRoutes {
         m.put("agent_config_id", s.agentConfigId());
         m.put("cli", s.cli().name());
         m.put("status", s.status().name());
+        m.put("title", s.title());
+        m.put("archived", s.archived());
         m.put("cli_session_id", s.cliSessionId());
         m.put("clone_path", s.clonePath());
         m.put("allocated_port", s.allocatedPort());

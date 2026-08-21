@@ -11,10 +11,13 @@ package gate.ports;
 public interface ReviewEngineFactory {
 
     /**
-     * @param pass the human verdict for this round
+     * @param pass the human verdict for this round: {@code true} pass, {@code false} reject,
+     *             {@code null} nobody has decided yet — with no engine configured the adapter emits
+     *             "undecided" evidence whose empty coverage the policy routes to REQUIRES_HUMAN
+     *             (Fail-Closed, 架构规范 I7) instead of guessing
      * @param note reject reason; becomes the BLOCKER finding message when {@code pass} is false
      */
-    ReviewEngine forManualVerdict(boolean pass, String note);
+    ReviewEngine forManualVerdict(Boolean pass, String note);
 
     /**
      * @return the live prism engine, or {@code null} when no engine is configured (P1 / no prism wired).

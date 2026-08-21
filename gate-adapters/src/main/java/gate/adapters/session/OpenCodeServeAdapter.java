@@ -137,7 +137,8 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                 String cliSessionId = createSession(port);
                 Session session = new Session(UUID.randomUUID().toString(), request.ticketNo(),
                         config.id(), AgentCli.OPENCODE, SessionStatus.ACTIVE, cliSessionId,
-                        request.clonePath(), port, clock.now(), null, SessionUsage.EMPTY);
+                        request.clonePath(), port, clock.now(), null, SessionUsage.EMPTY,
+                        null, false);
                 sessions.insert(session);
                 sessionPorts.put(session.id(), port);
                 return session;

@@ -36,4 +36,10 @@ public interface SessionRepository {
     void insertMessage(SessionMessage message);
 
     List<SessionMessage> findMessages(String sessionId);
+
+    /** Deletes the session row (workbench session-list removal). Messages must go first — FK. */
+    void delete(String id);
+
+    /** Deletes all message rows of a session (run before {@link #delete(String)}). */
+    void deleteMessages(String sessionId);
 }

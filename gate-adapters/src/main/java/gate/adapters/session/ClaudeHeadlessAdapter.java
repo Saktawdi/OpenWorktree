@@ -152,8 +152,16 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
         List<String> argv = buildArgv(config, contextFile, mcpConfig, null, request.initialPrompt());
         Session session = new Session(
                 sessionId, request.ticketNo(), config.id(), AgentCli.CLAUDE, SessionStatus.ACTIVE,
-                null, request.clonePath(), -1, now, null, SessionUsage.EMPTY);
+                null, request.clonePath(), -1, now, null, SessionUsage.EMPTY, null, false);
         sessions.insert(session);
+
+        // Empty initial_prompt = create an idle session: do not spawn claude, do not record a
+        // (meaningless empty) user message. The workbench sends the first real message later
+        // via POST /messages (sessionCreate sends "" when initial_prompt is absent).
+        if (request.initialPrompt() == null || request.initialPrompt().isBlank()) {
+            emitChunk(sessionId, new SessionStreamChunk.DoneChunk(sessionId, sessionId, now));
+            return sessions.find(sessionId).orElse(session);
+        }
 
         insertUserMessage(sessionId, request.initialPrompt(), now);
 
