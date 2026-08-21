@@ -56,11 +56,16 @@ export const actions = {
   ): string | null {
     if (appStore.getState().mode === "live") {
       void (async () => {
+        const st0 = appStore.getState();
+        const projectId =
+          st0.activeProjectId && st0.projects.some((p) => p.id === st0.activeProjectId)
+            ? st0.activeProjectId
+            : undefined;
         const no = await live.createTicketLive({
           title,
           priority,
           stage: "PENDING",
-          project_id: appStore.getState().activeProjectId || undefined,
+          project_id: projectId,
           description: extra?.description,
           labels: extra?.labels,
           agent_config_id: extra?.agentConfigId,
@@ -202,6 +207,13 @@ export const actions = {
     appStore.setState({ mode: "live", token, conn: "ok" });
     try {
       await Promise.all([live.loadTickets(), live.loadProjects(), live.loadAgentConfigs(), live.loadRuntimes()]);
+      // Demo leaves a demo project/agent id behind; live data is filtered by the project
+      // field and sessions need a real agent config, so reset both to backend values.
+      const st = appStore.getState();
+      appStore.setState({
+        activeProjectId: st.projects[0]?.id ?? "",
+        agentId: st.agents.some((a) => a.id === st.agentId) ? st.agentId : (st.agents[0]?.id ?? ""),
+      });
       const first = appStore.getState().tickets[0];
       if (first) await live.selectTicketLive(first.ticketNo);
     } catch {

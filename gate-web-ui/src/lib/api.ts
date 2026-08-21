@@ -287,9 +287,14 @@ export async function loadTicketSessions(no: string) {
 
 export async function createSessionLive(no: string) {
   try {
+    // Demo data can leave a stale agent id in the store; fall back to the first
+    // backend agent config so session creation cannot fail on it.
+    const st = appStore.getState();
+    const agentId =
+      st.agents.some((a) => a.id === st.agentId) ? st.agentId : (st.agents[0]?.id ?? "");
     const created = await api<{ id: string }>(`/api/tickets/${no}/sessions`, {
       method: "POST",
-      body: JSON.stringify({ agent_config_id: appStore.getState().agentId, initial_prompt: "" }),
+      body: JSON.stringify({ agent_config_id: agentId, initial_prompt: "" }),
     });
     try {
       await api(`/api/sessions/${created.id}`, {

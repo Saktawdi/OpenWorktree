@@ -122,7 +122,9 @@ export function TicketList() {
   const tickets = useMemo(
     () =>
       ticketsAll
-        .filter((t) => t.projectId === activeProjectId)
+        // Unassigned tickets stay visible under any project context; otherwise a ticket
+        // with no project would disappear from every list/board.
+        .filter((t) => t.projectId === activeProjectId || t.projectId === "")
         .sort((a, b) => (orderMap[a.ticketNo] ?? 0) - (orderMap[b.ticketNo] ?? 0)),
     [ticketsAll, activeProjectId, orderMap],
   );

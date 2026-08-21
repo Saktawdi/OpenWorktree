@@ -28,6 +28,7 @@ import type { Stage, Ticket } from "../lib/types";
 import { PriorityChip, StageDot } from "./ui";
 
 const LANES: Array<{ key: Stage; title: string }> = [
+  { key: "PENDING", title: "待处理" },
   { key: "IN_PROGRESS", title: "进行中" },
   { key: "PRESUBMITTED", title: "已预提交" },
   { key: "IN_REVIEW", title: "审查中" },
@@ -220,7 +221,7 @@ export function KanbanBoard() {
     agents.find((a) => a.id === t.agentConfigId)?.name;
 
   const tickets = useMemo(
-    () => ticketsAll.filter((t) => t.projectId === activeProjectId),
+    () => ticketsAll.filter((t) => t.projectId === activeProjectId || t.projectId === ""),
     [ticketsAll, activeProjectId],
   );
 
