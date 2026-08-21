@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { boot } from "./lib/actions";
-import { useApp } from "./lib/store";
+import { applyThemeFromStorage, useApp } from "./lib/store";
 import { TopBar } from "./components/TopBar";
 import { Workbench } from "./components/Workbench";
 import { KanbanBoard } from "./components/KanbanBoard";
@@ -14,6 +14,7 @@ export default function App() {
   const view = useApp((s) => s.view);
 
   useEffect(() => {
+    applyThemeFromStorage();
     void boot();
   }, []);
 

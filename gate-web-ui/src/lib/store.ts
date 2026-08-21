@@ -3,6 +3,7 @@ import type {
   AgentConfig,
   AgentRuntime,
   ChatItem,
+  ChatSession,
   DiffFile,
   Finding,
   GitRepoView,
@@ -31,6 +32,8 @@ import { uid } from "./format";
 
 export type CenterTab = "chat" | "diff" | "findings";
 
+export type Theme = "dark" | "light";
+
 export interface AppState {
   booted: boolean;
   mode: "demo" | "live";
@@ -38,6 +41,7 @@ export interface AppState {
   backendUrl: string;
   token: string;
   connectOpen: boolean;
+  theme: Theme;
   view: "workbench" | "kanban" | "projects" | "agents";
   projects: Project[];
   activeProjectId: string;
@@ -64,6 +68,8 @@ export interface AppState {
   highlight: { path: string; line: number; nonce: number } | null;
   cancelSeq: Record<string, number>;
   order: Record<string, number>;
+  sessions: Record<string, ChatSession[]>;
+  activeSessionId: Record<string, string>;
 }
 
 export const appStore = create<AppState>(() => ({
@@ -73,6 +79,7 @@ export const appStore = create<AppState>(() => ({
   backendUrl: "",
   token: "",
   connectOpen: false,
+  theme: (typeof window !== "undefined" && localStorage.getItem("gate-theme") as Theme) || "dark",
   view: "workbench",
   projects: [],
   activeProjectId: "",
@@ -99,6 +106,8 @@ export const appStore = create<AppState>(() => ({
   highlight: null,
   cancelSeq: {},
   order: {},
+  sessions: {},
+  activeSessionId: {},
 }));
 
 const s = () => appStore.getState();
@@ -501,6 +510,86 @@ export function openTicketEditor(no: string | null) {
   patch({ editingTicketNo: no });
 }
 
+export function toggleTheme() {
+  const next: Theme = s().theme === "dark" ? "light" : "dark";
+  document.documentElement.setAttribute("data-theme", next);
+  localStorage.setItem("gate-theme", next);
+  patch({ theme: next });
+}
+
+export function applyThemeFromStorage() {
+  const stored = localStorage.getItem("gate-theme") as Theme | null;
+  const theme = stored || "dark";
+  document.documentElement.setAttribute("data-theme", theme);
+  patch({ theme });
+}
+
+export function createSession(ticketNo: string) {
+  const id = uid("sess");
+  const session: ChatSession = {
+    id,
+    ticketNo,
+    title: `会话 ${new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}`,
+    status: "active",
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  };
+  set((st) => ({
+    sessions: {
+      ...st.sessions,
+      [ticketNo]: [...(st.sessions[ticketNo] ?? []), session],
+    },
+    activeSessionId: {
+      ...st.activeSessionId,
+      [ticketNo]: id,
+    },
+  }));
+  return id;
+}
+
+export function archiveSession(ticketNo: string, sessionId: string) {
+  set((st) => ({
+    sessions: {
+      ...st.sessions,
+      [ticketNo]: (st.sessions[ticketNo] ?? []).map((sess) =>
+        sess.id === sessionId ? { ...sess, status: "archived" as const, updatedAt: Date.now() } : sess,
+      ),
+    },
+  }));
+}
+
+export function restoreSession(ticketNo: string, sessionId: string) {
+  set((st) => ({
+    sessions: {
+      ...st.sessions,
+      [ticketNo]: (st.sessions[ticketNo] ?? []).map((sess) =>
+        sess.id === sessionId ? { ...sess, status: "active" as const, updatedAt: Date.now() } : sess,
+      ),
+    },
+  }));
+}
+
+export function switchSession(ticketNo: string, sessionId: string) {
+  set((st) => ({
+    activeSessionId: {
+      ...st.activeSessionId,
+      [ticketNo]: sessionId,
+    },
+  }));
+}
+
+export function deleteSession(ticketNo: string, sessionId: string) {
+  set((st) => {
+    const sessions = (st.sessions[ticketNo] ?? []).filter((sess) => sess.id !== sessionId);
+    const activeId = st.activeSessionId[ticketNo];
+    const newActiveId = activeId === sessionId ? (sessions.find((s) => s.status === "active")?.id ?? "") : activeId;
+    return {
+      sessions: { ...st.sessions, [ticketNo]: sessions },
+      activeSessionId: { ...st.activeSessionId, [ticketNo]: newActiveId },
+    };
+  });
+}
+
 export function useApp<T>(selector: (st: AppState) => T): T {
   return appStore(selector);
 }
@@ -508,3 +597,4 @@ export function useApp<T>(selector: (st: AppState) => T): T {
 export const NO_CHAT: ChatItem[] = [];
 export const NO_DIFF: DiffFile[] = [];
 export const NO_FINDINGS: Finding[] = [];
+export const NO_SESSIONS: ChatSession[] = [];

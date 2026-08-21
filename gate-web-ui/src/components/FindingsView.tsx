@@ -1,12 +1,18 @@
+import { motion } from "motion/react";
 import { ArrowUUpLeft, SealCheck } from "@phosphor-icons/react";
 import { actions } from "../lib/actions";
 import { jumpToFinding, NO_FINDINGS, useApp } from "../lib/store";
 import type { Finding } from "../lib/types";
 import { SeverityChip } from "./ui";
 
-function FindingCard({ finding }: { finding: Finding }) {
+function FindingCard({ finding, index }: { finding: Finding; index: number }) {
   return (
-    <div className="card p-4 animate-rise">
+    <motion.div
+      className="card p-4"
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ type: "spring", stiffness: 300, damping: 25, delay: index * 0.05 }}
+    >
       <div className="flex items-center gap-2">
         <SeverityChip severity={finding.severity} />
         {finding.ruleId && (
@@ -30,7 +36,7 @@ function FindingCard({ finding }: { finding: Finding }) {
           {finding.suggestion}
         </div>
       )}
-    </div>
+    </motion.div>
   );
 }
 
@@ -87,7 +93,7 @@ export function FindingsView({ ticketNo }: { ticketNo: string }) {
           )}
         </div>
         {findings.map((f, i) => (
-          <FindingCard key={i} finding={f} />
+          <FindingCard key={i} finding={f} index={i} />
         ))}
       </div>
     </div>

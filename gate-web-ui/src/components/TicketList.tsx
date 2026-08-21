@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { motion } from "motion/react";
 import { MagnifyingGlass, Plus } from "@phosphor-icons/react";
 import { actions } from "../lib/actions";
 import { relativeTime, STAGE_LABEL } from "../lib/format";
@@ -160,12 +161,14 @@ export function TicketList() {
           const active = t.ticketNo === selectedNo;
           const hasDiff = (diffs[t.ticketNo] ?? NO_DIFF).length > 0;
           return (
-            <button
+            <motion.button
               key={t.ticketNo}
               onClick={() => actions.openTicket(t.ticketNo)}
               className={`relative w-full text-left rounded-lg px-3 py-2.5 transition-colors cursor-pointer group ${
                 active ? "bg-raised" : "hover:bg-panel"
               }`}
+              whileHover={!active ? { x: 2 } : undefined}
+              transition={{ type: "spring", stiffness: 400, damping: 25 }}
             >
               {active && (
                 <span className="absolute left-0 top-2 bottom-2 w-[2px] rounded-full bg-accent" />
@@ -192,7 +195,7 @@ export function TicketList() {
                 <span className="flex-1" />
                 <span>{relativeTime(t.updatedAt)}</span>
               </div>
-            </button>
+            </motion.button>
           );
         })}
         {filtered.length === 0 && (
