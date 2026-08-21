@@ -268,6 +268,7 @@ export function KanbanBoard() {
     }
 
     const allowed: Partial<Record<Stage, Stage[]>> = {
+      PENDING: ["IN_PROGRESS"],
       IN_PROGRESS: ["PRESUBMITTED"],
       PRESUBMITTED: ["IN_REVIEW"],
       READY_TO_PUBLISH: ["DONE"],
@@ -282,6 +283,11 @@ export function KanbanBoard() {
       return;
     }
 
+    if (to === "IN_PROGRESS") {
+      showToast("工单已开始，进入编码协作");
+      void actions.startTicket(no);
+      return;
+    }
     if (to === "PRESUBMITTED") {
       if ((st.diffs[no]?.length ?? 0) === 0) {
         bounce(no, "沙箱内暂无变更，先让 Agent 完成编码");

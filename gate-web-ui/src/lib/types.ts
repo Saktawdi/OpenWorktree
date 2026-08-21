@@ -178,6 +178,7 @@ export interface Snapshot {
   targetRef: string;
   diffBytes: number;
   changedPaths: string[];
+  changedCount?: number;
   capturedAt: number;
 }
 

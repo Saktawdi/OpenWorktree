@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { CaretDown, Check, PaperPlaneRight, Sparkle, Stop } from "@phosphor-icons/react";
 import { actions } from "../lib/actions";
-import { appStore, requestCancel, setAgentId, useApp } from "../lib/store";
+import { appStore, setAgentId, useApp } from "../lib/store";
 import { formatTokens } from "../lib/format";
 
 function AgentPicker() {
@@ -135,7 +135,7 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
                 className="btn btn-danger-ghost w-8 h-8 p-0 rounded-lg"
                 title="中断生成"
                 aria-label="中断生成"
-                onClick={() => requestCancel(ticketNo)}
+                onClick={() => actions.abort(ticketNo)}
               >
                 <Stop size={15} weight="fill" />
               </button>

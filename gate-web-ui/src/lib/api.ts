@@ -18,7 +18,7 @@ import {
   setVerdict,
   showToast,
 } from "./store";
-import type { ChatItem, DiffFile, Finding, Severity } from "./types";
+import type { ChatItem, ChatSession, DiffFile, Finding, Severity, Snapshot } from "./types";
 import { parseUnifiedDiff } from "./diff";
 import { approxDiffBytes } from "./diff";
 import { sleep } from "./format";
@@ -120,27 +120,233 @@ export async function refreshTicket(no: string) {
   }));
 }
 
+export async function createTicketLive(body: Record<string, unknown>): Promise<string | null> {
+  try {
+    const t = await api<RawTicket>("/api/tickets", { method: "POST", body: JSON.stringify(body) });
+    return t.ticket_no ?? null;
+  } catch (e) {
+    showToast(`创建工单失败：${(e as Error).message}`);
+    return null;
+  }
+}
+
 export async function selectTicketLive(no: string) {
   appStore.setState({ selectedNo: no, centerTab: "chat", highlight: null });
+  const loadDiff = async () => {
+    try {
+      const diffRes = await api<{ diff: string }>(`/api/tickets/${no}/diff`);
+      const files: DiffFile[] = diffRes.diff.trim() ? parseUnifiedDiff(diffRes.diff) : [];
+      setDiffs(no, files);
+    } catch {
+      setDiffs(no, []);
+    }
+  };
+  const loadSessions = async () => {
+    try {
+      await loadTicketSessions(no);
+      const st = appStore.getState();
+      const target = st.activeSessionId[no] || st.sessions[no]?.[st.sessions[no].length - 1]?.id;
+      if (target) {
+        liveSessionId = target;
+        await loadSessionMessages(no, target);
+      }
+    } catch {
+      /* 会话可能尚未创建 */
+    }
+  };
+  await Promise.all([loadDiff(), loadSessions(), loadPresubmits(no), loadReviewState(no)]);
+}
+
+/* ─── 快照与审查结果回填 ─── */
+
+export async function loadPresubmits(no: string) {
   try {
-    const diffRes = await api<{ diff: string }>(`/api/tickets/${no}/diff`);
-    const files: DiffFile[] = diffRes.diff.trim() ? parseUnifiedDiff(diffRes.diff) : [];
-    setDiffs(no, files);
+    const data = await api<{
+      presubmits: Array<{
+        review_round: number;
+        tree_hash: string;
+        base_commit: string;
+        target_ref: string;
+        diff_bytes: number;
+        changed_count: number;
+        created_at: string;
+      }>;
+    }>(`/api/tickets/${no}/presubmits`);
+    const list: Snapshot[] = (data.presubmits ?? []).map((p) => ({
+      round: p.review_round,
+      treeHash: p.tree_hash,
+      baseCommit: p.base_commit,
+      targetRef: p.target_ref,
+      diffBytes: p.diff_bytes,
+      changedPaths: [],
+      changedCount: p.changed_count,
+      capturedAt: Date.parse(p.created_at),
+    }));
+    appStore.setState((st) => ({ snapshots: { ...st.snapshots, [no]: list } }));
   } catch {
-    setDiffs(no, []);
+    /* 尚无快照记录时静默 */
   }
+}
+
+interface RawReviewResult {
+  verdict: string;
+  engine_id: string;
+  review_round: number;
+  findings: string;
+}
+
+function parseFindings(raw: string): Finding[] {
+  let findings: Finding[] = [];
   try {
-    const sess = await api<{ sessions: Array<{ id: string }> }>(`/api/tickets/${no}/sessions`);
-    const latest = sess.sessions[sess.sessions.length - 1];
-    if (latest) {
-      const hist = await api<{ messages: RawMessage[] }>(`/api/sessions/${latest.id}/messages`);
-      const items: ChatItem[] = hist.messages.map(mapHistoryMessage).filter(Boolean) as ChatItem[];
-      appStore.setState((st) => ({ chats: { ...st.chats, [no]: items } }));
-      liveSessionId = latest.id;
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      findings = parsed.map((f: Record<string, unknown>) => ({
+        severity: (f.severity as Severity) ?? "INFO",
+        path: String(f.path ?? ""),
+        lineStart: typeof f.lineStart === "number" ? f.lineStart : undefined,
+        ruleId: f.ruleId ? String(f.ruleId) : undefined,
+        message: String(f.message ?? ""),
+        suggestion: f.suggestion ? String(f.suggestion) : undefined,
+      }));
     }
   } catch {
-    /* 会话可能尚未创建 */
+    /* findings 非结构化时忽略 */
   }
+  return findings;
+}
+
+function verdictReason(verdict: string): string {
+  if (verdict === "PASS") return "全部策略通过，发布授权已签发";
+  if (verdict === "REQUIRES_HUMAN") return "需人工核准后放行";
+  return "存在待处理项，详见审查发现";
+}
+
+async function applyReviewResult(no: string) {
+  const rr = await api<RawReviewResult>(`/api/tickets/${no}/review-result`);
+  setFindings(no, parseFindings(rr.findings));
+  setVerdict(no, {
+    verdict: rr.verdict as "PASS" | "REJECT" | "REQUIRES_HUMAN",
+    reason: verdictReason(rr.verdict),
+    engineId: rr.engine_id,
+    round: rr.review_round,
+  });
+}
+
+export async function loadReviewState(no: string) {
+  try {
+    await applyReviewResult(no);
+  } catch {
+    /* 尚无审查结果时静默返回 */
+  }
+}
+
+/* ─── 会话管理 ─── */
+
+function sessionTimeLabel(): string {
+  return `会话 ${new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}`;
+}
+
+interface RawSession {
+  id: string;
+  ticket_no?: string;
+  agent_config_id?: string | null;
+  cli?: string | null;
+  status?: string | null;
+  title?: string | null;
+  archived?: boolean | null;
+  started_at?: string | null;
+  updated_at?: string | null;
+}
+
+function mapSession(no: string, s: RawSession): ChatSession {
+  const createdAt = s.started_at ? Date.parse(s.started_at) : Date.now();
+  return {
+    id: s.id,
+    ticketNo: s.ticket_no ?? no,
+    title: s.title ?? sessionTimeLabel(),
+    status: s.archived ? "archived" : "active",
+    createdAt,
+    updatedAt: s.updated_at ? Date.parse(s.updated_at) : createdAt,
+  };
+}
+
+export async function loadTicketSessions(no: string) {
+  const data = await api<{ sessions: RawSession[] }>(`/api/tickets/${no}/sessions`);
+  const list = (data.sessions ?? []).map((s) => mapSession(no, s));
+  let latest: ChatSession | undefined;
+  for (const sess of list) {
+    if (sess.status === "active" && (!latest || sess.createdAt >= latest.createdAt)) latest = sess;
+  }
+  const activeId = latest?.id ?? "";
+  appStore.setState((st) => ({
+    sessions: { ...st.sessions, [no]: list },
+    activeSessionId: { ...st.activeSessionId, [no]: activeId },
+  }));
+  liveSessionId = activeId || null;
+}
+
+export async function createSessionLive(no: string) {
+  try {
+    const created = await api<{ id: string }>(`/api/tickets/${no}/sessions`, {
+      method: "POST",
+      body: JSON.stringify({ agent_config_id: appStore.getState().agentId, initial_prompt: "" }),
+    });
+    try {
+      await api(`/api/sessions/${created.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ title: sessionTimeLabel() }),
+      });
+    } catch {
+      /* 标题设置失败不阻断 */
+    }
+    await loadTicketSessions(no);
+    appStore.setState((st) => ({ activeSessionId: { ...st.activeSessionId, [no]: created.id } }));
+    liveSessionId = created.id;
+    await loadSessionMessages(no, created.id).catch(() => {});
+  } catch (e) {
+    showToast(`新建会话失败：${(e as Error).message}`);
+  }
+}
+
+export async function patchSessionLive(id: string, patch: { title?: string; archived?: boolean }) {
+  try {
+    await api(`/api/sessions/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
+  } catch (e) {
+    showToast(`更新会话失败：${(e as Error).message}`);
+    return;
+  }
+  const no = ticketNoOfSession(id);
+  if (no) await loadTicketSessions(no).catch(() => {});
+}
+
+export async function deleteSessionLive(id: string, ticketNo: string) {
+  try {
+    await api(`/api/sessions/${id}`, { method: "DELETE" });
+  } catch (e) {
+    showToast(`删除会话失败：${(e as Error).message}`);
+    return;
+  }
+  if (liveSessionId === id) liveSessionId = null;
+  await loadTicketSessions(ticketNo).catch(() => {});
+}
+
+export async function abortLive(no: string) {
+  const sid = liveSessionId;
+  if (sid) {
+    try {
+      await api(`/api/sessions/${sid}/abort`, { method: "POST" });
+    } catch (e) {
+      showToast(`中断失败：${(e as Error).message}`);
+    }
+  }
+  await loadTicketSessions(no).catch(() => {});
+}
+
+function ticketNoOfSession(id: string): string | null {
+  for (const [no, list] of Object.entries(appStore.getState().sessions)) {
+    if (list.some((s) => s.id === id)) return no;
+  }
+  return null;
 }
 
 interface RawMessage {
@@ -177,6 +383,16 @@ function mapHistoryMessage(m: RawMessage): ChatItem | null {
 }
 
 let liveSessionId: string | null = null;
+
+export function setLiveSessionId(id: string | null) {
+  liveSessionId = id;
+}
+
+export async function loadSessionMessages(no: string, sessionId: string) {
+  const hist = await api<{ messages: RawMessage[] }>(`/api/sessions/${sessionId}/messages`);
+  const items: ChatItem[] = hist.messages.map(mapHistoryMessage).filter(Boolean) as ChatItem[];
+  appStore.setState((st) => ({ chats: { ...st.chats, [no]: items } }));
+}
 
 export async function liveSendPrompt(no: string, userText: string) {
   const st = appStore.getState();
@@ -315,53 +531,39 @@ export async function livePresubmit(no: string) {
   }
 }
 
-export async function liveReview(no: string) {
+export async function liveReview(no: string, opts?: { humanPass?: boolean; note?: string }) {
   setGateBusy(no, true);
   setStage(no, "IN_REVIEW");
   try {
-    setTask(no, { kind: "review", percent: 30, label: "引擎执行中", done: false });
+    setTask(no, {
+      kind: "review",
+      percent: 30,
+      label: opts ? "正在提交人工判决" : "引擎执行中",
+      done: false,
+    });
+    const body: Record<string, unknown> = {};
+    if (opts) {
+      if (opts.humanPass !== undefined) body.human_pass = opts.humanPass;
+      if (opts.note !== undefined) body.note = opts.note;
+    }
     const { task_id } = await api<{ task_id: string }>(`/api/tickets/${no}/review`, {
       method: "POST",
-      body: "{}",
+      body: JSON.stringify(body),
     });
     const ok = await pollTask(task_id);
     setTask(no, { kind: "review", percent: 100, label: "判决完成", done: true });
     await sleep(300);
-    try {
-      const rr = await api<{ verdict: string; engine_id: string; review_round: number; findings: string }>(
-        `/api/tickets/${no}/review-result`,
-      );
-      let findings: Finding[] = [];
-      try {
-        const parsed = JSON.parse(rr.findings);
-        if (Array.isArray(parsed)) {
-          findings = parsed.map((f: Record<string, unknown>) => ({
-            severity: (f.severity as Severity) ?? "INFO",
-            path: String(f.path ?? ""),
-            lineStart: typeof f.lineStart === "number" ? f.lineStart : undefined,
-            ruleId: f.ruleId ? String(f.ruleId) : undefined,
-            message: String(f.message ?? ""),
-            suggestion: f.suggestion ? String(f.suggestion) : undefined,
-          }));
-        }
-      } catch {
-        /* findings 非结构化时忽略 */
-      }
-      setFindings(no, findings);
-      setVerdict(no, {
-        verdict: rr.verdict as "PASS" | "REJECT" | "REQUIRES_HUMAN",
-        reason: rr.verdict === "PASS" ? "全部策略通过，发布授权已签发" : "存在待处理项，详见审查发现",
-        engineId: rr.engine_id,
-        round: rr.review_round,
-      });
-    } catch {
-      /* 无审查结果记录 */
-    }
+    await loadReviewState(no);
     await refreshTicket(no);
     if (!ok) pushSystemMessage(no, "审查任务异常结束，请重试或人工核准", "warn");
+    if (opts?.humanPass === true) pushSystemMessage(no, "人工核准通过 · 发布授权已签发", "success");
+    if (opts?.humanPass === false) pushSystemMessage(no, "人工驳回 · 请根据审查意见修复后重新提审", "warn");
     setCenterTab("findings");
   } catch (e) {
     showToast(`审查失败：${(e as Error).message}`);
+    await refreshTicket(no).catch(() => {
+      /* 状态回刷失败忽略 */
+    });
   } finally {
     setTask(no, null);
     setGateBusy(no, false);

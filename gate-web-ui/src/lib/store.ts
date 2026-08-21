@@ -419,7 +419,7 @@ export function createTicket(title: string, priority: Ticket["priority"]) {
   const t: Ticket = {
     ticketNo: no,
     title,
-    stage: "IN_PROGRESS",
+    stage: "PENDING",
     priority,
     projectId: st.activeProjectId,
     labels: [],

@@ -2,16 +2,22 @@ import * as demo from "./engine";
 import * as live from "./api";
 import {
   appStore,
+  archiveSession as archiveSessionLocal,
   cancelTicket,
+  createSession as createSessionLocal,
   createTicket,
+  deleteSession as deleteSessionLocal,
   pushSystemMessage,
   removeAgentConfig,
   removeProject,
+  requestCancel,
+  restoreSession as restoreSessionLocal,
   seedDemo,
   selectTicket,
   setStage,
   setVerdict,
   showToast,
+  switchSession as switchSessionLocal,
   updateTicket,
   upsertAgentConfig,
   upsertProject,
@@ -47,26 +53,23 @@ export const actions = {
     title: string,
     priority: "P0" | "P1" | "P2" | "P3",
     extra?: { description?: string; labels?: string[]; agentConfigId?: string },
-  ) {
+  ): string | null {
     if (appStore.getState().mode === "live") {
-      const no = `T-${Date.now().toString().slice(-5)}`;
-      fetch(`/api/tickets`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${appStore.getState().token}` },
-        body: JSON.stringify({
-          ticket_no: no,
+      void (async () => {
+        const no = await live.createTicketLive({
           title,
           priority,
+          stage: "PENDING",
           project_id: appStore.getState().activeProjectId || undefined,
           description: extra?.description,
           labels: extra?.labels,
           agent_config_id: extra?.agentConfigId,
-        }),
-      })
-        .then(() => live.loadTickets())
-        .then(() => selectTicket(no))
-        .catch((e) => console.error(e));
-      return no;
+        });
+        if (!no) return;
+        await live.loadTickets().catch(() => {});
+        await live.selectTicketLive(no);
+      })();
+      return null;
     }
     const no = createTicket(title, priority);
     const p = extra ?? {};
@@ -211,6 +214,9 @@ export const actions = {
     seedDemo(true);
   },
   overridePass(no: string) {
+    if (appStore.getState().mode === "live") {
+      return live.liveReview(no, { humanPass: true, note: "人工核准放行" });
+    }
     setVerdict(no, {
       verdict: "PASS",
       reason: "人工核准放行",
@@ -220,6 +226,67 @@ export const actions = {
     });
     setStage(no, "READY_TO_PUBLISH");
     pushSystemMessage(no, "人工核准通过 · 发布授权已签发", "success");
+    return Promise.resolve();
+  },
+  rejectTicket(no: string) {
+    if (appStore.getState().mode === "live") {
+      return live.liveReview(no, { humanPass: false, note: "人工驳回重修" });
+    }
+    setStage(no, "REJECTED");
+    pushSystemMessage(no, "人工驳回 · 请根据审查意见修复后重新提审", "warn");
+    return Promise.resolve();
+  },
+  startTicket(no: string) {
+    if (appStore.getState().mode === "live") {
+      return live.updateTicketLive(no, { stage: "IN_PROGRESS" });
+    }
+    setStage(no, "IN_PROGRESS");
+    pushSystemMessage(no, "工单已开始 · Agent 可以在沙箱内编码", "info");
+    return Promise.resolve(true);
+  },
+  createSession(no: string) {
+    if (appStore.getState().mode === "live") {
+      void live.createSessionLive(no);
+      return;
+    }
+    createSessionLocal(no);
+  },
+  archiveSession(no: string, id: string) {
+    if (appStore.getState().mode === "live") {
+      void live.patchSessionLive(id, { archived: true });
+      return;
+    }
+    archiveSessionLocal(no, id);
+  },
+  restoreSession(no: string, id: string) {
+    if (appStore.getState().mode === "live") {
+      void live.patchSessionLive(id, { archived: false });
+      return;
+    }
+    restoreSessionLocal(no, id);
+  },
+  deleteSession(no: string, id: string) {
+    if (appStore.getState().mode === "live") {
+      void live.deleteSessionLive(id, no);
+      return;
+    }
+    deleteSessionLocal(no, id);
+  },
+  switchSession(no: string, id: string) {
+    if (appStore.getState().mode === "live") {
+      switchSessionLocal(no, id);
+      live.setLiveSessionId(id);
+      void live.loadSessionMessages(no, id).catch(() => {});
+      return;
+    }
+    switchSessionLocal(no, id);
+  },
+  abort(no: string) {
+    if (appStore.getState().mode === "live") {
+      return live.abortLive(no);
+    }
+    requestCancel(no);
+    return Promise.resolve();
   },
 };
 export async function boot() {
