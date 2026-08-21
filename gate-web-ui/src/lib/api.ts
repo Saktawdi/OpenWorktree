@@ -78,6 +78,11 @@ interface RawTicket {
   project_id?: string | null;
   labels?: string[] | null;
   description?: string | null;
+  note?: string | null;
+  target_ref?: string | null;
+  clone_path?: string | null;
+  agent_config_id?: string | null;
+  exec_token_total?: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -91,6 +96,11 @@ function mapTicket(t: RawTicket) {
     projectId: t.project_id ?? "",
     labels: t.labels ?? [],
     description: t.description ?? undefined,
+    note: t.note ?? undefined,
+    targetRef: t.target_ref ?? "refs/heads/main",
+    clonePath: t.clone_path ?? "",
+    agentConfigId: t.agent_config_id ?? null,
+    execTokenTotal: t.exec_token_total ?? 0,
     createdAt: t.created_at,
     updatedAt: t.updated_at,
   };
@@ -411,4 +421,171 @@ async function pollTask(taskId: string): Promise<boolean> {
 export function liveDiffBytes(no: string): number {
   const st = appStore.getState();
   return approxDiffBytes(st.diffs[no] ?? []);
+}
+
+interface RawProject {
+  id: string;
+  name: string;
+  workspace_path: string;
+  target_ref?: string | null;
+  auth_repo?: string | null;
+  priority?: string | null;
+  size?: string | null;
+  tags?: string[] | null;
+  ticket_count?: number;
+  active_ticket_count?: number;
+  created_at: string;
+  updated_at: string;
+}
+
+function mapProject(p: RawProject): import("./types").Project {
+  return {
+    id: p.id,
+    name: p.name,
+    workspacePath: p.workspace_path,
+    targetRef: p.target_ref ?? "refs/heads/main",
+    authRepo: p.auth_repo ?? "",
+    priority: (p.priority as import("./types").Priority | null) ?? null,
+    size: (p.size as "small" | "medium" | "large" | null) ?? null,
+    tags: p.tags ?? [],
+    ticketCount: p.ticket_count ?? 0,
+    activeTicketCount: p.active_ticket_count ?? 0,
+    createdAt: p.created_at,
+    updatedAt: p.updated_at,
+  };
+}
+
+export async function loadProjects() {
+  const data = await api<{ projects: RawProject[] }>("/api/projects");
+  appStore.setState({ projects: data.projects.map(mapProject) });
+}
+
+export async function createProjectLive(body: {
+  name: string;
+  workspace_path: string;
+  init_git?: boolean;
+  priority?: string | null;
+  size?: string | null;
+  tags?: string[];
+}): Promise<boolean> {
+  try {
+    await api("/api/projects", { method: "POST", body: JSON.stringify(body) });
+    await loadProjects();
+    return true;
+  } catch (e) {
+    showToast(`创建项目失败：${(e as Error).message}`);
+    return false;
+  }
+}
+
+export async function updateProjectLive(id: string, body: Record<string, unknown>): Promise<boolean> {
+  try {
+    await api(`/api/projects/${id}`, { method: "PUT", body: JSON.stringify(body) });
+    await loadProjects();
+    return true;
+  } catch (e) {
+    showToast(`更新项目失败：${(e as Error).message}`);
+    return false;
+  }
+}
+
+export async function deleteProjectLive(id: string): Promise<boolean> {
+  try {
+    await api(`/api/projects/${id}`, { method: "DELETE" });
+    await loadProjects();
+    await loadTickets();
+    return true;
+  } catch (e) {
+    showToast(`删除项目失败：${(e as Error).message}`);
+    return false;
+  }
+}
+
+export async function updateTicketLive(
+  no: string,
+  body: Record<string, unknown>,
+): Promise<boolean> {
+  try {
+    await api(`/api/tickets/${no}`, { method: "PATCH", body: JSON.stringify(body) });
+    await refreshTicket(no);
+    return true;
+  } catch (e) {
+    showToast(`更新工单失败：${(e as Error).message}`);
+    return false;
+  }
+}
+
+interface RawAgentConfig {
+  id: string;
+  name: string;
+  cli: string;
+  provider_id?: string | null;
+  model?: string | null;
+  system_prompt?: string | null;
+  extra_flags?: string[] | null;
+  description?: string | null;
+}
+
+function mapAgentConfig(c: RawAgentConfig): import("./types").AgentConfig {
+  return {
+    id: c.id,
+    name: c.name,
+    cli: c.cli.toLowerCase() as "claude" | "opencode",
+    providerId: c.provider_id ?? null,
+    model: c.model ?? "",
+    systemPrompt: c.system_prompt ?? null,
+    extraFlags: c.extra_flags ?? [],
+    description: c.description ?? null,
+  };
+}
+
+export async function loadAgentConfigs() {
+  const data = await api<{ agent_configs: RawAgentConfig[] }>("/api/agent-configs");
+  appStore.setState({ agents: data.agent_configs.map(mapAgentConfig) });
+}
+
+export async function upsertAgentConfigLive(c: import("./types").AgentConfig): Promise<boolean> {
+  try {
+    const body = JSON.stringify({
+      id: c.id,
+      name: c.name,
+      cli: c.cli.toUpperCase(),
+      provider_id: c.providerId,
+      model: c.model,
+      system_prompt: c.systemPrompt,
+      extra_flags: c.extraFlags,
+      description: c.description,
+    });
+    const exists = appStore.getState().agents.some((x) => x.id === c.id);
+    await api(`/api/agent-configs${exists ? `/${c.id}` : ""}`, {
+      method: exists ? "PUT" : "POST",
+      body,
+    });
+    await loadAgentConfigs();
+    return true;
+  } catch (e) {
+    showToast(`保存智能体配置失败：${(e as Error).message}`);
+    return false;
+  }
+}
+
+export async function deleteAgentConfigLive(id: string): Promise<boolean> {
+  try {
+    await api(`/api/agent-configs/${id}`, { method: "DELETE" });
+    await loadAgentConfigs();
+    return true;
+  } catch (e) {
+    showToast(`删除智能体配置失败：${(e as Error).message}`);
+    return false;
+  }
+}
+
+export async function loadRuntimes(): Promise<boolean> {
+  try {
+    const data = await api<{ agent_runtimes: import("./types").AgentRuntime[] }>("/api/agent-runtimes");
+    appStore.setState({ runtimes: data.agent_runtimes });
+    return true;
+  } catch {
+    return false;
+  }
 }

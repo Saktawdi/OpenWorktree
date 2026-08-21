@@ -2,14 +2,22 @@ import * as demo from "./engine";
 import * as live from "./api";
 import {
   appStore,
+  cancelTicket,
   createTicket,
   pushSystemMessage,
+  removeAgentConfig,
+  removeProject,
   seedDemo,
   selectTicket,
   setStage,
   setVerdict,
+  showToast,
+  updateTicket,
+  upsertAgentConfig,
+  upsertProject,
   wipePersisted,
 } from "./store";
+import type { AgentConfig, Project, Ticket } from "./types";
 
 export const actions = {
   sendPrompt(no: string, text: string) {
@@ -35,20 +43,149 @@ export const actions = {
   publish(no: string) {
     return appStore.getState().mode === "live" ? live.livePublish(no) : demo.demoPublish(no);
   },
-  newTicket(title: string, priority: "P0" | "P1" | "P2" | "P3") {
+  newTicket(
+    title: string,
+    priority: "P0" | "P1" | "P2" | "P3",
+    extra?: { description?: string; labels?: string[]; agentConfigId?: string },
+  ) {
     if (appStore.getState().mode === "live") {
       const no = `T-${Date.now().toString().slice(-5)}`;
       fetch(`/api/tickets`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${appStore.getState().token}` },
-        body: JSON.stringify({ ticket_no: no, title, priority }),
+        body: JSON.stringify({
+          ticket_no: no,
+          title,
+          priority,
+          project_id: appStore.getState().activeProjectId || undefined,
+          description: extra?.description,
+          labels: extra?.labels,
+          agent_config_id: extra?.agentConfigId,
+        }),
       })
         .then(() => live.loadTickets())
         .then(() => selectTicket(no))
         .catch((e) => console.error(e));
       return no;
     }
-    return createTicket(title, priority);
+    const no = createTicket(title, priority);
+    const p = extra ?? {};
+    if (p.description || p.labels?.length || p.agentConfigId) {
+      updateTicket(no, {
+        description: p.description,
+        labels: p.labels,
+        agentConfigId: p.agentConfigId,
+      });
+    }
+    return no;
+  },
+  editTicket(
+    no: string,
+    patch: {
+      title?: string;
+      description?: string;
+      note?: string;
+      labels?: string[];
+      priority?: Ticket["priority"];
+      agentConfigId?: string | null;
+    },
+  ) {
+    if (appStore.getState().mode === "live") {
+      return live.updateTicketLive(no, patch);
+    }
+    updateTicket(no, patch);
+    return Promise.resolve(true);
+  },
+  cancelTicket(no: string) {
+    if (appStore.getState().mode === "live") {
+      return live.updateTicketLive(no, { stage: "CANCELLED" });
+    }
+    cancelTicket(no);
+    pushSystemMessage(no, "工单已取消 · 沙箱克隆保留，可随时归档", "warn");
+    return Promise.resolve(true);
+  },
+  createProject(body: {
+    name: string;
+    workspacePath: string;
+    initGit: boolean;
+    priority: string | null;
+    size: string | null;
+    tags: string[];
+  }) {
+    if (appStore.getState().mode === "live") {
+      return live.createProjectLive({
+        name: body.name,
+        workspace_path: body.workspacePath,
+        init_git: body.initGit,
+        priority: body.priority,
+        size: body.size,
+        tags: body.tags,
+      });
+    }
+    const id = body.name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/(^-+|-+$)/g, "") || "project";
+    const st = appStore.getState();
+    const finalId = st.projects.some((p) => p.id === id) ? `${id}-${st.projects.length + 1}` : id;
+    upsertProject({
+      id: finalId,
+      name: body.name,
+      workspacePath: body.workspacePath,
+      targetRef: "refs/heads/main",
+      authRepo: `D:/repo/auth/${finalId}.git`,
+      priority: (body.priority as Project["priority"]) ?? null,
+      size: body.size as Project["size"],
+      tags: body.tags,
+      ticketCount: 0,
+      activeTicketCount: 0,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+    showToast(`项目「${body.name}」已接入`);
+    return Promise.resolve(true);
+  },
+  editProject(
+    id: string,
+    patch: { name?: string; priority?: Project["priority"] | null; size?: Project["size"] | null; tags?: string[] },
+  ) {
+    if (appStore.getState().mode === "live") {
+      return live.updateProjectLive(id, patch);
+    }
+    const st = appStore.getState();
+    const p = st.projects.find((x) => x.id === id);
+    if (!p) return Promise.resolve(false);
+    upsertProject({ ...p, ...patch, updatedAt: new Date().toISOString() });
+    return Promise.resolve(true);
+  },
+  deleteProject(id: string) {
+    if (appStore.getState().mode === "live") {
+      return live.deleteProjectLive(id);
+    }
+    removeProject(id);
+    showToast("项目已移除（工单保留为未分配）");
+    return Promise.resolve(true);
+  },
+  saveAgentConfig(c: AgentConfig) {
+    if (appStore.getState().mode === "live") {
+      return live.upsertAgentConfigLive(c);
+    }
+    upsertAgentConfig(c);
+    showToast("智能体配置已保存");
+    return Promise.resolve(true);
+  },
+  deleteAgentConfig(id: string) {
+    if (appStore.getState().mode === "live") {
+      return live.deleteAgentConfigLive(id);
+    }
+    removeAgentConfig(id);
+    showToast("智能体配置已删除");
+    return Promise.resolve(true);
+  },
+  refreshRuntimes() {
+    if (appStore.getState().mode === "live") {
+      void live.loadRuntimes();
+    }
   },
   openTicket(no: string) {
     appStore.setState({ view: "workbench" });
@@ -61,7 +198,7 @@ export const actions = {
     wipePersisted();
     appStore.setState({ mode: "live", token, conn: "ok" });
     try {
-      await live.loadTickets();
+      await Promise.all([live.loadTickets(), live.loadProjects(), live.loadAgentConfigs(), live.loadRuntimes()]);
       const first = appStore.getState().tickets[0];
       if (first) await live.selectTicketLive(first.ticketNo);
     } catch {

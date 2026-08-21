@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { MagnifyingGlass, Plus } from "@phosphor-icons/react";
 import { actions } from "../lib/actions";
 import { relativeTime, STAGE_LABEL } from "../lib/format";
-import { useApp, NO_CHAT, NO_DIFF } from "../lib/store";
+import { appStore, useApp, NO_DIFF } from "../lib/store";
 import type { Priority } from "../lib/types";
 import { PriorityChip, StageDot } from "./ui";
 
@@ -12,11 +12,25 @@ function NewTicketButton() {
   const [open, setOpen] = useState(false);
   const [title, setTitle] = useState("");
   const [priority, setPriority] = useState<Priority>("P1");
+  const [description, setDescription] = useState("");
+  const [labels, setLabels] = useState("");
+  const agents = useApp((s) => s.agents);
+  const agentId = useApp((s) => s.agentId);
 
   const submit = () => {
     if (!title.trim()) return;
-    actions.newTicket(title.trim(), priority);
+    actions.newTicket(title.trim(), priority, {
+      description: description.trim() || undefined,
+      labels: labels
+        .split(/[,，]/)
+        .map((x) => x.trim())
+        .filter(Boolean)
+        .slice(0, 20),
+      agentConfigId: agentId,
+    });
     setTitle("");
+    setDescription("");
+    setLabels("");
     setOpen(false);
   };
 
@@ -29,7 +43,7 @@ function NewTicketButton() {
       {open && (
         <>
           <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 top-9 z-40 w-[300px] card p-4 shadow-2xl shadow-black/50 animate-rise">
+          <div className="absolute right-0 top-9 z-40 w-[320px] card p-4 shadow-2xl shadow-black/50 animate-rise">
             <div className="text-[13px] font-semibold mb-3">新建工单</div>
             <label className="field-label">标题</label>
             <input
@@ -41,7 +55,7 @@ function NewTicketButton() {
               onKeyDown={(e) => e.key === "Enter" && submit()}
             />
             <label className="field-label">优先级</label>
-            <div className="flex gap-1 mb-4">
+            <div className="flex gap-1 mb-3">
               {PRIORITIES.map((p) => (
                 <button
                   key={p}
@@ -56,6 +70,36 @@ function NewTicketButton() {
                 </button>
               ))}
             </div>
+            <label className="field-label">描述（可选）</label>
+            <textarea
+              className="text-input h-16 py-2 resize-none mb-3"
+              placeholder="背景、验收标准…"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+            />
+            <label className="field-label">标签（逗号分隔，可选）</label>
+            <input
+              className="text-input mb-3"
+              placeholder="backend, security"
+              value={labels}
+              onChange={(e) => setLabels(e.target.value)}
+            />
+            <label className="field-label">协作智能体</label>
+            <div className="flex gap-1 mb-4">
+              {agents.map((a) => (
+                <button
+                  key={a.id}
+                  onClick={() => appStore.setState({ agentId: a.id })}
+                  className={`flex-1 h-8 rounded-lg border text-[11.5px] cursor-pointer transition-colors truncate px-2 ${
+                    agentId === a.id
+                      ? "border-accent/50 bg-accent/10 text-accent"
+                      : "border-edge text-dim hover:text-ink hover:bg-raised"
+                  }`}
+                >
+                  {a.name}
+                </button>
+              ))}
+            </div>
             <button className="btn btn-primary w-full" disabled={!title.trim()} onClick={submit}>
               创建并打开沙箱
             </button>
@@ -67,10 +111,20 @@ function NewTicketButton() {
 }
 
 export function TicketList() {
-  const tickets = useApp((s) => s.tickets);
+  const ticketsAll = useApp((s) => s.tickets);
+  const activeProjectId = useApp((s) => s.activeProjectId);
   const selectedNo = useApp((s) => s.selectedNo);
   const diffs = useApp((s) => s.diffs);
+  const orderMap = useApp((s) => s.order);
   const [query, setQuery] = useState("");
+
+  const tickets = useMemo(
+    () =>
+      ticketsAll
+        .filter((t) => t.projectId === activeProjectId)
+        .sort((a, b) => (orderMap[a.ticketNo] ?? 0) - (orderMap[b.ticketNo] ?? 0)),
+    [ticketsAll, activeProjectId, orderMap],
+  );
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
