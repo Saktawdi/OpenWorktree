@@ -1,82 +1,47 @@
+import { useMemo, useState } from "react";
+import { motion, AnimatePresence } from "motion/react";
 import {
   ArrowRight,
   ArrowUUpLeft,
+  Archive,
   Check,
   CircleNotch,
+  FileText,
   GitBranch,
+  Hash,
+  ListChecks,
   LockKey,
+  NotePencil,
+  Plus,
   RocketLaunch,
   SealCheck,
   ShieldCheck,
+  Trash,
   Warning,
   X,
 } from "@phosphor-icons/react";
 import { actions } from "../lib/actions";
 import { formatBytes, hhmmss, shortHash } from "../lib/format";
 import {
+  NO_SESSIONS,
+  archiveSession,
+  createSession,
+  deleteSession,
   pushSystemMessage,
+  restoreSession,
   setStage,
+  switchSession,
   useApp,
 } from "../lib/store";
-import type { Snapshot } from "../lib/types";
+import type { ChatSession, Snapshot } from "../lib/types";
 import { CopyButton, HashReveal, Spinner } from "./ui";
 
-function StepperNode({
-  state,
-  index,
-  label,
-  sub,
-  last,
-}: {
-  state: "done" | "active" | "error" | "todo";
-  index: number;
-  label: string;
-  sub?: string;
-  last?: boolean;
-}) {
-  return (
-    <div className="relative flex gap-3">
-      {!last && (
-        <span
-          className={`absolute left-[13px] top-7 bottom-0 w-px ${
-            state === "done" ? "bg-accent/40" : "bg-edge"
-          }`}
-        />
-      )}
-      <span
-        className={`relative z-10 shrink-0 w-[27px] h-[27px] rounded-full border grid place-items-center text-[11px] font-mono ${
-          state === "done"
-            ? "bg-accent-dim border-accent/50 text-accent"
-            : state === "active"
-              ? "border-accent text-accent bg-canvas shadow-[0_0_0_4px_rgba(53,217,158,0.08)]"
-              : state === "error"
-                ? "bg-danger-dim border-danger/50 text-danger"
-                : "border-edge text-faint bg-canvas"
-        }`}
-      >
-        {state === "done" ? (
-          <Check size={13} weight="bold" />
-        ) : state === "error" ? (
-          <X size={13} weight="bold" />
-        ) : state === "active" ? (
-          <span className="w-2 h-2 rounded-full bg-accent animate-breathe" />
-        ) : (
-          index + 1
-        )}
-      </span>
-      <div className="pb-5 min-w-0">
-        <div className={`text-[13px] leading-6 ${state === "todo" ? "text-faint" : "text-ink"}`}>{label}</div>
-        {sub && <div className="font-mono text-[11px] text-faint truncate">{sub}</div>}
-      </div>
-    </div>
-  );
-}
+/* ─── Stepper (horizontal pipeline) ─── */
 
 function Stepper({ stage, snap, commitSha }: { stage: string; snap?: Snapshot; commitSha?: string }) {
   const gated = ["PRESUBMITTED", "IN_REVIEW", "REJECTED", "READY_TO_PUBLISH", "NEEDS_HUMAN", "DONE"].includes(stage);
-  const coded = gated || (snap !== undefined);
+  const coded = gated || snap !== undefined;
   const reviewed = ["READY_TO_PUBLISH", "NEEDS_HUMAN", "DONE"].includes(stage);
-  const published = stage === "DONE";
   const rejected = stage === "REJECTED";
 
   const activeIdx =
@@ -97,31 +62,84 @@ function Stepper({ stage, snap, commitSha }: { stage: string; snap?: Snapshot; c
     return "todo";
   };
 
+  const nodes: Array<{ index: number; label: string; sub?: string }> = [
+    { index: 0, label: "编码协作", sub: coded ? "已完成" : "工作中" },
+    { index: 1, label: "预提审快照", sub: snap ? `R${snap.round}·${shortHash(snap.treeHash, 8, 4)}` : undefined },
+    { index: 2, label: "门禁审查", sub: rejected ? "已驳回" : reviewed ? "已放行" : undefined },
+    { index: 3, label: "发布主分支", sub: commitSha ? shortHash(commitSha, 8, 4) : undefined },
+  ];
+
+  const circleSize = "w-[24px] h-[24px]";
+  const circleBase = `relative z-10 shrink-0 ${circleSize} rounded-full border grid place-items-center text-[10px] font-mono transition-colors`;
+
   return (
-    <div>
-      <StepperNode index={0} state={st(0)} label="编码协作" sub={coded ? "沙箱内改动已完成" : "Agent 正在沙箱内工作"} />
-      <StepperNode
-        index={1}
-        state={st(1)}
-        label="预提审快照"
-        sub={snap ? `R${snap.round} · ${shortHash(snap.treeHash, 8, 4)}` : undefined}
-      />
-      <StepperNode
-        index={2}
-        state={st(2)}
-        label="门禁审查"
-        sub={rejected ? "已驳回 · 等待修复后重新提审" : reviewed ? "已放行 · 授权生效" : undefined}
-      />
-      <StepperNode
-        index={3}
-        state={st(3)}
-        label="发布主分支"
-        last
-        sub={commitSha ? shortHash(commitSha, 8, 4) : undefined}
-      />
+    <div className="relative px-1 pt-0.5">
+      {/* connector lines — positioned behind circles */}
+      <div className="absolute top-[12px] left-[calc(12.5%+6px)] right-[calc(12.5%+6px)] h-px bg-edge" />
+      <div className="absolute top-[12px] left-[calc(12.5%+6px)] h-px bg-accent/40" style={{ width: `${Math.min(activeIdx / 3, 1) * 75}%` }} />
+
+      {/* circles */}
+      <div className="relative flex justify-between">
+        {nodes.map((n) => {
+          const s = st(n.index);
+          return (
+            <span
+              key={n.index}
+              className={`${circleBase} ${
+                s === "done"
+                  ? "bg-accent-dim border-accent/50 text-accent"
+                  : s === "active"
+                    ? "border-accent text-accent bg-canvas shadow-[0_0_0_3px_rgba(53,217,158,0.08)]"
+                    : s === "error"
+                      ? "bg-danger-dim border-danger/50 text-danger"
+                      : "border-edge text-faint bg-sunken"
+              }`}
+            >
+              {s === "done" ? (
+                <Check size={12} weight="bold" />
+              ) : s === "error" ? (
+                <X size={12} weight="bold" />
+              ) : s === "active" ? (
+                <span className="w-1.5 h-1.5 rounded-full bg-accent animate-breathe" />
+              ) : (
+                n.index + 1
+              )}
+            </span>
+          );
+        })}
+      </div>
+
+      {/* labels */}
+      <div className="relative flex justify-between mt-2">
+        {nodes.map((n) => {
+          const s = st(n.index);
+          return (
+            <div key={n.index} className="w-[24px] flex-none first:flex-none flex flex-col items-center last:items-center">
+              <div
+                className={`text-center leading-4 ${
+                  s === "todo"
+                    ? "text-faint"
+                    : s === "error"
+                      ? "text-danger"
+                      : s === "done"
+                        ? "text-accent"
+                        : "text-ink"
+                }`}
+              >
+                <div className="text-[11px] font-medium whitespace-nowrap">{n.label}</div>
+                {n.sub && (
+                  <div className="font-mono text-[10px] text-faint truncate leading-3">{n.sub}</div>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
+
+/* ─── Info Cards ─── */
 
 function TreeHashCard({ snap }: { snap: Snapshot }) {
   return (
@@ -168,7 +186,7 @@ function TaskCard({ task }: { task: { kind: string; percent: number; label: stri
       </div>
       <div className="h-1 rounded-full bg-edge overflow-hidden">
         <div
-          className="h-full rounded-full bg-gradient-to-r from-accent-dim to-accent transition-all duration-500"
+          className="h-full rounded-full bg-accent transition-all duration-500"
           style={{ width: `${task.percent}%` }}
         />
       </div>
@@ -222,7 +240,7 @@ function VerdictBanner({
       </div>
       <div className="mt-1 text-[12.5px] text-dim">{verdict.reason}</div>
       <button
-        className="btn mt-2.5 h-7 text-[12px] border-danger/30 text-danger hover:bg-danger/10 hover:border-danger/50"
+        className="btn btn-sm mt-2.5 border-danger/30 text-danger hover:bg-danger/10 hover:border-danger/50"
         onClick={() => actions.returnWithFindings(ticketNo)}
       >
         <ArrowUUpLeft size={13} />
@@ -238,7 +256,7 @@ function OutcomeCard({
   outcome: { commitSha: string; refBefore: string; refAfter: string; targetRef: string; publishedAt: number };
 }) {
   return (
-    <div className="rounded-xl border border-accent/25 bg-gradient-to-b from-accent/[0.07] to-transparent p-4 animate-slide-in">
+    <div className="rounded-xl border border-accent/25 bg-accent/[0.04] p-4 animate-slide-in">
       <div className="flex items-center justify-center w-10 h-10 mx-auto rounded-full bg-accent-dim border border-accent/40">
         <Check size={20} className="text-accent" weight="bold" />
       </div>
@@ -264,6 +282,229 @@ function OutcomeCard({
   );
 }
 
+/* ─── Ticket Info Section ─── */
+
+function TicketInfo({ ticketNo }: { ticketNo: string }) {
+  const ticket = useApp((s) => s.tickets.find((t) => t.ticketNo === ticketNo));
+  const [expanded, setExpanded] = useState(true);
+
+  if (!ticket) return null;
+
+  return (
+    <div className="border-b border-edge">
+      <button
+        className="w-full flex items-center gap-2 px-4 py-2.5 text-left hover:bg-raised/50 transition-colors cursor-pointer"
+        onClick={() => setExpanded(!expanded)}
+      >
+        <FileText size={14} className="text-faint shrink-0" />
+        <span className="text-[12px] font-medium text-dim">工单信息</span>
+        <span className="flex-1" />
+        <span
+          className={`text-[11px] text-faint transition-transform duration-150 ${expanded ? "rotate-0" : "-rotate-90"}`}
+        >
+          ▾
+        </span>
+      </button>
+      <AnimatePresence>
+        {expanded && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+            className="overflow-hidden"
+          >
+            <div className="px-4 pb-3 space-y-2.5">
+              {ticket.description && (
+                <div>
+                  <div className="text-[10.5px] uppercase tracking-wider text-faint mb-1">需求描述</div>
+                  <div className="text-[12.5px] text-dim leading-relaxed whitespace-pre-wrap">{ticket.description}</div>
+                </div>
+              )}
+              {ticket.note && (
+                <div>
+                  <div className="text-[10.5px] uppercase tracking-wider text-faint mb-1">备注</div>
+                  <div className="text-[12.5px] text-dim leading-relaxed whitespace-pre-wrap">{ticket.note}</div>
+                </div>
+              )}
+              {!ticket.description && !ticket.note && (
+                <div className="text-[12px] text-faint text-center py-2">暂无描述信息</div>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+/* ─── Session List Section ─── */
+
+function SessionList({ ticketNo }: { ticketNo: string }) {
+  const sessions = useApp((s) => s.sessions[ticketNo] ?? NO_SESSIONS);
+  const activeSessionId = useApp((s) => s.activeSessionId[ticketNo]);
+  const [tab, setTab] = useState<"active" | "archived">("active");
+
+  const activeSessions = useMemo(() => sessions.filter((s) => s.status === "active"), [sessions]);
+  const archivedSessions = useMemo(() => sessions.filter((s) => s.status === "archived"), [sessions]);
+  const displayed = tab === "active" ? activeSessions : archivedSessions;
+
+  const handleCreate = () => {
+    createSession(ticketNo);
+  };
+
+  return (
+    <div className="flex flex-col min-h-0">
+      {/* Tab bar */}
+      <div className="flex items-center gap-1 px-4 pt-2.5 pb-1">
+        <button
+          className={`px-2.5 py-1 rounded-md text-[11.5px] font-medium transition-colors cursor-pointer ${
+            tab === "active"
+              ? "bg-raised text-ink border border-edge"
+              : "text-dim hover:text-ink border border-transparent"
+          }`}
+          onClick={() => setTab("active")}
+        >
+          活跃
+          {activeSessions.length > 0 && (
+            <span className="ml-1 font-mono text-[10px] text-faint">{activeSessions.length}</span>
+          )}
+        </button>
+        <button
+          className={`px-2.5 py-1 rounded-md text-[11.5px] font-medium transition-colors cursor-pointer ${
+            tab === "archived"
+              ? "bg-raised text-ink border border-edge"
+              : "text-dim hover:text-ink border border-transparent"
+          }`}
+          onClick={() => setTab("archived")}
+        >
+          归档
+          {archivedSessions.length > 0 && (
+            <span className="ml-1 font-mono text-[10px] text-faint">{archivedSessions.length}</span>
+          )}
+        </button>
+        <span className="flex-1" />
+        <button
+          className="icon-btn !w-6 !h-6"
+          onClick={handleCreate}
+          title="新建会话"
+          aria-label="新建会话"
+        >
+          <Plus size={13} weight="bold" />
+        </button>
+      </div>
+
+      {/* Session list */}
+      <div className="flex-1 min-h-0 overflow-y-auto px-3 pb-2">
+        {displayed.length === 0 ? (
+          <div className="py-6 text-center">
+            <div className="text-[12px] text-faint">
+              {tab === "active" ? "暂无活跃会话" : "暂无归档会话"}
+            </div>
+            {tab === "active" && (
+              <button
+                className="btn btn-sm mt-2 text-[11px]"
+                onClick={handleCreate}
+              >
+                <Plus size={12} />
+                新建会话
+              </button>
+            )}
+          </div>
+        ) : (
+          <div className="space-y-1">
+            {displayed.map((sess) => (
+              <SessionItem
+                key={sess.id}
+                session={sess}
+                isActive={sess.id === activeSessionId}
+                ticketNo={ticketNo}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function SessionItem({
+  session,
+  isActive,
+  ticketNo,
+}: {
+  session: ChatSession;
+  isActive: boolean;
+  ticketNo: string;
+}) {
+  const [showActions, setShowActions] = useState(false);
+
+  return (
+    <div
+      className={`group relative flex items-center gap-2 px-2.5 py-2 rounded-lg transition-colors cursor-pointer ${
+        isActive ? "bg-raised border border-edge" : "hover:bg-panel border border-transparent"
+      }`}
+      onClick={() => switchSession(ticketNo, session.id)}
+      onMouseEnter={() => setShowActions(true)}
+      onMouseLeave={() => setShowActions(false)}
+    >
+      <span
+        className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+          isActive ? "bg-accent" : session.status === "archived" ? "bg-faint" : "bg-dim"
+        }`}
+      />
+      <div className="flex-1 min-w-0">
+        <div className="text-[12px] text-dim truncate">{session.title}</div>
+        <div className="font-mono text-[10px] text-faint mt-0.5">
+          {new Date(session.createdAt).toLocaleDateString("zh-CN", { month: "short", day: "numeric" })}
+        </div>
+      </div>
+      {showActions && (
+        <div className="flex items-center gap-0.5 shrink-0">
+          {session.status === "active" ? (
+            <button
+              className="icon-btn !w-5 !h-5"
+              onClick={(e) => {
+                e.stopPropagation();
+                archiveSession(ticketNo, session.id);
+              }}
+              title="归档"
+              aria-label="归档"
+            >
+              <Archive size={11} />
+            </button>
+          ) : (
+            <button
+              className="icon-btn !w-5 !h-5"
+              onClick={(e) => {
+                e.stopPropagation();
+                restoreSession(ticketNo, session.id);
+              }}
+              title="恢复"
+              aria-label="恢复"
+            >
+              <ArrowUUpLeft size={11} />
+            </button>
+          )}
+          <button
+            className="icon-btn !w-5 !h-5 text-danger/70 hover:text-danger"
+            onClick={(e) => {
+              e.stopPropagation();
+              deleteSession(ticketNo, session.id);
+            }}
+            title="删除"
+            aria-label="删除"
+          >
+            <Trash size={11} />
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ─── Main Panel ─── */
+
 export function GatePanel({ ticketNo }: { ticketNo: string }) {
   const stage = useApp((s) => s.tickets.find((t) => t.ticketNo === ticketNo)?.stage);
   const snaps = useApp((s) => s.snapshots[ticketNo]);
@@ -273,9 +514,14 @@ export function GatePanel({ ticketNo }: { ticketNo: string }) {
   const gateBusy = useApp((s) => s.gateBusy[ticketNo] ?? false);
   const diffCount = useApp((s) => s.diffs[ticketNo]?.length ?? 0);
   const outcome = useApp((s) => s.outcomes[ticketNo]);
+  const sessions = useApp((s) => s.sessions[ticketNo] ?? NO_SESSIONS);
+  const activeSessionId = useApp((s) => s.activeSessionId[ticketNo]);
 
   const snap = snaps?.[snaps.length - 1];
   const round = snaps?.length ?? 0;
+
+  // Ensure there's always at least one active session
+  const hasActiveSession = sessions.some((s) => s.status === "active");
 
   let action: { label: string; icon: React.ReactNode; onClick?: () => void; disabled?: boolean; hint?: string; primary?: boolean } | null = null;
 
@@ -322,44 +568,57 @@ export function GatePanel({ ticketNo }: { ticketNo: string }) {
 
   return (
     <aside className="w-[400px] shrink-0 border-l border-edge flex flex-col bg-canvas">
-      <div className="h-12 shrink-0 flex items-center px-4 border-b border-edge">
-        <span className="kicker">门禁流水线</span>
-        <span className="flex-1" />
-        {round > 0 && (
-          <span className="chip border border-edge-strong bg-raised text-dim font-mono">第 {round} 轮</span>
-        )}
+      {/* ─── Header ─── */}
+      <div className="shrink-0 px-4 pt-3 pb-3 border-b border-edge bg-sunken/50">
+        <div className="flex items-center justify-between mb-3">
+          <span className="kicker">门禁流水线</span>
+          {round > 0 && (
+            <span className="chip border border-edge-strong bg-raised text-dim font-mono">第 {round} 轮</span>
+          )}
+        </div>
+        <Stepper stage={stage ?? "PENDING"} snap={snap} commitSha={outcome?.commitSha} />
       </div>
 
-      <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-3.5">
-        <div className="card p-4">
-          <Stepper stage={stage ?? "PENDING"} snap={snap} commitSha={outcome?.commitSha} />
-        </div>
+      {/* ─── Scrollable Content ─── */}
+      <div className="flex-1 min-h-0 flex flex-col">
+        {/* Ticket Info */}
+        <TicketInfo ticketNo={ticketNo} />
 
-        {task && <TaskCard task={task} />}
-        {snap && !task && <TreeHashCard snap={snap} />}
-        {verdict && !task && <VerdictBanner ticketNo={ticketNo} verdict={verdict} findingsCount={findingsCount} />}
-        {outcome && <OutcomeCard outcome={outcome} />}
-
-        {stage === "NEEDS_HUMAN" && (
-          <div className="grid grid-cols-2 gap-2">
-            <button className="btn btn-primary h-9" onClick={() => actions.overridePass(ticketNo)}>
-              人工核准放行
-            </button>
-            <button
-              className="btn btn-danger-ghost h-9"
-              onClick={() => {
-                setStage(ticketNo, "REJECTED");
-                pushSystemMessage(ticketNo, "人工驳回 · 请根据审查意见修复后重新提审", "warn");
-              }}
-            >
-              驳回重修
-            </button>
+        {/* Task / Verdict / Outcome cards */}
+        {(task || snap || verdict || outcome) && (
+          <div className="px-4 py-3 space-y-3 border-b border-edge">
+            {task && <TaskCard task={task} />}
+            {snap && !task && <TreeHashCard snap={snap} />}
+            {verdict && !task && <VerdictBanner ticketNo={ticketNo} verdict={verdict} findingsCount={findingsCount} />}
+            {outcome && <OutcomeCard outcome={outcome} />}
+            {stage === "NEEDS_HUMAN" && (
+              <div className="grid grid-cols-2 gap-2">
+                <button className="btn btn-primary h-9" onClick={() => actions.overridePass(ticketNo)}>
+                  人工核准放行
+                </button>
+                <button
+                  className="btn btn-danger-ghost h-9"
+                  onClick={() => {
+                    setStage(ticketNo, "REJECTED");
+                    pushSystemMessage(ticketNo, "人工驳回 · 请根据审查意见修复后重新提审", "warn");
+                  }}
+                >
+                  驳回重修
+                </button>
+              </div>
+            )}
           </div>
         )}
+
+        {/* Session List */}
+        <div className="flex-1 min-h-0 flex flex-col">
+          <SessionList ticketNo={ticketNo} />
+        </div>
       </div>
 
+      {/* ─── Action Button (sticky bottom) ─── */}
       {action && (
-        <div className="shrink-0 border-t border-edge bg-panel/60 p-3.5">
+        <div className="shrink-0 border-t border-edge bg-surface p-3.5">
           <button
             className={`btn btn-lg w-full ${action.primary ? "btn-primary" : ""}`}
             disabled={action.disabled}
@@ -373,7 +632,7 @@ export function GatePanel({ ticketNo }: { ticketNo: string }) {
         </div>
       )}
       {stage === "DONE" && (
-        <div className="shrink-0 border-t border-edge bg-panel/60 p-3.5">
+        <div className="shrink-0 border-t border-edge bg-surface p-3.5">
           <button className="btn btn-lg w-full" disabled>
             <Check size={15} weight="bold" />
             工单已完成归档

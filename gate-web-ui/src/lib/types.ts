@@ -132,6 +132,15 @@ export type ChatItem =
     }
   | { kind: "system"; id: string; text: string; tone: "info" | "success" | "warn"; ts: number };
 
+export interface ChatSession {
+  id: string;
+  ticketNo: string;
+  title: string;
+  status: "active" | "archived";
+  createdAt: number;
+  updatedAt: number;
+}
+
 export interface DiffLine {
   type: "add" | "del" | "ctx";
   oldNo?: number;

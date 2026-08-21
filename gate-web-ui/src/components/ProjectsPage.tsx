@@ -166,8 +166,8 @@ function ProjectDialog({
 }
 
 const LANE_COLORS = ["var(--color-accent)", "#7cc7f7", "#c79bf5", "#f5b84f"];
-const ROW_H = 38;
-const LANE_W = 30;
+const ROW_H = 40;
+const LANE_W = 28;
 
 function CommitGraph({ commits }: { commits: GitCommit[] }) {
   const laneCount = Math.max(1, ...commits.map((c) => c.lane)) + 1;
@@ -196,7 +196,7 @@ function CommitGraph({ commits }: { commits: GitCommit[] }) {
           const color = LANE_COLORS[c.lane % LANE_COLORS.length];
           if (x1 === x2) {
             return (
-              <line key={`${c.sha}-${pi}`} x1={x1} y1={y1} x2={x2} y2={y2} stroke={color} strokeOpacity={0.4} strokeWidth={1.6} />
+              <line key={`${c.sha}-${pi}`} x1={x1} y1={y1} x2={x2} y2={y2} stroke={color} strokeOpacity={0.35} strokeWidth={1.5} />
             );
           }
           const midY = (y1 + y2) / 2;
@@ -206,18 +206,22 @@ function CommitGraph({ commits }: { commits: GitCommit[] }) {
               d={`M ${x1} ${y1} C ${x1} ${midY}, ${x2} ${midY}, ${x2} ${y2}`}
               fill="none"
               stroke={color}
-              strokeOpacity={0.4}
-              strokeWidth={1.6}
+              strokeOpacity={0.35}
+              strokeWidth={1.5}
             />
           );
         }),
       )}
       {commits.map((c, i) => {
         const color = LANE_COLORS[c.lane % LANE_COLORS.length];
+        const hasRefs = c.refs.length > 0;
         return (
           <g key={c.sha}>
-            <circle cx={cx(c.lane)} cy={cy(i)} r={5.5} fill="var(--color-canvas)" stroke={color} strokeWidth={2} />
-            {c.refs.length > 0 && <circle cx={cx(c.lane)} cy={cy(i)} r={2.2} fill={color} />}
+            {hasRefs && (
+              <circle cx={cx(c.lane)} cy={cy(i)} r={8} fill={color} fillOpacity={0.12} />
+            )}
+            <circle cx={cx(c.lane)} cy={cy(i)} r={5} fill="var(--color-canvas)" stroke={color} strokeWidth={1.8} />
+            {hasRefs && <circle cx={cx(c.lane)} cy={cy(i)} r={2.5} fill={color} />}
           </g>
         );
       })}
@@ -231,39 +235,54 @@ function GraphTab({ git }: { git: import("../lib/types").GitRepoView }) {
 
   return (
     <div>
-      <div className="flex flex-wrap gap-1.5 px-4 pt-3 pb-3 border-b border-edge">
+      <div className="flex flex-wrap gap-2 px-4 py-3 border-b border-edge">
         {git.branches.map((b) => (
-          <span key={b.name} className="chip border border-edge-strong bg-raised text-dim font-mono">
+          <span
+            key={b.name}
+            className="inline-flex items-center gap-1.5 h-6 px-2.5 rounded-md border border-edge-strong bg-raised text-dim font-mono text-[11.5px]"
+          >
             <GitBranch size={11} className={b.lane === 0 ? "text-accent" : "text-info"} />
-            {b.name.replace("refs/heads/", "")}
-            <span className="text-faint">· {shortHash(b.tip, 6, 0)}</span>
+            <span>{b.name.replace("refs/heads/", "")}</span>
+            <span className="text-faint">·</span>
+            <span className="text-faint">{shortHash(b.tip, 6, 0)}</span>
           </span>
         ))}
       </div>
-      <div className="overflow-x-auto p-2">
+      <div className="overflow-x-auto">
         <div className="min-w-max relative" style={{ paddingLeft: graphW }}>
-          <div className="absolute left-2 top-2 bottom-2">
+          <div className="absolute left-3 top-0 bottom-0">
             <CommitGraph commits={git.commits} />
           </div>
           {git.commits.map((c) => (
-            <div key={c.sha} className="flex items-center gap-3 pr-3 rounded-lg hover:bg-raised/40 transition-colors" style={{ height: ROW_H }}>
-              <span className="font-mono text-[11.5px] text-faint w-[64px] shrink-0">{shortHash(c.sha, 7, 0)}</span>
-              <span className="text-[12.5px] text-ink truncate max-w-[420px]">{c.message}</span>
+            <div
+              key={c.sha}
+              className="flex items-center gap-3 px-4 hover:bg-raised/50 transition-colors border-b border-edge/40 last:border-b-0"
+              style={{ height: ROW_H }}
+            >
+              <span className="font-mono text-[11px] text-faint/70 w-[62px] shrink-0">{shortHash(c.sha, 7, 0)}</span>
+              <span className="text-[12.5px] text-ink truncate max-w-[400px]">{c.message}</span>
               {c.refs.map((ref) => (
                 <span
                   key={ref}
-                  className={`chip shrink-0 border font-mono ${
+                  className={`inline-flex items-center shrink-0 h-5 px-1.5 rounded border font-mono text-[10.5px] ${
                     ref.startsWith("tag:")
-                      ? "border-warn/35 bg-warn/10 text-warn"
-                      : "border-accent/30 bg-accent/10 text-accent"
+                      ? "border-warn/30 bg-warn/8 text-warn"
+                      : "border-accent/25 bg-accent/8 text-accent"
                   }`}
                 >
+                  {ref.startsWith("tag:") && (
+                    <svg width="9" height="9" viewBox="0 0 12 12" fill="none" className="mr-0.5">
+                      <path d="M2 6h8M8 3l2 3-2 3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
+                    </svg>
+                  )}
                   {ref.replace("refs/heads/", "").replace("tag:", "")}
                 </span>
               ))}
               <span className="flex-1" />
               <span className="text-[11px] text-faint shrink-0">
-                {c.author} · {relativeTime(c.time)}
+                {c.author}
+                <span className="mx-1 text-faint/50">·</span>
+                {relativeTime(c.time)}
               </span>
             </div>
           ))}
@@ -414,55 +433,71 @@ export function ProjectsPage() {
         </div>
 
         {detail && (
-          <div className="mt-4 card animate-rise overflow-hidden">
-            <div className="flex items-center gap-2 px-4 h-11 border-b border-edge">
-              <TreeStructure size={14} className="text-dim" />
-              <span className="text-[13px] font-semibold">{detail.name}</span>
-              <span className="font-mono text-[11px] text-faint">· 仓库视图</span>
-              <span className="flex-1" />
-              {(["graph", "tree"] as const).map((k) => (
-                <button
-                  key={k}
-                  onClick={() => setTab(k)}
-                  className={`h-7 px-2.5 rounded-md text-[12px] cursor-pointer transition-colors ${
-                    tab === k ? "bg-raised text-ink border border-edge" : "text-dim hover:text-ink border border-transparent"
-                  }`}
-                >
-                  {k === "graph" ? "分支图 · 提交历史" : "文件树"}
-                </button>
-              ))}
-            </div>
-
-            {!git && (
-              <div className="p-8 text-center text-[12.5px] text-faint leading-relaxed">
-                当前连接下后端未提供仓库读取接口，
-                <br />
-                分支图与文件树仅在演示模式中展示。
-              </div>
-            )}
-
-            {git && tab === "graph" && <GraphTab git={git} />}
-
-            {git && tab === "tree" && (
-              <div className="p-2">
-                {(tree ?? []).map((e) => (
-                  <div key={e.path} className="flex items-center gap-3 px-3 h-9 rounded-lg hover:bg-raised/60 transition-colors">
-                    {e.type === "dir" ? (
-                      <FolderOpen size={14} className="text-info/70 shrink-0" />
-                    ) : (
-                      <TreeStructure size={14} className="text-faint shrink-0" />
-                    )}
-                    <span className="font-mono text-[12.5px] text-ink">{e.path}</span>
-                    <span className="flex-1" />
-                    <span className="hidden md:inline text-[11.5px] text-faint truncate max-w-[320px]">{e.lastMessage}</span>
-                    <span className="font-mono text-[11px] text-faint w-[60px] text-right shrink-0">
-                      {e.type === "file" ? `${((e.size ?? 0) / 1024).toFixed(1)} KB` : ""}
-                    </span>
-                    <span className="font-mono text-[11px] text-faint w-[58px] text-right shrink-0">{e.lastCommitShort}</span>
-                  </div>
+          <div className="fixed inset-0 z-50 grid place-items-center bg-black/55 backdrop-blur-[2px]" onClick={() => setDetailId(null)}>
+            <div
+              className="w-[880px] max-h-[85vh] card shadow-2xl shadow-black/60 animate-rise overflow-hidden flex flex-col"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center gap-2 px-4 h-11 border-b border-edge shrink-0">
+                <TreeStructure size={14} className="text-dim" />
+                <span className="text-[13px] font-semibold">{detail.name}</span>
+                <span className="font-mono text-[11px] text-faint">· 仓库视图</span>
+                <span className="flex-1" />
+                {(["graph", "tree"] as const).map((k) => (
+                  <button
+                    key={k}
+                    onClick={() => setTab(k)}
+                    className={`h-7 px-2.5 rounded-md text-[12px] cursor-pointer transition-colors ${
+                      tab === k ? "bg-raised text-ink border border-edge" : "text-dim hover:text-ink border border-transparent"
+                    }`}
+                  >
+                    {k === "graph" ? "分支图 · 提交历史" : "文件树"}
+                  </button>
                 ))}
+                <button
+                  className="icon-btn ml-1"
+                  onClick={() => setDetailId(null)}
+                  aria-label="关闭"
+                >
+                  <svg width="13" height="13" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+                    <path d="M2 2l8 8M10 2l-8 8" />
+                  </svg>
+                </button>
               </div>
-            )}
+
+              <div className="flex-1 min-h-0 overflow-auto">
+                {!git && (
+                  <div className="p-8 text-center text-[12.5px] text-faint leading-relaxed">
+                    当前连接下后端未提供仓库读取接口，
+                    <br />
+                    分支图与文件树仅在演示模式中展示。
+                  </div>
+                )}
+
+                {git && tab === "graph" && <GraphTab git={git} />}
+
+                {git && tab === "tree" && (
+                  <div className="p-2">
+                    {(tree ?? []).map((e) => (
+                      <div key={e.path} className="flex items-center gap-3 px-3 h-9 rounded-lg hover:bg-raised/60 transition-colors">
+                        {e.type === "dir" ? (
+                          <FolderOpen size={14} className="text-info/70 shrink-0" />
+                        ) : (
+                          <TreeStructure size={14} className="text-faint shrink-0" />
+                        )}
+                        <span className="font-mono text-[12.5px] text-ink">{e.path}</span>
+                        <span className="flex-1" />
+                        <span className="hidden md:inline text-[11.5px] text-faint truncate max-w-[320px]">{e.lastMessage}</span>
+                        <span className="font-mono text-[11px] text-faint w-[60px] text-right shrink-0">
+                          {e.type === "file" ? `${((e.size ?? 0) / 1024).toFixed(1)} KB` : ""}
+                        </span>
+                        <span className="font-mono text-[11px] text-faint w-[58px] text-right shrink-0">{e.lastCommitShort}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         )}
       </div>

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { motion } from "motion/react";
 import {
   CaretDown,
   Check,
@@ -9,8 +10,10 @@ import {
   SquaresFour,
   Sparkle,
   FolderPlus,
+  Sun,
+  Moon,
 } from "@phosphor-icons/react";
-import { appStore, openConnect, setView, switchProject, useApp } from "../lib/store";
+import { appStore, openConnect, setView, switchProject, toggleTheme, useApp } from "../lib/store";
 import { LogoMark } from "./ui";
 
 const VIEWS = [
@@ -28,14 +31,21 @@ function ViewSwitch() {
         <button
           key={key}
           onClick={() => setView(key)}
-          className={`inline-flex items-center gap-1.5 h-7 px-3 rounded-md text-[12.5px] font-medium transition-colors cursor-pointer ${
-            view === key
-              ? "bg-raised text-ink shadow-sm border border-edge"
-              : "text-dim hover:text-ink border border-transparent"
+          className={`relative inline-flex items-center gap-1.5 h-7 px-3 rounded-md text-[12.5px] font-medium cursor-pointer ${
+            view === key ? "text-ink" : "text-dim hover:text-ink"
           }`}
         >
-          <Icon size={14} weight={view === key ? "fill" : "regular"} />
-          {label}
+          {view === key && (
+            <motion.div
+              layoutId="view-switch-active"
+              className="absolute inset-0 bg-raised rounded-md border border-edge shadow-sm"
+              transition={{ type: "spring", stiffness: 500, damping: 35 }}
+            />
+          )}
+          <span className="relative z-10 inline-flex items-center gap-1.5">
+            <Icon size={14} weight={view === key ? "fill" : "regular"} />
+            {label}
+          </span>
         </button>
       ))}
     </div>
@@ -75,7 +85,12 @@ function ProjectSwitcher() {
       {open && (
         <>
           <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 top-9 z-40 w-[280px] card p-1.5 shadow-2xl shadow-black/50 animate-rise">
+          <motion.div
+            initial={{ opacity: 0, y: -4, scale: 0.97 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            transition={{ type: "spring", stiffness: 500, damping: 30 }}
+            className="absolute right-0 top-9 z-40 w-[280px] card p-1.5 shadow-xl shadow-black/50"
+          >
             <div className="kicker px-2.5 pt-1.5 pb-1">切换项目</div>
             {projects.map((p) => (
               <button
@@ -106,10 +121,33 @@ function ProjectSwitcher() {
               <Plus size={14} weight="bold" />
               接入新项目…
             </button>
-          </div>
+          </motion.div>
         </>
       )}
     </div>
+  );
+}
+
+function ThemeToggle() {
+  const theme = useApp((s) => s.theme);
+  return (
+    <motion.button
+      className="icon-btn"
+      onClick={toggleTheme}
+      title={theme === "dark" ? "切换亮色模式" : "切换暗色模式"}
+      aria-label={theme === "dark" ? "切换亮色模式" : "切换暗色模式"}
+      whileTap={{ scale: 0.9, rotate: 15 }}
+      transition={{ type: "spring", stiffness: 400, damping: 15 }}
+    >
+      <motion.div
+        key={theme}
+        initial={{ rotate: -90, opacity: 0 }}
+        animate={{ rotate: 0, opacity: 1 }}
+        transition={{ type: "spring", stiffness: 300, damping: 20 }}
+      >
+        {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
+      </motion.div>
+    </motion.button>
   );
 }
 
@@ -133,7 +171,7 @@ export function TopBar() {
         : "text-dim border-edge-strong bg-raised";
 
   return (
-    <header className="h-13 shrink-0 flex items-center gap-4 px-4 border-b border-edge bg-panel">
+    <header className="h-13 shrink-0 flex items-center gap-4 px-4 border-b border-edge bg-surface">
       <div className="flex items-center gap-2.5 min-w-0">
         <LogoMark />
         <span className="font-semibold tracking-tight text-[15px]">Gate</span>
@@ -142,7 +180,9 @@ export function TopBar() {
         </span>
       </div>
 
-      <ViewSwitch />
+      <div className="hidden md:block">
+        <ViewSwitch />
+      </div>
 
       <div className="flex-1" />
 
@@ -158,12 +198,13 @@ export function TopBar() {
             mode === "live" && conn === "ok" ? "bg-accent" : mode === "live" ? "bg-warn animate-breathe" : "bg-dim"
           }`}
         />
-        {connLabel}
+        <span className="hidden sm:inline">{connLabel}</span>
       </button>
 
-      <button className="icon-btn" onClick={openConnect} title="设置" aria-label="设置">
+      <button className="icon-btn hidden sm:inline-flex" onClick={openConnect} title="设置" aria-label="设置">
         <GearSix size={16} />
       </button>
+      <ThemeToggle />
     </header>
   );
 }
