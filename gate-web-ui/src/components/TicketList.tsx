@@ -3,14 +3,14 @@ import { motion } from "motion/react";
 import { MagnifyingGlass, Plus } from "@phosphor-icons/react";
 import { actions } from "../lib/actions";
 import { relativeTime, STAGE_LABEL } from "../lib/format";
-import { appStore, useApp, NO_DIFF } from "../lib/store";
+import { appStore, closeTicketCreator, openTicketCreator, useApp, NO_DIFF } from "../lib/store";
 import type { Priority } from "../lib/types";
 import { PriorityChip, StageDot } from "./ui";
 
 const PRIORITIES: Priority[] = ["P0", "P1", "P2", "P3"];
 
 function NewTicketButton() {
-  const [open, setOpen] = useState(false);
+  const open = useApp((s) => s.ticketCreatorOpen);
   const [title, setTitle] = useState("");
   const [priority, setPriority] = useState<Priority>("P1");
   const [description, setDescription] = useState("");
@@ -32,18 +32,18 @@ function NewTicketButton() {
     setTitle("");
     setDescription("");
     setLabels("");
-    setOpen(false);
+    closeTicketCreator();
   };
 
   return (
     <div className="relative">
-      <button className="btn h-7 px-2.5 text-[12px]" onClick={() => setOpen(!open)}>
+      <button className="btn h-7 px-2.5 text-[12px]" onClick={() => (open ? closeTicketCreator() : openTicketCreator())}>
         <Plus size={13} weight="bold" />
         新建
       </button>
       {open && (
         <>
-          <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
+          <div className="fixed inset-0 z-30" onClick={() => closeTicketCreator()} />
           <div className="absolute right-0 top-9 z-40 w-[320px] card p-4 shadow-2xl shadow-black/50 animate-rise">
             <div className="text-[13px] font-semibold mb-3">新建工单</div>
             <label className="field-label">标题</label>

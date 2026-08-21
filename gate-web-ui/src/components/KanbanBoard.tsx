@@ -23,7 +23,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { motion } from "motion/react";
 import { actions } from "../lib/actions";
 import { relativeTime } from "../lib/format";
-import { appStore, setTicketOrder, showToast, useApp } from "../lib/store";
+import { appStore, openTicketCreator, setTicketOrder, setView, showToast, useApp } from "../lib/store";
 import type { Stage, Ticket } from "../lib/types";
 import { PriorityChip, StageDot } from "./ui";
 
@@ -343,6 +343,15 @@ export function KanbanBoard() {
         <span className="font-mono text-[11px] text-faint">{tickets.length} 个工单</span>
         <span className="flex-1" />
         <span className="text-[11.5px] text-faint">拖拽卡片即可流转 · 门禁泳道会执行对应操作</span>
+        <button
+          className="btn btn-sm btn-primary"
+          onClick={() => {
+            setView("workbench");
+            openTicketCreator();
+          }}
+        >
+          新建工单
+        </button>
       </div>
       <DndContext
         sensors={sensors}
