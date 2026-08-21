@@ -676,8 +676,16 @@ export async function createProjectLive(body: {
   tags?: string[];
 }): Promise<boolean> {
   try {
-    await api("/api/projects", { method: "POST", body: JSON.stringify(body) });
+    // The response is the created project row; switch the workspace context to it so
+    // the freshly onboarded (usually empty) project is immediately usable.
+    const created = await api<{ id: string }>("/api/projects", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
     await loadProjects();
+    if (created?.id) {
+      appStore.setState({ activeProjectId: created.id });
+    }
     return true;
   } catch (e) {
     showToast(`创建项目失败：${(e as Error).message}`);

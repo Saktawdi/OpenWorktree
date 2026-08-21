@@ -1,5 +1,5 @@
 import { GitBranch, NotePencil, Sparkle } from "@phosphor-icons/react";
-import { NO_CHAT, openTicketEditor, useApp } from "../lib/store";
+import { NO_CHAT, openTicketCreator, openTicketEditor, useApp } from "../lib/store";
 import { ChatStream } from "./ChatStream";
 import { Composer } from "./Composer";
 import { DiffView } from "./DiffView";
@@ -109,11 +109,21 @@ export function Workbench() {
   const tab = useApp((s) => s.centerTab);
 
   if (!selectedNo) {
+    // Even with no ticket selected (fresh project, nothing in progress yet) the
+    // ticket list stays mounted — otherwise an empty project has no visible way
+    // to create the first ticket and the whole flow deadlocks.
     return (
-      <div className="flex-1 grid place-items-center">
-        <div className="text-center text-faint">
-          <div className="text-[14px]">从左侧选择一个工单开始</div>
-          <div className="mt-1 text-[12.5px]">或新建工单，开启沙箱协作</div>
+      <div className="flex-1 min-h-0 flex">
+        <TicketList />
+        <div className="flex-1 grid place-items-center">
+          <div className="text-center text-faint">
+            <div className="text-[14px]">当前项目还没有工单</div>
+            <div className="mt-1 text-[12.5px]">创建第一个工单，开启沙箱协作</div>
+            <button className="btn btn-primary mt-4" onClick={() => openTicketCreator()}>
+              <NotePencil size={14} />
+              新建工单
+            </button>
+          </div>
         </div>
       </div>
     );

@@ -63,6 +63,7 @@ export interface AppState {
   gitViews: Record<string, GitRepoView>;
   treeViews: Record<string, GitTreeEntry[]>;
   editingTicketNo: string | null;
+  ticketCreatorOpen: boolean;
   agentId: string;
   toast: { id: number; nonce: number; text: string } | null;
   highlight: { path: string; line: number; nonce: number } | null;
@@ -101,6 +102,7 @@ export const appStore = create<AppState>(() => ({
   gitViews: { "acme-checkout": GIT_ACME, "nexus-docs": GIT_NEXUS },
   treeViews: { "acme-checkout": TREE_ACME, "nexus-docs": TREE_NEXUS },
   editingTicketNo: null,
+  ticketCreatorOpen: false,
   agentId: DEMO_AGENTS[0].id,
   toast: null,
   highlight: null,
@@ -207,6 +209,7 @@ function tryRestore(): boolean {
       gitViews: saved.gitViews ?? cur.gitViews,
       treeViews: saved.treeViews ?? cur.treeViews,
       editingTicketNo: null,
+      ticketCreatorOpen: false,
     };
     appStore.setState(clean);
     return true;
@@ -508,6 +511,15 @@ export function removeAgentConfig(id: string) {
 
 export function openTicketEditor(no: string | null) {
   patch({ editingTicketNo: no });
+}
+
+/** Opens the new-ticket form from anywhere (empty workbench, kanban toolbar). */
+export function openTicketCreator() {
+  patch({ ticketCreatorOpen: true });
+}
+
+export function closeTicketCreator() {
+  patch({ ticketCreatorOpen: false });
 }
 
 export function toggleTheme() {
