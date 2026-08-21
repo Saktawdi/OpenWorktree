@@ -173,6 +173,101 @@ class TicketMetaApiTest {
         assertTrue(unknown.statusCode() >= 400, "unknown agent config must be rejected: " + unknown.body());
     }
 
+    @Test
+    void create_without_ticket_no_generates_sequential_numbers() throws Exception {
+        // Fresh gate: the first server-side number is T-101, then T-102.
+        HttpResponse<String> first = post("/api/tickets", "{\"title\":\"auto one\"}");
+        assertEquals(201, first.statusCode(), first.body());
+        assertEquals("T-101", extractStringField(first.body(), "ticket_no"), first.body());
+
+        HttpResponse<String> second = post("/api/tickets", "{\"title\":\"auto two\"}");
+        assertEquals(201, second.statusCode(), second.body());
+        assertEquals("T-102", extractStringField(second.body(), "ticket_no"), second.body());
+
+        // Blank ticket_no is treated as omitted — the server mints the next number.
+        HttpResponse<String> blank = post("/api/tickets", "{\"ticket_no\":\"  \",\"title\":\"blank\"}");
+        assertEquals(201, blank.statusCode(), blank.body());
+        assertEquals("T-103", extractStringField(blank.body(), "ticket_no"), blank.body());
+
+        // An explicit high number pushes generation past it; explicit ids still work.
+        post("/api/tickets", "{\"ticket_no\":\"T-110\",\"title\":\"explicit high\"}");
+        HttpResponse<String> after = post("/api/tickets", "{\"title\":\"after high\"}");
+        assertEquals(201, after.statusCode(), after.body());
+        assertEquals("T-111", extractStringField(after.body(), "ticket_no"), after.body());
+
+        // Same behaviour on the project-scoped board entry point.
+        String projectId = createProject("Scoped", "scoped-ws");
+        HttpResponse<String> scoped = post("/api/projects/" + projectId + "/tickets",
+                "{\"title\":\"scoped auto\"}");
+        assertEquals(201, scoped.statusCode(), scoped.body());
+        assertEquals("T-112", extractStringField(scoped.body(), "ticket_no"), scoped.body());
+        assertTrue(scoped.body().contains("\"project_id\":\"" + projectId + "\""), scoped.body());
+    }
+
+    @Test
+    void create_with_explicit_ticket_no_and_duplicate_rejection() throws Exception {
+        HttpResponse<String> created = post("/api/tickets",
+                "{\"ticket_no\":\"EXPL-1\",\"title\":\"explicit\"}");
+        assertEquals(201, created.statusCode(), created.body());
+        assertTrue(created.body().contains("\"ticket_no\":\"EXPL-1\""), created.body());
+
+        HttpResponse<String> duplicate = post("/api/tickets",
+                "{\"ticket_no\":\"EXPL-1\",\"title\":\"again\"}");
+        assertTrue(duplicate.statusCode() >= 400, "duplicate ticket_no must be rejected: "
+                + duplicate.body());
+        assertTrue(duplicate.body().contains("already exists"), duplicate.body());
+    }
+
+    @Test
+    void create_stage_pending_allowed_and_other_stages_rejected() throws Exception {
+        HttpResponse<String> pending = post("/api/tickets",
+                "{\"ticket_no\":\"STG-PEND\",\"title\":\"queued\",\"stage\":\"PENDING\"}");
+        assertEquals(201, pending.statusCode(), pending.body());
+        assertTrue(pending.body().contains("\"stage\":\"PENDING\""), pending.body());
+        // PENDING creation still performs the clone takeover (TopologyInitializer runs as usual).
+        assertTrue(Files.isDirectory(harness.components().config().clonesRoot()
+                .resolve("STG-PEND").resolve(".git")), "clone must exist for a PENDING ticket");
+
+        // Default remains IN_PROGRESS (the current behaviour).
+        post("/api/tickets", "{\"ticket_no\":\"STG-DEF\",\"title\":\"default\"}");
+        HttpResponse<String> def = get("/api/tickets/STG-DEF");
+        assertTrue(def.body().contains("\"stage\":\"IN_PROGRESS\""), def.body());
+
+        // PENDING → IN_PROGRESS is a legal queue transition afterwards.
+        HttpResponse<String> started = patch("/api/tickets/STG-PEND", "{\"stage\":\"IN_PROGRESS\"}");
+        assertEquals(200, started.statusCode(), started.body());
+        assertTrue(started.body().contains("\"stage\":\"IN_PROGRESS\""), started.body());
+
+        // Only the two queue-entry stages may be requested at create time.
+        HttpResponse<String> done = post("/api/tickets",
+                "{\"ticket_no\":\"STG-DONE\",\"title\":\"nope\",\"stage\":\"DONE\"}");
+        assertTrue(done.statusCode() >= 400, "stage DONE on create must be rejected: " + done.body());
+        HttpResponse<String> review = post("/api/tickets",
+                "{\"ticket_no\":\"STG-REV\",\"title\":\"nope\",\"stage\":\"IN_REVIEW\"}");
+        assertTrue(review.statusCode() >= 400, "stage IN_REVIEW on create must be rejected: "
+                + review.body());
+    }
+
+    @Test
+    void project_create_and_update_responses_carry_real_ticket_counts() throws Exception {
+        String projectId = createProject("Counted", "counted-ws");
+        // A brand-new project starts at zero — computed, not hardcoded (projectCreate path).
+        HttpResponse<String> created = get("/api/projects");
+        assertTrue(created.body().contains("\"ticket_count\":0"), created.body());
+        assertTrue(created.body().contains("\"active_ticket_count\":0"), created.body());
+
+        // Two tickets on the board: one active, one terminal via a queue cancel.
+        post("/api/tickets", "{\"ticket_no\":\"CNT-1\",\"title\":\"a\",\"project_id\":\"" + projectId + "\"}");
+        post("/api/tickets", "{\"ticket_no\":\"CNT-2\",\"title\":\"b\",\"project_id\":\"" + projectId + "\"}");
+        assertEquals(200, patch("/api/tickets/CNT-2", "{\"stage\":\"CANCELLED\"}").statusCode());
+
+        // projectUpdate shares projectJson: counts must now be 2 total / 1 active.
+        HttpResponse<String> updated = put("/api/projects/" + projectId, "{\"name\":\"Renamed\"}");
+        assertEquals(200, updated.statusCode(), updated.body());
+        assertTrue(updated.body().contains("\"ticket_count\":2"), updated.body());
+        assertTrue(updated.body().contains("\"active_ticket_count\":1"), updated.body());
+    }
+
     private String createProject(String name, String dirName) throws Exception {
         Path ws = harness.root().resolve(dirName);
         HttpResponse<String> res = post("/api/projects",
@@ -216,6 +311,15 @@ class TicketMetaApiTest {
                 .header("Authorization", "Bearer " + token)
                 .header("Content-Type", "application/json")
                 .method("PATCH", HttpRequest.BodyPublishers.ofString(body))
+                .build();
+        return client.send(req, HttpResponse.BodyHandlers.ofString());
+    }
+
+    private HttpResponse<String> put(String path, String body) throws Exception {
+        HttpRequest req = HttpRequest.newBuilder(URI.create(base + path))
+                .header("Authorization", "Bearer " + token)
+                .header("Content-Type", "application/json")
+                .PUT(HttpRequest.BodyPublishers.ofString(body))
                 .build();
         return client.send(req, HttpResponse.BodyHandlers.ofString());
     }

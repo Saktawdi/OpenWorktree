@@ -79,16 +79,29 @@ public final class TicketRoutes {
 
     public ApiRoutes.Response ticketCreate(String requestBody, String scopedProjectId) {
         Map<String, Object> req = parseObject(requestBody);
-        String ticketNo = str(req, "ticket_no");
-        if (ticketNo == null || ticketNo.isBlank()) {
-            throw new GateException(GateErrorCode.USAGE, "ticket_no is required");
+        // ticket_no is optional: omitted/blank lets the server mint the next sequential number.
+        String requestedNo = str(req, "ticket_no");
+        if (requestedNo != null && requestedNo.isBlank()) {
+            requestedNo = null;
         }
         String title = str(req, "title");
         if (title == null) {
             title = "";
         }
+        String ticketNo = requestedNo != null ? requestedNo : generateTicketNo();
         if (tickets.find(ticketNo).isPresent()) {
             throw new GateException(GateErrorCode.USAGE, "ticket already exists: " + ticketNo);
+        }
+        // Creation stage: only the two queue-entry stages; later stages are gate-driven.
+        TicketStage stage = TicketStage.IN_PROGRESS;
+        String stageRaw = str(req, "stage");
+        if (stageRaw != null) {
+            TicketStage parsed = parseStage(stageRaw);
+            if (parsed != TicketStage.PENDING && parsed != TicketStage.IN_PROGRESS) {
+                throw new GateException(GateErrorCode.USAGE,
+                        "stage on create must be PENDING or IN_PROGRESS: " + parsed);
+            }
+            stage = parsed;
         }
         String priority = parsePriority(req);
         String description = optionalText(req, "description");
@@ -124,11 +137,32 @@ public final class TicketRoutes {
         RepoRef clone = topologyInitializer.createClone(auth, targetRef, cloneDir);
         Instant now = clock.now();
         tickets.insert(new Ticket(ticketNo, title, targetRef, clone.pathString(),
-                null, null, "manual", "human", TicketStage.IN_PROGRESS, now, now,
+                null, null, "manual", "human", stage, now, now,
                 null, null, agentConfigId, priority, projectId, description, note, labels));
         Ticket created = tickets.find(ticketNo).orElseThrow(() -> new GateException(
                 GateErrorCode.GATE_ERROR_IO, "ticket was created but could not be reloaded: " + ticketNo));
         return new ApiRoutes.Response(201, ticketJson(created, projectNameIndex()));
+    }
+
+    /**
+     * Server-side ticket numbering: the next free {@code T-<n>}. The scan takes the highest number
+     * among existing {@code T-(\d+)} tickets plus one, with a floor of 101 — a fresh gate mints
+     * {@code T-101}. The uniqueness loop is a belt-and-braces guard against explicit numbers the
+     * scan could not have seen (e.g. a concurrent insert).
+     */
+    private String generateTicketNo() {
+        java.util.regex.Pattern numbered = java.util.regex.Pattern.compile("T-(\\d+)");
+        int next = 101;
+        for (Ticket t : tickets.findAll()) {
+            java.util.regex.Matcher m = numbered.matcher(t.ticketNo());
+            if (m.matches()) {
+                next = Math.max(next, Integer.parseInt(m.group(1)) + 1);
+            }
+        }
+        while (tickets.find("T-" + next).isPresent()) {
+            next++;
+        }
+        return "T-" + next;
     }
 
     public Project requireProject(String projectId) {
