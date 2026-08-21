@@ -1,6 +1,10 @@
 # Build output
 target/
 
+# Frontend local dependencies and Vite build output
+gate-web-ui/node_modules/
+gate-web-ui/dist/
+
 # Archival / test output — build artifacts dumps
 doc/归档/
 .archive/

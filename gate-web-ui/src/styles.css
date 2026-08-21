@@ -1,0 +1,163 @@
+@import "tailwindcss";
+@import "@fontsource-variable/geist";
+@import "@fontsource-variable/geist-mono";
+
+@theme {
+  --font-sans: "Geist Variable", ui-sans-serif, system-ui, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-mono: "Geist Mono Variable", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+
+  --color-canvas: #0a0c10;
+  --color-sunken: #07090c;
+  --color-panel: #10131a;
+  --color-raised: #151a23;
+  --color-overlay: #1a2029;
+  --color-edge: #1e2531;
+  --color-edge-strong: #2b3444;
+  --color-ink: #e9ecf2;
+  --color-dim: #98a1b3;
+  --color-faint: #5f6879;
+  --color-accent: #35d99e;
+  --color-accent-hi: #6fe8bf;
+  --color-accent-dim: #16463a;
+  --color-danger: #fb7185;
+  --color-danger-dim: #3f1d28;
+  --color-warn: #f5b84f;
+  --color-warn-dim: #3d2f14;
+  --color-info: #7cc7f7;
+  --color-info-dim: #16304a;
+
+  --radius-card: 12px;
+
+  --animate-blink: blink 1s steps(2, start) infinite;
+  --animate-breathe: breathe 2.2s ease-in-out infinite;
+  --animate-rise: rise 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
+  --animate-slide-in: slideIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
+  --animate-flash-line: flashLine 1.6s ease-out both;
+}
+
+@keyframes blink {
+  to { visibility: hidden; }
+}
+@keyframes breathe {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+@keyframes rise {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes slideIn {
+  from { opacity: 0; transform: translateX(14px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+@keyframes flashLine {
+  0% { background-color: rgba(245, 184, 79, 0.28); }
+  100% { background-color: transparent; }
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-canvas);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overflow: hidden;
+}
+
+::selection {
+  background: rgba(53, 217, 158, 0.22);
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-thumb {
+  background: #232b38;
+  border-radius: 8px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: #303a4b;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--color-accent) 65%, transparent);
+  outline-offset: 1px;
+  border-radius: 6px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@layer components {
+  .btn {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-lg px-3 h-8 text-[13px] font-medium
+      border border-edge text-dim bg-transparent cursor-pointer select-none whitespace-nowrap
+      transition-all duration-150 active:scale-[0.98] disabled:opacity-40 disabled:pointer-events-none;
+  }
+  .btn:hover:not(:disabled) {
+    @apply text-ink border-edge-strong bg-raised;
+  }
+  .btn-primary {
+    @apply border-transparent text-[#06251a] font-semibold;
+    background: linear-gradient(180deg, var(--color-accent-hi), var(--color-accent));
+  }
+  .btn-primary:hover:not(:disabled) {
+    background: linear-gradient(180deg, var(--color-accent), #2bc48d);
+    @apply text-[#06251a];
+  }
+  .btn-danger-ghost {
+    @apply border-danger/30 text-danger;
+  }
+  .btn-danger-ghost:hover:not(:disabled) {
+    @apply bg-danger/10 border-danger/50 text-danger;
+  }
+  .btn-lg {
+    @apply h-9 px-4 text-sm rounded-lg;
+  }
+  .icon-btn {
+    @apply inline-flex items-center justify-center w-7 h-7 rounded-md text-faint cursor-pointer
+      transition-colors duration-150 hover:text-ink hover:bg-raised;
+  }
+  .chip {
+    @apply inline-flex items-center gap-1 rounded-full px-2 py-px text-[11px] font-medium leading-[18px];
+  }
+  .field-label {
+    @apply block text-[11px] font-medium uppercase tracking-[0.08em] text-faint mb-1.5;
+  }
+  .text-input {
+    @apply w-full h-9 rounded-lg border border-edge bg-sunken px-3 text-[13px] text-ink
+      placeholder:text-faint transition-colors duration-150 focus:border-accent/50 focus:outline-none;
+  }
+  .card {
+    @apply rounded-xl border border-edge bg-panel;
+  }
+  .kicker {
+    @apply text-[11px] font-semibold uppercase tracking-[0.14em] text-faint;
+  }
+  .divider {
+    @apply border-t border-edge;
+  }
+}
