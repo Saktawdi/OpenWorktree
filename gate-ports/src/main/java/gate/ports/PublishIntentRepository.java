@@ -38,8 +38,13 @@ public interface PublishIntentRepository {
 
     void updateOutcome(long id, PublishStatus status, String observedBefore, String observedAfter, Instant finishedAt);
 
-    /** Everything still {@code PENDING}; the input to {@code reconcile}. */
+    /** Everything still {@code PENDING}; the input to {@code reconcile}. Default uses current tenant. */
     List<PublishIntent> findPending();
+
+    /** Explicit tenant-scoped pending search for system background reconcile. */
+    default List<PublishIntent> findPending(String tenantId) {
+        return findPending();
+    }
 
     List<PublishIntent> findByTicket(String ticketNo);
 }

@@ -61,10 +61,11 @@ if (-not $Mock) {
     $procHeadroom = Start-Process -FilePath "mvn" -ArgumentList @("-pl","gate-adapters","-am","-Dtest=CapacityHeadroomProbeTest","-Dsurefire.failIfNoSpecifiedTests=false","-DfailIfNoTests=false","test") -WorkingDirectory $repo -Wait -PassThru -NoNewWindow
     if ($procHeadroom.ExitCode -ne 0) { Record-Error "GOV-OBS-001 headroom probe failed: CapacityHeadroomProbeTest mvn exit=$($procHeadroom.ExitCode) (threshold 5000ms internal)" }
     else { Write-Host "  - Headroom probe passed: CapacityHeadroomProbeTest internal <5000ms P99<100ms" }
-    # 1c) Phase4 health/SLO test must pass (real InMemoryMetrics + SloService)
+    # 1c) Phase4 health/SLO test must pass (real InMemoryMetrics + SloService) across adapters + web
     $proc2 = Start-Process -FilePath "mvn" -ArgumentList @("-pl","gate-adapters","-am","-Dtest=Phase4SecurityAndHaTest#testHealthAndMetricsAndSlo+testBackupAndRestore","-Dsurefire.failIfNoSpecifiedTests=false","-DfailIfNoTests=false","test") -WorkingDirectory $repo -Wait -PassThru -NoNewWindow
-    if ($proc2.ExitCode -ne 0) { Record-Error "GOV-OBS-001 Phase4 SLO/health evidence failed mvn exit=$($proc2.ExitCode)" }
-    else { Write-Host "  - Phase4 SLO/health/backup tests passed" }
+    $procWeb = Start-Process -FilePath "mvn" -ArgumentList @("-pl","gate-web","-am","-Dtest=RuntimeAndModelFetchTest,WebReadOnlyApiTest","-Dsurefire.failIfNoSpecifiedTests=false","-DfailIfNoTests=false","test") -WorkingDirectory $repo -Wait -PassThru -NoNewWindow
+    if ($proc2.ExitCode -ne 0 -or $procWeb.ExitCode -ne 0) { Record-Error "GOV-OBS-001 Phase4 SLO/health/web evidence failed mvn (adapter exit=$($proc2.ExitCode) web exit=$($procWeb.ExitCode))" }
+    else { Write-Host "  - Phase4 SLO/health/backup/web tests passed across modules" }
 
     # 3) Check that SseHandler comment does not claim P99 without measurement – warn if no JMH/benchmark module
     $hasBench = (Get-ChildItem $repo -Recurse -Filter "*Benchmark*.java" -ErrorAction SilentlyContinue | Measure-Object).Count -gt 0

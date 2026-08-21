@@ -160,32 +160,19 @@ public final class JdbcPublishIntentRepository implements PublishIntentRepositor
 
     @Override
     public List<PublishIntent> findPending() {
-        List<PublishIntent> all = jdbc.query(SELECT + " WHERE pi.status = ? ORDER BY pi.id",
-                mapper(), PublishStatus.PENDING.name());
-        String ctxTenant = currentTenant();
-        java.util.List<PublishIntent> filtered = new java.util.ArrayList<>();
-        for (PublishIntent pi : all) {
-            try {
-                String rowTenant = jdbc.queryForObject("SELECT tenant_id FROM publish_intent WHERE id=?", String.class, pi.id());
-                String rt = rowTenant == null || rowTenant.isBlank() ? "default" : rowTenant;
-                if (ctxTenant.equals(rt)) filtered.add(pi);
-            } catch (Exception e) { /* skip */ }
-        }
-        return java.util.List.copyOf(filtered);
+        return findPending(currentTenant());
+    }
+
+    @Override
+    public List<PublishIntent> findPending(String tenantId) {
+        String targetTenant = tenantId == null || tenantId.isBlank() ? "default" : tenantId;
+        return jdbc.query(SELECT + " WHERE pi.status = ? AND pi.tenant_id = ? ORDER BY pi.id",
+                mapper(), PublishStatus.PENDING.name(), targetTenant);
     }
 
     @Override
     public List<PublishIntent> findByTicket(String ticketNo) {
-        List<PublishIntent> all = jdbc.query(SELECT + " WHERE pi.ticket_no = ? ORDER BY pi.id", mapper(), ticketNo);
-        String ctxTenant = currentTenant();
-        java.util.List<PublishIntent> filtered = new java.util.ArrayList<>();
-        for (PublishIntent pi : all) {
-            try {
-                String rowTenant = jdbc.queryForObject("SELECT tenant_id FROM publish_intent WHERE id=?", String.class, pi.id());
-                String rt = rowTenant == null || rowTenant.isBlank() ? "default" : rowTenant;
-                if (ctxTenant.equals(rt)) filtered.add(pi);
-            } catch (Exception e) { /* skip */ }
-        }
-        return java.util.List.copyOf(filtered);
+        String tenant = currentTenant();
+        return jdbc.query(SELECT + " WHERE pi.ticket_no = ? AND pi.tenant_id = ? ORDER BY pi.id", mapper(), ticketNo, tenant);
     }
 }

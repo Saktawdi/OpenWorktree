@@ -1,8 +1,8 @@
 # Phase4 企业安全与生产运维 验收证据包
 
-状态：Candidate, Not Verified — 待 L4 终审（已合入全部 P0/P1/P2 修复，测试全绿）  
-基线提交：`5616098` + `2b64342`（见 `git log --oneline -1`）  
-范围：Tenant/RBAC/SoD · WORM审计 · OTel/Metrics/SLO · 健康探针 · 备份恢复
+状态：Candidate, Not Verified — 待 L4 终审（已合入全部 P0/P1/P2/系统路径租户化与 gate-web 脚本实跑，测试全绿）  
+基线提交：`phase4` 分支 HEAD（`e69cb4c`，见 `git log --oneline -1`）  
+范围：Tenant/RBAC/SoD · WORM审计 · OTel/Metrics/SLO · 健康探针 · 备份恢复 · 系统路径显式租户化 · 验证套件多模块闭环
 
 ## 1. 交付清单
 

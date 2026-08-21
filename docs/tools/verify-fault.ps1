@@ -55,18 +55,17 @@ if (Test-Path -LiteralPath $faultTestPath) {
 
 # REAL EXECUTION: run fault tests (not just file-name check) – prevents fake green when logic regresses
 if (-not $Mock) {
-    Write-Host "[GOV-CON-001] Running real fault tests: TaskEventOutboxFaultTest + Phase3HaFaultTest + Phase4SecurityAndHaTest + TaskRegistryTest..."
-    # Phase4: split into adapter and web to respect per-module Surefire scoping
+    Write-Host "[GOV-CON-001] Running real fault tests across adapters and web modules..."
     $adapterArgs = @("-Dtest=TaskEventOutboxFaultTest,Phase3HaFaultTest,Phase4SecurityAndHaTest","-Dsurefire.failIfNoSpecifiedTests=false","-pl","gate-adapters","-am","test")
-    $webArgs = @("-Dtest=TaskRegistryTest","-Dsurefire.failIfNoSpecifiedTests=false","-pl","gate-web","-am","test")
+    $webArgs = @("-Dtest=TaskRegistryTest,RbacNegativeTest,WebGateEquivalenceTest","-Dsurefire.failIfNoSpecifiedTests=false","-pl","gate-web","-am","test")
     $procA = Start-Process -FilePath "mvn" -ArgumentList $adapterArgs -WorkingDirectory $repo -Wait -PassThru -NoNewWindow
     $procW = Start-Process -FilePath "mvn" -ArgumentList $webArgs -WorkingDirectory $repo -Wait -PassThru -NoNewWindow
     if ($procA.ExitCode -ne 0 -or $procW.ExitCode -ne 0) {
         Record-Error "GOV-CON-001 fault tests failed (adapter exit=$($procA.ExitCode) web exit=$($procW.ExitCode)); see surefire-reports"
         Get-ChildItem -Recurse -Filter "*.txt" (Join-Path $repo "gate-adapters/target/surefire-reports") -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "--- $($_.Name)"; Get-Content $_.FullName -Head 40 }
-        Get-ChildItem -Recurse -Filter "*.txt" (Join-Path $repo "gate-web/target/surefire-reports") -ErrorAction SilentlyContinue | Where-Object { $_.Name -like "*TaskRegistry*" } | ForEach-Object { Write-Host "--- $($_.Name)"; Get-Content $_.FullName -Head 40 }
+        Get-ChildItem -Recurse -Filter "*.txt" (Join-Path $repo "gate-web/target/surefire-reports") -ErrorAction SilentlyContinue | Where-Object { $_.Name -like "*TaskRegistry*" -or $_.Name -like "*Rbac*" -or $_.Name -like "*Equivalence*" } | ForEach-Object { Write-Host "--- $($_.Name)"; Get-Content $_.FullName -Head 40 }
     } else {
-        Write-Host "  - Fault tests passed (mvn exit 0)"
+        Write-Host "  - Fault tests passed across gate-adapters and gate-web (mvn exit 0)"
     }
 } else {
     Write-Host "[MOCK] Skipping real mvn execution (Mock flag)"
