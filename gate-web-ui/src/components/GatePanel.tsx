@@ -22,17 +22,7 @@ import {
 } from "@phosphor-icons/react";
 import { actions } from "../lib/actions";
 import { formatBytes, hhmmss, shortHash } from "../lib/format";
-import {
-  NO_SESSIONS,
-  archiveSession,
-  createSession,
-  deleteSession,
-  pushSystemMessage,
-  restoreSession,
-  setStage,
-  switchSession,
-  useApp,
-} from "../lib/store";
+import { NO_SESSIONS, useApp } from "../lib/store";
 import type { ChatSession, Snapshot } from "../lib/types";
 import { CopyButton, HashReveal, Spinner } from "./ui";
 
@@ -158,7 +148,7 @@ function TreeHashCard({ snap }: { snap: Snapshot }) {
         </div>
         <div>
           <div className="text-faint">变更文件</div>
-          <div className="font-mono text-dim mt-0.5">{snap.changedPaths.length} 个</div>
+          <div className="font-mono text-dim mt-0.5">{snap.changedCount ?? snap.changedPaths.length} 个</div>
         </div>
         <div>
           <div className="text-faint">快照体量</div>
@@ -213,8 +203,12 @@ function VerdictBanner({
         </div>
         <div className="mt-1 text-[12.5px] text-dim">{verdict.reason}</div>
         <div className="mt-2 flex items-center gap-2 font-mono text-[11px] text-faint">
-          <span>授权 {verdict.authorizationId}</span>
-          <span>·</span>
+          {verdict.authorizationId && (
+            <>
+              <span>授权 {verdict.authorizationId}</span>
+              <span>·</span>
+            </>
+          )}
           <span>{verdict.engineId}</span>
         </div>
       </div>
@@ -350,7 +344,7 @@ function SessionList({ ticketNo }: { ticketNo: string }) {
   const displayed = tab === "active" ? activeSessions : archivedSessions;
 
   const handleCreate = () => {
-    createSession(ticketNo);
+    actions.createSession(ticketNo);
   };
 
   return (
@@ -444,7 +438,7 @@ function SessionItem({
       className={`group relative flex items-center gap-2 px-2.5 py-2 rounded-lg transition-colors cursor-pointer ${
         isActive ? "bg-raised border border-edge" : "hover:bg-panel border border-transparent"
       }`}
-      onClick={() => switchSession(ticketNo, session.id)}
+      onClick={() => actions.switchSession(ticketNo, session.id)}
       onMouseEnter={() => setShowActions(true)}
       onMouseLeave={() => setShowActions(false)}
     >
@@ -466,7 +460,7 @@ function SessionItem({
               className="icon-btn !w-5 !h-5"
               onClick={(e) => {
                 e.stopPropagation();
-                archiveSession(ticketNo, session.id);
+                actions.archiveSession(ticketNo, session.id);
               }}
               title="归档"
               aria-label="归档"
@@ -478,7 +472,7 @@ function SessionItem({
               className="icon-btn !w-5 !h-5"
               onClick={(e) => {
                 e.stopPropagation();
-                restoreSession(ticketNo, session.id);
+                actions.restoreSession(ticketNo, session.id);
               }}
               title="恢复"
               aria-label="恢复"
@@ -490,7 +484,7 @@ function SessionItem({
             className="icon-btn !w-5 !h-5 text-danger/70 hover:text-danger"
             onClick={(e) => {
               e.stopPropagation();
-              deleteSession(ticketNo, session.id);
+              actions.deleteSession(ticketNo, session.id);
             }}
             title="删除"
             aria-label="删除"
@@ -593,15 +587,13 @@ export function GatePanel({ ticketNo }: { ticketNo: string }) {
             {outcome && <OutcomeCard outcome={outcome} />}
             {stage === "NEEDS_HUMAN" && (
               <div className="grid grid-cols-2 gap-2">
-                <button className="btn btn-primary h-9" onClick={() => actions.overridePass(ticketNo)}>
+                <button className="btn btn-primary h-9" disabled={gateBusy} onClick={() => actions.overridePass(ticketNo)}>
                   人工核准放行
                 </button>
                 <button
                   className="btn btn-danger-ghost h-9"
-                  onClick={() => {
-                    setStage(ticketNo, "REJECTED");
-                    pushSystemMessage(ticketNo, "人工驳回 · 请根据审查意见修复后重新提审", "warn");
-                  }}
+                  disabled={gateBusy}
+                  onClick={() => actions.rejectTicket(ticketNo)}
                 >
                   驳回重修
                 </button>
