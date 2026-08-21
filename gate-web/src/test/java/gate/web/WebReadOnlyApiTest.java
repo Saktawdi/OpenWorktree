@@ -12,6 +12,8 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -102,6 +104,51 @@ class WebReadOnlyApiTest {
         HttpResponse<String> diff = get("/api/tickets/WEB-2/presubmit/1/diff");
         assertEquals(200, diff.statusCode(), diff.body());
         assertTrue(diff.body().contains("feature.txt"), diff.body());
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void presubmit_history_lists_every_round_with_changed_count() throws Exception {
+        post("/api/tickets", "{\"ticket_no\":\"WEB-PRE\",\"title\":\"rounds\"}");
+        Path clone = harness.components().config().clonesRoot().resolve("WEB-PRE");
+
+        // No round captured yet: an empty list, never an error (console renders "no history").
+        HttpResponse<String> empty = get("/api/tickets/WEB-PRE/presubmits");
+        assertEquals(200, empty.statusCode(), empty.body());
+        Map<String, Object> emptyBody = (Map<String, Object>) gate.application.MiniJson.parse(
+                empty.body().trim());
+        assertEquals("WEB-PRE", emptyBody.get("ticket_no"));
+        assertTrue(((List<?>) emptyBody.get("presubmits")).isEmpty(), empty.body());
+
+        // Round 1: one changed file.
+        Files.writeString(clone.resolve("first.txt"), "round one\n");
+        assertEquals(200, post("/api/tickets/WEB-PRE/presubmit", "").statusCode());
+        // Round 2: a second file lands on top — the working-tree diff now covers both.
+        Files.writeString(clone.resolve("second.txt"), "round two\n");
+        HttpResponse<String> round2 = post("/api/tickets/WEB-PRE/presubmit", "");
+        assertEquals(200, round2.statusCode(), round2.body());
+
+        HttpResponse<String> list = get("/api/tickets/WEB-PRE/presubmits");
+        assertEquals(200, list.statusCode(), list.body());
+        Map<String, Object> body = (Map<String, Object>) gate.application.MiniJson.parse(
+                list.body().trim());
+        List<Map<String, Object>> rows = (List<Map<String, Object>>) body.get("presubmits");
+        assertEquals(2, rows.size(), list.body());
+        // MiniJson parses integers as Long — compare through Number.
+        assertEquals(1L, ((Number) rows.get(0).get("review_round")).longValue(), list.body());
+        assertEquals(2L, ((Number) rows.get(1).get("review_round")).longValue(), list.body());
+        assertEquals(1L, ((Number) rows.get(0).get("changed_count")).longValue(),
+                "round 1 touched one file: " + list.body());
+        assertEquals(2L, ((Number) rows.get(1).get("changed_count")).longValue(),
+                "round 2 covers both files: " + list.body());
+        assertEquals("refs/heads/main", rows.get(0).get("target_ref"), list.body());
+        assertTrue(((Number) rows.get(0).get("diff_bytes")).longValue() > 0, list.body());
+        assertTrue(String.valueOf(rows.get(0).get("tree_hash")).matches("[0-9a-f]{40}"), list.body());
+        assertTrue(String.valueOf(rows.get(0).get("created_at")).startsWith("2"), list.body());
+
+        // Unknown ticket is a usage error, not an empty 200.
+        HttpResponse<String> unknown = get("/api/tickets/NOPE-404/presubmits");
+        assertTrue(unknown.statusCode() >= 400, unknown.body());
     }
 
     @Test

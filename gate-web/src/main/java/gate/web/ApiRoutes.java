@@ -221,6 +221,11 @@ public final class ApiRoutes {
                 && method.equals("GET")) {
             return reviewResult(seg[2]);
         }
+        // Multi-round review history: every captured presubmit round for the ticket.
+        if (seg.length == 4 && seg[1].equals("tickets") && seg[3].equals("presubmits")
+                && method.equals("GET")) {
+            return presubmitList(seg[2]);
+        }
         // /api/tickets/{no}/presubmit/{round}/diff
         if (seg.length == 6 && seg[1].equals("tickets") && seg[3].equals("presubmit")
                 && seg[5].equals("diff") && method.equals("GET")) {
@@ -274,8 +279,17 @@ public final class ApiRoutes {
                 return sessionRoutes.sessionCreate(seg[2], requestBody);
             }
         }
-        if (seg.length == 3 && seg[1].equals("sessions") && method.equals("GET")) {
-            return sessionRoutes.sessionDetail(seg[2]);
+        if (seg.length == 3 && seg[1].equals("sessions")) {
+            if (method.equals("GET")) {
+                return sessionRoutes.sessionDetail(seg[2]);
+            }
+            // Workbench session-list metadata (title/archived) and row removal.
+            if (method.equals("PATCH")) {
+                return sessionRoutes.sessionPatch(seg[2], requestBody);
+            }
+            if (method.equals("DELETE")) {
+                return sessionRoutes.sessionDelete(seg[2]);
+            }
         }
         if (seg.length == 4 && seg[1].equals("sessions") && seg[3].equals("messages")) {
             if (method.equals("GET")) {
@@ -335,6 +349,46 @@ public final class ApiRoutes {
         body.put("base_commit", row.baseCommit().hex());
         body.put("diff", new String(diff, StandardCharsets.UTF_8));
         return new Response(200, body);
+    }
+
+    /**
+     * GET /api/tickets/{no}/presubmits — every round captured so far, ascending. {@code
+     * changed_count} is derived from the diff blob (number of {@code "diff --git a/"} headers), the
+     * same blob the round-diff endpoint reads back. A ticket with no rounds yet is an empty list,
+     * not an error — the console renders it as "no review history".
+     */
+    private Response presubmitList(String ticketNo) {
+        if (tickets.find(ticketNo).isEmpty()) {
+            throw new GateException(GateErrorCode.USAGE, "no such ticket: " + ticketNo);
+        }
+        List<Map<String, Object>> rows = new ArrayList<>();
+        for (var row : presubmits.findAllByTicket(ticketNo)) {
+            String diff = new String(blobStore.get(
+                    new BlobRef(row.diffBlobPath(), row.diffBytes(), row.diffSha256())),
+                    StandardCharsets.UTF_8);
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("review_round", row.reviewRound());
+            m.put("tree_hash", row.treeHash().hex());
+            m.put("base_commit", row.baseCommit().hex());
+            m.put("target_ref", row.targetRef());
+            m.put("diff_bytes", row.diffBytes());
+            m.put("changed_count", countOccurrences(diff, "diff --git a/"));
+            m.put("created_at", row.createdAt().toString());
+            rows.add(m);
+        }
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("ticket_no", ticketNo);
+        body.put("presubmits", rows);
+        return new Response(200, body);
+    }
+
+    /** Non-overlapping occurrence count ({@link String#split} would need quoting + edge care). */
+    private static int countOccurrences(String text, String needle) {
+        int count = 0;
+        for (int i = text.indexOf(needle); i >= 0; i = text.indexOf(needle, i + needle.length())) {
+            count++;
+        }
+        return count;
     }
 
     // --- review-result (reject feedback) --------------------------------------------------------
@@ -739,7 +793,8 @@ public final class ApiRoutes {
         return new Response(200, body);
     }
 
-    private static Map<String, Object> projectJson(Project p) {
+    /** Real per-project ticket counters — same derivation as {@code ProjectRoutes.projectList}. */
+    private Map<String, Object> projectJson(Project p) {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("id", p.id());
         m.put("name", p.name());
@@ -749,8 +804,10 @@ public final class ApiRoutes {
         m.put("priority", p.priority());
         m.put("size", p.size());
         m.put("tags", p.tags());
-        m.put("ticket_count", 0);
-        m.put("active_ticket_count", 0);
+        List<Ticket> projectTickets = tickets.findAllByProject(p.id());
+        m.put("ticket_count", projectTickets.size());
+        m.put("active_ticket_count", (int) projectTickets.stream()
+                .filter(t -> t.stage() != null && !t.stage().isTerminal()).count());
         m.put("created_at", p.createdAt().toString());
         m.put("updated_at", p.updatedAt().toString());
         return m;

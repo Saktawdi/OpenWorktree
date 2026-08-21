@@ -203,6 +203,48 @@ class SessionOrchestrationTest {
     }
 
     @Test
+    void session_patch_and_delete_are_routed_over_http() throws Exception {
+        assertEquals(201, post("/api/agent-configs", """
+                {"id":"claude-dispatch","name":"Claude Dispatch","cli":"CLAUDE","provider_id":"manual",
+                 "model":"claude-test","extra_flags":[],"description":"test"}
+                """).statusCode());
+        assertEquals(201, post("/api/tickets",
+                "{\"ticket_no\":\"SESS-HTTP\",\"title\":\"dispatch\"}").statusCode());
+
+        HttpResponse<String> created = post("/api/tickets/SESS-HTTP/sessions",
+                "{\"agent_config_id\":\"claude-dispatch\",\"initial_prompt\":\"go\"}");
+        assertEquals(201, created.statusCode(), created.body());
+        String sid = sessionId(created.body());
+
+        // PATCH through the ApiRoutes dispatch: title + archived in one request.
+        HttpResponse<String> patched = patch("/api/sessions/" + sid,
+                "{\"title\":\"renamed by http\",\"archived\":true}");
+        assertEquals(200, patched.statusCode(), patched.body());
+        assertTrue(patched.body().contains("\"title\":\"renamed by http\""), patched.body());
+        assertTrue(patched.body().contains("\"archived\":true"), patched.body());
+        Session persisted = harness.components().sessionRepository().find(sid).orElseThrow();
+        assertEquals("renamed by http", persisted.title());
+        assertTrue(persisted.archived());
+
+        // An empty PATCH body is a USAGE error through the same dispatch.
+        HttpResponse<String> badPatch = patch("/api/sessions/" + sid, "{}");
+        assertTrue(badPatch.statusCode() >= 400, badPatch.body());
+
+        // DELETE through the dispatch: aborts (session is ACTIVE), drops messages + row.
+        HttpResponse<String> deleted = delete("/api/sessions/" + sid);
+        assertEquals(200, deleted.statusCode(), deleted.body());
+        assertTrue(deleted.body().contains("\"ok\":true"), deleted.body());
+        assertTrue(fake.aborted.contains(sid), "ACTIVE session must be aborted before delete");
+        assertTrue(harness.components().sessionRepository().find(sid).isEmpty());
+        assertTrue(harness.components().sessionRepository().findMessages(sid).isEmpty());
+
+        HttpResponse<String> gone = get("/api/sessions/" + sid);
+        assertTrue(gone.statusCode() >= 400, "deleted session must not be readable: " + gone.body());
+        assertTrue(delete("/api/sessions/" + sid).statusCode() >= 400,
+                "deleting an already-deleted session must fail");
+    }
+
+    @Test
     void session_repository_roundtrips_title_and_archived() throws Exception {
         assertEquals(201, post("/api/agent-configs", """
                 {"id":"claude-rt","name":"Claude RT","cli":"CLAUDE","provider_id":"manual",
@@ -252,6 +294,22 @@ class SessionOrchestrationTest {
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(body))
                 .build();
+        return client.send(req, HttpResponse.BodyHandlers.ofString());
+    }
+
+    private HttpResponse<String> patch(String path, String body) throws Exception {
+        HttpRequest req = HttpRequest.newBuilder(URI.create(base + path))
+                .header("Authorization", "Bearer " + token)
+                .header("Content-Type", "application/json")
+                .method("PATCH", HttpRequest.BodyPublishers.ofString(body))
+                .build();
+        return client.send(req, HttpResponse.BodyHandlers.ofString());
+    }
+
+    private HttpResponse<String> delete(String path) throws Exception {
+        HttpRequest req = HttpRequest.newBuilder(URI.create(base + path))
+                .header("Authorization", "Bearer " + token)
+                .DELETE().build();
         return client.send(req, HttpResponse.BodyHandlers.ofString());
     }
 
