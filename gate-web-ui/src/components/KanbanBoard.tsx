@@ -20,6 +20,7 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import { motion } from "motion/react";
 import { actions } from "../lib/actions";
 import { relativeTime } from "../lib/format";
 import { appStore, setTicketOrder, showToast, useApp } from "../lib/store";
@@ -62,7 +63,33 @@ function CardFace({
         <PriorityChip priority={ticket.priority} />
       </div>
       <div className="mt-1 text-[13px] leading-snug text-ink line-clamp-2">{ticket.title}</div>
-      <div className="mt-2 flex items-center gap-2 text-[11px] text-faint">
+      {ticket.description && (
+        <div className="mt-1 text-[11.5px] leading-snug text-dim line-clamp-2">{ticket.description}</div>
+      )}
+      {ticket.labels.length > 0 && (
+        <div className="mt-1.5 flex items-center gap-1">
+          <span className="text-[10px] text-faint/50 shrink-0">♯</span>
+          <div className="flex flex-wrap gap-1 min-w-0">
+            {ticket.labels.slice(0, 3).map((l) => (
+              <span
+                key={l}
+                className="inline-flex items-center h-[18px] rounded-md border border-edge-strong bg-raised px-1.5 text-[10px] leading-none font-medium text-faint"
+              >
+                {l}
+              </span>
+            ))}
+            {ticket.labels.length > 3 && (
+              <span
+                className="inline-flex items-center h-[18px] rounded-md px-1.5 text-[10px] leading-none text-faint/60"
+                title={ticket.labels.slice(3).join(", ")}
+              >
+                +{ticket.labels.length - 3}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+      <div className="mt-2 pt-2 border-t border-edge/50 flex items-center gap-2 text-[11px] text-faint">
         {agentName && (
           <span className="inline-flex items-center gap-1">
             <span className="w-3.5 h-3.5 rounded-full bg-accent-dim grid place-items-center text-[8px] text-accent font-semibold">
@@ -95,20 +122,22 @@ function SortableCard({
   });
 
   return (
-    <div
+    <motion.div
       ref={setNodeRef}
       {...attributes}
       {...listeners}
       style={{ transform: CSS.Translate.toString(transform), transition }}
       className={`cursor-grab active:cursor-grabbing touch-none ${
         isDragging ? "opacity-35" : ""
-      } ${shaken ? "animate-shake" : ""} hover:-translate-y-px`}
+      } ${shaken ? "animate-shake" : ""}`}
+      whileHover={!isDragging ? { y: -2 } : undefined}
+      transition={{ type: "spring", stiffness: 400, damping: 25 }}
       onClick={() => {
         if (!dragJustEnded()) actions.openTicket(ticket.ticketNo);
       }}
     >
       <CardFace ticket={ticket} agentName={agentName} rejected={rejected} />
-    </div>
+    </motion.div>
   );
 }
 
@@ -139,7 +168,7 @@ function Lane({
   const all = [...rejectedTickets, ...tickets];
 
   return (
-    <section className="w-[276px] shrink-0 flex flex-col rounded-2xl border border-edge/70 bg-sunken/70 overflow-hidden">
+    <section className="flex-1 min-w-[276px] flex flex-col rounded-2xl border border-edge/70 bg-sunken/70 overflow-hidden">
       <header className="flex items-center gap-2 px-3 pt-3 pb-2">
         <StageDot stage={stage} />
         <span className="text-[12.5px] font-medium">{title}</span>
@@ -320,7 +349,7 @@ export function KanbanBoard() {
         }}
       >
         <div className="flex-1 min-h-0 overflow-x-auto overflow-y-hidden px-4 pb-4">
-          <div className="h-full flex gap-3 min-w-max">
+          <div className="h-full flex gap-3 w-full">
             {LANES.map(({ key, title }) => (
               <Lane
                 key={key}
