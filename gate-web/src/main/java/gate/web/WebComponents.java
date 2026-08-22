@@ -39,6 +39,7 @@ import gate.ports.TicketRepository;
 import gate.ports.TopologyInitializer;
 import java.nio.file.Path;
 import java.time.Instant;
+import java.util.List;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 /**
@@ -149,7 +150,7 @@ public final class WebComponents {
             String claudeCmd = cliLocator.locate("claude").map(Path::toString).orElse("claude");
             String opencodeCmd = cliLocator.locate("opencode").map(Path::toString).orElse("opencode");
             this.claudeAdapter = new ClaudeHeadlessAdapter(processRunner, this.agentConfigRepository, sessionRepo,
-                    tickets, taskRegistry, ticketLockManager, clock, claudeCmd);
+                    tickets, this.projectRepository, taskRegistry, ticketLockManager, clock, claudeCmd, List.of());
             int startTimeout = config.session() == null ? 60 : config.session().startTimeoutSeconds();
             // First-party adapter trail for incident diagnosis (spawn/stream/send/cleanup).
             AdapterLog adapterLog = AdapterLog.at(config.gateHome().resolve("adapters.log"));
@@ -158,7 +159,7 @@ public final class WebComponents {
             gate.adapters.io.ServePidRegistry pidRegistry =
                     new gate.adapters.io.ServePidRegistry(config.gateHome().resolve("opencode-serve.pids"));
             this.opencodeAdapter = new OpenCodeServeAdapter(processRunner, this.agentConfigRepository, sessionRepo,
-                    tickets, taskRegistry, ticketLockManager, clock, portAllocator, opencodeCmd,
+                    tickets, this.projectRepository, taskRegistry, ticketLockManager, clock, portAllocator, opencodeCmd,
                     startTimeout, adapterLog, pidRegistry);
             this.agentSessionPort = new DispatchAgentSessionPort(this.agentConfigRepository, sessionRepo,
                     claudeAdapter, opencodeAdapter);

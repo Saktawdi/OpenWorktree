@@ -303,6 +303,24 @@ public final class ApiRoutes {
                 && method.equals("POST")) {
             return sessionRoutes.sessionAbort(seg[2]);
         }
+        // Live model / reasoning-effort switch (会话内实时切换, OpenChamber-style per-session picker).
+        if (seg.length == 4 && seg[1].equals("sessions") && seg[3].equals("model")
+                && method.equals("POST")) {
+            return sessionRoutes.sessionModelSet(seg[2], requestBody);
+        }
+        if (seg.length == 4 && seg[1].equals("sessions") && seg[3].equals("models")
+                && method.equals("GET")) {
+            return sessionRoutes.sessionModels(seg[2]);
+        }
+        // Permission asks: pending snapshot + per-request replies (opencode sessions).
+        if (seg.length == 4 && seg[1].equals("sessions") && seg[3].equals("permissions")
+                && method.equals("GET")) {
+            return sessionRoutes.permissionList(seg[2]);
+        }
+        if (seg.length == 5 && seg[1].equals("sessions") && seg[3].equals("permissions")
+                && method.equals("POST")) {
+            return sessionRoutes.sessionPermissionRespond(seg[2], seg[4], requestBody);
+        }
 
         return new Response(404, null); // ApiHandler renders the NOT_FOUND envelope
     }

@@ -6,6 +6,7 @@ import gate.domain.session.AgentCli;
 import gate.domain.session.AgentConfig;
 import gate.domain.session.Session;
 import gate.domain.session.SessionMessage;
+import gate.domain.session.PermissionRequest;
 import gate.ports.AgentConfigRepository;
 import gate.ports.AgentSessionPort;
 import gate.ports.SessionRepository;
@@ -75,6 +76,22 @@ public final class DispatchAgentSessionPort implements AgentSessionPort {
                 .orElseThrow(() -> new GateException(GateErrorCode.USAGE,
                         "no such session: " + sessionId));
         return adapter(s.cli()).attachListener(sessionId, listener);
+    }
+
+    @Override
+    public void respondPermission(String sessionId, String permissionId, String response) {
+        Session s = sessions.find(sessionId)
+                .orElseThrow(() -> new GateException(GateErrorCode.USAGE,
+                        "no such session: " + sessionId));
+        adapter(s.cli()).respondPermission(sessionId, permissionId, response);
+    }
+
+    @Override
+    public List<PermissionRequest> pendingPermissions(String sessionId) {
+        Session s = sessions.find(sessionId)
+                .orElseThrow(() -> new GateException(GateErrorCode.USAGE,
+                        "no such session: " + sessionId));
+        return adapter(s.cli()).pendingPermissions(sessionId);
     }
 
     private AgentSessionPort adapter(AgentCli cli) {

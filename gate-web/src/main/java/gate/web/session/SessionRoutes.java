@@ -4,6 +4,7 @@ import gate.domain.error.GateErrorCode;
 import gate.domain.error.GateException;
 import gate.domain.session.AgentCli;
 import gate.domain.session.AgentConfig;
+import gate.domain.session.PermissionRequest;
 import gate.domain.session.Session;
 import gate.ports.AgentConfigRepository;
 import gate.ports.AgentSessionPort;
@@ -27,14 +28,22 @@ public final class SessionRoutes {
     private final AgentSessionPort agentSessionPort;
     private final TicketRepository tickets;
     private final Clock clock;
+    private final SessionModelCatalog modelCatalog;
 
     public SessionRoutes(AgentConfigRepository agentConfigs, SessionRepository sessionRepository,
                          AgentSessionPort agentSessionPort, TicketRepository tickets, Clock clock) {
+        this(agentConfigs, sessionRepository, agentSessionPort, tickets, clock, new SessionModelCatalog());
+    }
+
+    SessionRoutes(AgentConfigRepository agentConfigs, SessionRepository sessionRepository,
+                  AgentSessionPort agentSessionPort, TicketRepository tickets, Clock clock,
+                  SessionModelCatalog modelCatalog) {
         this.agentConfigs = agentConfigs;
         this.sessionRepository = sessionRepository;
         this.agentSessionPort = agentSessionPort;
         this.tickets = tickets;
         this.clock = clock;
+        this.modelCatalog = modelCatalog;
     }
 
     public ApiRoutes.Response agentConfigList() {
@@ -153,10 +162,73 @@ public final class SessionRoutes {
         if (message == null || message.isBlank()) {
             throw new GateException(GateErrorCode.USAGE, "message is required");
         }
+        // Optional per-send model/variant (会话内实时切换): persisted so the async send — and every
+        // later send until changed again — uses this selection (OpenChamber per-session picker
+        // semantics).
+        applyModelOverrideIfPresent(sessionId, req);
         String taskId = agentSessionPort.sendMessage(new AgentSessionPort.SendRequest(sessionId, message, true));
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("task_id", taskId);
         return new ApiRoutes.Response(202, body);
+    }
+
+    /**
+     * POST /api/sessions/{id}/model — live model / reasoning-effort switch. Body:
+     * {@code {"provider_id"?, "model_id"?, "variant"?}}. Per-key tri-state semantics: a missing
+     * key keeps the current value, a present blank value clears it back to the AgentConfig
+     * default, and a present pair sets the override. Takes effect on the NEXT send; safe to call
+     * mid-turn.
+     */
+    public ApiRoutes.Response sessionModelSet(String sessionId, String requestBody) {
+        Session s = sessionRepository.find(sessionId).orElseThrow(() -> new GateException(
+                GateErrorCode.USAGE, "no such session: " + sessionId));
+        Map<String, Object> req = parseObject(requestBody);
+        Session updated = s.withModelOverride(
+                mergeOverridePart(s.overrideProvider(), req, "provider_id"),
+                mergeOverridePart(s.overrideModel(), req, "model_id"),
+                mergeOverridePart(s.overrideVariant(), req, "variant"));
+        if (updated.overrideProvider() != null && updated.overrideModel() == null
+                || updated.overrideProvider() == null && updated.overrideModel() != null) {
+            throw new GateException(GateErrorCode.USAGE,
+                    "provider_id and model_id must be provided together");
+        }
+        sessionRepository.update(updated);
+        return new ApiRoutes.Response(200, sessionJson(updated));
+    }
+
+    /**
+     * GET /api/sessions/{id}/models — live catalog from the session's opencode serve
+     * ({@code /config/providers}, reduced for the picker): providers → models → variant keys.
+     */
+    public ApiRoutes.Response sessionModels(String sessionId) {
+        Session s = sessionRepository.find(sessionId).orElseThrow(() -> new GateException(
+                GateErrorCode.USAGE, "no such session: " + sessionId));
+        return new ApiRoutes.Response(200, modelCatalog.fetch(s.allocatedPort()));
+    }
+
+    private void applyModelOverrideIfPresent(String sessionId, Map<String, Object> req) {
+        if (!req.containsKey("provider_id") && !req.containsKey("model_id")
+                && !req.containsKey("variant")) {
+            return;
+        }
+        Session s = sessionRepository.find(sessionId).orElseThrow();
+        Session updated = s.withModelOverride(
+                mergeOverridePart(s.overrideProvider(), req, "provider_id"),
+                mergeOverridePart(s.overrideModel(), req, "model_id"),
+                mergeOverridePart(s.overrideVariant(), req, "variant"));
+        sessionRepository.update(updated);
+    }
+
+    /**
+     * Tri-state per-key merge: absent key keeps {@code current}; present blank clears (null);
+     * present non-blank sets the trimmed value.
+     */
+    private static String mergeOverridePart(String current, Map<String, Object> req, String key) {
+        if (!req.containsKey(key)) {
+            return current;
+        }
+        String value = str(req, key);
+        return value == null || value.isBlank() ? null : value.trim();
     }
 
     public ApiRoutes.Response sessionAbort(String sessionId) {
@@ -178,9 +250,10 @@ public final class SessionRoutes {
         Session s = sessionRepository.find(sessionId).orElseThrow(() -> new GateException(
                 GateErrorCode.USAGE, "no such session: " + sessionId));
         Map<String, Object> req = parseObject(requestBody);
-        if (!req.containsKey("title") && !req.containsKey("archived")) {
+        if (!req.containsKey("title") && !req.containsKey("archived")
+                && !req.containsKey("permission_auto_accept")) {
             throw new GateException(GateErrorCode.USAGE,
-                    "at least one of title/archived is required");
+                    "at least one of title/archived/permission_auto_accept is required");
         }
         Session updated = s;
         // Archived is processed before title so the post-abort re-fetch (which refreshes
@@ -202,8 +275,63 @@ public final class SessionRoutes {
             String title = str(req, "title");
             updated = updated.withTitle(title == null || title.isBlank() ? null : title);
         }
+        if (req.containsKey("permission_auto_accept")) {
+            Object auto = req.get("permission_auto_accept");
+            if (!(auto instanceof Boolean b)) {
+                throw new GateException(GateErrorCode.USAGE, "permission_auto_accept must be a boolean");
+            }
+            updated = updated.withPermissionAutoAccept(b);
+        }
         sessionRepository.update(updated);
         return new ApiRoutes.Response(200, sessionJson(updated));
+    }
+
+    /**
+     * POST /api/sessions/{id}/permissions/{permissionId} — answer an opencode permission.asked.
+     * Body: {@code {"response":"once"|"always"|"reject"}}. Only opencode sessions can carry
+     * permission requests; anything else is rejected before reaching the port.
+     */
+    public ApiRoutes.Response sessionPermissionRespond(String sessionId, String permissionId, String requestBody) {
+        Session s = sessionRepository.find(sessionId).orElseThrow(() -> new GateException(
+                GateErrorCode.USAGE, "no such session: " + sessionId));
+        if (s.cli() != AgentCli.OPENCODE) {
+            throw new GateException(GateErrorCode.USAGE,
+                    "permission asks are only supported for opencode sessions");
+        }
+        Map<String, Object> req = parseObject(requestBody);
+        String response = str(req, "response");
+        if (response == null || !(response.equals("once") || response.equals("always") || response.equals("reject"))) {
+            throw new GateException(GateErrorCode.USAGE, "response must be one of once/always/reject");
+        }
+        agentSessionPort.respondPermission(sessionId, permissionId, response);
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("ok", true);
+        body.put("permission_id", permissionId);
+        body.put("response", response);
+        return new ApiRoutes.Response(200, body);
+    }
+
+    /** GET /api/sessions/{id}/permissions — unresolved pending permission asks for this session. */
+    public ApiRoutes.Response permissionList(String sessionId) {
+        Session s = sessionRepository.find(sessionId).orElseThrow(() -> new GateException(
+                GateErrorCode.USAGE, "no such session: " + sessionId));
+        List<Map<String, Object>> perms = new ArrayList<>();
+        for (PermissionRequest p : agentSessionPort.pendingPermissions(sessionId)) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("session_id", sessionId);
+            m.put("timestamp", clock.now().toString());
+            m.put("permission_id", p.permissionId());
+            m.put("permission", p.permission());
+            m.put("patterns", p.patterns());
+            m.put("always", p.always());
+            m.put("metadata", p.metadata());
+            m.put("message_id", p.messageId());
+            m.put("call_id", p.callId());
+            perms.add(m);
+        }
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("permissions", perms);
+        return new ApiRoutes.Response(200, body);
     }
 
     /** DELETE /api/sessions/{id} — drops the session and its messages; always aborts first. */
@@ -230,6 +358,7 @@ public final class SessionRoutes {
         m.put("system_prompt", c.systemPrompt());
         m.put("extra_flags", c.extraFlags());
         m.put("description", c.description());
+        m.put("inject_context", c.injectContext());
         return m;
     }
 
@@ -245,6 +374,10 @@ public final class SessionRoutes {
         m.put("cli_session_id", s.cliSessionId());
         m.put("clone_path", s.clonePath());
         m.put("allocated_port", s.allocatedPort());
+        m.put("override_provider", s.overrideProvider());
+        m.put("override_model", s.overrideModel());
+        m.put("override_variant", s.overrideVariant());
+        m.put("permission_auto_accept", s.permissionAutoAccept());
         m.put("started_at", s.startedAt().toString());
         m.put("finished_at", s.finishedAt() == null ? null : s.finishedAt().toString());
         if (s.cumulativeUsage() == null) {
@@ -312,8 +445,12 @@ public final class SessionRoutes {
                 extraFlags.add(String.valueOf(o));
             }
         }
+        // 缺省注入：请求未携带 inject_context 时视为开启（与 UI 开关默认值一致）。
+        Object injectRaw = req.get("inject_context");
+        boolean injectContext = !(injectRaw instanceof Boolean b) || b;
         return new AgentConfig(id, name, AgentCli.valueOf(cli.toUpperCase(java.util.Locale.ROOT)),
-                providerId, model, str(req, "system_prompt"), extraFlags, str(req, "description"));
+                providerId, model, str(req, "system_prompt"), extraFlags, str(req, "description"),
+                injectContext);
     }
 
     @SuppressWarnings("unchecked")

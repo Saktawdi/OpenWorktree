@@ -50,6 +50,7 @@ export const DEMO_AGENTS: AgentConfig[] = [
     systemPrompt: "你是结算系统的资深工程师，改动保持最小化，遵循现有代码风格。",
     extraFlags: [],
     description: "日常编码与修复的主力配置",
+    injectContext: true,
   },
   {
     id: "oc-codex",
@@ -60,6 +61,7 @@ export const DEMO_AGENTS: AgentConfig[] = [
     systemPrompt: null,
     extraFlags: ["-c", "model_context_limit=200000"],
     description: "大上下文重构与批量迁移",
+    injectContext: true,
   },
 ];
 

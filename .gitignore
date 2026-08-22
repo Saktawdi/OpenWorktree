@@ -37,3 +37,6 @@ test.json
 /start-local.bat
 /local-run/
 *.timestamp-*.mjs
+
+# Reference projects cloned for study (not part of this repo)
+docx/reference/

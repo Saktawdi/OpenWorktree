@@ -397,5 +397,15 @@ class SessionOrchestrationTest {
             done.start();
             return done::interrupt;
         }
+
+        @Override
+        public void respondPermission(String sessionId, String permissionId, String response) {
+            // Fake: nothing to forward; the test asserts the dispatch chain, not the transport.
+        }
+
+        @Override
+        public List<gate.domain.session.PermissionRequest> pendingPermissions(String sessionId) {
+            return List.of();
+        }
     }
 }

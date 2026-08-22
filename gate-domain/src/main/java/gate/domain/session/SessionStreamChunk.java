@@ -11,7 +11,9 @@ public sealed interface SessionStreamChunk permits
         SessionStreamChunk.ToolCallChunk,
         SessionStreamChunk.UsageChunk,
         SessionStreamChunk.ErrorChunk,
-        SessionStreamChunk.DoneChunk {
+        SessionStreamChunk.DoneChunk,
+        SessionStreamChunk.PermissionAskedChunk,
+        SessionStreamChunk.PermissionRepliedChunk {
 
     String sessionId();
     Instant timestamp();
@@ -40,4 +42,10 @@ public sealed interface SessionStreamChunk permits
 
     /** Turn completion signal */
     record DoneChunk(String sessionId, String fullMessageId, Instant timestamp) implements SessionStreamChunk {}
+
+    /** An opencode permission.asked request surfaced for the user to approve/reject. */
+    record PermissionAskedChunk(String sessionId, PermissionRequest request, Instant timestamp) implements SessionStreamChunk {}
+
+    /** A permission reply (user click or server auto-allow) applied to opencode. */
+    record PermissionRepliedChunk(String sessionId, String permissionId, String response, boolean auto, Instant timestamp) implements SessionStreamChunk {}
 }

@@ -10,6 +10,7 @@ import gate.domain.session.SessionMessage;
 import gate.domain.session.SessionStatus;
 import gate.domain.session.SessionStreamChunk;
 import gate.domain.session.SessionUsage;
+import gate.domain.session.PermissionRequest;
 import gate.ports.AgentSessionPort;
 import gate.ports.SessionRepository;
 import java.io.IOException;
@@ -22,6 +23,7 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
@@ -139,6 +141,60 @@ class SessionSseHandlerTest {
         return count;
     }
 
+    @Test
+    void permission_chunks_emit_contract_events() throws Exception {
+        HttpClient client = HttpClient.newHttpClient();
+        HttpResponse<InputStream> res = client.send(
+                HttpRequest.newBuilder(URI.create(
+                                "http://127.0.0.1:" + server.getAddress().getPort() + "/"))
+                        .header("Accept", "text/event-stream")
+                        .GET().build(),
+                HttpResponse.BodyHandlers.ofInputStream());
+
+        StringBuilder received = new StringBuilder();
+        Thread reader = new Thread(() -> {
+            byte[] buf = new byte[4096];
+            try (InputStream in = res.body()) {
+                int n;
+                while ((n = in.read(buf)) != -1) {
+                    received.append(new String(buf, 0, n, StandardCharsets.UTF_8));
+                }
+            } catch (IOException ignored) {
+                // server stopped; whatever was read is enough for the assertions
+            }
+        });
+        reader.setDaemon(true);
+        reader.start();
+
+        PermissionRequest req = new PermissionRequest("perm-1", "bash", List.of("a.txt", "b.txt"),
+                List.of("read"), Map.of("k", "v"), "msg-1", "call-1");
+        port.emit(new SessionStreamChunk.PermissionAskedChunk(SESSION_ID, req, Instant.now()));
+        port.emit(new SessionStreamChunk.PermissionRepliedChunk(SESSION_ID, "perm-1", "once", true, Instant.now()));
+        port.emit(new SessionStreamChunk.DoneChunk(SESSION_ID, "msg-done", Instant.now()));
+
+        long closeDeadline = System.nanoTime() + 5_000_000_000L;
+        while (!handlerReturned.get() && System.nanoTime() < closeDeadline) {
+            Thread.sleep(50);
+        }
+        assertTrue(handlerReturned.get(), "handler should return after done");
+        reader.join(5_000);
+        String body = received.toString();
+        // permission_asked carries the exact contract fields.
+        assertTrue(body.contains("event: permission_asked"), body);
+        assertTrue(body.contains("\"permission_id\":\"perm-1\""), body);
+        assertTrue(body.contains("\"permission\":\"bash\""), body);
+        assertTrue(body.contains("\"patterns\":[\"a.txt\",\"b.txt\"]"), body);
+        assertTrue(body.contains("\"message_id\":\"msg-1\""), body);
+        assertTrue(body.contains("\"call_id\":\"call-1\""), body);
+        // permission_replied carries response + auto flag.
+        assertTrue(body.contains("event: permission_replied"), body);
+        assertTrue(body.contains("\"response\":\"once\""), body);
+        assertTrue(body.contains("\"auto\":true"), body);
+        // Session id + timestamp must lead each event data frame.
+        assertTrue(body.contains("\"session_id\":\"" + SESSION_ID + "\""), body);
+        assertFalse(reader.isAlive(), "response stream should be fully drained and closed");
+    }
+
     /** In-memory fake that only supports attachListener/emit; enough for the SSE handler. */
     static final class FakeSessionPort implements AgentSessionPort {
 
@@ -180,6 +236,16 @@ class SessionSseHandlerTest {
         public AutoCloseable attachListener(String sessionId, Consumer<SessionStreamChunk> listener) {
             this.listener = listener;
             return () -> this.listener = null;
+        }
+
+        @Override
+        public void respondPermission(String sessionId, String permissionId, String response) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public List<PermissionRequest> pendingPermissions(String sessionId) {
+            throw new UnsupportedOperationException();
         }
     }
 

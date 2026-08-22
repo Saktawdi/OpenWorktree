@@ -49,7 +49,16 @@ public final class JdbcSessionRepository implements SessionRepository {
                     rs.getObject("completion_tokens") == null ? null : rs.getLong("completion_tokens"),
                     rs.getObject("total_tokens") == null ? null : rs.getLong("total_tokens")),
             rs.getString("title"),
-            rs.getInt("archived") != 0);
+            rs.getInt("archived") != 0,
+            nullableColumn(rs, "override_provider"),
+            nullableColumn(rs, "override_model"),
+            nullableColumn(rs, "override_variant"),
+            rs.getInt("permission_auto_accept") != 0);
+
+    private static String nullableColumn(ResultSet rs, String column) throws java.sql.SQLException {
+        String value = rs.getString(column);
+        return value == null || value.isBlank() ? null : value;
+    }
 
     @Override
     public Optional<Session> find(String id) {
@@ -80,8 +89,10 @@ public final class JdbcSessionRepository implements SessionRepository {
         jdbc.update("""
                 INSERT INTO agent_session(id, ticket_no, agent_config_id, cli, status, cli_session_id,
                                           clone_path, allocated_port, prompt_tokens, completion_tokens,
-                                          total_tokens, started_at, finished_at, title, archived)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                                          total_tokens, started_at, finished_at, title, archived,
+                                          override_provider, override_model, override_variant,
+                                          permission_auto_accept)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 session.id(), session.ticketNo(), session.agentConfigId(), session.cli().name(),
                 session.status().name(), session.cliSessionId(), session.clonePath(),
@@ -89,7 +100,9 @@ public final class JdbcSessionRepository implements SessionRepository {
                 session.startedAt().toString(),
                 session.finishedAt() == null ? null : session.finishedAt().toString(),
                 session.title(),
-                session.archived() ? 1 : 0);
+                session.archived() ? 1 : 0,
+                session.overrideProvider(), session.overrideModel(), session.overrideVariant(),
+                session.permissionAutoAccept() ? 1 : 0);
     }
 
     @Override
@@ -98,7 +111,8 @@ public final class JdbcSessionRepository implements SessionRepository {
         jdbc.update("""
                 UPDATE agent_session SET status = ?, cli_session_id = ?, allocated_port = ?,
                        prompt_tokens = ?, completion_tokens = ?, total_tokens = ?, finished_at = ?,
-                       title = ?, archived = ?
+                       title = ?, archived = ?, override_provider = ?, override_model = ?,
+                       override_variant = ?, permission_auto_accept = ?
                 WHERE id = ?
                 """,
                 session.status().name(), session.cliSessionId(), session.allocatedPort(),
@@ -106,6 +120,8 @@ public final class JdbcSessionRepository implements SessionRepository {
                 session.finishedAt() == null ? null : session.finishedAt().toString(),
                 session.title(),
                 session.archived() ? 1 : 0,
+                session.overrideProvider(), session.overrideModel(), session.overrideVariant(),
+                session.permissionAutoAccept() ? 1 : 0,
                 session.id());
     }
 

@@ -17,6 +17,8 @@ import {
 import { NO_CHAT, useApp } from "../lib/store";
 import type { ChatItem, ToolCallView } from "../lib/types";
 import { hhmmss } from "../lib/format";
+import { PermissionCard } from "./PermissionCard";
+import { Markdown } from "./Markdown";
 
 const TOOL_ICONS = {
   file: FileCode,
@@ -122,8 +124,8 @@ function AssistantMessage({ item }: { item: Extract<ChatItem, { kind: "assistant
           </div>
         )}
         {(item.text || item.streaming) && (
-          <div className="text-[13.5px] leading-relaxed whitespace-pre-wrap text-ink">
-            {item.text}
+          <div className="text-[13.5px] leading-relaxed text-ink">
+            {item.text && <Markdown className="md-body">{item.text}</Markdown>}
             {item.streaming && (
               <span className="inline-block w-[7px] h-[15px] bg-accent animate-blink align-middle ml-0.5" />
             )}
@@ -151,6 +153,7 @@ function SystemMessage({ item }: { item: Extract<ChatItem, { kind: "system" }> }
 
 export function ChatStream({ ticketNo }: { ticketNo: string }) {
   const chat = useApp((s) => s.chats[ticketNo] ?? NO_CHAT);
+  const sessionId = useApp((s) => s.activeSessionId[ticketNo] ?? "");
   const bottomRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
@@ -175,12 +178,16 @@ export function ChatStream({ ticketNo }: { ticketNo: string }) {
         {chat.map((item) =>
           item.kind === "user" ? (
             <div key={item.id} className="flex justify-end animate-rise">
-              <div className="max-w-[82%] rounded-xl rounded-tr-sm border border-edge bg-raised px-3.5 py-2 text-[13.5px] leading-relaxed whitespace-pre-wrap">
-                {item.text}
+              <div className="max-w-[82%] rounded-xl rounded-tr-sm border border-edge bg-raised px-3.5 py-2 text-[13.5px] leading-relaxed">
+                <Markdown className="md-body">{item.text}</Markdown>
               </div>
             </div>
           ) : item.kind === "assistant" ? (
             <AssistantMessage key={item.id} item={item} />
+          ) : item.kind === "permission" ? (
+            <div key={item.id} className="animate-rise">
+              <PermissionCard ticketNo={ticketNo} sessionId={sessionId} item={item} />
+            </div>
           ) : (
             <SystemMessage key={item.id} item={item} />
           ),

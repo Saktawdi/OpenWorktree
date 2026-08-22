@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import gate.adapters.clock.SystemClock;
+import gate.adapters.io.AdapterLog;
 import gate.adapters.lock.FileChannelTicketLockManager;
 import gate.adapters.process.ProcessRunnerImpl;
 import gate.adapters.session.OpenCodeServeAdapter;
@@ -22,6 +23,7 @@ import gate.domain.session.AgentConfig;
 import gate.domain.session.Role;
 import gate.domain.session.Session;
 import gate.domain.session.SessionMessage;
+import gate.domain.session.SessionStreamChunk;
 import gate.domain.task.GateTaskStatus;
 import gate.ports.AgentSessionPort;
 import gate.ports.ProviderRepository;
@@ -59,10 +61,14 @@ class OpenCodeServeAdapterTest {
     private OpenCodeServeAdapter adapter;
     private String lastMessageRequest;
     private CountDownLatch eventStreamHeld;
+    // When true the fake /event frame pushes a partial assistant turn (one text part +
+    // completion, NO idle) so the test can exercise the abort/supersede recovery flush.
+    private boolean partialTurnOnly;
 
     @BeforeEach
     void setUp() throws Exception {
         root = Files.createTempDirectory("gate-opencode-test-");
+        partialTurnOnly = false;
         DataSource ds = SqliteDataSourceFactory.create(root.resolve("gate.db"));
         SqliteDataSourceFactory.migrate(ds);
         JdbcTemplate jdbc = new JdbcTemplate(ds);
@@ -77,7 +83,7 @@ class OpenCodeServeAdapterTest {
         ticketLocks = new FileChannelTicketLockManager(root.resolve("locks"));
 
         agentConfigs.insert(new AgentConfig("opencode-test", "OpenCode Test", AgentCli.OPENCODE,
-                "manual", "opencode/test-model", null, List.of(), "test"), now);
+                "manual", "opencode/test-model", null, List.of(), "test", false), now);
         ticketRepository.insert(new gate.domain.ticket.Ticket("OPEN-1", "t", "refs/heads/main",
                 root.resolve("clone").toString(), null, null, null, null,
                 gate.domain.ticket.TicketStage.IN_PROGRESS, now, now));
@@ -97,7 +103,7 @@ class OpenCodeServeAdapterTest {
         PortAllocator allocator = new PortAllocator(port, port);
         adapter = new OpenCodeServeAdapter(new ProcessRunnerImpl(root.resolve("proc")),
                 agentConfigs, sessions, ticketRepository, tasks, ticketLocks, new SystemClock(),
-                allocator, "", 60);
+                allocator, "", 60, AdapterLog.at(root.resolve("adapters.log")));
     }
 
     @AfterEach
@@ -109,6 +115,43 @@ class OpenCodeServeAdapterTest {
             fakeServer.stop(0);
         }
         gate.adapters.io.FsUtil.deleteRecursively(root);
+    }
+
+    @Test
+    void aborted_turn_persists_partial_reply_degraded() throws Exception {
+        partialTurnOnly = true;
+        Session session = adapter.start(new AgentSessionPort.StartRequest(
+                "OPEN-1", "opencode-test", root.resolve("clone").toString(), "refs/heads/main",
+                "hello", Map.of()));
+        // Wait until the half-streamed text has actually been buffered before aborting, so the
+        // test does not race the upstream reader.
+        CountDownLatch sawPartial = new CountDownLatch(1);
+        adapter.attachListener(session.id(), chunk -> {
+            if (chunk instanceof SessionStreamChunk.ContentChunk c
+                    && c.textDelta().contains("partial reply in progress")) {
+                sawPartial.countDown();
+            }
+        });
+        assertTrue(sawPartial.await(10, TimeUnit.SECONDS), "partial text never streamed");
+
+        adapter.abort(session.id());
+
+        // The interrupted turn survives the abort as a degraded assistant reply, so switching
+        // back to this session (history reload) still shows the half-streamed content.
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        SessionMessage partial = null;
+        while (System.nanoTime() < deadline && partial == null) {
+            for (SessionMessage m : sessions.findMessages(session.id())) {
+                if (m.role() == Role.ASSISTANT && m.degraded()) {
+                    partial = m;
+                }
+            }
+            if (partial == null) {
+                Thread.sleep(50);
+            }
+        }
+        assertNotNull(partial, "interrupted turn content was lost on abort");
+        assertTrue(partial.content().contains("partial reply in progress"), partial.content());
     }
 
     @Test
@@ -213,6 +256,23 @@ class OpenCodeServeAdapterTest {
         exchange.sendResponseHeaders(200, 0);
         OutputStream os = exchange.getResponseBody();
         try {
+            if (partialTurnOnly) {
+                sse(os, "{\"id\":\"evt_a0\",\"type\":\"server.connected\",\"properties\":{}}");
+                // Assistant role announced, but the turn is only half-finished: one text part
+                // and a step completion, NO idle — exercises the recovery flush path.
+                sse(os, "{\"id\":\"evt_a1\",\"type\":\"message.updated\",\"properties\":{\"info\":"
+                        + "{\"id\":\"msg_partial\",\"sessionID\":\"sess-1\",\"role\":\"assistant\","
+                        + "\"time\":{\"created\":1}}}}");
+                sse(os, "{\"id\":\"evt_a2\",\"type\":\"message.part.updated\",\"properties\":{\"part\":"
+                        + "{\"id\":\"prt_p1\",\"sessionID\":\"sess-1\",\"messageID\":\"msg_partial\","
+                        + "\"type\":\"text\",\"text\":\"partial reply in progress\"}}}");
+                // Deliberately NO message.updated(completed) and NO session.status=idle: the
+                // turn is cut mid-step, so recovery must drain the per-message buffers.
+                // Hold the stream open so the adapter does not churn on reconnects mid-test.
+                eventStreamHeld = new CountDownLatch(1);
+                eventStreamHeld.await(15, TimeUnit.SECONDS);
+                return;
+            }
             sse(os, "{\"id\":\"evt_1\",\"type\":\"server.connected\",\"properties\":{}}");
             // User echo: role announced first, then its text part — must be skipped entirely.
             sse(os, "{\"id\":\"evt_1b\",\"type\":\"message.updated\",\"properties\":{\"info\":"
@@ -269,7 +329,7 @@ class OpenCodeServeAdapterTest {
             sse(os, "{\"id\":\"evt_9\",\"type\":\"session.status\",\"properties\":"
                     + "{\"sessionID\":\"sess-1\",\"status\":{\"type\":\"idle\"}}}");
             // Hold the stream open so the adapter does not churn on reconnects mid-test.
-            eventStreamHeld = new CountDownLatch(true ? 1 : 1);
+            eventStreamHeld = new CountDownLatch(1);
             eventStreamHeld.await(15, TimeUnit.SECONDS);
         } catch (InterruptedException ignored) {
             // server shutting down

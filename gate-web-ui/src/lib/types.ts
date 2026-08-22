@@ -56,6 +56,8 @@ export interface AgentConfig {
   systemPrompt: string | null;
   extraFlags: string[];
   description: string | null;
+  /** 会话启动时注入项目/工单上下文作为系统提示词；缺省开启 */
+  injectContext: boolean;
 }
 
 export interface AgentRuntime {
@@ -119,6 +121,19 @@ export interface UsageView {
   completionTokens: number;
 }
 
+/** One pending permission request from the agent (opencode 权限询问). */
+export interface PermissionRequestView {
+  permissionId: string;
+  permission: string;
+  patterns: string[];
+  always: string[];
+  metadata: Record<string, unknown>;
+  messageId?: string;
+  callId?: string;
+}
+
+export type PermissionStatus = "pending" | "once" | "always" | "reject" | "auto";
+
 export type ChatItem =
   | { kind: "user"; id: string; text: string; ts: number }
   | {
@@ -129,8 +144,19 @@ export type ChatItem =
       thinking?: ThinkingView;
       tools: ToolCallView[];
       ts: number;
+      /** 完成本回复的模型/智能体名称（openchamber 式底部标注）。 */
+      agent?: string | null;
+      /** 推理等级（reasoning-effort，如 high/medium/low）；可能为空。 */
+      variant?: string | null;
     }
-  | { kind: "system"; id: string; text: string; tone: "info" | "success" | "warn"; ts: number };
+  | { kind: "system"; id: string; text: string; tone: "info" | "success" | "warn"; ts: number }
+  | {
+      kind: "permission";
+      id: string;
+      request: PermissionRequestView;
+      status: PermissionStatus;
+      ts: number;
+    };
 
 export interface ChatSession {
   id: string;
@@ -139,6 +165,35 @@ export interface ChatSession {
   status: "active" | "archived";
   createdAt: number;
   updatedAt: number;
+  /** 会话是否自动允许权限请求（端侧开关，受控）。 */
+  permissionAutoAccept: boolean;
+  /** Backing agent-config id (raw API field, used to resolve picker defaults). */
+  agentConfigId?: string | null;
+  /** 会话内实时切换的模型覆盖（null = 用 AgentConfig 默认值） */
+  overrideProvider?: string | null;
+  overrideModel?: string | null;
+  overrideVariant?: string | null;
+}
+
+/** One model entry of the live opencode catalog (GET /api/sessions/{id}/models). */
+export interface CatalogModel {
+  id: string;
+  name: string;
+  /** OpenCode reasoning-effort keys ("high"/"medium"/"low"/…); empty when the model has none. */
+  variants: string[];
+}
+
+export interface CatalogProvider {
+  id: string;
+  name: string;
+  models: CatalogModel[];
+}
+
+/** The effective per-session model selection (会话内实时切换). */
+export interface SessionModelSel {
+  providerId: string | null;
+  modelId: string | null;
+  variant: string | null;
 }
 
 export interface DiffLine {

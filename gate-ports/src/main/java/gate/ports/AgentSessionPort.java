@@ -3,6 +3,7 @@ package gate.ports;
 import gate.domain.session.Session;
 import gate.domain.session.SessionMessage;
 import gate.domain.session.SessionStreamChunk;
+import gate.domain.session.PermissionRequest;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
@@ -40,6 +41,16 @@ public interface AgentSessionPort {
      * Returns an {@link AutoCloseable} to unregister the listener.
      */
     AutoCloseable attachListener(String sessionId, Consumer<SessionStreamChunk> listener);
+
+    /**
+     * Reply to a pending opencode permission request for the given session.
+     * {@code response} is one of {@code once|always|reject}; only meaningful for opencode
+     * sessions (the web layer rejects other CLIs before reaching here).
+     */
+    void respondPermission(String sessionId, String permissionId, String response);
+
+    /** Live snapshot of this session's unresolved pending permission requests. */
+    java.util.List<PermissionRequest> pendingPermissions(String sessionId);
 
     record StartRequest(
             String ticketNo,
