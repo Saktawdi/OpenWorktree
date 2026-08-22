@@ -3,6 +3,7 @@ package gate.adapters.session;
 import gate.application.MiniJson;
 import gate.domain.error.GateErrorCode;
 import gate.domain.error.GateException;
+import gate.domain.project.Project;
 import gate.domain.session.AgentConfig;
 import gate.domain.session.AgentCli;
 import gate.domain.session.Role;
@@ -11,12 +12,15 @@ import gate.domain.session.SessionMessage;
 import gate.domain.session.SessionStatus;
 import gate.domain.session.SessionStreamChunk;
 import gate.domain.session.SessionUsage;
+import gate.domain.session.PermissionRequest;
 import gate.domain.task.GateTask;
 import gate.domain.task.GateTaskStatus;
+import gate.domain.ticket.Ticket;
 import gate.ports.AgentConfigRepository;
 import gate.ports.AgentSessionPort;
 import gate.ports.Clock;
 import gate.ports.ProcessRunner;
+import gate.ports.ProjectRepository;
 import gate.ports.SessionRepository;
 import gate.ports.TaskRegistry;
 import gate.ports.TicketLockManager;
@@ -53,6 +57,7 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
     private final AgentConfigRepository agentConfigs;
     private final SessionRepository sessions;
     private final TicketRepository tickets;
+    private final ProjectRepository projects;
     private final TaskRegistry tasks;
     private final TicketLockManager ticketLocks;
     private final Clock clock;
@@ -85,10 +90,26 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
                                  Clock clock,
                                  String claudeExecutable,
                                  List<String> claudePrefix) {
+        this(processRunner, agentConfigs, sessions, tickets, null, tasks, ticketLocks, clock,
+                claudeExecutable, claudePrefix);
+    }
+
+    /** Full constructor: {@code projects} is optional (null skips the 项目 section of the injected context). */
+    public ClaudeHeadlessAdapter(ProcessRunner processRunner,
+                                 AgentConfigRepository agentConfigs,
+                                 SessionRepository sessions,
+                                 TicketRepository tickets,
+                                 ProjectRepository projects,
+                                 TaskRegistry tasks,
+                                 TicketLockManager ticketLocks,
+                                 Clock clock,
+                                 String claudeExecutable,
+                                 List<String> claudePrefix) {
         this.processRunner = processRunner;
         this.agentConfigs = agentConfigs;
         this.sessions = sessions;
         this.tickets = tickets;
+        this.projects = projects;
         this.tasks = tasks;
         this.ticketLocks = ticketLocks;
         this.clock = clock;
@@ -146,7 +167,7 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
         Path contextDir = clone.resolve(".git").resolve("gate-context");
         Path contextFile = contextDir.resolve("CLAUDE.md");
         Path mcpConfig = contextDir.resolve("mcp-config.json");
-        writeContext(contextFile, request, config);
+        writeContext(contextFile, request.ticketNo(), request.targetRef(), config);
         writeMcpConfig(mcpConfig, request.env());
 
         List<String> argv = buildArgv(config, contextFile, mcpConfig, null, request.initialPrompt());
@@ -227,6 +248,19 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
         return events.stream();
     }
 
+    @Override
+    public void respondPermission(String sessionId, String permissionId, String response) {
+        // The web layer intercepts non-opencode sessions before dispatching; this is a hard
+        // contract violation guard rather than a reachable path.
+        throw new UnsupportedOperationException(
+                "permission asks are only supported for opencode sessions");
+    }
+
+    @Override
+    public List<PermissionRequest> pendingPermissions(String sessionId) {
+        return List.of();
+    }
+
     public void close() {
         executor.shutdown();
     }
@@ -273,7 +307,9 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
 
     private void runSend(GateTask task, Session session, String message, boolean resume) {
         try (AutoCloseable ignored = ticketLocks.acquire(session.ticketNo())) {
-            AgentConfig config = agentConfigs.find(session.agentConfigId()).orElseThrow();
+            // Fresh read: a live model switch persisted after enqueue must still win.
+            Session latest = sessions.find(session.id()).orElse(session);
+            AgentConfig config = agentConfigs.find(latest.agentConfigId()).orElseThrow();
             Path clone = Path.of(session.clonePath());
             Path contextDir = clone.resolve(".git").resolve("gate-context");
             Path contextFile = contextDir.resolve("CLAUDE.md");
@@ -282,8 +318,14 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
             Instant now = clock.now();
             insertUserMessage(session.id(), message, now);
 
+            // Fresh read of the ticket row so 注入上下文 reflects edits made between turns.
+            Ticket ctxTicket = tickets.find(latest.ticketNo()).orElse(null);
+            writeContext(contextFile, latest.ticketNo(),
+                    ctxTicket == null ? null : ctxTicket.targetRef(), config);
+
             List<String> argv = buildArgv(config, contextFile, mcpConfig,
-                    resume ? session.cliSessionId() : session.cliSessionId(), message);
+                    resume ? session.cliSessionId() : session.cliSessionId(), message,
+                    latest.overrideModel());
             ProcessRunner.ProcRun run = processRunner.runStreaming(argv, clone, Map.of(), Duration.ofMinutes(10),
                     line -> handleStreamLine(session.id(), line), null);
 
@@ -329,6 +371,11 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
 
     private List<String> buildArgv(AgentConfig config, Path contextFile, Path mcpConfig,
                                    String resumeSessionId, String prompt) {
+        return buildArgv(config, contextFile, mcpConfig, resumeSessionId, prompt, null);
+    }
+
+    private List<String> buildArgv(AgentConfig config, Path contextFile, Path mcpConfig,
+                                   String resumeSessionId, String prompt, String overrideModel) {
         List<String> argv = new ArrayList<>();
         argv.add(claudeExecutable);
         argv.addAll(claudePrefix);
@@ -341,16 +388,21 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
         // --verbose ("When using --print, --output-format=stream-json requires --verbose").
         argv.add("--verbose");
         // No model flag means Claude Code resolves its own provider/model configuration. The
-        // agent profile may still opt into an explicit model override when one is selected.
-        if (config.model() != null && !config.model().isBlank()) {
+        // agent profile may still opt into an explicit model override when one is selected;
+        // a live per-session switch (会话内实时切换) beats the profile default.
+        String effectiveModel = overrideModel != null && !overrideModel.isBlank()
+                ? overrideModel.trim() : config.model();
+        if (effectiveModel != null && !effectiveModel.isBlank()) {
             argv.add("--model");
-            argv.add(config.model());
+            argv.add(effectiveModel);
         }
         if (resumeSessionId != null && !resumeSessionId.isBlank()) {
             argv.add("--resume");
             argv.add(resumeSessionId);
         }
-        if (config.systemPrompt() != null && !config.systemPrompt().isBlank()) {
+        // 系统提示词注入：context file 由 writeContext 组合 systemPrompt + 项目/工单上下文，
+        // 只在确实有内容可注入时才追加（inject_context 关闭且无自定义提示词 → 不写文件）。
+        if (Files.exists(contextFile)) {
             argv.add("--append-system-prompt-file");
             argv.add(contextFile.toString());
         }
@@ -370,16 +422,24 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
         return argv;
     }
 
-    private void writeContext(Path file, StartRequest request, AgentConfig config) {
+    /**
+     * Writes the effective append-system-prompt content: the optional AgentConfig.systemPrompt
+     * plus — when 注入开关 (injectContext) is on — the project/ticket context block. Deletes any
+     * stale file when there is nothing to inject so buildArgv's existence check stays truthful.
+     */
+    private void writeContext(Path file, String ticketNo, String targetRef, AgentConfig config) {
         try {
+            Ticket ticket = tickets == null ? null : tickets.find(ticketNo).orElse(null);
+            Project project = null;
+            if (projects != null && ticket != null && ticket.projectId() != null) {
+                project = projects.find(ticket.projectId()).orElse(null);
+            }
+            String content = AgentContextPrompt.compose(config, ticketNo, targetRef, ticket, project);
             Files.createDirectories(file.getParent());
-            String content = "# Gate 工单上下文\n\n"
-                    + "- 工单号: " + request.ticketNo() + "\n"
-                    + "- 目标分支: " + request.targetRef() + "\n"
-                    + "- AgentConfig: " + config.id() + " ("
-                    + (config.model() == null ? "CLI 默认设置" : config.model()) + ")\n"
-                    + "- 你无权 push 到权威库；预提审请调 presubmit_create MCP 工具\n"
-                    + "- tree_hash 约定: 审核锚定不可变 tree，修改后需重新预提审\n";
+            if (content.isBlank()) {
+                Files.deleteIfExists(file);
+                return;
+            }
             Files.writeString(file, content, StandardCharsets.UTF_8);
         } catch (Exception e) {
             throw new GateException(GateErrorCode.GATE_ERROR_IO,

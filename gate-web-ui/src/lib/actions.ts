@@ -299,9 +299,29 @@ export const actions = {
       switchSessionLocal(no, id);
       live.setLiveSessionId(id);
       void live.loadSessionMessages(no, id).catch(() => {});
+      void live.loadSessionCatalog(no, id);
       return;
     }
     switchSessionLocal(no, id);
+  },
+  /** 会话内实时切换模型/推理强度：持久化覆盖，下一回合生效。 */
+  switchSessionModel(
+    no: string,
+    sel: { providerId: string | null; modelId: string | null; variant: string | null },
+  ) {
+    const st = appStore.getState();
+    if (st.mode !== "live") return Promise.resolve(false);
+    const sid = st.activeSessionId[no];
+    if (!sid) return Promise.resolve(false);
+    return live.switchSessionModelLive(sid, sel);
+  },
+  /** 开关「权限：自动允许」：持久化到会话并回写 store。 */
+  setSessionAutoAccept(no: string, value: boolean) {
+    const st = appStore.getState();
+    if (st.mode !== "live") return Promise.resolve(false);
+    const sid = st.activeSessionId[no];
+    if (!sid) return Promise.resolve(false);
+    return live.patchSessionLive(sid, { permission_auto_accept: value });
   },
   abort(no: string) {
     if (appStore.getState().mode === "live") {

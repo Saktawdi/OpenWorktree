@@ -5,8 +5,10 @@ import gate.adapters.io.ServePidRegistry;
 import gate.application.MiniJson;
 import gate.domain.error.GateErrorCode;
 import gate.domain.error.GateException;
+import gate.domain.project.Project;
 import gate.domain.session.AgentCli;
 import gate.domain.session.AgentConfig;
+import gate.domain.session.PermissionRequest;
 import gate.domain.session.Role;
 import gate.domain.session.Session;
 import gate.domain.session.SessionMessage;
@@ -16,10 +18,12 @@ import gate.domain.session.SessionUsage;
 import gate.domain.session.ToolCall;
 import gate.domain.task.GateTask;
 import gate.domain.task.GateTaskStatus;
+import gate.domain.ticket.Ticket;
 import gate.ports.AgentConfigRepository;
 import gate.ports.AgentSessionPort;
 import gate.ports.Clock;
 import gate.ports.ProcessRunner;
+import gate.ports.ProjectRepository;
 import gate.ports.SessionRepository;
 import gate.ports.TaskRegistry;
 import gate.ports.TicketLockManager;
@@ -77,11 +81,14 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
     static final long UPSTREAM_STALL_TIMEOUT_MS = 90_000L;
     /** Delay between upstream reconnect attempts after a drop. */
     static final long UPSTREAM_RECONNECT_DELAY_MS = 2_000L;
+    /** Timeout for permission reply / list HTTP calls against the serve instance. */
+    static final Duration PERMISSION_HTTP_TIMEOUT = Duration.ofSeconds(5);
 
     private final ProcessRunner processRunner;
     private final AgentConfigRepository agentConfigs;
     private final SessionRepository sessions;
     private final TicketRepository tickets;
+    private final ProjectRepository projects;
     private final TaskRegistry tasks;
     private final TicketLockManager ticketLocks;
     private final Clock clock;
@@ -100,6 +107,10 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
     private final Map<String, Integer> sessionPorts = new ConcurrentHashMap<>();
     private final Map<String, Upstream> upstreams = new ConcurrentHashMap<>();
     private final Map<String, java.util.Set<java.util.function.Consumer<SessionStreamChunk>>> listeners = new ConcurrentHashMap<>();
+    // Per-session pending permission asks: gateSessionId -> permissionId -> request. Mirrors
+    // the serve instance's /permission snapshot so auto-allow and pre-send reject have a local
+    // view even before the SSE permission.asked frame is replayed after a reconnect.
+    private final Map<String, Map<String, PermissionRequest>> pendingPermissions = new ConcurrentHashMap<>();
     private final AdapterLog log;
     private final ServePidRegistry pidRegistry;
 
@@ -144,10 +155,29 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                                  int startTimeoutSeconds,
                                  AdapterLog log,
                                  ServePidRegistry pidRegistry) {
+        this(processRunner, agentConfigs, sessions, tickets, null, tasks, ticketLocks, clock,
+                ports, opencodeExecutable, startTimeoutSeconds, log, pidRegistry);
+    }
+
+    /** Full constructor: {@code projects} is optional (null skips the 项目 section of the injected context). */
+    public OpenCodeServeAdapter(ProcessRunner processRunner,
+                                 AgentConfigRepository agentConfigs,
+                                 SessionRepository sessions,
+                                 TicketRepository tickets,
+                                 ProjectRepository projects,
+                                 TaskRegistry tasks,
+                                 TicketLockManager ticketLocks,
+                                 Clock clock,
+                                 PortAllocator ports,
+                                 String opencodeExecutable,
+                                 int startTimeoutSeconds,
+                                 AdapterLog log,
+                                 ServePidRegistry pidRegistry) {
         this.processRunner = processRunner;
         this.agentConfigs = agentConfigs;
         this.sessions = sessions;
         this.tickets = tickets;
+        this.projects = projects;
         this.tasks = tasks;
         this.ticketLocks = ticketLocks;
         this.clock = clock;
@@ -204,6 +234,131 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
     }
 
     @Override
+    public void respondPermission(String sessionId, String permissionId, String response) {
+        Integer port = sessionPorts.get(sessionId);
+        if (port == null) {
+            throw new GateException(GateErrorCode.USAGE, "session has no opencode endpoint");
+        }
+        HttpResponse<String> resp;
+        try {
+            resp = post("http://127.0.0.1:" + port + "/permission/" + permissionId + "/reply",
+                    "{\"reply\":\"" + response + "\"}", PERMISSION_HTTP_TIMEOUT);
+        } catch (Exception e) {
+            throw new GateException(GateErrorCode.GATE_ERROR_IO,
+                    "opencode permission reply failed: " + permissionId, e);
+        }
+        if (resp.statusCode() == 404) {
+            // Already answered (e.g. the auto-allow won the race); treat as resolved.
+            log.info("opencode", "permission.already-resolved", "sessionId", sessionId,
+                    "permissionId", permissionId);
+        } else if (resp.statusCode() / 100 != 2) {
+            throw new GateException(GateErrorCode.GATE_ERROR_IO,
+                    "opencode permission reply failed: HTTP " + resp.statusCode() + " " + resp.body());
+        }
+        removePending(sessionId, permissionId);
+    }
+
+    @Override
+    public java.util.List<PermissionRequest> pendingPermissions(String sessionId) {
+        Map<String, PermissionRequest> merged = new LinkedHashMap<>();
+        Map<String, PermissionRequest> local = pendingPermissions.get(sessionId);
+        if (local != null) {
+            merged.putAll(local);
+        }
+        Integer port = sessionPorts.get(sessionId);
+        Session session = sessions.find(sessionId).orElse(null);
+        if (port != null && session != null && session.cliSessionId() != null) {
+            try {
+                HttpRequest req = HttpRequest.newBuilder(
+                                URI.create("http://127.0.0.1:" + port + "/permission"))
+                        .timeout(PERMISSION_HTTP_TIMEOUT).GET().build();
+                HttpResponse<String> resp = http.send(req,
+                        HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+                if (resp.statusCode() / 100 == 2) {
+                    Object parsed = MiniJson.parse(resp.body().trim());
+                    if (parsed instanceof List<?> list) {
+                        for (Object item : list) {
+                            if (!(item instanceof Map<?, ?> m)) {
+                                continue;
+                            }
+                            Map<String, Object> obj = castMap(m);
+                            // The /permission snapshot is instance-wide; keep this session's asks.
+                            if (!session.cliSessionId().equals(str(obj.get("sessionID")))) {
+                                continue;
+                            }
+                            PermissionRequest r = permissionFromProps(obj);
+                            if (r.permissionId() != null) {
+                                merged.put(r.permissionId(), r);
+                            }
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                // Serve unreachable (restarting / down): fall back to the in-memory table only.
+                log.warn("opencode", "permission.list-failed", "sessionId", sessionId,
+                        "error", e.getClass().getSimpleName());
+            }
+        }
+        return List.copyOf(merged.values());
+    }
+
+    private void removePending(String sessionId, String permissionId) {
+        Map<String, PermissionRequest> local = pendingPermissions.get(sessionId);
+        if (local != null) {
+            local.remove(permissionId);
+        }
+    }
+
+    /** Best-effort reject of all in-memory pending asks so a new turn cannot be blocked by one. */
+    private void rejectPendingPermissions(String sessionId, int port) {
+        Map<String, PermissionRequest> local = pendingPermissions.get(sessionId);
+        if (local == null || local.isEmpty()) {
+            return;
+        }
+        for (String permissionId : List.copyOf(local.keySet())) {
+            try {
+                post("http://127.0.0.1:" + port + "/permission/" + permissionId + "/reply",
+                        "{\"reply\":\"reject\"}", PERMISSION_HTTP_TIMEOUT);
+                removePending(sessionId, permissionId);
+            } catch (Exception e) {
+                // 尽力而为：一个失败的 reject 不应中断新回合的触发。
+                log.warn("opencode", "permission.reject-failed", "sessionId", sessionId,
+                        "permissionId", permissionId, "error", e.getClass().getSimpleName());
+            }
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> castMap(Map<?, ?> raw) {
+        Map<String, Object> typed = new LinkedHashMap<>();
+        for (Map.Entry<?, ?> e : raw.entrySet()) {
+            typed.put(String.valueOf(e.getKey()), (Object) e.getValue());
+        }
+        return typed;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static PermissionRequest permissionFromProps(Map<String, Object> props) {
+        Map<String, Object> tool = props.get("tool") instanceof Map<?, ?> t
+                ? (Map<String, Object>) t : Map.of();
+        return new PermissionRequest(
+                str(props.get("id")),
+                str(props.get("permission")),
+                stringList(props.get("patterns")),
+                stringList(props.get("always")),
+                props.get("metadata") instanceof Map<?, ?> meta ? (Map<String, Object>) meta : Map.of(),
+                str(tool.get("messageID")),
+                str(tool.get("callID")));
+    }
+
+    private static List<String> stringList(Object v) {
+        if (v instanceof List<?> list) {
+            return list.stream().map(String::valueOf).toList();
+        }
+        return List.of();
+    }
+
+    @Override
     public Session start(StartRequest request) {
         try (AutoCloseable ignored = ticketLocks.acquire(request.ticketNo())) {
             AgentConfig config = agentConfigs.find(request.agentConfigId())
@@ -252,18 +407,27 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
         Session session = sessions.find(request.sessionId())
                 .orElseThrow(() -> new GateException(GateErrorCode.USAGE,
                         "no such session: " + request.sessionId()));
+        // First-turn detection must happen BEFORE the user message is persisted: 注入上下文
+        // (项目/工单信息) rides along only on the session's opening turn.
+        boolean firstTurn = sessions.findMessages(session.id()).isEmpty();
         sessions.insertMessage(new SessionMessage(UUID.randomUUID().toString(), session.id(),
                 Role.USER, request.message(), List.of(), null, false, clock.now()));
         GateTask task = tasks.register("session-send", session.ticketNo(), session.id());
-        executor.submit(() -> runSend(task, session, request.message()));
+        executor.submit(() -> runSend(task, session, request.message(), firstTurn));
         return task.id();
     }
 
     @Override
     public void abort(String sessionId) {
-        sessions.find(sessionId).ifPresent(s -> {
-            stopUpstream(sessionId);
-            Integer port = sessionPorts.get(sessionId);
+sessions.find(sessionId).ifPresent(s -> {
+                Upstream up = stopUpstream(sessionId);
+                if (up != null) {
+                    // Persist whatever the interrupted turn buffered BEFORE tearing the serve
+                    // process down, so a session switch after the abort does not lose the
+                    // half-streamed reply (degraded, recover-only).
+                    up.flushTurn("aborted");
+                }
+                Integer port = sessionPorts.get(sessionId);
             if (port != null && s.cliSessionId() != null) {
                 postQuietly("http://127.0.0.1:" + port + "/session/" + s.cliSessionId() + "/abort", "{}");
             }
@@ -273,6 +437,7 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                 sessionPorts.remove(sessionId);
             }
             sessions.update(s.withStatus(SessionStatus.ABORTED).withFinishedAt(clock.now()));
+            pendingPermissions.remove(sessionId);
         });
     }
 
@@ -301,6 +466,7 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
             ports.release(port);
         }
         sessionPorts.clear();
+        pendingPermissions.clear();
         executor.shutdown();
     }
 
@@ -308,17 +474,44 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
     // Send path: fire prompt_async, streaming happens on the upstream event reader
     // -------------------------------------------------------------------------------------------
 
-    private void runSend(GateTask task, Session session, String message) {
+    private void runSend(GateTask task, Session session, String message, boolean firstTurn) {
         try (AutoCloseable ignored = ticketLocks.acquire(session.ticketNo())) {
             Integer port = sessionPorts.get(session.id());
             if (port == null || session.cliSessionId() == null) {
                 throw new GateException(GateErrorCode.USAGE, "session has no opencode endpoint");
             }
-            AgentConfig config = agentConfigs.find(session.agentConfigId()).orElseThrow();
+            // Fresh read: a model/variant switch persisted after this task was enqueued must
+            // still win (会话内实时切换 semantics — the next send uses the latest selection).
+            Session latest = sessions.find(session.id()).orElse(session);
+            AgentConfig config = agentConfigs.find(latest.agentConfigId()).orElseThrow();
             tasks.update(progress(task, 20, "触发 opencode 回合"));
-            String body = messageBody(config, message);
+            // A permission.asked left unanswered would block the new turn forever (opencode waits
+            // on it before continuing); reject every residual pending ask best-effort.
+            rejectPendingPermissions(session.id(), port);
+            // OpenCode 的 prompt_async 没有独立 system 通道：注入上下文（项目/工单信息，
+            // 以及 AgentConfig.systemPrompt）只在会话首个回合作为带分隔线的前缀随行。
+            String outgoing = message;
+            if (firstTurn) {
+                Ticket ctxTicket = tickets.find(latest.ticketNo()).orElse(null);
+                Project project = null;
+                if (projects != null && ctxTicket != null && ctxTicket.projectId() != null) {
+                    project = projects.find(ctxTicket.projectId()).orElse(null);
+                }
+                String context = AgentContextPrompt.compose(config, latest.ticketNo(),
+                        ctxTicket == null ? null : ctxTicket.targetRef(), ctxTicket, project);
+                if (!context.isBlank()) {
+                    outgoing = context + "\n\n---\n\n" + message;
+                }
+            }
+            String body = messageBody(config, outgoing,
+                    latest.overrideProvider(), latest.overrideModel(), latest.overrideVariant());
             Upstream up = upstreams.get(session.id());
             if (up != null) {
+                // A previous turn whose stream never reached session.status=idle (serve drop,
+                // connection loss, interrupted abort) left buffered content dangling; the reset
+                // below would wipe it, so flush it as a degraded reply first and let it survive
+                // the next send.
+                up.flushTurn("superseded");
                 // Reset BEFORE firing the request: once prompt_async lands, events for this turn
                 // can arrive within milliseconds and must not be wiped by post-send cleanup.
                 up.assistantPersistedSinceSend = false;
@@ -357,15 +550,29 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
     }
 
     static String messageBody(AgentConfig config, String message) {
+        return messageBody(config, message, null, null, null);
+    }
+
+    /**
+     * Builds the {@code prompt_async} body. The live per-session override (provider/model/variant,
+     * 会话内实时切换) wins over the AgentConfig defaults; a blank override falls back to
+     * {@code config.model()} parsed as {@code provider/model}. {@code variant} is OpenCode's
+     * reasoning-effort selection (same field the OpenChamber composer sends).
+     */
+    static String messageBody(AgentConfig config, String message,
+                              String overrideProvider, String overrideModel, String overrideVariant) {
         StringBuilder body = new StringBuilder("{\"parts\":[{\"type\":\"text\",\"text\":\"")
                 .append(escapeJson(message)).append("\"}]");
-        ModelRef model = ModelRef.parse(config.model());
+        ModelRef model = resolveModel(config, overrideProvider, overrideModel);
         if (model != null) {
             body.append(",\"model\":{\"providerID\":\"")
                     .append(escapeJson(model.providerId()))
                     .append("\",\"modelID\":\"")
                     .append(escapeJson(model.modelId()))
                     .append("\"}");
+        }
+        if (overrideVariant != null && !overrideVariant.isBlank()) {
+            body.append(",\"variant\":\"").append(escapeJson(overrideVariant.trim())).append('"');
         }
         String agent = agentFlag(config);
         if (agent != null && !agent.isBlank()) {
@@ -374,6 +581,14 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
             body.append(",\"agent\":\"").append(escapeJson(agent)).append("\"");
         }
         return body.append('}').toString();
+    }
+
+    /** Override pair when both halves are present, else the AgentConfig default, else none. */
+    private static ModelRef resolveModel(AgentConfig config, String provider, String model) {
+        if (provider != null && !provider.isBlank() && model != null && !model.isBlank()) {
+            return new ModelRef(provider.trim(), model.trim());
+        }
+        return ModelRef.parse(config.model());
     }
 
     /**
@@ -594,6 +809,8 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                 case "message.updated" -> handleMessageUpdated(props);
                 case "session.status" -> handleSessionStatus(props);
                 case "session.error" -> handleSessionError(props);
+                case "permission.asked" -> handlePermissionAsked(props);
+                case "permission.replied" -> handlePermissionReplied(props);
                 default -> {
                     // server.connected, file.watcher.*, pty.*, ... are irrelevant here
                 }
@@ -713,9 +930,17 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                 return;
             }
             // Merge this completed step into the turn reply; persistence happens once at idle.
+            mergeStepIntoTurn(messageId, usageFromTokens(info.get("tokens")));
+        }
+
+        /**
+         * Folds one step's buffered text/tools/usage into the turn reply. Called when a step's
+         * message completes normally, and again from {@link #flushTurn} for steps whose turn was
+         * cut before their completion event (their parts live in the per-message buffers only).
+         */
+        private void mergeStepIntoTurn(String messageId, SessionUsage stepUsage) {
             String content = joinedContent(messageId);
             List<ToolCall> stepTools = drainToolCalls(messageId);
-            SessionUsage stepUsage = usageFromTokens(info.get("tokens"));
             if (!content.isEmpty()) {
                 if (turnText.length() > 0) {
                     turnText.append("\n\n");
@@ -743,6 +968,65 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                     "toolCalls", stepTools.size());
         }
 
+        /** Degraded recovery flush: a turn that never reached {@code session.status=idle}
+         *  (user abort, serve drop, superseded by a fresh send). See the two-arg overload. */
+        void flushTurn(String reason) {
+            flushTurn(reason, true);
+        }
+
+        /**
+         * Persist the buffered turn (all steps' text + tool calls + summed usage) as ONE
+         * assistant reply — the openchamber-style grouping of the idle path, reused here
+         * so an unfinished turn survives a session switch/reload. Content already streamed
+         * live; no chunks are emitted (recover-only persistence). No-op when the turn
+         * buffer holds nothing. Recovery callers pass {@code degraded=true}.
+         */
+        void flushTurn(String reason, boolean degraded) {
+            // Drain steps that never reached their message.updated(completed) merge: an aborted
+            // or dropped turn can be cut mid-step, leaving that step's text/tools only in the
+            // per-message buffers. Without this the flush would silently skip them.
+            for (String messageId : List.copyOf(messageParts.keySet())) {
+                if (!userMessages.contains(messageId)) {
+                    mergeStepIntoTurn(messageId, null);
+                }
+            }
+            for (String messageId : List.copyOf(toolsByMessage.keySet())) {
+                if (!userMessages.contains(messageId)) {
+                    mergeStepIntoTurn(messageId, null);
+                }
+            }
+            if (!turnHasNewContent) {
+                return;
+            }
+            String content;
+            List<ToolCall> tools = new ArrayList<>();
+            synchronized (turnTools) {
+                content = turnText.toString();
+                for (TurnTool tt : turnTools) {
+                    tools.add(new ToolCall(tt.name(), tt.inputJson(), tt.output()));
+                }
+                turnTools.clear();
+            }
+            SessionUsage usage = turnUsage;
+            sessions.insertMessage(new SessionMessage(UUID.randomUUID().toString(),
+                    sessionId, Role.ASSISTANT, content, tools, usage, degraded, clock.now()));
+            log.info("opencode", degraded ? "turn.persisted-degraded" : "turn.persisted",
+                    "sessionId", sessionId, "reason", reason,
+                    "chars", content.length(), "toolCalls", tools.size());
+            if (usage != null) {
+                Session latest = sessions.find(sessionId).orElse(null);
+                if (latest != null) {
+                    Session updated = latest.withCumulativeUsage(latest.cumulativeUsage().add(usage));
+                    sessions.update(updated);
+                    writeback(updated);
+                }
+            }
+            turnText.setLength(0);
+            turnUsage = null;
+            turnHasNewContent = false;
+            assistantPersistedSinceSend = true;
+        }
+
         private void handleSessionStatus(Map<String, Object> props) {
             if (!cliSessionId.equals(str(props.get("sessionID")))) {
                 return;
@@ -752,34 +1036,7 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
             if ("idle".equals(str(status.get("type")))) {
                 // Turn ended: persist the whole turn (all steps' text + tool calls + summed
                 // usage) as ONE assistant reply — openchamber-style grouping.
-                if (turnHasNewContent) {
-                    String content;
-                    List<ToolCall> tools = new ArrayList<>();
-                    synchronized (turnTools) {
-                        content = turnText.toString();
-                        for (TurnTool tt : turnTools) {
-                            tools.add(new ToolCall(tt.name(), tt.inputJson(), tt.output()));
-                        }
-                        turnTools.clear();
-                    }
-                    SessionUsage usage = turnUsage;
-                    sessions.insertMessage(new SessionMessage(UUID.randomUUID().toString(),
-                            sessionId, Role.ASSISTANT, content, tools, usage, false, clock.now()));
-                    log.info("opencode", "turn.persisted", "sessionId", sessionId,
-                            "chars", content.length(), "toolCalls", tools.size());
-                    if (usage != null) {
-                        Session latest = sessions.find(sessionId).orElse(null);
-                        if (latest != null) {
-                            Session updated = latest.withCumulativeUsage(latest.cumulativeUsage().add(usage));
-                            sessions.update(updated);
-                            writeback(updated);
-                        }
-                    }
-                    turnText.setLength(0);
-                    turnUsage = null;
-                    turnHasNewContent = false;
-                    assistantPersistedSinceSend = true;
-                }
+                flushTurn("idle", false);
                 // If nothing was produced and an error was buffered, persist it so the
                 // failure is visible after reload instead of living only in the SSE stream.
                 String errName = pendingErrorName;
@@ -817,6 +1074,66 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                     "errorName", pendingErrorName, "errorMessage", message);
             emitChunk(sessionId, new SessionStreamChunk.ErrorChunk(sessionId,
                     pendingErrorName, message, clock.now()));
+        }
+
+        /**
+         * permission.asked: property map IS the request ({id, sessionID, permission, patterns,
+         * always, metadata, tool?}). Record it for the /permissions endpoint, surface it to the
+         * UI, and auto-answer "once" when this session's auto-accept switch is on.
+         */
+        @SuppressWarnings("unchecked")
+        private void handlePermissionAsked(Map<String, Object> props) {
+            if (!cliSessionId.equals(str(props.get("sessionID")))) {
+                return;
+            }
+            String permissionId = str(props.get("id"));
+            if (permissionId == null) {
+                return;
+            }
+            PermissionRequest request = permissionFromProps(props);
+            pendingPermissions.computeIfAbsent(sessionId, k -> new ConcurrentHashMap<>())
+                    .put(permissionId, request);
+            emitChunk(sessionId, new SessionStreamChunk.PermissionAskedChunk(sessionId, request, clock.now()));
+            Session latest = sessions.find(sessionId).orElse(null);
+            if (latest != null && latest.permissionAutoAccept()) {
+                // Defer the HTTP call off the reader thread so it cannot stall SSE reads.
+                executor.submit(() -> autoAllow(sessionId, permissionId, port));
+            }
+        }
+
+        /** permission.replied: {sessionID, requestID, reply}. Drop the pending entry, notify the UI. */
+        private void handlePermissionReplied(Map<String, Object> props) {
+            if (!cliSessionId.equals(str(props.get("sessionID")))) {
+                return;
+            }
+            String requestId = str(props.get("requestID"));
+            if (requestId == null) {
+                return;
+            }
+            removePending(sessionId, requestId);
+            emitChunk(sessionId, new SessionStreamChunk.PermissionRepliedChunk(
+                    sessionId, requestId, str(props.get("reply")), false, clock.now()));
+        }
+
+        /** Server-side auto-allow: answer "once" on the user's behalf, then reflect the outcome. */
+        private void autoAllow(String sessionId, String permissionId, int port) {
+            try {
+                HttpResponse<String> resp = post("http://127.0.0.1:" + port + "/permission/"
+                                + permissionId + "/reply",
+                        "{\"reply\":\"once\"}", PERMISSION_HTTP_TIMEOUT);
+                if (resp.statusCode() / 100 != 2) {
+                    log.warn("opencode", "permission.auto-allow-rejected", "sessionId", sessionId,
+                            "permissionId", permissionId, "status", resp.statusCode());
+                    return;
+                }
+                removePending(sessionId, permissionId);
+                emitChunk(sessionId, new SessionStreamChunk.PermissionRepliedChunk(
+                        sessionId, permissionId, "once", true, clock.now()));
+            } catch (Exception e) {
+                // Failed auto-allow falls back to the user answering the card manually.
+                log.warn("opencode", "permission.auto-allow-failed", "sessionId", sessionId,
+                        "permissionId", permissionId, "error", e.getClass().getSimpleName());
+            }
         }
 
         /** Upsert one tool call's latest state; reader-thread confined, ordered by first sight. */
@@ -895,11 +1212,12 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
         }
     }
 
-    private void stopUpstream(String sessionId) {
+    private Upstream stopUpstream(String sessionId) {
         Upstream up = upstreams.remove(sessionId);
         if (up != null) {
             up.stop();
         }
+        return up;
     }
 
     private void checkStalledUpstreams() {
@@ -1069,6 +1387,14 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                     "--port", String.valueOf(port), "--hostname", "127.0.0.1");
             if (clonePath != null) {
                 pb.directory(Path.of(clonePath).toFile());
+            }
+            // A gate backend launched from inside an OpenChamber/OpenCode-managed shell inherits
+            // that shell's server wiring; OPENCODE_SERVER_PASSWORD in particular makes every child
+            // serve demand Bearer auth our adapter never sends (all requests 401). The spawned
+            // serve must be a clean-slate instance.
+            for (String key : List.of("OPENCODE_SERVER_PASSWORD", "OPENCODE_CONFIG_CONTENT",
+                    "OPENCODE_BINARY", "OPENCODE_PID", "OPENCODE")) {
+                pb.environment().remove(key);
             }
             pb.redirectErrorStream(true);
             pb.redirectOutput(ProcessBuilder.Redirect.DISCARD);

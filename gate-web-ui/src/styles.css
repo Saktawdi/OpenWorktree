@@ -321,6 +321,16 @@ body {
   .field-label {
     @apply block text-[11px] font-medium uppercase tracking-[0.08em] text-faint mb-1.5;
   }
+  .source-badge {
+    @apply inline-flex items-center rounded-full px-1.5 font-medium leading-[16px] normal-case tracking-normal;
+    font-size: 9.5px;
+  }
+  .source-badge.live {
+    @apply bg-accent/12 text-accent border border-accent/30;
+  }
+  .source-badge.fallback {
+    @apply bg-raised text-faint border border-edge;
+  }
   .text-input {
     @apply w-full h-9 rounded-lg border border-edge bg-sunken px-3 text-[13px] text-ink
       placeholder:text-faint transition-all duration-150 focus:border-accent/50 focus:outline-none;
@@ -386,4 +396,140 @@ body {
     transition-timing-function: var(--ease-default);
     transition-duration: var(--duration-normal);
   }
+
+  /* ── Permission Card（opencode 权限询问） ── */
+  .mono-cc {
+    @apply inline-block font-mono text-[11px] leading-relaxed text-dim rounded-md bg-sunken border border-edge px-2 py-1 break-all max-w-full;
+  }
+  .psm {
+    @apply px-2.5 py-2 rounded-md font-mono text-[11px] leading-relaxed text-dim;
+  }
+  .mono-blk {
+    @apply whitespace-pre-wrap break-all bg-sunken border border-edge;
+  }
+.permission-pending {
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-warn) 45%, transparent);
+  }
+  .permission-decided {
+    opacity: 0.6;
+  }
+
+  /* ── Composer（会话输入卡，参考 OpenChamber：输入区与控制栏同卡） ── */
+  .composer-shell {
+    @apply relative rounded-2xl border border-edge bg-sunken transition-all duration-200;
+  }
+  .composer-shell:hover:not(:focus-within) {
+    @apply border-edge-strong;
+  }
+  .composer-shell:focus-within {
+    @apply border-accent/40;
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-accent) 25%, transparent);
+  }
+  .composer-shell-busy {
+    @apply border-accent/30;
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-accent) 14%, transparent);
+  }
+  .composer-shell-done {
+    @apply opacity-60;
+  }
+  .composer-ta {
+    @apply block w-full resize-none rounded-2xl border-0 bg-transparent px-4 pt-3.5 pb-1
+      text-[13.5px] leading-relaxed text-ink placeholder:text-faint
+      focus:outline-none disabled:opacity-60;
+  }
+  .composer-btn {
+    @apply inline-flex items-center gap-1.5 h-7 px-2 rounded-lg text-[12px] font-medium
+      text-dim bg-transparent border border-transparent cursor-pointer select-none whitespace-nowrap
+      transition-all duration-150 hover:text-ink hover:bg-raised active:scale-[0.98]
+      disabled:opacity-40 disabled:pointer-events-none;
+  }
+  .composer-btn-active {
+    @apply text-accent;
+  }
+  .composer-btn-active:hover:not(:disabled) {
+    @apply bg-accent/10 text-accent;
+  }
+  .composer-chip {
+    @apply inline-flex items-center gap-1.5 h-6.5 px-2.5 rounded-full border border-edge bg-canvas
+      text-[11.5px] font-medium text-dim cursor-pointer select-none whitespace-nowrap
+      transition-all duration-150 hover:text-ink hover:border-edge-strong hover:bg-raised
+      active:scale-[0.97] disabled:opacity-40 disabled:pointer-events-none;
+  }
+  .composer-count {
+    @apply font-mono text-[10.5px] text-faint tabular-nums;
+  }
+  .composer-send {
+    @apply grid place-items-center w-8 h-8 rounded-full bg-accent text-sunken cursor-pointer shrink-0
+      transition-all duration-150 hover:bg-accent-hi active:scale-95
+      disabled:opacity-30 disabled:pointer-events-none;
+    box-shadow: 0 2px 12px -2px color-mix(in srgb, var(--color-accent) 50%, transparent);
+  }
+  .composer-send:disabled {
+    box-shadow: none;
+  }
+  .composer-stop {
+    @apply grid place-items-center w-8 h-8 rounded-full border border-danger/40 text-danger
+      cursor-pointer shrink-0 transition-all duration-150 hover:bg-danger/10 active:scale-95;
+  }
+
+  /* ── Markdown Body ── */
+  .md-body > *:first-child { margin-top: 0; }
+  .md-body > *:last-child { margin-bottom: 0; }
+  .md-body strong { font-weight: 600; color: var(--color-ink); }
+  .md-body a { color: var(--color-accent); text-decoration: underline; text-underline-offset: 2px; }
+  .md-body a:hover { filter: brightness(1.1); }
+  .md-body code {
+    background: var(--color-sunken);
+    padding: 1px 5px;
+    border-radius: 4px;
+    font-size: 90%;
+    font-family: var(--font-mono);
+  }
+  .md-body pre {
+    background: var(--color-sunken);
+    border: 1px solid var(--color-edge);
+    border-radius: 8px;
+    padding: 12px;
+    overflow-x: auto;
+    margin: 6px 0;
+  }
+  .md-body pre code {
+    background: none;
+    padding: 0;
+    border-radius: 0;
+    font-size: 12.5px;
+    line-height: 1.55;
+  }
+  .md-body table { width: 100%; border-collapse: collapse; margin: 6px 0; }
+  .md-body th, .md-body td {
+    border: 1px solid var(--color-edge);
+    padding: 4px 10px;
+    text-align: left;
+  }
+  .md-body th { background: var(--color-sunken); font-weight: 600; }
+  .md-body ul, .md-body ol { padding-left: 20px; margin: 4px 0; }
+  .md-body li { line-height: 1.55; }
+  .md-body blockquote {
+    border-left: 3px solid color-mix(in srgb, var(--color-accent) 30%, transparent);
+    padding-left: 12px;
+    margin: 6px 0;
+    color: var(--color-faint);
+    font-style: italic;
+  }
+  .md-body hr { margin: 12px 0; border: 0; border-top: 1px solid var(--color-edge); }
+  .md-body h1, .md-body h2, .md-body h3, .md-body h4 { font-weight: 600; margin: 14px 0 6px; }
+  .md-body h1 { font-size: 1em; }
+  .md-body h2 { font-size: 15px; }
+  .md-body h3 { font-size: 14px; }
+  .md-body p { margin: 6px 0; }
+  .md-body p:last-child { margin-bottom: 0; }
+  .md-body img { max-width: 100%; border-radius: 8px; margin: 6px 0; }
+}
+
+/* ── Composer textarea：聚焦反馈统一由 .composer-shell 呈现，textarea 自身不发光 ──
+   此规则必须留在 layer 外：全局 :focus-visible 光晕是无 layer 的，layer 内的
+   outline-none 压不过它。 */
+.composer-ta:focus,
+.composer-ta:focus-visible {
+  outline: none;
 }

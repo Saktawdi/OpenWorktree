@@ -45,4 +45,35 @@ class OpenCodeServeAdapterMessageBodyTest {
                 body);
         assertNull(OpenCodeServeAdapter.agentFlag(config(null, null)));
     }
+
+    @Test
+    void overrideModelAndVariantBeatConfigDefaults() {
+        String body = OpenCodeServeAdapter.messageBody(
+                config("own/deepseek-v4-flash", List.of()), "hi", "prov-x", "model-x", "high");
+        assertEquals(
+                "{\"parts\":[{\"type\":\"text\",\"text\":\"hi\"}],"
+                        + "\"model\":{\"providerID\":\"prov-x\",\"modelID\":\"model-x\"},"
+                        + "\"variant\":\"high\"}",
+                body);
+    }
+
+    @Test
+    void variantWithoutOverrideFallsBackToConfigModel() {
+        String body = OpenCodeServeAdapter.messageBody(
+                config("own/deepseek-v4-flash", List.of()), "hi", null, null, "max");
+        assertEquals(
+                "{\"parts\":[{\"type\":\"text\",\"text\":\"hi\"}],"
+                        + "\"model\":{\"providerID\":\"own\",\"modelID\":\"deepseek-v4-flash\"},"
+                        + "\"variant\":\"max\"}",
+                body);
+    }
+
+    @Test
+    void blankOrMissingVariantOmitsTheField() {
+        String withBlank = OpenCodeServeAdapter.messageBody(
+                config("p/m", List.of()), "hi", "px", "mx", " ");
+        assertFalse(withBlank.contains("variant"), withBlank);
+        String legacy = OpenCodeServeAdapter.messageBody(config("p/m", List.of()), "hi");
+        assertFalse(legacy.contains("variant"), legacy);
+    }
 }

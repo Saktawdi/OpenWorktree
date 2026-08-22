@@ -33,7 +33,17 @@ public final class JdbcAgentConfigRepository implements AgentConfigRepository {
             readOptional(rs.getString("model")),
             rs.getString("system_prompt"),
             parseStringList(rs.getString("extra_flags")),
-            rs.getString("description"));
+            rs.getString("description"),
+            readInjectContext(rs.getString("inject_context")));
+
+    /** NULL/'1' → 注入开启（缺省），'0' → 关闭；与 V15 迁移注释的语义一致。 */
+    private static boolean readInjectContext(String value) {
+        return !"0".equals(value);
+    }
+
+    private static String writeInjectContext(boolean value) {
+        return value ? "1" : "0";
+    }
 
     @Override
     public List<AgentConfig> findAll() {
@@ -50,12 +60,13 @@ public final class JdbcAgentConfigRepository implements AgentConfigRepository {
     public void insert(AgentConfig config, Instant now) {
         jdbc.update("""
                 INSERT INTO agent_config(id, name, cli, provider_id, model, system_prompt, extra_flags,
-                                        description, created_at, updated_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?)
+                                        description, inject_context, created_at, updated_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 config.id(), config.name(), config.cli().name(), storeOptional(config.providerId()),
                 storeOptional(config.model()),
                 config.systemPrompt(), writeStringList(config.extraFlags()), config.description(),
+                writeInjectContext(config.injectContext()),
                 now.toString(), now.toString());
     }
 
@@ -63,12 +74,14 @@ public final class JdbcAgentConfigRepository implements AgentConfigRepository {
     public void update(AgentConfig config, Instant now) {
         jdbc.update("""
                 UPDATE agent_config SET name = ?, cli = ?, provider_id = ?, model = ?,
-                       system_prompt = ?, extra_flags = ?, description = ?, updated_at = ?
+                       system_prompt = ?, extra_flags = ?, description = ?,
+                       inject_context = ?, updated_at = ?
                 WHERE id = ?
                 """,
                 config.name(), config.cli().name(), storeOptional(config.providerId()),
                 storeOptional(config.model()),
                 config.systemPrompt(), writeStringList(config.extraFlags()), config.description(),
+                writeInjectContext(config.injectContext()),
                 now.toString(), config.id());
     }
 

@@ -5,8 +5,10 @@ import {
   finishAssistant,
   patchAssistant,
   pushAssistantPlaceholder,
+  pushPermissionRequest,
   pushSystemMessage,
   pushUserMessage,
+  resolvePermission,
   setBusy,
   setCenterTab,
   setDiffs,
@@ -18,10 +20,11 @@ import {
   setVerdict,
   showToast,
 } from "./store";
-import type { ChatItem, ChatSession, DiffFile, Finding, Severity, Snapshot } from "./types";
+import type { ChatItem, ChatSession, CatalogProvider, DiffFile, Finding, Severity, Snapshot } from "./types";
 import { parseUnifiedDiff } from "./diff";
 import { approxDiffBytes } from "./diff";
 import { sleep } from "./format";
+import { setSessionModelSel, setSessionModels } from "./store";
 
 function authHeaders(): Record<string, string> {
   const token = appStore.getState().token;
@@ -149,6 +152,10 @@ export async function selectTicketLive(no: string) {
       if (target) {
         liveSessionId = target;
         await loadSessionMessages(no, target);
+        void loadSessionCatalog(no, target);
+        // 目标会话为 ACTIVE 时恢复未决的权限询问卡片（若已就绪）。
+        const sess = st.sessions[no]?.find((x) => x.id === target);
+        if (sess?.status === "active") void loadSessionPermissions(no, target);
       }
     } catch {
       /* 会话可能尚未创建 */
@@ -256,6 +263,10 @@ interface RawSession {
   archived?: boolean | null;
   started_at?: string | null;
   updated_at?: string | null;
+  override_provider?: string | null;
+  override_model?: string | null;
+  override_variant?: string | null;
+  permission_auto_accept?: boolean | null;
 }
 
 function mapSession(no: string, s: RawSession): ChatSession {
@@ -267,6 +278,11 @@ function mapSession(no: string, s: RawSession): ChatSession {
     status: s.archived ? "archived" : "active",
     createdAt,
     updatedAt: s.updated_at ? Date.parse(s.updated_at) : createdAt,
+    permissionAutoAccept: s.permission_auto_accept ?? false,
+    agentConfigId: s.agent_config_id ?? null,
+    overrideProvider: s.override_provider ?? null,
+    overrideModel: s.override_model ?? null,
+    overrideVariant: s.override_variant ?? null,
   };
 }
 
@@ -308,12 +324,18 @@ export async function createSessionLive(no: string) {
     appStore.setState((st) => ({ activeSessionId: { ...st.activeSessionId, [no]: created.id } }));
     liveSessionId = created.id;
     await loadSessionMessages(no, created.id).catch(() => {});
+    // 新建会话为 ACTIVE，预拉未决权限（一般为空，保持路径一致）。
+    void loadSessionPermissions(no, created.id);
+    void loadSessionCatalog(no, created.id);
   } catch (e) {
     showToast(`新建会话失败：${(e as Error).message}`);
   }
 }
 
-export async function patchSessionLive(id: string, patch: { title?: string; archived?: boolean }) {
+export async function patchSessionLive(
+  id: string,
+  patch: { title?: string; archived?: boolean; permission_auto_accept?: boolean },
+) {
   try {
     await api(`/api/sessions/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
   } catch (e) {
@@ -321,7 +343,79 @@ export async function patchSessionLive(id: string, patch: { title?: string; arch
     return;
   }
   const no = ticketNoOfSession(id);
-  if (no) await loadTicketSessions(no).catch(() => {});
+  if (no) {
+    await loadTicketSessions(no).catch(() => {});
+    // loadSessionTickets 会整体回填会话列表（含 permission_auto_accept），此处无需再局部更新
+  }
+}
+
+/* ─── 权限询问（opencode） ─── */
+
+export type PermissionResponse = "once" | "always" | "reject";
+
+interface RawPermissionAsk {
+  session_id?: string;
+  timestamp?: string;
+  permission_id: string;
+  permission?: string;
+  patterns?: string[];
+  always?: string[];
+  metadata?: Record<string, unknown>;
+  message_id?: string | null;
+  call_id?: string | null;
+}
+
+function mapPermissionAsk(p: RawPermissionAsk): import("./types").PermissionRequestView {
+  return {
+    permissionId: p.permission_id,
+    permission: p.permission ?? "",
+    patterns: p.patterns ?? [],
+    always: p.always ?? [],
+    metadata: p.metadata ?? {},
+    messageId: p.message_id ?? undefined,
+    callId: p.call_id ?? undefined,
+  };
+}
+
+/** 应答一次权限请求：POST /api/sessions/{sid}/permissions/{pid}，body {response}。 */
+export async function answerSessionPermission(
+  sessionId: string,
+  permissionId: string,
+  response: PermissionResponse,
+): Promise<boolean> {
+  try {
+    await api(`/api/sessions/${sessionId}/permissions/${permissionId}`, {
+      method: "POST",
+      body: JSON.stringify({ response }),
+    });
+    return true;
+  } catch (e) {
+    showToast(`权限应答失败：${(e as Error).message}`);
+    return false;
+  }
+}
+
+/**
+ * 恢复未决的权限卡片（页面刷新后，SSE 不会回放已经过去的 permission_asked）。
+ * GET /api/sessions/{sessionId}/permissions → 每条 pending 推入 store，
+ * pushPermissionRequest 内部按 permissionId 去重，已存在同 id 的会跳过。
+ *
+ * 取舍说明：刷新场景下如果当时没有挂着的 EventSource，用户应答后这里不再主动
+ * 重挂 ESL 事件流——后端会把应答/后续消息持久化，下一次拉历史即可看到，避免为了
+ * 恢复实时流额外引入一整套会话续接逻辑；实时应答仍由已挂着的 consumeSessionStream
+ * 通过 permission_replied 事件即时反馈。
+ */
+export async function loadSessionPermissions(no: string, sessionId: string) {
+  try {
+    const data = await api<{ permissions: RawPermissionAsk[] }>(
+      `/api/sessions/${sessionId}/permissions`,
+    );
+    for (const p of data.permissions ?? []) {
+      pushPermissionRequest(no, mapPermissionAsk(p));
+    }
+  } catch (e) {
+    /* 权限恢复失败不阻断会话打开 */
+  }
 }
 
 export async function deleteSessionLive(id: string, ticketNo: string) {
@@ -404,6 +498,8 @@ export async function loadSessionMessages(no: string, sessionId: string) {
 export async function liveSendPrompt(no: string, userText: string) {
   const st = appStore.getState();
   if (st.busy[no]) return;
+  const sessionId = st.activeSessionId[no] || liveSessionId;
+  const sel = sessionId ? st.sessionModelSel[sessionId] : undefined;
   pushUserMessage(no, userText);
   setBusy(no, true);
   try {
@@ -416,7 +512,12 @@ export async function liveSendPrompt(no: string, userText: string) {
     } else {
       await api(`/api/sessions/${liveSessionId}/messages`, {
         method: "POST",
-        body: JSON.stringify({ message: userText }),
+        body: JSON.stringify({
+          message: userText,
+          provider_id: sel?.providerId ?? undefined,
+          model_id: sel?.modelId ?? undefined,
+          variant: sel?.variant ?? undefined,
+        }),
       });
     }
     await consumeSessionStream(no, liveSessionId);
@@ -424,6 +525,75 @@ export async function liveSendPrompt(no: string, userText: string) {
     pushSystemMessage(no, `会话失败：${(e as Error).message}`, "warn");
   } finally {
     setBusy(no, false);
+  }
+}
+
+/* ─── 会话内实时切换模型 / 推理强度 ─── */
+
+interface RawCatalogModel {
+  id: string;
+  name?: string | null;
+  variants?: string[] | null;
+}
+
+interface RawCatalogProvider {
+  id: string;
+  name?: string | null;
+  models?: RawCatalogModel[] | null;
+}
+
+/**
+ * Loads the live model catalog for the session's opencode serve and seeds the
+ * picker selection: persisted session override first, then the AgentConfig
+ * default (provider/model), mirroring OpenChamber's restore order.
+ */
+export async function loadSessionCatalog(no: string, sessionId: string) {
+  const st = appStore.getState();
+  try {
+    const data = await api<{ providers: RawCatalogProvider[] }>(`/api/sessions/${sessionId}/models`);
+    const providers: CatalogProvider[] = (data.providers ?? []).map((p) => ({
+      id: p.id,
+      name: p.name ?? p.id,
+      models: (p.models ?? []).map((m) => ({
+        id: m.id,
+        name: m.name ?? m.id,
+        variants: m.variants ?? [],
+      })),
+    }));
+    setSessionModels(sessionId, providers);
+    // Seed the selection from the persisted session override when present.
+    const sess = (st.sessions[no] ?? []).find((s) => s.id === sessionId);
+    if (sess?.overrideProvider && sess.overrideModel) {
+      setSessionModelSel(sessionId, {
+        providerId: sess.overrideProvider,
+        modelId: sess.overrideModel,
+        variant: sess.overrideVariant ?? null,
+      });
+    }
+  } catch {
+    /* catalog is best-effort: the picker just stays empty */
+  }
+}
+
+/** Live switch: persists the override server-side; takes effect on the NEXT turn. */
+export async function switchSessionModelLive(
+  sessionId: string,
+  sel: { providerId: string | null; modelId: string | null; variant: string | null },
+): Promise<boolean> {
+  try {
+    await api(`/api/sessions/${sessionId}/model`, {
+      method: "POST",
+      body: JSON.stringify({
+        provider_id: sel.providerId ?? undefined,
+        model_id: sel.modelId ?? undefined,
+        variant: sel.variant ?? undefined,
+      }),
+    });
+    setSessionModelSel(sessionId, sel);
+    return true;
+  } catch (e) {
+    showToast(`切换失败：${(e as Error).message}`);
+    return false;
   }
 }
 
@@ -495,6 +665,14 @@ async function consumeSessionStream(no: string, sessionId: string) {
     es.addEventListener("usage", (ev) => {
       const d = JSON.parse((ev as MessageEvent).data);
       if (d.usage) addUsage(no, d.usage.prompt_tokens ?? 0, d.usage.completion_tokens ?? 0);
+    });
+    es.addEventListener("permission_asked", (ev) => {
+      const d = JSON.parse((ev as MessageEvent).data);
+      pushPermissionRequest(no, mapPermissionAsk(d));
+    });
+    es.addEventListener("permission_replied", (ev) => {
+      const d = JSON.parse((ev as MessageEvent).data);
+      resolvePermission(no, d.permission_id, d.response ?? "once", !!d.auto);
     });
     es.addEventListener("done", finish);
     es.addEventListener("error", (ev) => {
@@ -766,6 +944,7 @@ interface RawAgentConfig {
   system_prompt?: string | null;
   extra_flags?: string[] | null;
   description?: string | null;
+  inject_context?: boolean | null;
 }
 
 function mapAgentConfig(c: RawAgentConfig): import("./types").AgentConfig {
@@ -778,6 +957,7 @@ function mapAgentConfig(c: RawAgentConfig): import("./types").AgentConfig {
     systemPrompt: c.system_prompt ?? null,
     extraFlags: c.extra_flags ?? [],
     description: c.description ?? null,
+    injectContext: c.inject_context !== false,
   };
 }
 
@@ -804,6 +984,7 @@ export async function upsertAgentConfigLive(c: import("./types").AgentConfig): P
       system_prompt: c.systemPrompt,
       extra_flags: c.extraFlags,
       description: c.description,
+      inject_context: c.injectContext,
     });
     const exists = appStore.getState().agents.some((x) => x.id === c.id);
     await api(`/api/agent-configs${exists ? `/${c.id}` : ""}`, {

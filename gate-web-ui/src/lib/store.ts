@@ -2,6 +2,7 @@ import { create } from "zustand";
 import type {
   AgentConfig,
   AgentRuntime,
+  CatalogProvider,
   ChatItem,
   ChatSession,
   DiffFile,
@@ -10,6 +11,8 @@ import type {
   GitTreeEntry,
   Project,
   PublishOutcome,
+  PermissionRequestView,
+  SessionModelSel,
   Snapshot,
   TaskProgress,
   Ticket,
@@ -72,6 +75,10 @@ export interface AppState {
   order: Record<string, number>;
   sessions: Record<string, ChatSession[]>;
   activeSessionId: Record<string, string>;
+  /** Live model catalog per session (from the session's opencode serve). */
+  sessionModels: Record<string, CatalogProvider[]>;
+  /** Per-session live model / reasoning-effort selection (会话内实时切换). */
+  sessionModelSel: Record<string, SessionModelSel>;
 }
 
 export const appStore = create<AppState>(() => ({
@@ -112,6 +119,8 @@ export const appStore = create<AppState>(() => ({
   order: {},
   sessions: {},
   activeSessionId: {},
+  sessionModels: {},
+  sessionModelSel: {},
 }));
 
 const s = () => appStore.getState();
@@ -216,6 +225,11 @@ function tryRestore(): boolean {
       editingTicketNo: null,
       ticketCreatorOpen: false,
     };
+    // 旧版本会把已应答的权限卡片留在 chats 里（永久挂在底部）；恢复时只保留待决的。
+    for (const [no, items] of Object.entries(clean.chats)) {
+      const filtered = items.filter((m) => m.kind !== "permission" || m.status === "pending");
+      if (filtered.length !== items.length) clean.chats[no] = filtered;
+    }
     appStore.setState(clean);
     return true;
   } catch {
@@ -265,6 +279,16 @@ export function setAgentId(id: string) {
   } catch {
     /* ignore */
   }
+}
+
+/* ─── 会话内实时切换模型 / 推理强度（OpenChamber 式 per-session 选择） ─── */
+
+export function setSessionModels(sessionId: string, providers: CatalogProvider[]) {
+  set((st) => ({ sessionModels: { ...st.sessionModels, [sessionId]: providers } }));
+}
+
+export function setSessionModelSel(sessionId: string, sel: SessionModelSel) {
+  set((st) => ({ sessionModelSel: { ...st.sessionModelSel, [sessionId]: sel } }));
 }
 
 export function selectTicket(no: string) {
@@ -319,6 +343,50 @@ export function pushSystemMessage(
   pushChatItem(no, { kind: "system", id: uid("sys"), tone, text, ts: Date.now() });
 }
 
+/** 已应答权限 id 的墓碑：应答即移除卡片（openchamber 语义），墓碑阻止重放的 asked 事件复活卡片。 */
+const resolvedPermissions = new Set<string>();
+
+/** 入队一个权限请求卡片；按 permissionId 去重（id 恒为 perm-<permission_id>）。 */
+export function pushPermissionRequest(no: string, request: PermissionRequestView) {
+  if (resolvedPermissions.has(request.permissionId)) return;
+  const id = `perm-${request.permissionId}`;
+  set((st) => {
+    const list = st.chats[no] ?? [];
+    if (list.some((m) => m.kind === "permission" && m.id === id)) return st;
+    return {
+      chats: {
+        ...st.chats,
+        [no]: [...list, { kind: "permission" as const, id, request, status: "pending" as const, ts: Date.now() }],
+      },
+    };
+  });
+}
+
+/**
+ * 权限已有结论（用户点击或服务端自动允许/permission_replied）：移除卡片并记墓碑。
+ * 与 openchamber 一致——已应答的询问不再驻留聊天流。
+ */
+export function resolvePermission(
+  no: string,
+  permissionId: string,
+  _response: "once" | "always" | "reject",
+  _auto: boolean,
+) {
+  resolvedPermissions.add(permissionId);
+  const id = `perm-${permissionId}`;
+  set((st) => ({
+    chats: {
+      ...st.chats,
+      [no]: (st.chats[no] ?? []).filter((m) => !(m.kind === "permission" && m.id === id)),
+    },
+  }));
+}
+
+/** 应答提交失败：清掉墓碑，调用方随后重新 pushPermissionRequest 恢复待决卡片。 */
+export function revertPermission(_no: string, permissionId: string) {
+  resolvedPermissions.delete(permissionId);
+}
+
 export function pushAssistantPlaceholder(no: string): string {
   const id = uid("a");
   pushChatItem(no, {
@@ -343,10 +411,16 @@ export function patchAssistant(no: string, id: string, fn: (a: Extract<ChatItem,
   }));
 }
 
-export function finishAssistant(no: string, id: string) {
+export function finishAssistant(
+  no: string,
+  id: string,
+  meta?: { agent?: string | null; variant?: string | null },
+) {
   patchAssistant(no, id, (a) => ({
     ...a,
     streaming: false,
+    agent: meta?.agent ?? a.agent,
+    variant: meta?.variant ?? a.variant,
     thinking: a.thinking ? { ...a.thinking, done: true } : a.thinking,
   }));
 }
@@ -566,6 +640,7 @@ export function createSession(ticketNo: string) {
     ticketNo,
     title: `会话 ${new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}`,
     status: "active",
+    permissionAutoAccept: false,
     createdAt: Date.now(),
     updatedAt: Date.now(),
   };
