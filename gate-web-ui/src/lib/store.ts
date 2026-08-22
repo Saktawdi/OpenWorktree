@@ -58,6 +58,8 @@ export interface AppState {
   tasks: Record<string, TaskProgress>;
   outcomes: Record<string, PublishOutcome>;
   busy: Record<string, boolean>;
+  /** Live 模式按会话粒度的生成中标记（key = gate session id）；按钮状态跟随当前会话。 */
+  sessionBusy: Record<string, boolean>;
   gateBusy: Record<string, boolean>;
   creatingSession: Record<string, boolean>;
   usage: Record<string, UsageView>;
@@ -102,6 +104,7 @@ export const appStore = create<AppState>(() => ({
   tasks: {},
   outcomes: {},
   busy: {},
+  sessionBusy: {},
   gateBusy: {},
   creatingSession: {},
   usage: {},
@@ -216,6 +219,7 @@ function tryRestore(): boolean {
       connectOpen: false,
       highlight: null,
       busy: {},
+      sessionBusy: {},
       gateBusy: {},
       creatingSession: {},
       tasks: {},
@@ -427,6 +431,21 @@ export function finishAssistant(
 
 export function setBusy(no: string, busy: boolean) {
   set((st) => ({ busy: { ...st.busy, [no]: busy } }));
+}
+
+export function setSessionBusy(sessionId: string, busy: boolean) {
+  set((st) => ({ sessionBusy: { ...st.sessionBusy, [sessionId]: busy } }));
+}
+
+/** 工单级 busy = 该工单任一会话仍在生成；仅用于整卡样式等聚合展示，按钮状态走 sessionBusy。 */
+export function refreshTicketBusy(no: string) {
+  set((st) => {
+    const any = (st.sessions[no] ?? []).some((sess) => st.sessionBusy[sess.id] === true);
+    const busy = { ...st.busy };
+    if (any) busy[no] = true;
+    else delete busy[no];
+    return { busy };
+  });
 }
 
 export function setGateBusy(no: string, busy: boolean) {

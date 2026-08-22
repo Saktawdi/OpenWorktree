@@ -297,7 +297,6 @@ export const actions = {
   switchSession(no: string, id: string) {
     if (appStore.getState().mode === "live") {
       switchSessionLocal(no, id);
-      live.setLiveSessionId(id);
       void live.loadSessionMessages(no, id).catch(() => {});
       void live.loadSessionCatalog(no, id);
       return;

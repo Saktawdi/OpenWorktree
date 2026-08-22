@@ -265,7 +265,11 @@ public final class SessionRoutes {
             }
             // Archiving releases the session's runtime resources: the serve process and the
             // upstream event reader would otherwise outlive the visible session forever.
+            // Pre-mark ABORTED so the opencode adapter hard-kills the serve instead of the
+            // soft turn-abort an interactive stop uses.
             if (b && s.status() == gate.domain.session.SessionStatus.ACTIVE) {
+                sessionRepository.update(s.withStatus(gate.domain.session.SessionStatus.ABORTED)
+                        .withFinishedAt(clock.now()));
                 agentSessionPort.abort(sessionId);
                 updated = sessionRepository.find(sessionId).orElse(s);
             }
@@ -340,6 +344,12 @@ public final class SessionRoutes {
                 GateErrorCode.USAGE, "no such session: " + sessionId));
         // Abort unconditionally: even a non-ACTIVE row may still own an upstream reader or a
         // serve process after edge cases (e.g. an abort that raced a status flip).
+        // Pre-mark ABORTED so the opencode adapter takes the hard path (kill serve) — a soft
+        // abort would leave the serve process alive under a deleted session row.
+        if (s.status() != gate.domain.session.SessionStatus.ABORTED) {
+            sessionRepository.update(s.withStatus(gate.domain.session.SessionStatus.ABORTED)
+                    .withFinishedAt(clock.now()));
+        }
         agentSessionPort.abort(sessionId);
         sessionRepository.deleteMessages(sessionId);
         sessionRepository.delete(sessionId);

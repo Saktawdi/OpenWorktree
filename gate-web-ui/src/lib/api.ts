@@ -8,6 +8,7 @@ import {
   pushPermissionRequest,
   pushSystemMessage,
   pushUserMessage,
+  refreshTicketBusy,
   resolvePermission,
   setBusy,
   setCenterTab,
@@ -15,6 +16,7 @@ import {
   setFindings,
   setGateBusy,
   setOutcome,
+  setSessionBusy,
   setStage,
   setTask,
   setVerdict,
@@ -150,7 +152,6 @@ export async function selectTicketLive(no: string) {
       const st = appStore.getState();
       const target = st.activeSessionId[no] || st.sessions[no]?.[st.sessions[no].length - 1]?.id;
       if (target) {
-        liveSessionId = target;
         await loadSessionMessages(no, target);
         void loadSessionCatalog(no, target);
         // 目标会话为 ACTIVE 时恢复未决的权限询问卡片（若已就绪）。
@@ -298,7 +299,6 @@ export async function loadTicketSessions(no: string) {
     sessions: { ...st.sessions, [no]: list },
     activeSessionId: { ...st.activeSessionId, [no]: activeId },
   }));
-  liveSessionId = activeId || null;
 }
 
 export async function createSessionLive(no: string) {
@@ -322,7 +322,6 @@ export async function createSessionLive(no: string) {
     }
     await loadTicketSessions(no);
     appStore.setState((st) => ({ activeSessionId: { ...st.activeSessionId, [no]: created.id } }));
-    liveSessionId = created.id;
     await loadSessionMessages(no, created.id).catch(() => {});
     // 新建会话为 ACTIVE，预拉未决权限（一般为空，保持路径一致）。
     void loadSessionPermissions(no, created.id);
@@ -425,18 +424,21 @@ export async function deleteSessionLive(id: string, ticketNo: string) {
     showToast(`删除会话失败：${(e as Error).message}`);
     return;
   }
-  if (liveSessionId === id) liveSessionId = null;
+  setSessionBusy(id, false);
   await loadTicketSessions(ticketNo).catch(() => {});
+  refreshTicketBusy(ticketNo);
 }
 
 export async function abortLive(no: string) {
-  const sid = liveSessionId;
-  if (sid) {
-    try {
-      await api(`/api/sessions/${sid}/abort`, { method: "POST" });
-    } catch (e) {
-      showToast(`中断失败：${(e as Error).message}`);
-    }
+  const sid = appStore.getState().activeSessionId[no];
+  if (!sid) return;
+  // 乐观翻转按钮：后端的 done 事件可能迟到，用户的点击必须立刻可见。
+  setSessionBusy(sid, false);
+  refreshTicketBusy(no);
+  try {
+    await api(`/api/sessions/${sid}/abort`, { method: "POST" });
+  } catch (e) {
+    showToast(`中断失败：${(e as Error).message}`);
   }
   await loadTicketSessions(no).catch(() => {});
 }
@@ -483,12 +485,6 @@ function mapHistoryMessage(m: RawMessage): ChatItem | null {
   return null;
 }
 
-let liveSessionId: string | null = null;
-
-export function setLiveSessionId(id: string | null) {
-  liveSessionId = id;
-}
-
 export async function loadSessionMessages(no: string, sessionId: string) {
   const hist = await api<{ messages: RawMessage[] }>(`/api/sessions/${sessionId}/messages`);
   const items: ChatItem[] = hist.messages.map(mapHistoryMessage).filter(Boolean) as ChatItem[];
@@ -497,20 +493,24 @@ export async function loadSessionMessages(no: string, sessionId: string) {
 
 export async function liveSendPrompt(no: string, userText: string) {
   const st = appStore.getState();
-  if (st.busy[no]) return;
-  const sessionId = st.activeSessionId[no] || liveSessionId;
-  const sel = sessionId ? st.sessionModelSel[sessionId] : undefined;
+  // 目标永远是「当前查看的会话」（activeSessionId），不再有跨工单/跨会话的全局游标；
+  // 同一会话生成中不允许并发追加，其他会话不受影响。
+  const sessionId = st.activeSessionId[no];
+  if (sessionId && st.sessionBusy[sessionId]) return;
   pushUserMessage(no, userText);
   setBusy(no, true);
+  let sid: string | null = sessionId || null;
   try {
-    if (!liveSessionId) {
+    if (!sid) {
       const created = await api<{ id: string }>(`/api/tickets/${no}/sessions`, {
         method: "POST",
         body: JSON.stringify({ agent_config_id: st.agentId, initial_prompt: userText }),
       });
-      liveSessionId = created.id;
+      sid = created.id;
+      appStore.setState((s2) => ({ activeSessionId: { ...s2.activeSessionId, [no]: sid! } }));
     } else {
-      await api(`/api/sessions/${liveSessionId}/messages`, {
+      const sel = st.sessionModelSel[sid];
+      await api(`/api/sessions/${sid}/messages`, {
         method: "POST",
         body: JSON.stringify({
           message: userText,
@@ -520,11 +520,13 @@ export async function liveSendPrompt(no: string, userText: string) {
         }),
       });
     }
-    await consumeSessionStream(no, liveSessionId);
+    setSessionBusy(sid, true);
+    await consumeSessionStream(no, sid);
   } catch (e) {
     pushSystemMessage(no, `会话失败：${(e as Error).message}`, "warn");
   } finally {
-    setBusy(no, false);
+    if (sid) setSessionBusy(sid, false);
+    refreshTicketBusy(no);
   }
 }
 

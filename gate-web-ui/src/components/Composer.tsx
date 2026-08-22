@@ -354,13 +354,19 @@ function VariantPicker({
 }
 
 export function Composer({ ticketNo }: { ticketNo: string }) {
-  const busy = useApp((s) => s.busy[ticketNo] ?? false);
-  const stage = useApp((s) => s.tickets.find((t) => t.ticketNo === ticketNo)?.stage);
   const mode = useApp((s) => s.mode);
+  const activeSessionId = useApp((s) => s.activeSessionId[ticketNo] ?? "");
+  // 按钮状态跟随「当前查看的会话」：A 在生成、切到 B 时 B 应显示发送而非中止。
+  // demo 模式没有真实的会话流，退回工单级 busy。
+  const busy = useApp((s) =>
+    s.mode === "live"
+      ? (activeSessionId ? s.sessionBusy[activeSessionId] === true : false)
+      : (s.busy[ticketNo] ?? false),
+  );
+  const stage = useApp((s) => s.tickets.find((t) => t.ticketNo === ticketNo)?.stage);
   const diffs = useApp((s) => s.diffs[ticketNo]?.length ?? 0);
   const findingsCount = useApp((s) => s.findings[ticketNo]?.length ?? 0);
   const usage = useApp((s) => s.usage[ticketNo]);
-  const activeSessionId = useApp((s) => s.activeSessionId[ticketNo] ?? "");
   const activeSession = useApp((s) =>
     activeSessionId ? (s.sessions[ticketNo] ?? []).find((x) => x.id === activeSessionId) : undefined,
   );

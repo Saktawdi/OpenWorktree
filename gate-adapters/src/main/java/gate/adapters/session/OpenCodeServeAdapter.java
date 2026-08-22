@@ -419,26 +419,54 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
 
     @Override
     public void abort(String sessionId) {
-sessions.find(sessionId).ifPresent(s -> {
-                Upstream up = stopUpstream(sessionId);
+        sessions.find(sessionId).ifPresent(s -> {
+            Integer port = sessionPorts.get(sessionId);
+            // Soft abort first: stop the in-flight turn but keep the serve and the session
+            // ACTIVE so the user can immediately continue the same session. The interrupted
+            // turn is flushed right away (degraded) so a history reload still shows the
+            // half-streamed reply, and the done chunk unblocks the browser stream — without
+            // it the UI spinner would sit on its 300s fallback.
+            if (s.status() != SessionStatus.ABORTED && port != null && s.cliSessionId() != null
+                    && postQuietly("http://127.0.0.1:" + port + "/session/" + s.cliSessionId() + "/abort",
+                            "{}", Duration.ofSeconds(2))) {
+                Upstream up = upstreams.get(sessionId);
                 if (up != null) {
-                    // Persist whatever the interrupted turn buffered BEFORE tearing the serve
-                    // process down, so a session switch after the abort does not lose the
-                    // half-streamed reply (degraded, recover-only).
                     up.flushTurn("aborted");
                 }
-                Integer port = sessionPorts.get(sessionId);
-            if (port != null && s.cliSessionId() != null) {
-                postQuietly("http://127.0.0.1:" + port + "/session/" + s.cliSessionId() + "/abort", "{}");
+                emitChunk(sessionId, new SessionStreamChunk.DoneChunk(sessionId, s.cliSessionId(), clock.now()));
+                return;
             }
-            killProcess(port);
-            if (port != null) {
-                ports.release(port);
-                sessionPorts.remove(sessionId);
-            }
-            sessions.update(s.withStatus(SessionStatus.ABORTED).withFinishedAt(clock.now()));
-            pendingPermissions.remove(sessionId);
+            hardAbort(sessionId, s, port);
         });
+    }
+
+    /**
+     * Legacy teardown: persist the interrupted turn, kill the serve, mark the session ABORTED.
+     * Used when opencode does not acknowledge the soft abort, and by delete/archive (the route
+     * pre-marks the session ABORTED so this path is taken).
+     */
+    private void hardAbort(String sessionId, Session s, Integer port) {
+        Upstream up = stopUpstream(sessionId);
+        if (up != null) {
+            // Persist whatever the interrupted turn buffered BEFORE tearing the serve
+            // process down, so a session switch after the abort does not lose the
+            // half-streamed reply (degraded, recover-only).
+            up.flushTurn("aborted");
+        }
+        if (port != null && s.cliSessionId() != null) {
+            postQuietly("http://127.0.0.1:" + port + "/session/" + s.cliSessionId() + "/abort", "{}",
+                    Duration.ofSeconds(2));
+        }
+        killProcess(port);
+        if (port != null) {
+            ports.release(port);
+            sessionPorts.remove(sessionId);
+        }
+        sessions.update(s.withStatus(SessionStatus.ABORTED).withFinishedAt(clock.now()));
+        pendingPermissions.remove(sessionId);
+        // stopUpstream already detached the reader, so no natural done/error will ever reach
+        // the browser — emit one ourselves or the UI keeps its stop button until timeout.
+        emitChunk(sessionId, new SessionStreamChunk.DoneChunk(sessionId, s.cliSessionId(), clock.now()));
     }
 
     @Override
@@ -1485,11 +1513,13 @@ sessions.find(sessionId).ifPresent(s -> {
         }
     }
 
-    private void postQuietly(String url, String body) {
+    /** @return true only when opencode acknowledged with a 2xx within the timeout. */
+    private boolean postQuietly(String url, String body, Duration timeout) {
         try {
-            post(url, body);
-        } catch (Exception ignored) {
+            return post(url, body, timeout).statusCode() / 100 == 2;
+        } catch (Exception e) {
             // abort best-effort
+            return false;
         }
     }
 
