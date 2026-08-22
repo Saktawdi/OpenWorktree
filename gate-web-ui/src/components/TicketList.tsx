@@ -36,78 +36,112 @@ function NewTicketButton() {
   };
 
   return (
-    <div className="relative">
+    <>
       <button className="btn h-7 px-2.5 text-[12px]" onClick={() => (open ? closeTicketCreator() : openTicketCreator())}>
         <Plus size={13} weight="bold" />
         新建
       </button>
       {open && (
-        <>
-          <div className="fixed inset-0 z-30" onClick={() => closeTicketCreator()} />
-          <div className="absolute right-0 top-9 z-40 w-[320px] card p-4 shadow-2xl shadow-black/50 animate-rise">
-            <div className="text-[13px] font-semibold mb-3">新建工单</div>
-            <label className="field-label">标题</label>
-            <input
-              autoFocus
-              className="text-input mb-3"
-              placeholder="例如：为订单接口添加幂等保护"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && submit()}
-            />
-            <label className="field-label">优先级</label>
-            <div className="flex gap-1 mb-3">
-              {PRIORITIES.map((p) => (
-                <button
-                  key={p}
-                  onClick={() => setPriority(p)}
-                  className={`flex-1 h-8 rounded-lg border font-mono text-[12px] cursor-pointer transition-colors ${
-                    priority === p
-                      ? "border-accent/50 bg-accent/10 text-accent"
-                      : "border-edge text-dim hover:text-ink hover:bg-raised"
-                  }`}
-                >
-                  {p}
-                </button>
-              ))}
+        <div
+          className="fixed inset-0 z-50 grid place-items-center bg-black/55 backdrop-blur-[2px]"
+          onClick={() => closeTicketCreator()}
+        >
+          <div
+            className="w-[420px] card shadow-2xl shadow-black/60 animate-rise"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-2.5 px-5 h-12 border-b border-edge">
+              <span className="text-[13px] font-semibold">新建工单</span>
+              <span className="flex-1" />
+              <button className="icon-btn" onClick={() => closeTicketCreator()} aria-label="关闭">
+                ✕
+              </button>
             </div>
-            <label className="field-label">描述（可选）</label>
-            <textarea
-              className="text-input h-16 py-2 resize-none mb-3"
-              placeholder="背景、验收标准…"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-            />
-            <label className="field-label">标签（逗号分隔，可选）</label>
-            <input
-              className="text-input mb-3"
-              placeholder="backend, security"
-              value={labels}
-              onChange={(e) => setLabels(e.target.value)}
-            />
-            <label className="field-label">协作智能体</label>
-            <div className="flex gap-1 mb-4">
-              {agents.map((a) => (
-                <button
-                  key={a.id}
-                  onClick={() => appStore.setState({ agentId: a.id })}
-                  className={`flex-1 h-8 rounded-lg border text-[11.5px] cursor-pointer transition-colors truncate px-2 ${
-                    agentId === a.id
-                      ? "border-accent/50 bg-accent/10 text-accent"
-                      : "border-edge text-dim hover:text-ink hover:bg-raised"
-                  }`}
-                >
-                  {a.name}
-                </button>
-              ))}
+
+            <div className="p-5 space-y-4 max-h-[70vh] overflow-y-auto">
+              <div>
+                <label className="field-label">标题</label>
+                <input
+                  autoFocus
+                  className="text-input"
+                  placeholder="例如：为订单接口添加幂等保护"
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && submit()}
+                />
+              </div>
+
+              <div>
+                <label className="field-label">优先级</label>
+                <div className="flex gap-1">
+                  {PRIORITIES.map((p) => (
+                    <button
+                      key={p}
+                      onClick={() => setPriority(p)}
+                      className={`flex-1 h-8 rounded-lg border font-mono text-[12px] cursor-pointer transition-colors ${
+                        priority === p
+                          ? "border-accent/50 bg-accent/10 text-accent"
+                          : "border-edge text-dim hover:text-ink hover:bg-raised"
+                      }`}
+                    >
+                      {p}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="field-label">描述（可选）</label>
+                <textarea
+                  className="text-input h-16 py-2 resize-none"
+                  placeholder="背景、验收标准…"
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                />
+              </div>
+
+              <div>
+                <label className="field-label">标签（逗号分隔，可选）</label>
+                <input
+                  className="text-input"
+                  placeholder="backend, security"
+                  value={labels}
+                  onChange={(e) => setLabels(e.target.value)}
+                />
+              </div>
+
+              <div>
+                <label className="field-label">协作智能体</label>
+                <div className="flex gap-1">
+                  {agents.map((a) => (
+                    <button
+                      key={a.id}
+                      onClick={() => appStore.setState({ agentId: a.id })}
+                      className={`flex-1 h-8 rounded-lg border text-[11.5px] cursor-pointer transition-colors truncate px-2 ${
+                        agentId === a.id
+                          ? "border-accent/50 bg-accent/10 text-accent"
+                          : "border-edge text-dim hover:text-ink hover:bg-raised"
+                      }`}
+                    >
+                      {a.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
-            <button className="btn btn-primary w-full" disabled={!title.trim()} onClick={submit}>
-              创建并打开沙箱
-            </button>
+
+            <div className="flex justify-end gap-2 px-5 py-4 border-t border-edge">
+              <button className="btn" onClick={() => closeTicketCreator()}>
+                取消
+              </button>
+              <button className="btn btn-primary" disabled={!title.trim()} onClick={submit}>
+                创建并打开沙箱
+              </button>
+            </div>
           </div>
-        </>
+        </div>
       )}
-    </div>
+    </>
   );
 }
 

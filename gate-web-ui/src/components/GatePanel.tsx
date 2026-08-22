@@ -337,6 +337,7 @@ function TicketInfo({ ticketNo }: { ticketNo: string }) {
 function SessionList({ ticketNo }: { ticketNo: string }) {
   const sessions = useApp((s) => s.sessions[ticketNo] ?? NO_SESSIONS);
   const activeSessionId = useApp((s) => s.activeSessionId[ticketNo]);
+  const creating = useApp((s) => s.creatingSession[ticketNo] ?? false);
   const [tab, setTab] = useState<"active" | "archived">("active");
 
   const activeSessions = useMemo(() => sessions.filter((s) => s.status === "active"), [sessions]);
@@ -348,7 +349,7 @@ function SessionList({ ticketNo }: { ticketNo: string }) {
   };
 
   return (
-    <div className="flex flex-col min-h-0">
+    <div className="relative flex flex-col min-h-0">
       {/* Tab bar */}
       <div className="flex items-center gap-1 px-4 pt-2.5 pb-1">
         <button
@@ -379,8 +380,9 @@ function SessionList({ ticketNo }: { ticketNo: string }) {
         </button>
         <span className="flex-1" />
         <button
-          className="icon-btn !w-6 !h-6"
+          className="icon-btn !w-6 !h-6 disabled:opacity-50 disabled:pointer-events-none"
           onClick={handleCreate}
+          disabled={creating}
           title="新建会话"
           aria-label="新建会话"
         >
@@ -397,8 +399,9 @@ function SessionList({ ticketNo }: { ticketNo: string }) {
             </div>
             {tab === "active" && (
               <button
-                className="btn btn-sm mt-2 text-[11px]"
+                className="btn btn-sm mt-2 text-[11px] disabled:opacity-50 disabled:pointer-events-none"
                 onClick={handleCreate}
+                disabled={creating}
               >
                 <Plus size={12} />
                 新建会话
@@ -418,6 +421,16 @@ function SessionList({ ticketNo }: { ticketNo: string }) {
           </div>
         )}
       </div>
+
+      {/* Creating overlay — blocks repeated clicks while the backend round-trip finishes */}
+      {creating && (
+        <div className="absolute inset-0 z-20 grid place-items-center bg-canvas/70 backdrop-blur-[1.5px] rounded-lg">
+          <div className="flex items-center gap-2 rounded-lg border border-edge bg-raised px-3.5 py-2 shadow-lg shadow-black/30 animate-rise">
+            <CircleNotch size={14} className="text-accent animate-[spin_0.9s_linear_infinite]" />
+            <span className="text-[12px] text-dim">正在创建会话…</span>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

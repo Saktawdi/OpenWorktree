@@ -183,28 +183,36 @@ public final class SessionRoutes {
                     "at least one of title/archived is required");
         }
         Session updated = s;
-        if (req.containsKey("title")) {
-            String title = str(req, "title");
-            updated = updated.withTitle(title == null || title.isBlank() ? null : title);
-        }
+        // Archived is processed before title so the post-abort re-fetch (which refreshes
+        // status/finishedAt) cannot clobber other fields mutated in this request.
         if (req.containsKey("archived")) {
             Object archived = req.get("archived");
             if (!(archived instanceof Boolean b)) {
                 throw new GateException(GateErrorCode.USAGE, "archived must be a boolean");
             }
+            // Archiving releases the session's runtime resources: the serve process and the
+            // upstream event reader would otherwise outlive the visible session forever.
+            if (b && s.status() == gate.domain.session.SessionStatus.ACTIVE) {
+                agentSessionPort.abort(sessionId);
+                updated = sessionRepository.find(sessionId).orElse(s);
+            }
             updated = updated.withArchived(b);
+        }
+        if (req.containsKey("title")) {
+            String title = str(req, "title");
+            updated = updated.withTitle(title == null || title.isBlank() ? null : title);
         }
         sessionRepository.update(updated);
         return new ApiRoutes.Response(200, sessionJson(updated));
     }
 
-    /** DELETE /api/sessions/{id} — drops the session and its messages; aborts first if ACTIVE. */
+    /** DELETE /api/sessions/{id} — drops the session and its messages; always aborts first. */
     public ApiRoutes.Response sessionDelete(String sessionId) {
         Session s = sessionRepository.find(sessionId).orElseThrow(() -> new GateException(
                 GateErrorCode.USAGE, "no such session: " + sessionId));
-        if (s.status() == gate.domain.session.SessionStatus.ACTIVE) {
-            agentSessionPort.abort(sessionId);
-        }
+        // Abort unconditionally: even a non-ACTIVE row may still own an upstream reader or a
+        // serve process after edge cases (e.g. an abort that raced a status flip).
+        agentSessionPort.abort(sessionId);
         sessionRepository.deleteMessages(sessionId);
         sessionRepository.delete(sessionId);
         Map<String, Object> body = new LinkedHashMap<>();

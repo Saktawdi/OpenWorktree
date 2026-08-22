@@ -19,11 +19,13 @@ import gate.adapters.store.JdbcTicketRepository;
 import gate.adapters.store.SqliteDataSourceFactory;
 import gate.domain.session.AgentCli;
 import gate.domain.session.AgentConfig;
+import gate.domain.session.Role;
 import gate.domain.session.Session;
 import gate.domain.session.SessionMessage;
 import gate.domain.task.GateTaskStatus;
 import gate.ports.AgentSessionPort;
 import gate.ports.ProviderRepository;
+import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -31,6 +33,7 @@ import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import javax.sql.DataSource;
 import org.junit.jupiter.api.AfterEach;
@@ -40,7 +43,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
 
 /**
  * S3 OpenCodeServeAdapter test (执行文档-后端-web §9.2): a fake HTTP server simulates
- * {@code opencode serve} endpoints and the adapter parses session id / message / usage.
+ * {@code opencode serve} endpoints. The adapter fires {@code prompt_async} and persists the
+ * assistant reply from the streamed {@code /event} bus (part updates + completion snapshot).
  */
 class OpenCodeServeAdapterTest {
 
@@ -54,6 +58,7 @@ class OpenCodeServeAdapterTest {
     private FileChannelTicketLockManager ticketLocks;
     private OpenCodeServeAdapter adapter;
     private String lastMessageRequest;
+    private CountDownLatch eventStreamHeld;
 
     @BeforeEach
     void setUp() throws Exception {
@@ -80,10 +85,13 @@ class OpenCodeServeAdapterTest {
         Files.createDirectories(clone);
 
         fakeServer = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        // The blocking SSE /event handler must not starve other requests.
+        fakeServer.setExecutor(java.util.concurrent.Executors.newCachedThreadPool());
         port = fakeServer.getAddress().getPort();
         fakeServer.createContext("/health", this::health);
         fakeServer.createContext("/session", this::session);
-        fakeServer.createContext("/session/sess-1/message", this::message);
+        fakeServer.createContext("/session/sess-1/prompt_async", this::promptAsync);
+        fakeServer.createContext("/event", this::events);
         fakeServer.start();
 
         PortAllocator allocator = new PortAllocator(port, port);
@@ -94,6 +102,9 @@ class OpenCodeServeAdapterTest {
 
     @AfterEach
     void tearDown() throws Exception {
+        if (adapter != null) {
+            adapter.close();
+        }
         if (fakeServer != null) {
             fakeServer.stop(0);
         }
@@ -101,7 +112,7 @@ class OpenCodeServeAdapterTest {
     }
 
     @Test
-    void start_and_send_message_parse_opencode_http() throws Exception {
+    void start_and_prompt_async_streams_reply_via_event_bus() throws Exception {
         Session session = adapter.start(new AgentSessionPort.StartRequest(
                 "OPEN-1", "opencode-test", root.resolve("clone").toString(), "refs/heads/main",
                 "hello", Map.of()));
@@ -111,20 +122,34 @@ class OpenCodeServeAdapterTest {
 
         String taskId = adapter.sendMessage(new AgentSessionPort.SendRequest(session.id(), "hi", true));
         waitForTask(taskId);
-        List<SessionMessage> history = sessions.findMessages(session.id());
-        System.out.println("HISTORY MESSAGES: " + history);
-        assertTrue(history.stream().anyMatch(m -> m.role() == gate.domain.session.Role.ASSISTANT
-                && "hello opencode".equals(m.content())));
-        SessionMessage assistant = history.stream()
-                .filter(m -> m.role() == gate.domain.session.Role.ASSISTANT)
-                .findFirst().orElseThrow();
+
+        SessionMessage assistant = waitForAssistant(session.id());
+        assertEquals("hello opencode", assistant.content());
+        assertEquals(38726L, assistant.usage().promptTokens());
+        assertEquals(89L, assistant.usage().completionTokens());
         assertEquals(38866L, assistant.usage().totalTokens());
+
         assertNotNull(lastMessageRequest);
         assertTrue(lastMessageRequest.contains("\"parts\":[{\"type\":\"text\",\"text\":\"hi\"}]"),
                 lastMessageRequest);
         assertTrue(lastMessageRequest.contains(
                 "\"model\":{\"providerID\":\"opencode\",\"modelID\":\"test-model\"}"),
                 lastMessageRequest);
+    }
+
+    private SessionMessage waitForAssistant(String sessionId) throws Exception {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (System.nanoTime() < deadline) {
+            List<SessionMessage> history = sessions.findMessages(sessionId);
+            SessionMessage found = history.stream()
+                    .filter(m -> m.role() == Role.ASSISTANT && "hello opencode".equals(m.content()))
+                    .findFirst().orElse(null);
+            if (found != null) {
+                return found;
+            }
+            Thread.sleep(100);
+        }
+        throw new AssertionError("assistant reply never arrived: " + sessions.findMessages(sessionId));
     }
 
     private void waitForTask(String taskId) throws Exception {
@@ -156,15 +181,63 @@ class OpenCodeServeAdapterTest {
         exchange.close();
     }
 
-    private void message(HttpExchange exchange) throws java.io.IOException {
+    private void promptAsync(HttpExchange exchange) throws java.io.IOException {
         lastMessageRequest = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
-        byte[] body = ("{\"info\":{\"tokens\":{\"input\":38726,\"output\":89,\"total\":38866}},"
-                + "\"parts\":[{\"type\":\"step-start\"},{\"type\":\"reasoning\",\"text\":\"thinking\"},"
-                + "{\"type\":\"text\",\"text\":\"hello opencode\"},"
-                + "{\"type\":\"step-finish\",\"tokens\":{\"input\":38726,\"output\":89,\"total\":38866}}]}").getBytes(StandardCharsets.UTF_8);
+        byte[] body = "{}".getBytes(StandardCharsets.UTF_8);
         exchange.getResponseHeaders().set("Content-Type", "application/json");
         exchange.sendResponseHeaders(200, body.length);
         exchange.getResponseBody().write(body);
         exchange.close();
+    }
+
+    /** Simulates opencode's /event SSE bus for one turn, then holds the stream open. */
+    private void events(HttpExchange exchange) throws java.io.IOException {
+        exchange.getResponseHeaders().set("Content-Type", "text/event-stream");
+        exchange.getResponseHeaders().set("Cache-Control", "no-cache");
+        exchange.sendResponseHeaders(200, 0);
+        OutputStream os = exchange.getResponseBody();
+        try {
+            sse(os, "{\"id\":\"evt_1\",\"type\":\"server.connected\",\"properties\":{}}");
+            // User echo: role announced first, then its text part — must be skipped entirely.
+            sse(os, "{\"id\":\"evt_1b\",\"type\":\"message.updated\",\"properties\":{\"info\":"
+                    + "{\"id\":\"msg_u\",\"sessionID\":\"sess-1\",\"role\":\"user\","
+                    + "\"time\":{\"created\":0}}}}");
+            sse(os, "{\"id\":\"evt_1c\",\"type\":\"message.part.updated\",\"properties\":{\"part\":"
+                    + "{\"id\":\"prt_u\",\"sessionID\":\"sess-1\",\"messageID\":\"msg_u\","
+                    + "\"type\":\"text\",\"text\":\"hi\"}}}");
+            sse(os, "{\"id\":\"evt_1d\",\"type\":\"message.updated\",\"properties\":{\"info\":"
+                    + "{\"id\":\"msg_1\",\"sessionID\":\"sess-1\",\"role\":\"assistant\","
+                    + "\"time\":{\"created\":1}}}}");
+            sse(os, "{\"id\":\"evt_2\",\"type\":\"message.part.updated\",\"properties\":{\"part\":"
+                    + "{\"id\":\"prt_1\",\"sessionID\":\"sess-1\",\"messageID\":\"msg_1\","
+                    + "\"type\":\"text\",\"text\":\"hello \"}}}");
+            sse(os, "{\"id\":\"evt_3\",\"type\":\"message.part.updated\",\"properties\":{\"part\":"
+                    + "{\"id\":\"prt_1\",\"sessionID\":\"sess-1\",\"messageID\":\"msg_1\","
+                    + "\"type\":\"text\",\"text\":\"hello opencode\"},\"delta\":\"opencode\"}}");
+            sse(os, "{\"id\":\"evt_4\",\"type\":\"message.part.updated\",\"properties\":{\"part\":"
+                    + "{\"id\":\"prt_2\",\"sessionID\":\"sess-1\",\"messageID\":\"msg_1\","
+                    + "\"type\":\"step-finish\",\"reason\":\"stop\",\"cost\":0,"
+                    + "\"tokens\":{\"input\":38726,\"output\":89,\"reasoning\":0,"
+                    + "\"cache\":{\"read\":51,\"write\":0}}}}}");
+            sse(os, "{\"id\":\"evt_5\",\"type\":\"message.updated\",\"properties\":{\"info\":"
+                    + "{\"id\":\"msg_1\",\"sessionID\":\"sess-1\",\"role\":\"assistant\","
+                    + "\"time\":{\"created\":1,\"completed\":2},"
+                    + "\"tokens\":{\"input\":38726,\"output\":89,\"reasoning\":0,"
+                    + "\"cache\":{\"read\":51,\"write\":0}}}}}");
+            sse(os, "{\"id\":\"evt_6\",\"type\":\"session.status\",\"properties\":"
+                    + "{\"sessionID\":\"sess-1\",\"status\":{\"type\":\"idle\"}}}");
+            // Hold the stream open so the adapter does not churn on reconnects mid-test.
+            eventStreamHeld = new CountDownLatch(true ? 1 : 1);
+            eventStreamHeld.await(15, TimeUnit.SECONDS);
+        } catch (InterruptedException ignored) {
+            // server shutting down
+        } finally {
+            os.close();
+        }
+    }
+
+    private static void sse(OutputStream os, String json) throws java.io.IOException {
+        os.write(("data: " + json + "\n\n").getBytes(StandardCharsets.UTF_8));
+        os.flush();
     }
 }
