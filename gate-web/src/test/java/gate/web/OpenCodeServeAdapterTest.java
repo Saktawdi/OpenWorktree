@@ -125,9 +125,21 @@ class OpenCodeServeAdapterTest {
 
         SessionMessage assistant = waitForAssistant(session.id());
         assertEquals("hello opencode", assistant.content());
+        // A finished step's text re-announced under a fresh part id must not double the body.
         assertEquals(38726L, assistant.usage().promptTokens());
         assertEquals(89L, assistant.usage().completionTokens());
         assertEquals(38866L, assistant.usage().totalTokens());
+
+        // Tool-call state streamed on the bus must survive persistence so session switches
+        // re-render 工具调用 instead of degrading to plain text.
+        assertEquals(1, assistant.toolCalls().size());
+        gate.domain.session.ToolCall call = assistant.toolCalls().get(0);
+        assertEquals("bash", call.name());
+        assertEquals("{\"command\":\"git log\"}", call.argumentsJson());
+        assertEquals("commit log output", call.resultJson());
+
+        SessionMessage second = waitForAssistantContent(session.id(), "second turn reply");
+        assertEquals("second turn reply", second.content());
 
         assertNotNull(lastMessageRequest);
         assertTrue(lastMessageRequest.contains("\"parts\":[{\"type\":\"text\",\"text\":\"hi\"}]"),
@@ -138,11 +150,15 @@ class OpenCodeServeAdapterTest {
     }
 
     private SessionMessage waitForAssistant(String sessionId) throws Exception {
+        return waitForAssistantContent(sessionId, "hello opencode");
+    }
+
+    private SessionMessage waitForAssistantContent(String sessionId, String content) throws Exception {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
         while (System.nanoTime() < deadline) {
             List<SessionMessage> history = sessions.findMessages(sessionId);
             SessionMessage found = history.stream()
-                    .filter(m -> m.role() == Role.ASSISTANT && "hello opencode".equals(m.content()))
+                    .filter(m -> m.role() == Role.ASSISTANT && content.equals(m.content()))
                     .findFirst().orElse(null);
             if (found != null) {
                 return found;
@@ -214,6 +230,20 @@ class OpenCodeServeAdapterTest {
             sse(os, "{\"id\":\"evt_3\",\"type\":\"message.part.updated\",\"properties\":{\"part\":"
                     + "{\"id\":\"prt_1\",\"sessionID\":\"sess-1\",\"messageID\":\"msg_1\","
                     + "\"type\":\"text\",\"text\":\"hello opencode\"},\"delta\":\"opencode\"}}");
+            // Tool call lifecycle: running with input, then completed with output.
+            sse(os, "{\"id\":\"evt_3b\",\"type\":\"message.part.updated\",\"properties\":{\"part\":"
+                    + "{\"id\":\"prt_t1\",\"sessionID\":\"sess-1\",\"messageID\":\"msg_1\","
+                    + "\"type\":\"tool\",\"callID\":\"call_1\",\"tool\":\"bash\","
+                    + "\"state\":{\"status\":\"running\",\"input\":{\"command\":\"git log\"}}}}}");
+            sse(os, "{\"id\":\"evt_3c\",\"type\":\"message.part.updated\",\"properties\":{\"part\":"
+                    + "{\"id\":\"prt_t1\",\"sessionID\":\"sess-1\",\"messageID\":\"msg_1\","
+                    + "\"type\":\"tool\",\"callID\":\"call_1\",\"tool\":\"bash\","
+                    + "\"state\":{\"status\":\"completed\",\"input\":{\"command\":\"git log\"},"
+                    + "\"output\":\"commit log output\"}}}}");
+            // Reconciliation echo: the finished step's text re-sent under a fresh part id.
+            sse(os, "{\"id\":\"evt_3d\",\"type\":\"message.part.updated\",\"properties\":{\"part\":"
+                    + "{\"id\":\"prt_1dup\",\"sessionID\":\"sess-1\",\"messageID\":\"msg_1\","
+                    + "\"type\":\"text\",\"text\":\"hello opencode\"}}}");
             sse(os, "{\"id\":\"evt_4\",\"type\":\"message.part.updated\",\"properties\":{\"part\":"
                     + "{\"id\":\"prt_2\",\"sessionID\":\"sess-1\",\"messageID\":\"msg_1\","
                     + "\"type\":\"step-finish\",\"reason\":\"stop\",\"cost\":0,"
@@ -225,6 +255,18 @@ class OpenCodeServeAdapterTest {
                     + "\"tokens\":{\"input\":38726,\"output\":89,\"reasoning\":0,"
                     + "\"cache\":{\"read\":51,\"write\":0}}}}}");
             sse(os, "{\"id\":\"evt_6\",\"type\":\"session.status\",\"properties\":"
+                    + "{\"sessionID\":\"sess-1\",\"status\":{\"type\":\"idle\"}}}");
+            // Second assistant message whose text part races ahead of its role announcement:
+            // the snapshot must still be buffered and persisted (no empty bubble after reload).
+            sse(os, "{\"id\":\"evt_7\",\"type\":\"message.part.updated\",\"properties\":{\"part\":"
+                    + "{\"id\":\"prt_3\",\"sessionID\":\"sess-1\",\"messageID\":\"msg_2\","
+                    + "\"type\":\"text\",\"text\":\"second turn reply\"}}}");
+            sse(os, "{\"id\":\"evt_8\",\"type\":\"message.updated\",\"properties\":{\"info\":"
+                    + "{\"id\":\"msg_2\",\"sessionID\":\"sess-1\",\"role\":\"assistant\","
+                    + "\"time\":{\"created\":3,\"completed\":4},"
+                    + "\"tokens\":{\"input\":10,\"output\":5,\"reasoning\":0}}}}");
+            // Turn boundary: the reply flushes to history when the session goes idle.
+            sse(os, "{\"id\":\"evt_9\",\"type\":\"session.status\",\"properties\":"
                     + "{\"sessionID\":\"sess-1\",\"status\":{\"type\":\"idle\"}}}");
             // Hold the stream open so the adapter does not churn on reconnects mid-test.
             eventStreamHeld = new CountDownLatch(true ? 1 : 1);

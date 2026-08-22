@@ -377,8 +377,10 @@ function mapHistoryMessage(m: RawMessage): ChatItem | null {
         id: `${m.id}-${i}`,
         name: "工具调用",
         icon: "terminal" as const,
-        argsSummary: tc.name,
+        // Match the live-streamed row: tool name followed by its full arguments JSON.
+        argsSummary: `${tc.name}${tc.arguments_json ?? ""}`,
         resultSummary: tc.result_json?.slice(0, 80),
+        resultDetail: tc.result_json,
         status: "ok" as const,
       })),
       ts: Date.parse(m.timestamp),
