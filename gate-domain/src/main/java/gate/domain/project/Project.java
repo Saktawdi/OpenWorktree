@@ -6,9 +6,11 @@ import java.util.List;
 /**
  * A registered project (web console, codex-style workspace adoption).
  *
- * <p>A project owns one isolated ticket board and its tickets. The gate topology (auth repo, clone
- * root, target refs) is still owned by {@code gate.toml} — one gate instance serves one configured
- * topology (ADR-14).
+ * <p>A project owns one isolated ticket board and its tickets. Each project carries its own
+ * {@code authRepo} (provisioned at registration) so its tickets clone from — and publish back to —
+ * that repo; {@code gate.toml} remains the fallback topology for unaffiliated tickets (ADR-14,
+ * amended after a shared auth repo leaked one project's history into every other project's
+ * clones).
  *
  * <p>V6 project meta: {@code priority} (P0..P3) and {@code size} are nullable console-managed
  * fields; {@code tags} is a free-form label list. All three are optional — the home board falls

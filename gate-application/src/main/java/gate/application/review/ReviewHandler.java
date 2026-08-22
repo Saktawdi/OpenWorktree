@@ -44,6 +44,7 @@ import java.util.Map;
  */
 public final class ReviewHandler {
     private final GateConfig config;
+    private final gate.application.project.ProjectAuthResolver authResolver;
     private final SnapshotCapture snapshotCapture;
     private final CommitPublisher commitPublisher;
     private final ApprovalStore approvalStore;
@@ -62,7 +63,18 @@ public final class ReviewHandler {
                          GatePolicy gatePolicy, TicketRepository tickets, PresubmitRepository presubmits,
                          ReviewResultRepository reviewResults, BlobStore blobStore, AuditLog auditLog,
                          DbTransactionRunner tx, Clock clock) {
+        this(config, snapshotCapture, commitPublisher, approvalStore, reviewEngineFactory,
+                gatePolicy, tickets, presubmits, reviewResults, blobStore, auditLog, tx, clock, null);
+    }
+
+    public ReviewHandler(GateConfig config, SnapshotCapture snapshotCapture, CommitPublisher commitPublisher,
+                         ApprovalStore approvalStore, ReviewEngineFactory reviewEngineFactory,
+                         GatePolicy gatePolicy, TicketRepository tickets, PresubmitRepository presubmits,
+                         ReviewResultRepository reviewResults, BlobStore blobStore, AuditLog auditLog,
+                         DbTransactionRunner tx, Clock clock,
+                         gate.application.project.ProjectAuthResolver authResolver) {
         this.config = config;
+        this.authResolver = authResolver;
         this.snapshotCapture = snapshotCapture;
         this.commitPublisher = commitPublisher;
         this.approvalStore = approvalStore;
@@ -98,7 +110,7 @@ public final class ReviewHandler {
         PublishIntent scratchIntent = new PublishIntent(-1L, ticket.ticketNo(), row.reviewRound(), row.treeHash(), row.baseCommit(),
                 row.targetRef(), commitMessage(ticket, row), config.gateIdentity(), config.gateIdentity(),
                 approvalStore.allocate(), null, PublishStatus.PENDING, null, null, clock.now(), null,
-                clone, RepoRef.of(config.authRepo()));
+                clone, authFor(ticket));
         ObjectId dangling = commitPublisher.buildCommit(scratchIntent);
         commitPublisher.pinGateRef(clone, ticket.ticketNo(), row.reviewRound(), dangling);
 
@@ -204,6 +216,13 @@ public final class ReviewHandler {
 
         return new ReviewResult(ticket.ticketNo(), row.reviewRound(), row.treeHash().hex(), dangling.hex(),
                 decision.verdict(), decision.reason(), decision.detail());
+    }
+
+    /** The ticket's project auth repo when bound, else the gate-level auth repo. */
+    private RepoRef authFor(Ticket ticket) {
+        return authResolver != null
+                ? authResolver.forTicket(ticket).authRepo()
+                : RepoRef.of(config.authRepo());
     }
 
     private static String commitMessage(Ticket ticket, PresubmitRepository.PresubmitRow row) {

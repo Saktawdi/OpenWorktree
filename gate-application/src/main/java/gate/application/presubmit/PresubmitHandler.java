@@ -30,6 +30,7 @@ import java.util.Map;
  */
 public final class PresubmitHandler {
     private final GateConfig config;
+    private final gate.application.project.ProjectAuthResolver authResolver;
     private final SnapshotCapture snapshotCapture;
     private final TicketRepository tickets;
     private final PresubmitRepository presubmits;
@@ -41,7 +42,15 @@ public final class PresubmitHandler {
     public PresubmitHandler(GateConfig config, SnapshotCapture snapshotCapture, TicketRepository tickets,
                             PresubmitRepository presubmits, BlobStore blobStore, AuditLog auditLog,
                             DbTransactionRunner tx, Clock clock) {
+        this(config, snapshotCapture, tickets, presubmits, blobStore, auditLog, tx, clock, null);
+    }
+
+    public PresubmitHandler(GateConfig config, SnapshotCapture snapshotCapture, TicketRepository tickets,
+                            PresubmitRepository presubmits, BlobStore blobStore, AuditLog auditLog,
+                            DbTransactionRunner tx, Clock clock,
+                            gate.application.project.ProjectAuthResolver authResolver) {
         this.config = config;
+        this.authResolver = authResolver;
         this.snapshotCapture = snapshotCapture;
         this.tickets = tickets;
         this.presubmits = presubmits;
@@ -55,7 +64,7 @@ public final class PresubmitHandler {
         Ticket ticket = tickets.find(command.ticketNo()).orElseThrow(
                 () -> new GateException(GateErrorCode.USAGE, "no such ticket: " + command.ticketNo()));
         RepoRef clone = RepoRef.of(java.nio.file.Path.of(ticket.clonePath()));
-        RepoRef auth = RepoRef.of(config.authRepo());
+        RepoRef auth = authFor(ticket);
         String targetRef = ticket.targetRef();
 
         // Capture is pure git + filesystem work; it holds no DB transaction (I3).
@@ -98,6 +107,13 @@ public final class PresubmitHandler {
         return new PresubmitResult(ticket.ticketNo(), row.reviewRound(), snapshot.treeHash().hex(),
                 snapshot.baseCommit().hex(), targetRef, diffBlob.bytes(), snapshot.changedPaths(),
                 snapshot.integrity());
+    }
+
+    /** The ticket's project auth repo when bound, else the gate-level auth repo. */
+    private RepoRef authFor(Ticket ticket) {
+        return authResolver != null
+                ? authResolver.forTicket(ticket).authRepo()
+                : RepoRef.of(config.authRepo());
     }
 
     private static String integrityText(CaptureIntegrityReport report) {

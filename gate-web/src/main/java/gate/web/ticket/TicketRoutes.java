@@ -120,8 +120,11 @@ public final class TicketRoutes {
         if (projectId != null && projectId.isBlank()) {
             projectId = null;
         }
-        if (projectId != null && projects.find(projectId).isEmpty()) {
-            throw new GateException(GateErrorCode.USAGE, "no such project: " + projectId);
+        Project project = null;
+        if (projectId != null) {
+            final String pid = projectId;
+            project = projects.find(pid).orElseThrow(() -> new GateException(
+                    GateErrorCode.USAGE, "no such project: " + pid));
         }
         String agentConfigId = str(req, "agent_config_id");
         if (agentConfigId != null && agentConfigId.isBlank()) {
@@ -131,8 +134,17 @@ public final class TicketRoutes {
             throw new GateException(GateErrorCode.USAGE, "no such agent config: " + agentConfigId);
         }
 
-        String targetRef = config.primaryTargetRef();
-        RepoRef auth = RepoRef.of(config.authRepo());
+        // Project tickets clone from the project's own auth repo; only unaffiliated tickets use
+        // the gate-level topology (ProjectAuthResolver — cross-project clones caused T-107).
+        gate.application.project.ProjectAuthResolver.AuthTarget topology =
+                new gate.application.project.ProjectAuthResolver(projects, config).forNewTicket(project);
+        String targetRef = topology.targetRef();
+        RepoRef auth = topology.authRepo();
+        if (!java.nio.file.Files.exists(auth.path())) {
+            throw new GateException(GateErrorCode.USAGE,
+                    "auth repo for this ticket does not exist: " + auth.pathString()
+                            + " (init it before creating tickets)");
+        }
         Path cloneDir = config.clonesRoot().resolve(ticketNo);
         RepoRef clone = topologyInitializer.createClone(auth, targetRef, cloneDir);
         Instant now = clock.now();

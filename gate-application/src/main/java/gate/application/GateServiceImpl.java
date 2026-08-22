@@ -76,20 +76,34 @@ public final class GateServiceImpl implements GateService {
                            ReviewResultRepository reviewResults, PublishIntentRepository intents, BlobStore blobStore,
                            AuditLog auditLog, LockManager lockManager, DbTransactionRunner tx, Clock clock,
                            gate.ports.PublishProbe publishProbe, gate.ports.AuthoritativeGitService authoritativeGitService) {
+        this(config, snapshotCapture, commitPublisher, refObserver, approvalStore, reviewEngineFactory, gatePolicy,
+                tickets, presubmits, reviewResults, intents, blobStore, auditLog, lockManager, tx, clock, publishProbe,
+                authoritativeGitService, null);
+    }
+
+    public GateServiceImpl(GateConfig config, SnapshotCapture snapshotCapture, CommitPublisher commitPublisher,
+                           RefObserver refObserver, ApprovalStore approvalStore, ReviewEngineFactory reviewEngineFactory,
+                           GatePolicy gatePolicy, TicketRepository tickets, PresubmitRepository presubmits,
+                           ReviewResultRepository reviewResults, PublishIntentRepository intents, BlobStore blobStore,
+                           AuditLog auditLog, LockManager lockManager, DbTransactionRunner tx, Clock clock,
+                           gate.ports.PublishProbe publishProbe, gate.ports.AuthoritativeGitService authoritativeGitService,
+                           gate.ports.ProjectRepository projects) {
         this.config = config;
         this.refObserver = refObserver;
         this.tickets = tickets;
         this.presubmits = presubmits;
         this.intents = intents;
+        gate.application.project.ProjectAuthResolver authResolver =
+                new gate.application.project.ProjectAuthResolver(projects, config);
         this.presubmitHandler = new gate.application.presubmit.PresubmitHandler(
-                config, snapshotCapture, tickets, presubmits, blobStore, auditLog, tx, clock);
+                config, snapshotCapture, tickets, presubmits, blobStore, auditLog, tx, clock, authResolver);
         this.reviewHandler = new gate.application.review.ReviewHandler(
                 config, snapshotCapture, commitPublisher, approvalStore, reviewEngineFactory,
-                gatePolicy, tickets, presubmits, reviewResults, blobStore, auditLog, tx, clock);
+                gatePolicy, tickets, presubmits, reviewResults, blobStore, auditLog, tx, clock, authResolver);
         this.publishHandler = new gate.application.publish.PublishHandler(
                 config, snapshotCapture, commitPublisher, refObserver, approvalStore,
                 gatePolicy, tickets, presubmits, reviewResults, intents, blobStore,
-                auditLog, lockManager, tx, clock, publishProbe, authoritativeGitService);
+                auditLog, lockManager, tx, clock, publishProbe, authoritativeGitService, authResolver);
     }
 
     @Override

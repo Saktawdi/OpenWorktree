@@ -151,6 +151,42 @@ class ProjectsWorkspacesApiTest {
     }
 
     @Test
+    void project_tickets_clone_from_the_project_auth_repo_not_the_gate_repo() throws Exception {
+        // T-107 regression: one project's history in the shared gate-level auth repo must never
+        // become another project's clone base — project tickets clone from the project's own repo.
+        Path ws = harness.root().resolve("iso-ws");
+        HttpResponse<String> created = post("/api/projects",
+                "{\"name\":\"Iso\",\"workspace_path\":\"" + json(ws.toString()) + "\"}");
+        assertEquals(201, created.statusCode(), created.body());
+        String id = extract(created.body(), "id");
+        String projectAuth = extract(created.body(), "auth_repo");
+        assertTrue(projectAuth.contains("auth-iso.git"),
+                "project registration must provision a dedicated auth repo: " + projectAuth);
+
+        HttpResponse<String> ticket = post("/api/projects/" + id + "/tickets",
+                "{\"ticket_no\":\"ISO-1\",\"title\":\"iso ticket\"}");
+        assertEquals(201, ticket.statusCode(), ticket.body());
+        Path clone = Path.of(extract(ticket.body(), "clone_path"));
+        var origin = harness.components().git().run(clone.getParent(), java.util.Map.of(),
+                "-C", clone.toString(), "remote", "get-url", "origin");
+        assertTrue(origin.ok(), origin.stdout() + origin.stderr());
+        assertEquals(Path.of(projectAuth).toAbsolutePath().normalize().toString(),
+                Path.of(origin.stdout().trim()).toAbsolutePath().normalize().toString(),
+                "project tickets must clone from the project's auth repo");
+
+        // Unaffiliated tickets keep cloning from the gate-level topology.
+        HttpResponse<String> plain = post("/api/tickets", "{\"ticket_no\":\"PLAIN-1\",\"title\":\"plain\"}");
+        assertEquals(201, plain.statusCode(), plain.body());
+        Path plainClone = Path.of(extract(plain.body(), "clone_path"));
+        var plainOrigin = harness.components().git().run(plainClone.getParent(), java.util.Map.of(),
+                "-C", plainClone.toString(), "remote", "get-url", "origin");
+        assertTrue(plainOrigin.ok(), plainOrigin.stdout() + plainOrigin.stderr());
+        assertEquals(harness.components().config().authRepo().toAbsolutePath().normalize().toString(),
+                Path.of(plainOrigin.stdout().trim()).toAbsolutePath().normalize().toString(),
+                "unaffiliated tickets keep the gate-level auth repo");
+    }
+
+    @Test
     void project_meta_priority_size_tags_roundtrip() throws Exception {
         Path ws = harness.root().resolve("meta-ws");
         HttpResponse<String> created = post("/api/projects",

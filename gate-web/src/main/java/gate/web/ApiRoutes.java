@@ -22,6 +22,7 @@ import gate.ports.TaskRegistry;
 import gate.ports.TicketLockManager;
 import gate.ports.TicketRepository;
 import gate.ports.TopologyInitializer;
+import gate.domain.git.RepoRef;
 import gate.adapters.git.GitCli;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -722,8 +723,17 @@ public final class ApiRoutes {
         String size = parseProjectSize(req);
         List<String> tags = parseProjectTags(req);
         Instant now = clock.now();
-        Project p = new Project(uniqueProjectId(name), name, workspace.toString(),
-                targetRef, config.authRepo().toString(), priority, size, tags, now, now);
+        String id = uniqueProjectId(name);
+        // Each project gets its own auth repo so one project's published history can never
+        // become another project's clone base (T-107 incident). The repo is seeded with the
+        // same baseline + hook semantics as the gate-level auth repo.
+        java.nio.file.Path projectAuthRepo = new gate.application.project.ProjectAuthResolver(projects, config)
+                .defaultProjectAuthRepo(id);
+        topologyInitializer.initAuthRepo(RepoRef.of(projectAuthRepo),
+                targetRef == null || targetRef.isBlank() ? config.primaryTargetRef() : targetRef,
+                config.approvalsDir());
+        Project p = new Project(id, name, workspace.toString(),
+                targetRef, projectAuthRepo.toString(), priority, size, tags, now, now);
         projects.insert(p);
         return new Response(201, projectJson(p));
     }

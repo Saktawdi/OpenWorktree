@@ -157,7 +157,8 @@ public final class GateRuntime {
                 : new ManualReviewEngineFactory(blobStore);
         this.gateService = new GateServiceImpl(config, snapshotCapture, commitPublisher, refObserver,
                 approvalStore, reviewEngineFactory, new GatePolicy(), ticketRepository, presubmitRepository,
-                reviewResultRepository, publishIntentRepository, blobStore, auditLog, lockManager, txRunner, clock, gate.ports.PublishProbe.NOOP, authoritativeGitService);
+                reviewResultRepository, publishIntentRepository, blobStore, auditLog, lockManager, txRunner, clock, gate.ports.PublishProbe.NOOP, authoritativeGitService,
+                projectRepository);
     }
 
     public GateConfig config() { return config; }

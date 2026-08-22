@@ -50,6 +50,7 @@ import java.util.Optional;
  */
 public final class PublishHandler {
     private final GateConfig config;
+    private final gate.application.project.ProjectAuthResolver authResolver;
     private final SnapshotCapture snapshotCapture;
     private final CommitPublisher commitPublisher;
     private final RefObserver refObserver;
@@ -84,7 +85,21 @@ public final class PublishHandler {
                           BlobStore blobStore, AuditLog auditLog, LockManager lockManager,
                           DbTransactionRunner tx, Clock clock, PublishProbe publishProbe,
                           AuthoritativeGitService authoritativeGitService) {
+        this(config, snapshotCapture, commitPublisher, refObserver, approvalStore, gatePolicy, tickets, presubmits,
+                reviewResults, intents, blobStore, auditLog, lockManager, tx, clock, publishProbe,
+                authoritativeGitService, null);
+    }
+
+    public PublishHandler(GateConfig config, SnapshotCapture snapshotCapture, CommitPublisher commitPublisher,
+                          RefObserver refObserver, ApprovalStore approvalStore, GatePolicy gatePolicy,
+                          TicketRepository tickets, PresubmitRepository presubmits,
+                          ReviewResultRepository reviewResults, PublishIntentRepository intents,
+                          BlobStore blobStore, AuditLog auditLog, LockManager lockManager,
+                          DbTransactionRunner tx, Clock clock, PublishProbe publishProbe,
+                          AuthoritativeGitService authoritativeGitService,
+                          gate.application.project.ProjectAuthResolver authResolver) {
         this.config = config;
+        this.authResolver = authResolver;
         this.snapshotCapture = snapshotCapture;
         this.commitPublisher = commitPublisher;
         this.refObserver = refObserver;
@@ -107,7 +122,7 @@ public final class PublishHandler {
         Ticket ticket = tickets.find(command.ticketNo()).orElseThrow(
                 () -> new GateException(GateErrorCode.USAGE, "no such ticket: " + command.ticketNo()));
         RepoRef clone = RepoRef.of(java.nio.file.Path.of(ticket.clonePath()));
-        RepoRef auth = RepoRef.of(config.authRepo());
+        RepoRef auth = authFor(ticket);
         String targetRef = ticket.targetRef();
 
         try (AutoCloseable ignored = lockManager.acquire(config.project(), targetRef)) {
@@ -151,7 +166,6 @@ public final class PublishHandler {
     }
 
     public ReconcileResult reconcile(ReconcileCommand command) {
-        RepoRef auth = RepoRef.of(config.authRepo());
         List<PublishIntent> pending = command.ticketNo() == null
                 ? intents.findPending()
                 : intents.findByTicket(command.ticketNo()).stream()
@@ -159,6 +173,9 @@ public final class PublishHandler {
 
         List<ReconcileResult.IntentOutcome> outcomes = new ArrayList<>();
         for (PublishIntent intent : pending) {
+            // Each intent carries the auth repo it was created against; legacy rows fall back
+            // to the gate-level repo.
+            RepoRef auth = intent.authRepo() != null ? intent.authRepo() : RepoRef.of(config.authRepo());
             String from = intent.status().name();
             if (intent.commitSha() == null) {
                 long id = intent.id();
@@ -197,6 +214,13 @@ public final class PublishHandler {
                     "published", String.valueOf(published)));
         }
         return new ReconcileResult(outcomes);
+    }
+
+    /** The ticket's project auth repo when bound, else the gate-level auth repo. */
+    private RepoRef authFor(Ticket ticket) {
+        return authResolver != null
+                ? authResolver.forTicket(ticket).authRepo()
+                : RepoRef.of(config.authRepo());
     }
 
     private PublishResult runPublish(Ticket ticket, PresubmitRepository.PresubmitRow row, RepoRef clone,
