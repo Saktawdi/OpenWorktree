@@ -56,6 +56,7 @@ export interface AppState {
   outcomes: Record<string, PublishOutcome>;
   busy: Record<string, boolean>;
   gateBusy: Record<string, boolean>;
+  creatingSession: Record<string, boolean>;
   usage: Record<string, UsageView>;
   centerTab: CenterTab;
   agents: AgentConfig[];
@@ -95,6 +96,7 @@ export const appStore = create<AppState>(() => ({
   outcomes: {},
   busy: {},
   gateBusy: {},
+  creatingSession: {},
   usage: {},
   centerTab: "chat",
   agents: DEMO_AGENTS,
@@ -182,7 +184,9 @@ export function seedDemo(force = false) {
     gitViews: { "acme-checkout": GIT_ACME, "nexus-docs": GIT_NEXUS },
     treeViews: { "acme-checkout": TREE_ACME, "nexus-docs": TREE_NEXUS },
     editingTicketNo: null,
-    agentId: DEMO_AGENTS[0].id,
+  agentId:
+    (typeof window !== "undefined" && localStorage.getItem("gate-agent-id")) ||
+    DEMO_AGENTS[0].id,
   });
 }
 
@@ -204,6 +208,7 @@ function tryRestore(): boolean {
       highlight: null,
       busy: {},
       gateBusy: {},
+      creatingSession: {},
       tasks: {},
       runtimes: saved.runtimes ?? cur.runtimes,
       gitViews: saved.gitViews ?? cur.gitViews,
@@ -255,6 +260,11 @@ export function setCenterTab(tab: CenterTab) {
 
 export function setAgentId(id: string) {
   patch({ agentId: id });
+  try {
+    localStorage.setItem("gate-agent-id", id);
+  } catch {
+    /* ignore */
+  }
 }
 
 export function selectTicket(no: string) {
@@ -334,7 +344,11 @@ export function patchAssistant(no: string, id: string, fn: (a: Extract<ChatItem,
 }
 
 export function finishAssistant(no: string, id: string) {
-  patchAssistant(no, id, (a) => ({ ...a, streaming: false }));
+  patchAssistant(no, id, (a) => ({
+    ...a,
+    streaming: false,
+    thinking: a.thinking ? { ...a.thinking, done: true } : a.thinking,
+  }));
 }
 
 export function setBusy(no: string, busy: boolean) {
@@ -343,6 +357,15 @@ export function setBusy(no: string, busy: boolean) {
 
 export function setGateBusy(no: string, busy: boolean) {
   set((st) => ({ gateBusy: { ...st.gateBusy, [no]: busy } }));
+}
+
+export function setCreatingSession(no: string, busy: boolean) {
+  set((st) => {
+    const next = { ...st.creatingSession };
+    if (busy) next[no] = true;
+    else delete next[no];
+    return { creatingSession: next };
+  });
 }
 
 export function setTask(no: string, task: TaskProgress | null) {

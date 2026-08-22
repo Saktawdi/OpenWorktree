@@ -1,8 +1,9 @@
 package gate.web;
 
-import gate.adapters.config.TomlGateConfigLoader;
-import gate.adapters.git.GitCli;
-import gate.adapters.lock.FileChannelTicketLockManager;
+ import gate.adapters.config.TomlGateConfigLoader;
+ import gate.adapters.git.GitCli;
+ import gate.adapters.io.AdapterLog;
+ import gate.adapters.lock.FileChannelTicketLockManager;
 import gate.adapters.process.CliLocator;
 import gate.adapters.session.ClaudeHeadlessAdapter;
 import gate.adapters.session.DispatchAgentSessionPort;
@@ -55,6 +56,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 public final class WebComponents {
 
     private final GateConfig config;
+    private boolean closed;
     private final GateService gateService;
     private final MetricsService metricsService;
     private final TopologyInitializer topologyInitializer;
@@ -149,9 +151,15 @@ public final class WebComponents {
             this.claudeAdapter = new ClaudeHeadlessAdapter(processRunner, this.agentConfigRepository, sessionRepo,
                     tickets, taskRegistry, ticketLockManager, clock, claudeCmd);
             int startTimeout = config.session() == null ? 60 : config.session().startTimeoutSeconds();
+            // First-party adapter trail for incident diagnosis (spawn/stream/send/cleanup).
+            AdapterLog adapterLog = AdapterLog.at(config.gateHome().resolve("adapters.log"));
+            // Spawned serve PIDs are journaled so the next startup can reap orphans left behind
+            // by an unclean shutdown (Windows console close skips JVM shutdown hooks).
+            gate.adapters.io.ServePidRegistry pidRegistry =
+                    new gate.adapters.io.ServePidRegistry(config.gateHome().resolve("opencode-serve.pids"));
             this.opencodeAdapter = new OpenCodeServeAdapter(processRunner, this.agentConfigRepository, sessionRepo,
                     tickets, taskRegistry, ticketLockManager, clock, portAllocator, opencodeCmd,
-                    startTimeout);
+                    startTimeout, adapterLog, pidRegistry);
             this.agentSessionPort = new DispatchAgentSessionPort(this.agentConfigRepository, sessionRepo,
                     claudeAdapter, opencodeAdapter);
         }
@@ -291,7 +299,11 @@ public final class WebComponents {
     }
 
     /** Shuts down the async task executor and session adapters. Idempotent; called by {@link WebServer#close()}. */
-    public void close() {
+    public synchronized void close() {
+        if (closed) {
+            return;
+        }
+        closed = true;
         taskRunner.close();
         if (claudeAdapter != null) {
             claudeAdapter.close();

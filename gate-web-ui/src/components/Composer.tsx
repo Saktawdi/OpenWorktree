@@ -1,27 +1,31 @@
 import { useEffect, useRef, useState } from "react";
-import { CaretDown, Check, PaperPlaneRight, Sparkle, Stop } from "@phosphor-icons/react";
+import { CaretDown, Check, Lock, PaperPlaneRight, Sparkle, Stop } from "@phosphor-icons/react";
 import { actions } from "../lib/actions";
-import { appStore, setAgentId, useApp } from "../lib/store";
+import { appStore, NO_CHAT, setAgentId, useApp } from "../lib/store";
 import { formatTokens } from "../lib/format";
 
-function AgentPicker() {
+function AgentPicker({ ticketNo }: { ticketNo: string }) {
   const agents = useApp((s) => s.agents);
   const agentId = useApp((s) => s.agentId);
+  const locked = useApp((s) =>
+    (s.chats[ticketNo] ?? NO_CHAT).some((m) => m.kind === "user"),
+  );
   const [open, setOpen] = useState(false);
   const current = agents.find((a) => a.id === agentId) ?? agents[0];
 
   return (
     <div className="relative">
       <button
-        className="btn h-7 px-2.5 text-[12px]"
+        className="btn h-7 px-2.5 text-[12px] disabled:opacity-50 disabled:pointer-events-none"
         onClick={() => setOpen(!open)}
-        title="选择协作的 Agent"
+        disabled={locked}
+        title={locked ? "已发送消息 · 协作 Agent 已锁定，新建会话可重新选择" : "选择协作的 Agent"}
       >
-        <Sparkle size={12} className="text-accent" weight="fill" />
+        <Sparkle size={12} className={locked ? "text-faint" : "text-accent"} weight="fill" />
         {current ? `${current.name} · ${current.model}` : "选择 Agent"}
-        <CaretDown size={11} />
+        {locked ? <Lock size={11} className="text-faint" weight="fill" /> : <CaretDown size={11} />}
       </button>
-      {open && (
+      {open && !locked && (
         <>
           <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
           <div className="absolute bottom-9 left-0 z-40 w-[260px] card p-1.5 shadow-2xl shadow-black/50 animate-rise">
@@ -154,7 +158,7 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
         </div>
 
         <div className="flex items-center gap-2">
-          <AgentPicker />
+          <AgentPicker ticketNo={ticketNo} />
           <span className="flex-1" />
           {usage && (
             <span className="font-mono text-[11px] text-faint tabular-nums">

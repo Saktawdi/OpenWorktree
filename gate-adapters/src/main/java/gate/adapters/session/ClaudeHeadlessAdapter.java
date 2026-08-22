@@ -337,6 +337,9 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
         argv.add("stream-json");
         argv.add("--output-format");
         argv.add("stream-json");
+        // claude CLI hard requirement: --print + stream-json output refuses to start without
+        // --verbose ("When using --print, --output-format=stream-json requires --verbose").
+        argv.add("--verbose");
         // No model flag means Claude Code resolves its own provider/model configuration. The
         // agent profile may still opt into an explicit model override when one is selected.
         if (config.model() != null && !config.model().isBlank()) {

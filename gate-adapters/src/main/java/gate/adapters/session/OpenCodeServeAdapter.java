@@ -1,5 +1,7 @@
 package gate.adapters.session;
 
+import gate.adapters.io.AdapterLog;
+import gate.adapters.io.ServePidRegistry;
 import gate.application.MiniJson;
 import gate.domain.error.GateErrorCode;
 import gate.domain.error.GateException;
@@ -22,7 +24,10 @@ import gate.ports.TaskRegistry;
 import gate.ports.TicketLockManager;
 import gate.ports.TicketRepository;
 
+import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -33,23 +38,43 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
 /**
  * OpenCode serve adapter (执行文档-后端-web §5.3.1, ADR-12): talks to a local
  * {@code opencode serve} HTTP API on an allocated port.
  *
- * <p>When {@code opencodeExecutable} is non-blank the adapter spawns the serve process; tests pass a
- * blank executable and point at a fake HTTP server on the allocated port.
+ * <p>Streaming architecture (mirrors how OpenChamber integrates OpenCode): prompts are fired with
+ * {@code POST /session/{id}/prompt_async} which returns immediately, and the adapter keeps one
+ * persistent upstream SSE reader per session attached to OpenCode's {@code GET /event} bus. Bus
+ * events are mapped onto the port's {@link SessionStreamChunk} vocabulary, so browsers get true
+ * token-level streaming plus live tool-call state through the existing listener/SSE pipeline:
+ *
+ * <pre>
+ *   text.delta        -> ContentChunk      reasoning.delta   -> ThinkingChunk
+ *   tool.called/...   -> ToolCallChunk     step-finish       -> UsageChunk
+ *   session.status=idle -> DoneChunk       session.error     -> ErrorChunk
+ * </pre>
+ *
+ * <p>The final assistant message is persisted from the {@code message.updated} completion snapshot
+ * (with token usage written back to the ticket), replacing the former synchronous-response parsing.
+ * The upstream reader reconnects with {@code Last-Event-ID} after drops and force-reconnects a
+ * stalled stream, following the same recovery shape as OpenChamber's upstream-reader module.
  */
 public final class OpenCodeServeAdapter implements AgentSessionPort {
+
+    /** Force-reconnect an upstream whose stream has been silent longer than this. */
+    static final long UPSTREAM_STALL_TIMEOUT_MS = 90_000L;
+    /** Delay between upstream reconnect attempts after a drop. */
+    static final long UPSTREAM_RECONNECT_DELAY_MS = 2_000L;
 
     private final ProcessRunner processRunner;
     private final AgentConfigRepository agentConfigs;
@@ -68,20 +93,55 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
             .version(HttpClient.Version.HTTP_1_1)
             .build();
     private final ExecutorService executor;
+    private final ScheduledExecutorService watchdog;
     private final Map<Integer, Process> serveProcesses = new ConcurrentHashMap<>();
     private final Map<String, Integer> sessionPorts = new ConcurrentHashMap<>();
+    private final Map<String, Upstream> upstreams = new ConcurrentHashMap<>();
     private final Map<String, java.util.Set<java.util.function.Consumer<SessionStreamChunk>>> listeners = new ConcurrentHashMap<>();
+    private final AdapterLog log;
+    private final ServePidRegistry pidRegistry;
 
     public OpenCodeServeAdapter(ProcessRunner processRunner,
-                                AgentConfigRepository agentConfigs,
-                                SessionRepository sessions,
-                                TicketRepository tickets,
-                                TaskRegistry tasks,
-                                TicketLockManager ticketLocks,
-                                Clock clock,
-                                PortAllocator ports,
-                                String opencodeExecutable,
-                                int startTimeoutSeconds) {
+                                 AgentConfigRepository agentConfigs,
+                                 SessionRepository sessions,
+                                 TicketRepository tickets,
+                                 TaskRegistry tasks,
+                                 TicketLockManager ticketLocks,
+                                 Clock clock,
+                                 PortAllocator ports,
+                                 String opencodeExecutable,
+                                 int startTimeoutSeconds) {
+        this(processRunner, agentConfigs, sessions, tickets, tasks, ticketLocks, clock,
+                ports, opencodeExecutable, startTimeoutSeconds, AdapterLog.noop(), null);
+    }
+
+    public OpenCodeServeAdapter(ProcessRunner processRunner,
+                                 AgentConfigRepository agentConfigs,
+                                 SessionRepository sessions,
+                                 TicketRepository tickets,
+                                 TaskRegistry tasks,
+                                 TicketLockManager ticketLocks,
+                                 Clock clock,
+                                 PortAllocator ports,
+                                 String opencodeExecutable,
+                                 int startTimeoutSeconds,
+                                 AdapterLog log) {
+        this(processRunner, agentConfigs, sessions, tickets, tasks, ticketLocks, clock,
+                ports, opencodeExecutable, startTimeoutSeconds, log, null);
+    }
+
+    public OpenCodeServeAdapter(ProcessRunner processRunner,
+                                 AgentConfigRepository agentConfigs,
+                                 SessionRepository sessions,
+                                 TicketRepository tickets,
+                                 TaskRegistry tasks,
+                                 TicketLockManager ticketLocks,
+                                 Clock clock,
+                                 PortAllocator ports,
+                                 String opencodeExecutable,
+                                 int startTimeoutSeconds,
+                                 AdapterLog log,
+                                 ServePidRegistry pidRegistry) {
         this.processRunner = processRunner;
         this.agentConfigs = agentConfigs;
         this.sessions = sessions;
@@ -92,22 +152,41 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
         this.ports = ports;
         this.opencodeExecutable = opencodeExecutable;
         this.startTimeout = Duration.ofSeconds(startTimeoutSeconds);
+        this.log = log == null ? AdapterLog.noop() : log;
+        this.pidRegistry = pidRegistry == null ? new ServePidRegistry(null) : pidRegistry;
+        this.pidRegistry.sweepOrphans();
         this.executor = Executors.newSingleThreadExecutor(r -> {
             Thread t = new Thread(r, "opencode-session");
             t.setDaemon(true);
             return t;
         });
+        this.watchdog = Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "opencode-event-watchdog");
+            t.setDaemon(true);
+            return t;
+        });
+        this.watchdog.scheduleAtFixedRate(this::checkStalledUpstreams,
+                UPSTREAM_STALL_TIMEOUT_MS, 15_000L, TimeUnit.MILLISECONDS);
     }
 
     @Override
     public AutoCloseable attachListener(String sessionId, java.util.function.Consumer<SessionStreamChunk> listener) {
-        listeners.computeIfAbsent(sessionId, k -> java.util.Collections.newSetFromMap(new ConcurrentHashMap<>())).add(listener);
-        return () -> {
-            java.util.Set<java.util.function.Consumer<SessionStreamChunk>> set = listeners.get(sessionId);
-            if (set != null) {
-                set.remove(listener);
+        java.util.Set<java.util.function.Consumer<SessionStreamChunk>> set =
+                listeners.computeIfAbsent(sessionId, k -> java.util.Collections.newSetFromMap(new ConcurrentHashMap<>()));
+        set.add(listener);
+        Upstream up = upstreams.get(sessionId);
+        if (up != null && !up.stopped) {
+            long sinceDone = System.currentTimeMillis() - up.lastDoneAt;
+            // A very fast turn can finish before the browser finishes subscribing; re-signal done
+            // so its SSE does not spin until the client-side timeout.
+            if (up.lastDoneAt > 0 && sinceDone < 2_500L) {
+                try {
+                    listener.accept(new SessionStreamChunk.DoneChunk(sessionId, up.cliSessionId, clock.now()));
+                } catch (Exception ignored) {
+                }
             }
-        };
+        }
+        return () -> set.remove(listener);
     }
 
     private void emitChunk(String sessionId, SessionStreamChunk chunk) {
@@ -131,6 +210,10 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
             int port = ports.allocate();
             try {
                 if (opencodeExecutable != null && !opencodeExecutable.isBlank()) {
+                    // A leftover opencode serve from a previous backend run silently answers /health
+                    // on this port with STALE in-memory config; our own spawned process loses the
+                    // bind race and dies while waitHealthy talks to the orphan instead. Refuse.
+                    assertPortFree(port);
                     spawnServe(port, request.clonePath());
                 }
                 waitHealthy(port);
@@ -141,6 +224,10 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                         null, false);
                 sessions.insert(session);
                 sessionPorts.put(session.id(), port);
+                ensureUpstream(session.id(), port, cliSessionId);
+                log.info("opencode", "session.started",
+                        "sessionId", session.id(), "ticketNo", request.ticketNo(),
+                        "port", port, "cliSessionId", cliSessionId);
                 return session;
             } catch (Exception e) {
                 // Never leak a half-started serve process: its port would stay occupied on disk even
@@ -173,6 +260,7 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
     @Override
     public void abort(String sessionId) {
         sessions.find(sessionId).ifPresent(s -> {
+            stopUpstream(sessionId);
             Integer port = sessionPorts.get(sessionId);
             if (port != null && s.cliSessionId() != null) {
                 postQuietly("http://127.0.0.1:" + port + "/session/" + s.cliSessionId() + "/abort", "{}");
@@ -201,6 +289,11 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
     }
 
     public void close() {
+        for (Upstream up : upstreams.values()) {
+            up.stop();
+        }
+        upstreams.clear();
+        watchdog.shutdownNow();
         for (Integer port : List.copyOf(sessionPorts.values())) {
             killProcess(port);
             ports.release(port);
@@ -210,8 +303,610 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
     }
 
     // -------------------------------------------------------------------------------------------
-    // Internals
+    // Send path: fire prompt_async, streaming happens on the upstream event reader
     // -------------------------------------------------------------------------------------------
+
+    private void runSend(GateTask task, Session session, String message) {
+        try (AutoCloseable ignored = ticketLocks.acquire(session.ticketNo())) {
+            Integer port = sessionPorts.get(session.id());
+            if (port == null || session.cliSessionId() == null) {
+                throw new GateException(GateErrorCode.USAGE, "session has no opencode endpoint");
+            }
+            AgentConfig config = agentConfigs.find(session.agentConfigId()).orElseThrow();
+            tasks.update(progress(task, 20, "触发 opencode 回合"));
+            String body = messageBody(config, message);
+            HttpResponse<String> resp = post("http://127.0.0.1:" + port + "/session/"
+                    + session.cliSessionId() + "/prompt_async", body);
+            if (resp.statusCode() / 100 != 2) {
+                log.error("opencode", "prompt_async.rejected",
+                        "sessionId", session.id(), "status", resp.statusCode(),
+                        "bodySnippet", resp.body() == null ? "" : resp.body().substring(0, Math.min(200, resp.body().length())));
+                throw new GateException(GateErrorCode.GATE_ERROR_IO,
+                        "opencode prompt_async failed: HTTP " + resp.statusCode() + " " + resp.body());
+            }
+            Upstream up = upstreams.get(session.id());
+            if (up != null) {
+                up.assistantPersistedSinceSend = false;
+                up.pendingErrorName = null;
+                up.pendingErrorMessage = null;
+            }
+            log.info("opencode", "prompt_async.accepted", "sessionId", session.id(),
+                    "cliSessionId", session.cliSessionId(), "chars", message.length());
+            // The turn itself runs asynchronously; token/tool/done chunks arrive on the upstream
+            // reader and the final assistant message is persisted from its completion snapshot.
+            tasks.update(success(task, "{\"accepted\":true}"));
+        } catch (Throwable e) {
+            // Persist the failure so a page reload still shows why the turn died, mirroring the
+            // claude adapter's ERROR-message behaviour.
+            sessions.insertMessage(new SessionMessage(UUID.randomUUID().toString(), session.id(),
+                    Role.ERROR, e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage(),
+                    List.of(), null, true, clock.now()));
+            emitChunk(session.id(), new SessionStreamChunk.ErrorChunk(session.id(), "INTERNAL_ERROR", e.getMessage(), clock.now()));
+            tasks.update(fail(task, e));
+        }
+    }
+
+    static String messageBody(AgentConfig config, String message) {
+        StringBuilder body = new StringBuilder("{\"parts\":[{\"type\":\"text\",\"text\":\"")
+                .append(escapeJson(message)).append("\"}]");
+        ModelRef model = ModelRef.parse(config.model());
+        if (model != null) {
+            body.append(",\"model\":{\"providerID\":\"")
+                    .append(escapeJson(model.providerId()))
+                    .append("\",\"modelID\":\"")
+                    .append(escapeJson(model.modelId()))
+                    .append("\"}");
+        }
+        String agent = agentFlag(config);
+        if (agent != null && !agent.isBlank()) {
+            // Explicit agent beats opencode's server-side default_agent; without this the send
+            // 500s when the configured default agent no longer exists ("default agent X not found").
+            body.append(",\"agent\":\"").append(escapeJson(agent)).append("\"");
+        }
+        return body.append('}').toString();
+    }
+
+    /**
+     * Optional agent override via an {@code --agent=<name>} / {@code agent=<name>} entry in the
+     * AgentConfig extra flags (unlike the claude adapter, these flags are not CLI argv here).
+     */
+    static String agentFlag(AgentConfig config) {
+        if (config.extraFlags() == null) {
+            return null;
+        }
+        for (String flag : config.extraFlags()) {
+            if (flag == null) {
+                continue;
+            }
+            String f = flag.trim();
+            if (f.startsWith("--agent=")) {
+                return f.substring("--agent=".length()).trim();
+            }
+            if (f.startsWith("agent=")) {
+                return f.substring("agent=".length()).trim();
+            }
+        }
+        return null;
+    }
+
+    private record ModelRef(String providerId, String modelId) {
+        private static ModelRef parse(String value) {
+            if (value == null || value.isBlank()) {
+                return null;
+            }
+            int slash = value.indexOf('/');
+            if (slash <= 0 || slash >= value.length() - 1) {
+                return null;
+            }
+            return new ModelRef(value.substring(0, slash), value.substring(slash + 1));
+        }
+    }
+
+    private void writeback(Session session) {
+        try {
+            if (session.cumulativeUsage() != null && session.cumulativeUsage().totalTokens() != null) {
+                tickets.updateExecTokens(session.ticketNo(), session.cumulativeUsage().totalTokens(),
+                        "agent_cli", clock.now());
+            }
+        } catch (Exception ignored) {
+            // bypass-only
+        }
+    }
+
+    // -------------------------------------------------------------------------------------------
+    // Upstream SSE reader: one persistent /event subscription per gate session
+    // -------------------------------------------------------------------------------------------
+
+    /** Per-session upstream state: reader thread, cursor, and streaming accumulators. */
+    private final class Upstream implements Runnable {
+        final String sessionId;
+        final int port;
+        final String cliSessionId;
+        final Thread thread;
+        final Map<String, Integer> partSeen = new ConcurrentHashMap<>();
+        final Map<String, StringBuilder> messageText = new ConcurrentHashMap<>();
+        final java.util.Set<String> persistedMessages = ConcurrentHashMap.newKeySet();
+        // Roles are announced via message.updated before a message's parts stream in; user-message
+        // parts echo the prompt verbatim and must never surface as assistant content chunks.
+        final java.util.Set<String> assistantMessages = ConcurrentHashMap.newKeySet();
+        final java.util.Set<String> userMessages = ConcurrentHashMap.newKeySet();
+        volatile boolean stopped;
+        volatile String lastEventId;
+        volatile long lastEventAt = System.currentTimeMillis();
+        volatile long lastDoneAt;
+        volatile InputStream currentBody;
+        // Turn bookkeeping: if a turn ends (idle) without any assistant completion, the buffered
+        // session.error is persisted as an ERROR row so failures survive page reloads.
+        volatile boolean assistantPersistedSinceSend;
+        volatile String pendingErrorName;
+        volatile String pendingErrorMessage;
+
+        Upstream(String sessionId, int port, String cliSessionId) {
+            this.sessionId = sessionId;
+            this.port = port;
+            this.cliSessionId = cliSessionId;
+            this.thread = new Thread(this, "opencode-events-" + sessionId.substring(0, 8));
+            this.thread.setDaemon(true);
+        }
+
+        void start() {
+            thread.start();
+        }
+
+        void stop() {
+            stopped = true;
+            closeBody();
+            thread.interrupt();
+        }
+
+        void closeBody() {
+            InputStream body = currentBody;
+            currentBody = null;
+            if (body != null) {
+                try {
+                    body.close();
+                } catch (IOException ignored) {
+                }
+            }
+        }
+
+        boolean stale() {
+            return !stopped && System.currentTimeMillis() - lastEventAt > UPSTREAM_STALL_TIMEOUT_MS;
+        }
+
+        @Override
+        public void run() {
+            while (!stopped) {
+                try {
+                    HttpRequest.Builder req = HttpRequest.newBuilder(
+                                    URI.create("http://127.0.0.1:" + port + "/event"))
+                            .header("Accept", "text/event-stream")
+                            .timeout(Duration.ofSeconds(30))
+                            .GET();
+                    if (lastEventId != null && !lastEventId.isBlank()) {
+                        // Resume where we left off; opencode replays everything after this id.
+                        req.header("Last-Event-ID", lastEventId);
+                    }
+                    HttpResponse<InputStream> resp =
+                            http.send(req.build(), HttpResponse.BodyHandlers.ofInputStream());
+                    lastEventAt = System.currentTimeMillis();
+                    currentBody = resp.body();
+                    log.info("opencode", "upstream.connected", "sessionId", sessionId,
+                            "port", port, "lastEventId", lastEventId);
+                    try (BufferedReader reader = new BufferedReader(
+                            new InputStreamReader(resp.body(), StandardCharsets.UTF_8))) {
+                        String line;
+                        while (!stopped && (line = reader.readLine()) != null) {
+                            lastEventAt = System.currentTimeMillis();
+                            if (line.startsWith("data:")) {
+                                handleEventData(line.substring(5).trim());
+                            } else if (line.startsWith("id:")) {
+                                lastEventId = line.substring(3).trim();
+                            }
+                        }
+                    }
+                } catch (InterruptedException e) {
+                    return;
+                } catch (Exception e) {
+                    log.warn("opencode", "upstream.dropped", "sessionId", sessionId,
+                            "port", port, "error", e.getClass().getSimpleName());
+                } finally {
+                    currentBody = null;
+                }
+                if (stopped) {
+                    return;
+                }
+                try {
+                    Thread.sleep(UPSTREAM_RECONNECT_DELAY_MS);
+                } catch (InterruptedException e) {
+                    return;
+                }
+            }
+        }
+
+        /** Dispatch one SSE data frame: {"id":"evt_..","type":"..","properties":{..}}. */
+        @SuppressWarnings("unchecked")
+        void handleEventData(String json) {
+            if (json == null || json.isBlank()) {
+                return;
+            }
+            Object parsed;
+            try {
+                parsed = MiniJson.parse(json);
+            } catch (Exception ignored) {
+                return;
+            }
+            if (!(parsed instanceof Map<?, ?> raw)) {
+                return;
+            }
+            Map<String, Object> obj = (Map<String, Object>) raw;
+            Object id = obj.get("id");
+            if (id != null) {
+                lastEventId = String.valueOf(id);
+            }
+            String type = String.valueOf(obj.get("type"));
+            Map<String, Object> props = obj.get("properties") instanceof Map<?, ?> p
+                    ? (Map<String, Object>) p : Map.of();
+
+            switch (type) {
+                case "message.part.updated" -> handlePartUpdated(props);
+                case "message.updated" -> handleMessageUpdated(props);
+                case "session.status" -> handleSessionStatus(props);
+                case "session.error" -> handleSessionError(props);
+                default -> {
+                    // server.connected, file.watcher.*, pty.*, ... are irrelevant here
+                }
+            }
+        }
+
+        @SuppressWarnings("unchecked")
+        private void handlePartUpdated(Map<String, Object> props) {
+            Map<String, Object> part = props.get("part") instanceof Map<?, ?> p
+                    ? (Map<String, Object>) p : null;
+            if (part == null || !cliSessionId.equals(str(part.get("sessionID")))) {
+                return;
+            }
+            Instant now = clock.now();
+            String partType = str(part.get("type"));
+            String messageId = str(part.get("messageID"));
+            String partId = str(part.get("id"));
+
+            if (messageId != null && userMessages.contains(messageId)) {
+                return;
+            }
+
+            if ("text".equals(partType)) {
+                String full = str(part.get("text"));
+                if (full == null) {
+                    return;
+                }
+                int prev = partSeen.getOrDefault(partId, 0);
+                String suffix = full.length() > prev ? full.substring(prev) : "";
+                Object explicitDelta = props.get("delta");
+                String chunk = explicitDelta instanceof String s && !s.isEmpty() ? s : suffix;
+                if (!chunk.isEmpty()) {
+                    partSeen.put(partId, full.length());
+                    // Only assistant-message text parts form the persisted answer body; reasoning
+                    // must stay out (models routinely open their CoT by restating the prompt).
+                    if (messageId != null && assistantMessages.contains(messageId)) {
+                        messageText.computeIfAbsent(messageId, k -> new StringBuilder()).append(chunk);
+                    }
+                    emitChunk(sessionId, new SessionStreamChunk.ContentChunk(sessionId, chunk, now));
+                }
+            } else if ("reasoning".equals(partType)) {
+                String full = str(part.get("text"));
+                if (full == null) {
+                    return;
+                }
+                int prev = partSeen.getOrDefault(partId, 0);
+                String suffix = full.length() > prev ? full.substring(prev) : "";
+                Object explicitDelta = props.get("delta");
+                String chunk = explicitDelta instanceof String s && !s.isEmpty() ? s : suffix;
+                if (!chunk.isEmpty()) {
+                    partSeen.put(partId, full.length());
+                    emitChunk(sessionId, new SessionStreamChunk.ThinkingChunk(sessionId, chunk, now));
+                }
+            } else if ("tool".equals(partType)) {
+                String callId = str(part.get("callID"));
+                String toolName = str(part.get("tool"));
+                Map<String, Object> state = part.get("state") instanceof Map<?, ?> st
+                        ? (Map<String, Object>) st : Map.of();
+                String status = switch (str(state.get("status"))) {
+                    case "completed" -> "SUCCESS";
+                    case "error" -> "FAILED";
+                    default -> "RUNNING";
+                };
+                String output = str(state.get("output"));
+                emitChunk(sessionId, new SessionStreamChunk.ToolCallChunk(sessionId,
+                        callId == null ? partId : callId,
+                        toolName == null ? "unknown" : toolName,
+                        jsonValue(state.get("input")),
+                        output, status, now));
+            } else if ("step-finish".equals(partType)) {
+                SessionUsage usage = usageFromTokens(part.get("tokens"));
+                if (usage != null) {
+                    emitChunk(sessionId, new SessionStreamChunk.UsageChunk(sessionId, usage, now));
+                }
+            }
+            // step-start / snapshot / patch parts carry nothing the chat view needs today.
+        }
+
+        @SuppressWarnings("unchecked")
+        private void handleMessageUpdated(Map<String, Object> props) {
+            Map<String, Object> info = props.get("info") instanceof Map<?, ?> i
+                    ? (Map<String, Object>) i : null;
+            if (info == null || !cliSessionId.equals(str(info.get("sessionID")))) {
+                return;
+            }
+            String messageId = str(info.get("id"));
+            String role = str(info.get("role"));
+            if ("assistant".equals(role)) {
+                if (messageId != null) {
+                    assistantMessages.add(messageId);
+                }
+            } else if ("user".equals(role)) {
+                if (messageId != null) {
+                    userMessages.add(messageId);
+                }
+                return;
+            }
+            if (!"assistant".equals(role)) {
+                return;
+            }
+            Map<String, Object> time = info.get("time") instanceof Map<?, ?> t
+                    ? (Map<String, Object>) t : Map.of();
+            boolean completed = time.get("completed") != null;
+            if (!completed || messageId == null || !persistedMessages.add(messageId)) {
+                return;
+            }
+            StringBuilder text = messageText.get(messageId);
+            String content = text == null ? "" : text.toString();
+            SessionUsage usage = usageFromTokens(info.get("tokens"));
+            if (content.isEmpty() && usage == null) {
+                // A turn that died on a provider error still "completes" with no parts — keep
+                // such husks out of history so reloads show only real replies.
+                log.warn("opencode", "assistant.empty-completion-skipped",
+                        "sessionId", sessionId, "messageId", messageId);
+                return;
+            }
+            assistantPersistedSinceSend = true;
+            sessions.insertMessage(new SessionMessage(UUID.randomUUID().toString(), sessionId,
+                    Role.ASSISTANT, content, List.of(), usage, false, clock.now()));
+            log.info("opencode", "assistant.persisted", "sessionId", sessionId,
+                    "messageId", messageId, "chars", content.length());
+            if (usage != null) {
+                Session latest = sessions.find(sessionId).orElse(null);
+                if (latest != null) {
+                    Session updated = latest.withCumulativeUsage(latest.cumulativeUsage().add(usage));
+                    sessions.update(updated);
+                    writeback(updated);
+                }
+            }
+        }
+
+        private void handleSessionStatus(Map<String, Object> props) {
+            if (!cliSessionId.equals(str(props.get("sessionID")))) {
+                return;
+            }
+            Map<String, Object> status = props.get("status") instanceof Map<?, ?> s
+                    ? (Map<String, Object>) s : Map.of();
+            if ("idle".equals(str(status.get("type")))) {
+                // Turn ended; if nothing was produced and an error was buffered, persist it so the
+                // failure is visible after reload instead of living only in the SSE stream.
+                String errName = pendingErrorName;
+                String errMsg = pendingErrorMessage;
+                if (!assistantPersistedSinceSend && errName != null) {
+                    pendingErrorName = null;
+                    pendingErrorMessage = null;
+                    String body = (errName + (errMsg == null ? "" : ": " + errMsg));
+                    sessions.insertMessage(new SessionMessage(UUID.randomUUID().toString(),
+                            sessionId, Role.ERROR, body, List.of(), null, true, clock.now()));
+                    log.error("opencode", "turn.failed", "sessionId", sessionId,
+                            "errorName", errName, "errorMessage", errMsg);
+                }
+                long nowMs = System.currentTimeMillis();
+                if (nowMs - lastDoneAt > 300) {
+                    lastDoneAt = nowMs;
+                    emitChunk(sessionId, new SessionStreamChunk.DoneChunk(sessionId, cliSessionId, clock.now()));
+                }
+            }
+            // busy/retry drive no chat chunks; the UI spinner is bounded by done/error.
+        }
+
+        @SuppressWarnings("unchecked")
+        private void handleSessionError(Map<String, Object> props) {
+            if (props.get("sessionID") != null && !cliSessionId.equals(str(props.get("sessionID")))) {
+                return;
+            }
+            Map<String, Object> error = props.get("error") instanceof Map<?, ?> e
+                    ? (Map<String, Object>) e : Map.of();
+            String name = str(error.get("name"));
+            String message = str(error.get("message"));
+            pendingErrorName = name == null ? "OPENCODE_ERROR" : name;
+            pendingErrorMessage = message;
+            log.warn("opencode", "session.error", "sessionId", sessionId,
+                    "errorName", pendingErrorName, "errorMessage", message);
+            emitChunk(sessionId, new SessionStreamChunk.ErrorChunk(sessionId,
+                    pendingErrorName, message, clock.now()));
+        }
+    }
+
+    private void ensureUpstream(String sessionId, int port, String cliSessionId) {
+        Upstream up = upstreams.get(sessionId);
+        if (up == null) {
+            up = new Upstream(sessionId, port, cliSessionId);
+            upstreams.put(sessionId, up);
+            up.start();
+        }
+    }
+
+    private void stopUpstream(String sessionId) {
+        Upstream up = upstreams.remove(sessionId);
+        if (up != null) {
+            up.stop();
+        }
+    }
+
+    private void checkStalledUpstreams() {
+        for (Upstream up : upstreams.values()) {
+            if (up.stale()) {
+                // Closing the body unblocks readLine(); the reader loop reconnects with
+                // Last-Event-ID, exactly like OpenChamber's stall recovery.
+                log.warn("opencode", "upstream.stall-force-reconnect", "sessionId", up.sessionId,
+                        "silentMs", System.currentTimeMillis() - up.lastEventAt);
+                up.closeBody();
+            }
+        }
+    }
+
+    private SessionUsage usageFromTokens(Object tokensObj) {
+        if (!(tokensObj instanceof Map<?, ?> tokens)) {
+            return null;
+        }
+        Long input = longOrNull(tokens.get("input"));
+        Long output = longOrNull(tokens.get("output"));
+        Long reasoning = longOrNull(tokens.get("reasoning"));
+        long cacheRead = nvl(longOrNull(cacheTokens(tokens).get("read")));
+        long cacheWrite = nvl(longOrNull(cacheTokens(tokens).get("write")));
+        if (input == null && output == null && reasoning == null) {
+            return null;
+        }
+        long total = nvl(input) + nvl(output) + nvl(reasoning) + cacheRead + cacheWrite;
+        return new SessionUsage(input, output, total);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> cacheTokens(Object tokens) {
+        if (tokens instanceof Map<?, ?> m && m.get("cache") instanceof Map<?, ?> c) {
+            return (Map<String, Object>) c;
+        }
+        return Map.of();
+    }
+
+    private static long nvl(Long v) {
+        return v == null ? 0L : v;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static String str(Object v) {
+        return v == null ? null : String.valueOf(v);
+    }
+
+    /** Compact JSON encoding for arbitrary decoded-MiniJson values (tool inputs etc.). */
+    private static String jsonValue(Object v) {
+        StringBuilder sb = new StringBuilder();
+        appendJsonValue(sb, v);
+        return sb.toString();
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void appendJsonValue(StringBuilder sb, Object v) {
+        if (v == null) {
+            sb.append("null");
+        } else if (v instanceof String s) {
+            sb.append('"').append(escapeJson(s)).append('"');
+        } else if (v instanceof Number n) {
+            sb.append(n);
+        } else if (v instanceof Boolean b) {
+            sb.append(b);
+        } else if (v instanceof Map<?, ?> m) {
+            sb.append('{');
+            boolean first = true;
+            for (Map.Entry<?, ?> e : m.entrySet()) {
+                if (!first) {
+                    sb.append(',');
+                }
+                first = false;
+                appendJsonValue(sb, String.valueOf(e.getKey()));
+                sb.append(':');
+                appendJsonValue(sb, e.getValue());
+            }
+            sb.append('}');
+        } else if (v instanceof Iterable<?> list) {
+            sb.append('[');
+            boolean first = true;
+            for (Object item : list) {
+                if (!first) {
+                    sb.append(',');
+                }
+                first = false;
+                appendJsonValue(sb, item);
+            }
+            sb.append(']');
+        } else {
+            sb.append('"').append(escapeJson(String.valueOf(v))).append('"');
+        }
+    }
+
+    private static Long longOrNull(Object v) {
+        if (v instanceof Number n) {
+            return n.longValue();
+        }
+        if (v != null) {
+            try {
+                return Long.parseLong(String.valueOf(v));
+            } catch (NumberFormatException ignored) {
+                return null;
+            }
+        }
+        return null;
+    }
+
+    private static String escapeJson(String s) {
+        return s == null ? "" : s.replace("\\", "\\\\").replace("\"", "\\\"")
+                .replace("\r", "\\r").replace("\n", "\\n").replace("\t", "\\t");
+    }
+
+    private static GateTask progress(GateTask task, int percent, String label) {
+        return new GateTask(task.id(), task.type(), task.ticketNo(), task.sessionId(),
+                GateTaskStatus.RUNNING, task.startedAt(), null,
+                "{\"percent\":" + percent + ",\"label\":\"" + label + "\"}", null);
+    }
+
+    private static GateTask success(GateTask task, String resultJson) {
+        return new GateTask(task.id(), task.type(), task.ticketNo(), task.sessionId(),
+                GateTaskStatus.SUCCEEDED, task.startedAt(), null, resultJson, null);
+    }
+
+    private static GateTask fail(GateTask task, Throwable e) {
+        int code = e instanceof GateException ge ? ge.code().code() : 70;
+        String name = e instanceof GateException ge ? ge.code().name() : "INTERNAL";
+        String message = e instanceof GateException ge2 ? ge2.getMessage() : "internal error";
+        return new GateTask(task.id(), task.type(), task.ticketNo(), task.sessionId(),
+                GateTaskStatus.FAILED, task.startedAt(), null, null,
+                "{\"error_code\":" + code + ",\"error\":\"" + name
+                        + "\",\"message\":\"" + escapeJson(message) + "\"}");
+    }
+
+    // -------------------------------------------------------------------------------------------
+    // Serve process management
+    // -------------------------------------------------------------------------------------------
+
+    /**
+     * Throws when something already answers /health on the port BEFORE we spawn our own serve —
+     * an orphaned opencode process from a previous backend run. Reusing it would silently route
+     * the session onto a server with stale in-memory config (e.g. a default agent that has since
+     * been renamed), so the session must fail loudly instead.
+     */
+    private void assertPortFree(int port) {
+        try {
+            HttpResponse<String> resp = http.send(
+                    HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/health"))
+                            .timeout(Duration.ofMillis(500)).GET().build(),
+                    HttpResponse.BodyHandlers.ofString());
+            if (resp.statusCode() == 200) {
+                throw new GateException(GateErrorCode.GATE_ERROR_IO,
+                        "port " + port + " is already served by a stale opencode process from an "
+                                + "earlier run; kill it (or adjust session.port_range in gate.toml) "
+                                + "and retry");
+            }
+        } catch (GateException e) {
+            log.error("opencode", "start.refused-stale-port", "port", port);
+            throw e;
+        } catch (Exception ignored) {
+            // nothing listening -> port is genuinely free
+        }
+    }
 
     private void spawnServe(int port, String clonePath) {
         try {
@@ -224,7 +919,11 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
             pb.redirectOutput(ProcessBuilder.Redirect.DISCARD);
             Process p = pb.start();
             serveProcesses.put(port, p);
+            pidRegistry.record(p.pid());
+            log.info("opencode", "serve.spawned", "port", port,
+                    "pid", p.pid(), "clonePath", clonePath);
         } catch (IOException e) {
+            log.error("opencode", "serve.spawn-failed", "port", port, "error", String.valueOf(e));
             throw new GateException(GateErrorCode.GATE_ERROR_IO,
                     "cannot spawn opencode serve on port " + port, e);
         }
@@ -285,102 +984,15 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                 "opencode /session response missing id: " + resp.body());
     }
 
-    private void runSend(GateTask task, Session session, String message) {
-        try (AutoCloseable ignored = ticketLocks.acquire(session.ticketNo())) {
-            Integer port = sessionPorts.get(session.id());
-            if (port == null || session.cliSessionId() == null) {
-                throw new GateException(GateErrorCode.USAGE, "session has no opencode endpoint");
-            }
-            AgentConfig config = agentConfigs.find(session.agentConfigId()).orElseThrow();
-            tasks.update(progress(task, 10, "发送到 opencode"));
-            String body = messageBody(config, message);
-            HttpResponse<String> resp = post("http://127.0.0.1:" + port + "/session/"
-                    + session.cliSessionId() + "/message", body);
-            tasks.update(progress(task, 70, "解析 opencode 响应"));
-            ParsedOutput parsed = parseResponse(resp.body());
-            Instant now = clock.now();
-            if (parsed.text != null || parsed.usage != null) {
-                sessions.insertMessage(new SessionMessage(UUID.randomUUID().toString(), session.id(),
-                        Role.ASSISTANT, parsed.text == null ? "" : parsed.text, List.of(),
-                        parsed.usage, parsed.degraded, now));
-                if (parsed.text != null) {
-                    emitChunk(session.id(), new SessionStreamChunk.ContentChunk(session.id(), parsed.text, now));
-                }
-                if (parsed.usage != null) {
-                    emitChunk(session.id(), new SessionStreamChunk.UsageChunk(session.id(), parsed.usage, now));
-                }
-            } else {
-                sessions.insertMessage(new SessionMessage(UUID.randomUUID().toString(), session.id(),
-                        Role.ERROR, resp.body(), List.of(), null, true, now));
-                emitChunk(session.id(), new SessionStreamChunk.ErrorChunk(session.id(), "OPENCODE_ERROR", resp.body(), now));
-            }
-            SessionUsage cumulative = session.cumulativeUsage().add(
-                    parsed.usage == null ? SessionUsage.EMPTY : parsed.usage);
-            Session updated = session.withCumulativeUsage(cumulative);
-            sessions.update(updated);
-            writeback(updated);
-            emitChunk(session.id(), new SessionStreamChunk.DoneChunk(session.id(), session.id(), now));
-            tasks.update(success(task, "{\"message_count\":" + sessions.findMessages(session.id()).size() + "}"));
-        } catch (Throwable e) {
-            emitChunk(session.id(), new SessionStreamChunk.ErrorChunk(session.id(), "INTERNAL_ERROR", e.getMessage(), clock.now()));
-            tasks.update(fail(task, e));
-        }
-    }
-
-    private static String messageBody(AgentConfig config, String message) {
-        StringBuilder body = new StringBuilder("{\"parts\":[{\"type\":\"text\",\"text\":\"")
-                .append(escapeJson(message)).append("\"}]");
-        ModelRef model = ModelRef.parse(config.model());
-        if (model != null) {
-            body.append(",\"model\":{\"providerID\":\"")
-                    .append(escapeJson(model.providerId()))
-                    .append("\",\"modelID\":\"")
-                    .append(escapeJson(model.modelId()))
-                    .append("\"}");
-        }
-        return body.append('}').toString();
-    }
-
-    private record ModelRef(String providerId, String modelId) {
-        private static ModelRef parse(String value) {
-            if (value == null || value.isBlank()) {
-                return null;
-            }
-            int slash = value.indexOf('/');
-            if (slash <= 0 || slash >= value.length() - 1) {
-                return null;
-            }
-            return new ModelRef(value.substring(0, slash), value.substring(slash + 1));
-        }
-    }
-
-    private void writeback(Session session) {
-        try {
-            if (session.cumulativeUsage() != null && session.cumulativeUsage().totalTokens() != null) {
-                tickets.updateExecTokens(session.ticketNo(), session.cumulativeUsage().totalTokens(),
-                        "agent_cli", clock.now());
-            }
-        } catch (Exception ignored) {
-            // bypass-only
-        }
-    }
-
-    private void killProcess(Integer port) {
-        if (port == null) {
-            return;
-        }
-        Process p = serveProcesses.remove(port);
-        if (p != null) {
-            p.descendants().forEach(ProcessHandle::destroyForcibly);
-            p.destroyForcibly();
-        }
-    }
-
     private HttpResponse<String> post(String url, String body) {
+        return post(url, body, Duration.ofSeconds(30));
+    }
+
+    private HttpResponse<String> post(String url, String body, Duration timeout) {
         try {
             HttpRequest req = HttpRequest.newBuilder(URI.create(url))
                     .header("Content-Type", "application/json")
-                    .timeout(Duration.ofSeconds(30))
+                    .timeout(timeout)
                     .POST(HttpRequest.BodyPublishers.ofString(body))
                     .build();
             return http.send(req, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
@@ -400,158 +1012,14 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
         }
     }
 
-    @SuppressWarnings("unchecked")
-    private static ParsedOutput parseResponse(String responseBody) {
-        if (responseBody == null || responseBody.isBlank()) {
-            return new ParsedOutput(null, null, true);
+    private void killProcess(Integer port) {
+        if (port == null) {
+            return;
         }
-        try {
-            Object parsed = MiniJson.parse(responseBody.trim());
-            if (!(parsed instanceof Map<?, ?> m)) {
-                return new ParsedOutput(null, null, false);
-            }
-            Map<String, Object> obj = (Map<String, Object>) m;
-            String text = extractText(obj.get("message"), obj.get("text"), obj.get("content"));
-            if (text == null && obj.get("parts") instanceof List<?> partsList) {
-                StringBuilder sb = new StringBuilder();
-                for (Object p : partsList) {
-                    if (p instanceof Map<?, ?> pm) {
-                        Map<String, Object> pmm = (Map<String, Object>) pm;
-                        Object type = pmm.get("type");
-                        if ("text".equals(String.valueOf(type))) {
-                            Object t = pmm.get("text");
-                            if (t != null) {
-                                if (sb.length() > 0) sb.append("\n");
-                                sb.append(t);
-                            }
-                        }
-                    }
-                }
-                if (sb.length() > 0) {
-                    text = sb.toString();
-                }
-            }
-            SessionUsage usage = null;
-            Object usageObj = obj.get("usage");
-            if (usageObj == null && obj.get("info") instanceof Map<?, ?> infoMap) {
-                usageObj = ((Map<?, ?>) infoMap).get("tokens");
-            }
-            if (usageObj == null && obj.get("parts") instanceof List<?> partsList) {
-                for (Object p : partsList) {
-                    if (p instanceof Map<?, ?> pm) {
-                        Map<String, Object> pmm = (Map<String, Object>) pm;
-                        if (pmm.get("tokens") instanceof Map<?, ?>) {
-                            usageObj = pmm.get("tokens");
-                            break;
-                        }
-                    }
-                }
-            }
-            if (usageObj instanceof Map<?, ?> um) {
-                Map<String, Object> usageMap = (Map<String, Object>) um;
-                Long prompt = longOrNull(usageMap.get("input_tokens"));
-                if (prompt == null) {
-                    prompt = longOrNull(usageMap.get("input"));
-                }
-                if (prompt == null) {
-                    prompt = longOrNull(usageMap.get("prompt_tokens"));
-                }
-                Long completion = longOrNull(usageMap.get("output_tokens"));
-                if (completion == null) {
-                    completion = longOrNull(usageMap.get("output"));
-                }
-                if (completion == null) {
-                    completion = longOrNull(usageMap.get("completion_tokens"));
-                }
-                Long total = longOrNull(usageMap.get("total_tokens"));
-                if (total == null) {
-                    total = longOrNull(usageMap.get("total"));
-                }
-                if (prompt != null || completion != null || total != null) {
-                    usage = new SessionUsage(prompt, completion, total);
-                }
-            }
-            boolean degraded = usage == null || (text == null && (responseBody.contains("error") || responseBody.contains("FAIL")));
-            return new ParsedOutput(text, usage, degraded);
-        } catch (Throwable e) {
-            System.err.println("Failed to parse opencode response: " + e.getMessage());
-            e.printStackTrace();
-            return new ParsedOutput(null, null, true);
+        Process p = serveProcesses.remove(port);
+        if (p != null) {
+            p.descendants().forEach(ProcessHandle::destroyForcibly);
+            p.destroyForcibly();
         }
-    }
-
-    @SuppressWarnings("unchecked")
-    private static String extractText(Object message, Object directText, Object directContent) {
-        if (directText != null) {
-            return String.valueOf(directText);
-        }
-        if (directContent instanceof String s) {
-            return s;
-        }
-        if (message instanceof Map<?, ?> m) {
-            Map<String, Object> mm = (Map<String, Object>) m;
-            Object content = mm.get("content");
-            if (content instanceof List<?> list) {
-                for (Object o : list) {
-                    if (o instanceof Map<?, ?> cm) {
-                        Map<String, Object> cmm = (Map<String, Object>) cm;
-                        Object type = cmm.get("type");
-                        if (type == null || "text".equals(String.valueOf(type))) {
-                            Object text = cmm.get("text");
-                            if (text != null) {
-                                return String.valueOf(text);
-                            }
-                        }
-                    }
-                }
-            }
-            Object text = mm.get("text");
-            if (text != null) {
-                return String.valueOf(text);
-            }
-        }
-        return null;
-    }
-
-    private static Long longOrNull(Object v) {
-        if (v instanceof Number n) {
-            return n.longValue();
-        }
-        if (v != null) {
-            try {
-                return Long.parseLong(String.valueOf(v));
-            } catch (NumberFormatException ignored) {
-                return null;
-            }
-        }
-        return null;
-    }
-
-    private static String escapeJson(String s) {
-        return s == null ? "" : s.replace("\\", "\\\\").replace("\"", "\\\"");
-    }
-
-    private static GateTask progress(GateTask task, int percent, String label) {
-        return new GateTask(task.id(), task.type(), task.ticketNo(), task.sessionId(),
-                GateTaskStatus.RUNNING, task.startedAt(), null,
-                "{\"percent\":" + percent + ",\"label\":\"" + label + "\"}", null);
-    }
-
-    private static GateTask success(GateTask task, String resultJson) {
-        return new GateTask(task.id(), task.type(), task.ticketNo(), task.sessionId(),
-                GateTaskStatus.SUCCEEDED, task.startedAt(), null, resultJson, null);
-    }
-
-    private static GateTask fail(GateTask task, Throwable e) {
-        int code = e instanceof GateException ge ? ge.code().code() : 70;
-        String name = e instanceof GateException ge ? ge.code().name() : "INTERNAL";
-        String message = e instanceof GateException ge2 ? ge2.getMessage() : "internal error";
-        return new GateTask(task.id(), task.type(), task.ticketNo(), task.sessionId(),
-                GateTaskStatus.FAILED, task.startedAt(), null, null,
-                "{\"error_code\":" + code + ",\"error\":\"" + name
-                        + "\",\"message\":\"" + escapeJson(message) + "\"}");
-    }
-
-    private record ParsedOutput(String text, SessionUsage usage, boolean degraded) {
     }
 }

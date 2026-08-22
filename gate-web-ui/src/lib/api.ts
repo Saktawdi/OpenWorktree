@@ -437,16 +437,18 @@ async function consumeSessionStream(no: string, sessionId: string) {
       resolve();
     };
     es.addEventListener("message", (ev) => {
-      const d = JSON.parse((ev as MessageEvent).data);
-      if (d.message?.role === "USER") {
-        /* 历史回放中的用户消息已在界面中 */
-      } else if (d.message?.role === "ASSISTANT") {
-        patchAssistant(no, assistantId, (a) => ({ ...a, text: d.message.content }));
-      }
+      // History replay (event: message) must not touch the live placeholder: the chat is
+      // already rendered from GET /messages when the session opens, and replaying past
+      // assistant messages here would overwrite the streaming reply with the previous one.
+      void ev;
     });
     es.addEventListener("token", (ev) => {
       const d = JSON.parse((ev as MessageEvent).data);
-      patchAssistant(no, assistantId, (a) => ({ ...a, text: a.text + (d.text_delta ?? "") }));
+      patchAssistant(no, assistantId, (a) => ({
+        ...a,
+        text: a.text + (d.text_delta ?? ""),
+        thinking: a.thinking && !a.thinking.done ? { ...a.thinking, done: true } : a.thinking,
+      }));
     });
     es.addEventListener("thinking", (ev) => {
       const d = JSON.parse((ev as MessageEvent).data);
@@ -493,8 +495,31 @@ async function consumeSessionStream(no: string, sessionId: string) {
       if (d.usage) addUsage(no, d.usage.prompt_tokens ?? 0, d.usage.completion_tokens ?? 0);
     });
     es.addEventListener("done", finish);
-    es.addEventListener("error", () => {
+    es.addEventListener("error", (ev) => {
+      let msg = "会话连接中断";
+      const data = (ev as MessageEvent).data;
+      if (data) {
+        try {
+          const d = JSON.parse(data);
+          if (d.error_message) {
+            let detail = String(d.error_message);
+            try {
+              const inner = JSON.parse(detail);
+              if (inner?.data?.message) detail = inner.data.message;
+              else if (inner?.message) detail = inner.message;
+            } catch {
+              /* 非结构化错误体，原样展示 */
+            }
+            msg = `Agent 出错：${detail}`;
+          } else if (d.error_code) {
+            msg = `Agent 出错：${d.error_code}`;
+          }
+        } catch {
+          /* ignore */
+        }
+      }
       patchAssistant(no, assistantId, (a) => ({ ...a, streaming: false }));
+      pushSystemMessage(no, msg, "warn");
       finish();
     });
     setTimeout(() => finish(), 300_000);
@@ -756,7 +781,14 @@ function mapAgentConfig(c: RawAgentConfig): import("./types").AgentConfig {
 
 export async function loadAgentConfigs() {
   const data = await api<{ agent_configs: RawAgentConfig[] }>("/api/agent-configs");
-  appStore.setState({ agents: data.agent_configs.map(mapAgentConfig) });
+  appStore.setState((st) => ({
+    agents: data.agent_configs.map(mapAgentConfig),
+    // Snap an invalid (e.g. demo-era or deleted) selection to a real config so the
+    // composer picker always shows what a new session will actually use.
+    agentId: data.agent_configs.some((c) => c.id === st.agentId)
+      ? st.agentId
+      : (data.agent_configs[0]?.id ?? ""),
+  }));
 }
 
 export async function upsertAgentConfigLive(c: import("./types").AgentConfig): Promise<boolean> {

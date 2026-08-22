@@ -14,6 +14,7 @@ import {
   restoreSession as restoreSessionLocal,
   seedDemo,
   selectTicket,
+  setCreatingSession,
   setStage,
   setVerdict,
   showToast,
@@ -257,11 +258,20 @@ export const actions = {
     return Promise.resolve(true);
   },
   createSession(no: string) {
+    if (appStore.getState().creatingSession[no]) return;
+    setCreatingSession(no, true);
     if (appStore.getState().mode === "live") {
-      void live.createSessionLive(no);
+      void live
+        .createSessionLive(no)
+        .catch(() => {})
+        .finally(() => setCreatingSession(no, false));
       return;
     }
-    createSessionLocal(no);
+    try {
+      createSessionLocal(no);
+    } finally {
+      setCreatingSession(no, false);
+    }
   },
   archiveSession(no: string, id: string) {
     if (appStore.getState().mode === "live") {

@@ -53,7 +53,12 @@ final class WebServer implements AutoCloseable {
 
     @Override
     public void close() {
-        server.stop(0);
-        components.close();
+        try {
+            server.stop(0);
+        } finally {
+            // Adapter cleanup must happen even if the HTTP server fails to stop — orphaned
+            // opencode serve processes outliving the backend are exactly what we must avoid.
+            components.close();
+        }
     }
 }
