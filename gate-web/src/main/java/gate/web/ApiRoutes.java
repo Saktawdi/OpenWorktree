@@ -871,6 +871,9 @@ public final class ApiRoutes {
         return providerDetail(id);
     }
 
+    /** Diff payloads above this size get the --ignore-cr-at-eol cross-check in {@link #workingDiff}. */
+    private static final int EOL_NOISE_THRESHOLD_CHARS = 100_000;
+
     /**
      * V5: live working-tree diff of the ticket clone — {@code git diff HEAD} plus untracked files
      * synthesized as new-file hunks. This is what the review console shows before the first
@@ -886,12 +889,32 @@ public final class ApiRoutes {
         gate.ports.ProcessRunner.ProcRun head = git.run(clone, Map.of(), "rev-parse", "HEAD");
         String baseCommit = head.ok() ? head.stdout().trim() : null;
 
-        StringBuilder diff = new StringBuilder();
         gate.ports.ProcessRunner.ProcRun tracked = baseCommit == null
                 ? git.run(clone, Map.of(), "diff")
                 : git.run(clone, Map.of(), "diff", "HEAD");
-        if (tracked.ok() && !tracked.stdout().isBlank()) {
-            diff.append(tracked.stdout().stripTrailing()).append('\n');
+        String trackedDiff = tracked.ok() ? tracked.stdout() : "";
+
+        // EOL sentinel (T-107 incident): a clone re-checked-out without the pinned
+        // core.autocrlf=false holds CRLF bytes over LF blobs, and git then reports every line
+        // of every file as changed — tens of thousands of noise lines that freeze the diff
+        // console. When the diff is huge but collapses under --ignore-cr-at-eol, serve the
+        // normalized diff plus a warning instead. Genuine large diffs (lock files, vendored
+        // trees) survive normalization unchanged and pass through as-is.
+        String eolWarning = null;
+        if (trackedDiff.length() > EOL_NOISE_THRESHOLD_CHARS) {
+            gate.ports.ProcessRunner.ProcRun normalized = baseCommit == null
+                    ? git.run(clone, Map.of(), "diff", "--ignore-cr-at-eol")
+                    : git.run(clone, Map.of(), "diff", "HEAD", "--ignore-cr-at-eol");
+            if (normalized.ok() && normalized.stdout().length() * 10 < trackedDiff.length()) {
+                eolWarning = "已忽略大量仅换行符（CRLF/LF）差异：该 clone 的检出未在 core.autocrlf=false 下进行，"
+                        + "建议重建工作区；以下仅显示真实的内容变更。";
+                trackedDiff = normalized.stdout();
+            }
+        }
+
+        StringBuilder diff = new StringBuilder();
+        if (!trackedDiff.isBlank()) {
+            diff.append(trackedDiff.stripTrailing()).append('\n');
         }
         gate.ports.ProcessRunner.ProcRun untracked = git.run(clone, Map.of(), "ls-files", "--others", "--exclude-standard");
         if (untracked.ok()) {
@@ -908,6 +931,9 @@ public final class ApiRoutes {
         body.put("source", "working");
         body.put("base_commit", baseCommit);
         body.put("diff", diff.toString());
+        if (eolWarning != null) {
+            body.put("eol_warning", eolWarning);
+        }
         return new Response(200, body);
     }
 

@@ -52,6 +52,8 @@ export interface AppState {
   selectedNo: string | null;
   chats: Record<string, ChatItem[]>;
   diffs: Record<string, DiffFile[]>;
+  /** 变更对比的行尾噪声警告（key = 工单号），来自 /diff 端点的 eol_warning。 */
+  diffWarnings: Record<string, string>;
   snapshots: Record<string, Snapshot[]>;
   findings: Record<string, Finding[]>;
   verdicts: Record<string, VerdictInfo>;
@@ -98,6 +100,7 @@ export const appStore = create<AppState>(() => ({
   selectedNo: null,
   chats: {},
   diffs: {},
+  diffWarnings: {},
   snapshots: {},
   findings: {},
   verdicts: {},
@@ -470,8 +473,11 @@ export function setTask(no: string, task: TaskProgress | null) {
   });
 }
 
-export function setDiffs(no: string, files: DiffFile[]) {
-  set((st) => ({ diffs: { ...st.diffs, [no]: files } }));
+export function setDiffs(no: string, files: DiffFile[], eolWarning?: string) {
+  set((st) => ({
+    diffs: { ...st.diffs, [no]: files },
+    diffWarnings: { ...st.diffWarnings, [no]: eolWarning ?? "" },
+  }));
 }
 
 export function addSnapshot(no: string, snap: Snapshot) {

@@ -139,9 +139,9 @@ export async function selectTicketLive(no: string) {
   appStore.setState({ selectedNo: no, centerTab: "chat", highlight: null });
   const loadDiff = async () => {
     try {
-      const diffRes = await api<{ diff: string }>(`/api/tickets/${no}/diff`);
+      const diffRes = await api<{ diff: string; eol_warning?: string }>(`/api/tickets/${no}/diff`);
       const files: DiffFile[] = diffRes.diff.trim() ? parseUnifiedDiff(diffRes.diff) : [];
-      setDiffs(no, files);
+      setDiffs(no, files, diffRes.eol_warning);
     } catch {
       setDiffs(no, []);
     }

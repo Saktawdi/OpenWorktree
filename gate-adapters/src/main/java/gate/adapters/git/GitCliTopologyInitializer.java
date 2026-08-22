@@ -108,6 +108,19 @@ public final class GitCliTopologyInitializer implements TopologyInitializer {
         git.must(cloneRepo, "config", "user.email", "agent@localhost");
         git.must(cloneRepo, "config", "core.autocrlf", "false");
         git.must(cloneRepo, "config", "core.safecrlf", "false");
+
+        // Under the pinned core.autocrlf=false a fresh clone must be byte-identical to HEAD.
+        // A non-empty status means the checkout itself was mangled (e.g. the auth repo carries
+        // .gitattributes eol rules), and every later working diff would degrade to pure
+        // line-ending noise (the T-107 incident: 291 files, ±39k phantom lines). Fail fast
+        // instead of seeding a poisoned workspace.
+        var status = git.run(cloneRepo, "status", "--porcelain");
+        if (status.ok() && !status.stdout().isBlank()) {
+            throw new GateException(GateErrorCode.GATE_ERROR_IO, "fresh clone of "
+                    + authRepo.pathString() + " into " + cloneDir + " is not clean: "
+                    + status.stdout().lines().findFirst().orElse("?")
+                    + " — checkout line-ending config disagrees with HEAD");
+        }
         return cloneRepo;
     }
 
