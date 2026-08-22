@@ -13,6 +13,7 @@ import gate.domain.session.SessionMessage;
 import gate.domain.session.SessionStatus;
 import gate.domain.session.SessionStreamChunk;
 import gate.domain.session.SessionUsage;
+import gate.domain.session.ToolCall;
 import gate.domain.task.GateTask;
 import gate.domain.task.GateTaskStatus;
 import gate.ports.AgentConfigRepository;
@@ -38,6 +39,7 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -315,6 +317,20 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
             AgentConfig config = agentConfigs.find(session.agentConfigId()).orElseThrow();
             tasks.update(progress(task, 20, "触发 opencode 回合"));
             String body = messageBody(config, message);
+            Upstream up = upstreams.get(session.id());
+            if (up != null) {
+                // Reset BEFORE firing the request: once prompt_async lands, events for this turn
+                // can arrive within milliseconds and must not be wiped by post-send cleanup.
+                up.assistantPersistedSinceSend = false;
+                up.pendingErrorName = null;
+                up.pendingErrorMessage = null;
+                up.turnText.setLength(0);
+                synchronized (up.turnTools) {
+                    up.turnTools.clear();
+                }
+                up.turnUsage = null;
+                up.turnHasNewContent = false;
+            }
             HttpResponse<String> resp = post("http://127.0.0.1:" + port + "/session/"
                     + session.cliSessionId() + "/prompt_async", body);
             if (resp.statusCode() / 100 != 2) {
@@ -323,12 +339,6 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                         "bodySnippet", resp.body() == null ? "" : resp.body().substring(0, Math.min(200, resp.body().length())));
                 throw new GateException(GateErrorCode.GATE_ERROR_IO,
                         "opencode prompt_async failed: HTTP " + resp.statusCode() + " " + resp.body());
-            }
-            Upstream up = upstreams.get(session.id());
-            if (up != null) {
-                up.assistantPersistedSinceSend = false;
-                up.pendingErrorName = null;
-                up.pendingErrorMessage = null;
             }
             log.info("opencode", "prompt_async.accepted", "sessionId", session.id(),
                     "cliSessionId", session.cliSessionId(), "chars", message.length());
@@ -424,12 +434,27 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
         final String cliSessionId;
         final Thread thread;
         final Map<String, Integer> partSeen = new ConcurrentHashMap<>();
-        final Map<String, StringBuilder> messageText = new ConcurrentHashMap<>();
-        final java.util.Set<String> persistedMessages = ConcurrentHashMap.newKeySet();
+        // Final snapshot text per assistant message: messageId -> (partId -> latest full text).
+        // Replace-not-append keeps persistence idempotent: opencode re-announces a finished
+        // step's text under a fresh part id, and the former append model doubled exactly that
+        // content in persisted history (visible after switching sessions).
+        final Map<String, LinkedHashMap<String, String>> messageParts = new ConcurrentHashMap<>();
+        // Tool calls per assistant message keyed by upstream callID; upserted as state
+        // transitions stream in and drained into the persisted ASSISTANT row on completion,
+        // so reloading a session re-renders 工具调用 instead of degrading to plain text.
+        final Map<String, LinkedHashMap<String, ToolCallState>> toolsByMessage = new ConcurrentHashMap<>();
+        final java.util.Set<String> mergedMessages = ConcurrentHashMap.newKeySet();
         // Roles are announced via message.updated before a message's parts stream in; user-message
         // parts echo the prompt verbatim and must never surface as assistant content chunks.
         final java.util.Set<String> assistantMessages = ConcurrentHashMap.newKeySet();
         final java.util.Set<String> userMessages = ConcurrentHashMap.newKeySet();
+        // Turn grouping (openchamber-style): an agentic turn spans MANY assistant messages
+        // (one per step). Everything accumulates here and persists as ONE reply when the
+        // turn goes idle — instead of one noisy bubble per intermediate CoT step.
+        final StringBuilder turnText = new StringBuilder();
+        final List<TurnTool> turnTools = java.util.Collections.synchronizedList(new ArrayList<>());
+        volatile SessionUsage turnUsage;
+        volatile boolean turnHasNewContent;
         volatile boolean stopped;
         volatile String lastEventId;
         volatile long lastEventAt = System.currentTimeMillis();
@@ -457,6 +482,22 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
             stopped = true;
             closeBody();
             thread.interrupt();
+        }
+
+        /** One journaled tool call within the current turn; updated in place as state streams. */
+        private record TurnTool(String callId, String name, String inputJson, String output, String status) {
+        }
+
+        private void upsertTurnTool(String callId, String name, String inputJson, String output, String status) {
+            synchronized (turnTools) {
+                for (int i = 0; i < turnTools.size(); i++) {
+                    if (turnTools.get(i).callId().equals(callId)) {
+                        turnTools.set(i, new TurnTool(callId, name, inputJson, output, status));
+                        return;
+                    }
+                }
+                turnTools.add(new TurnTool(callId, name, inputJson, output, status));
+            }
         }
 
         void closeBody() {
@@ -584,14 +625,19 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                 String suffix = full.length() > prev ? full.substring(prev) : "";
                 Object explicitDelta = props.get("delta");
                 String chunk = explicitDelta instanceof String s && !s.isEmpty() ? s : suffix;
-                if (!chunk.isEmpty()) {
+                if (!chunk.isEmpty() || !full.isEmpty()) {
                     partSeen.put(partId, full.length());
-                    // Only assistant-message text parts form the persisted answer body; reasoning
-                    // must stay out (models routinely open their CoT by restating the prompt).
-                    if (messageId != null && assistantMessages.contains(messageId)) {
-                        messageText.computeIfAbsent(messageId, k -> new StringBuilder()).append(chunk);
+                    // Snapshot text is keyed by its own messageId and only judged at that
+                    // message's completion, so buffering before the role announcement is safe;
+                    // dropping it here produced empty rows for fast steps (parts raced ahead of
+                    // message.updated). Known user messages are excluded above.
+                    if (messageId != null) {
+                        messageParts.computeIfAbsent(messageId, k -> new LinkedHashMap<>())
+                                .put(partId, full);
                     }
-                    emitChunk(sessionId, new SessionStreamChunk.ContentChunk(sessionId, chunk, now));
+                    if (!chunk.isEmpty()) {
+                        emitChunk(sessionId, new SessionStreamChunk.ContentChunk(sessionId, chunk, now));
+                    }
                 }
             } else if ("reasoning".equals(partType)) {
                 String full = str(part.get("text"));
@@ -617,13 +663,17 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                     default -> "RUNNING";
                 };
                 String output = str(state.get("output"));
+                String inputJson = jsonValue(state.get("input"));
                 emitChunk(sessionId, new SessionStreamChunk.ToolCallChunk(sessionId,
                         callId == null ? partId : callId,
                         toolName == null ? "unknown" : toolName,
-                        jsonValue(state.get("input")),
+                        inputJson,
                         output, status, now));
-            } else if ("step-finish".equals(partType)) {
-                SessionUsage usage = usageFromTokens(part.get("tokens"));
+                // Journal the call so the persisted turn reply keeps tool cards after reload.
+                upsertTurnTool(callId == null ? partId : callId,
+                        toolName == null ? "unknown" : toolName, inputJson, output, status);
+                turnHasNewContent = true;
+            } else if ("step-finish".equals(partType)) {                SessionUsage usage = usageFromTokens(part.get("tokens"));
                 if (usage != null) {
                     emitChunk(sessionId, new SessionStreamChunk.UsageChunk(sessionId, usage, now));
                 }
@@ -647,6 +697,9 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
             } else if ("user".equals(role)) {
                 if (messageId != null) {
                     userMessages.add(messageId);
+                    // A user part that raced ahead of this announcement buffered itself; drop it.
+                    messageParts.remove(messageId);
+                    toolsByMessage.remove(messageId);
                 }
                 return;
             }
@@ -656,32 +709,38 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
             Map<String, Object> time = info.get("time") instanceof Map<?, ?> t
                     ? (Map<String, Object>) t : Map.of();
             boolean completed = time.get("completed") != null;
-            if (!completed || messageId == null || !persistedMessages.add(messageId)) {
+            if (!completed || messageId == null || !mergedMessages.add(messageId)) {
                 return;
             }
-            StringBuilder text = messageText.get(messageId);
-            String content = text == null ? "" : text.toString();
-            SessionUsage usage = usageFromTokens(info.get("tokens"));
-            if (content.isEmpty() && usage == null) {
-                // A turn that died on a provider error still "completes" with no parts — keep
-                // such husks out of history so reloads show only real replies.
-                log.warn("opencode", "assistant.empty-completion-skipped",
-                        "sessionId", sessionId, "messageId", messageId);
-                return;
+            // Merge this completed step into the turn reply; persistence happens once at idle.
+            String content = joinedContent(messageId);
+            List<ToolCall> stepTools = drainToolCalls(messageId);
+            SessionUsage stepUsage = usageFromTokens(info.get("tokens"));
+            if (!content.isEmpty()) {
+                if (turnText.length() > 0) {
+                    turnText.append("\n\n");
+                }
+                turnText.append(content);
             }
-            assistantPersistedSinceSend = true;
-            sessions.insertMessage(new SessionMessage(UUID.randomUUID().toString(), sessionId,
-                    Role.ASSISTANT, content, List.of(), usage, false, clock.now()));
-            log.info("opencode", "assistant.persisted", "sessionId", sessionId,
-                    "messageId", messageId, "chars", content.length());
-            if (usage != null) {
-                Session latest = sessions.find(sessionId).orElse(null);
-                if (latest != null) {
-                    Session updated = latest.withCumulativeUsage(latest.cumulativeUsage().add(usage));
-                    sessions.update(updated);
-                    writeback(updated);
+            if (!stepTools.isEmpty()) {
+                synchronized (turnTools) {
+                    for (int i = 0; i < stepTools.size(); i++) {
+                        ToolCall tc = stepTools.get(i);
+                        turnTools.add(new TurnTool("m:" + messageId + ":" + i,
+                                tc.name(), tc.argumentsJson(), tc.resultJson(), "SUCCESS"));
+                    }
                 }
             }
+            if (stepUsage != null) {
+                turnUsage = (turnUsage == null ? SessionUsage.EMPTY : turnUsage).add(stepUsage);
+            }
+            if (!content.isEmpty() || !stepTools.isEmpty() || stepUsage != null) {
+                turnHasNewContent = true;
+                assistantPersistedSinceSend = true;
+            }
+            log.info("opencode", "assistant.step-merged", "sessionId", sessionId,
+                    "messageId", messageId, "chars", content.length(),
+                    "toolCalls", stepTools.size());
         }
 
         private void handleSessionStatus(Map<String, Object> props) {
@@ -691,7 +750,37 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
             Map<String, Object> status = props.get("status") instanceof Map<?, ?> s
                     ? (Map<String, Object>) s : Map.of();
             if ("idle".equals(str(status.get("type")))) {
-                // Turn ended; if nothing was produced and an error was buffered, persist it so the
+                // Turn ended: persist the whole turn (all steps' text + tool calls + summed
+                // usage) as ONE assistant reply — openchamber-style grouping.
+                if (turnHasNewContent) {
+                    String content;
+                    List<ToolCall> tools = new ArrayList<>();
+                    synchronized (turnTools) {
+                        content = turnText.toString();
+                        for (TurnTool tt : turnTools) {
+                            tools.add(new ToolCall(tt.name(), tt.inputJson(), tt.output()));
+                        }
+                        turnTools.clear();
+                    }
+                    SessionUsage usage = turnUsage;
+                    sessions.insertMessage(new SessionMessage(UUID.randomUUID().toString(),
+                            sessionId, Role.ASSISTANT, content, tools, usage, false, clock.now()));
+                    log.info("opencode", "turn.persisted", "sessionId", sessionId,
+                            "chars", content.length(), "toolCalls", tools.size());
+                    if (usage != null) {
+                        Session latest = sessions.find(sessionId).orElse(null);
+                        if (latest != null) {
+                            Session updated = latest.withCumulativeUsage(latest.cumulativeUsage().add(usage));
+                            sessions.update(updated);
+                            writeback(updated);
+                        }
+                    }
+                    turnText.setLength(0);
+                    turnUsage = null;
+                    turnHasNewContent = false;
+                    assistantPersistedSinceSend = true;
+                }
+                // If nothing was produced and an error was buffered, persist it so the
                 // failure is visible after reload instead of living only in the SSE stream.
                 String errName = pendingErrorName;
                 String errMsg = pendingErrorMessage;
@@ -729,6 +818,72 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
             emitChunk(sessionId, new SessionStreamChunk.ErrorChunk(sessionId,
                     pendingErrorName, message, clock.now()));
         }
+
+        /** Upsert one tool call's latest state; reader-thread confined, ordered by first sight. */
+        private void trackToolCall(String messageId, String key, String toolName,
+                                   Map<String, Object> state, String output) {
+            if (messageId == null || userMessages.contains(messageId)) {
+                return;
+            }
+            LinkedHashMap<String, ToolCallState> calls =
+                    toolsByMessage.computeIfAbsent(messageId, k -> new LinkedHashMap<>());
+            ToolCallState st = calls.get(key);
+            if (st == null) {
+                st = new ToolCallState();
+                calls.put(key, st);
+            }
+            if (toolName != null && !toolName.isBlank()) {
+                st.name = toolName;
+            }
+            Object input = state.get("input");
+            if (input != null) {
+                st.argumentsJson = jsonValue(input);
+            }
+            if (output != null) {
+                st.resultJson = output;
+            }
+        }
+
+        private List<ToolCall> drainToolCalls(String messageId) {
+            LinkedHashMap<String, ToolCallState> calls = toolsByMessage.remove(messageId);
+            if (calls == null || calls.isEmpty()) {
+                return List.of();
+            }
+            List<ToolCall> out = new ArrayList<>(calls.size());
+            for (ToolCallState st : calls.values()) {
+                out.add(new ToolCall(st.name, st.argumentsJson, st.resultJson));
+            }
+            return out;
+        }
+
+        /**
+         * Joins the per-part snapshot texts into the persisted body. Adjacent byte-identical
+         * parts are collapsed: opencode re-announces a finished step's final text under a fresh
+         * part id, and that echo is not real content.
+         */
+        private String joinedContent(String messageId) {
+            LinkedHashMap<String, String> parts = messageParts.remove(messageId);
+            if (parts == null || parts.isEmpty()) {
+                return "";
+            }
+            StringBuilder sb = new StringBuilder();
+            String prev = null;
+            for (String t : parts.values()) {
+                if (t == null || t.isEmpty() || t.equals(prev)) {
+                    continue;
+                }
+                sb.append(t);
+                prev = t;
+            }
+            return sb.toString();
+        }
+    }
+
+    /** Mutable accumulator for one upstream tool call; confined to the reader thread. */
+    static final class ToolCallState {
+        String name = "unknown";
+        String argumentsJson = "";
+        String resultJson;
     }
 
     private void ensureUpstream(String sessionId, int port, String cliSessionId) {
