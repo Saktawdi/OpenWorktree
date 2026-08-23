@@ -1,11 +1,16 @@
 package gate.web.project;
 
+import gate.adapters.git.GitCli;
 import gate.domain.config.GateConfig;
 import gate.domain.error.GateErrorCode;
 import gate.domain.error.GateException;
+import gate.domain.git.ObjectId;
+import gate.domain.git.RepoRef;
 import gate.domain.project.Project;
+import gate.ports.ProcessRunner;
 import gate.ports.ProjectRepository;
 import gate.ports.TopologyInitializer;
+import gate.ports.WorkspaceSyncer;
 import gate.web.ApiRoutes;
 import java.io.IOException;
 import java.nio.file.FileSystems;
@@ -28,16 +33,26 @@ public final class ProjectRoutes {
     private final gate.ports.TicketRepository tickets;
     private final TopologyInitializer topologyInitializer;
     private final GateConfig config;
+    private final WorkspaceSyncer workspaceSyncer;
+    private final GitCli git;
 
     public ProjectRoutes(ProjectRepository projects, TopologyInitializer topologyInitializer, GateConfig config) {
         this(projects, null, topologyInitializer, config);
     }
 
     public ProjectRoutes(ProjectRepository projects, gate.ports.TicketRepository tickets, TopologyInitializer topologyInitializer, GateConfig config) {
+        this(projects, tickets, topologyInitializer, config, null, null);
+    }
+
+    public ProjectRoutes(ProjectRepository projects, gate.ports.TicketRepository tickets,
+                         TopologyInitializer topologyInitializer, GateConfig config,
+                         WorkspaceSyncer workspaceSyncer, GitCli git) {
         this.projects = projects;
         this.tickets = tickets;
         this.topologyInitializer = topologyInitializer;
         this.config = config;
+        this.workspaceSyncer = workspaceSyncer;
+        this.git = git;
     }
 
     public ApiRoutes.Response projectList() {
@@ -116,5 +131,58 @@ public final class ProjectRoutes {
 
     private static Path normalizeWorkspace(String raw) {
         return Path.of(raw.trim()).toAbsolutePath().normalize();
+    }
+
+    /**
+     * POST /api/projects/{id}/workspace-sync — 把权威库目标分支的 tip 尽力快进回写项目工作区。
+     *
+     * <p>存量补同步与 DEFERRED 重试的入口：发布时同步未配置/被延迟时，由人在此触发。同步器
+     * ff-only，绝不 force；DEFERRED 只意味着"未同步"，不是失败（note 携带原因）。
+     */
+    public ApiRoutes.Response workspaceSync(String projectId) {
+        Project p = projects.find(projectId).orElseThrow(() -> new GateException(
+                GateErrorCode.USAGE, "no such project: " + projectId));
+        if (workspaceSyncer == null || git == null) {
+            throw new GateException(GateErrorCode.USAGE, "workspace sync is not configured on this gate");
+        }
+        if (p.authRepo() == null || p.authRepo().isBlank()) {
+            throw new GateException(GateErrorCode.USAGE, "project has no auth repo: " + projectId);
+        }
+        Path ws = normalizeWorkspace(p.workspacePath());
+        if (!Files.isDirectory(ws) || !Files.exists(ws.resolve(".git"))) {
+            throw new GateException(GateErrorCode.USAGE,
+                    "workspace is not a git repository: " + ws);
+        }
+        String targetRef = p.targetRef() == null || p.targetRef().isBlank()
+                ? config.primaryTargetRef() : p.targetRef();
+        RepoRef auth = RepoRef.of(Path.of(p.authRepo()));
+        ProcessRunner.ProcRun tipRun = git.run(auth, "rev-parse", "--verify", targetRef);
+        if (!tipRun.ok()) {
+            throw new GateException(GateErrorCode.USAGE,
+                    "auth repo has no such ref: " + targetRef + " (" + auth.pathString() + ")");
+        }
+        ObjectId authTip = ObjectId.of(tipRun.stdout().trim());
+
+        String branch = targetRef.startsWith("refs/heads/")
+                ? targetRef.substring("refs/heads/".length()) : targetRef;
+        String before = branchTip(ws, "refs/heads/" + branch);
+        WorkspaceSyncer.SyncOutcome outcome = workspaceSyncer.syncWorkspace(
+                RepoRef.of(ws), auth, targetRef, authTip);
+        String after = branchTip(ws, "refs/heads/" + branch);
+
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("project_id", p.id());
+        body.put("status", outcome.status().name());
+        body.put("note", outcome.note());
+        body.put("target_ref", targetRef);
+        body.put("auth_tip", authTip.hex());
+        body.put("workspace_tip_before", before);
+        body.put("workspace_tip_after", after);
+        return new ApiRoutes.Response(200, body);
+    }
+
+    private String branchTip(Path ws, String ref) {
+        ProcessRunner.ProcRun run = git.run(ws, Map.of(), "rev-parse", "--verify", ref);
+        return run.ok() ? run.stdout().trim() : null;
     }
 }

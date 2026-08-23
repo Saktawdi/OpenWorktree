@@ -64,6 +64,7 @@ public final class RepoViewRoutes {
 
         String head = resolveHead(ws);
         body.put("head", head);
+        body.put("auth", authInfo(p));
 
         List<Branch> branches = readBranches(ws, head, p.targetRef());
         Map<String, List<String>> branchTips = new LinkedHashMap<>();
@@ -144,6 +145,25 @@ public final class RepoViewRoutes {
     }
 
     /* ─── repo graph pieces ─── */
+
+    /**
+     * 权威库只读投影（repo/target_ref/tip），供前端判定"工作区落后于权威库"。tip 读不到
+     * （空库/缺 ref/路径失效）时为 null——视图永远不该因为权威库不可读而整体失败。
+     */
+    private Map<String, Object> authInfo(Project p) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("repo", p.authRepo());
+        m.put("target_ref", p.targetRef());
+        String tip = null;
+        if (p.authRepo() != null && !p.authRepo().isBlank() && Files.isDirectory(Path.of(p.authRepo()))
+                && p.targetRef() != null && !p.targetRef().isBlank()) {
+            ProcessRunner.ProcRun run = git.run(Path.of(p.authRepo()), Map.of(),
+                    "rev-parse", "--verify", p.targetRef());
+            tip = run.ok() && !run.stdout().isBlank() ? run.stdout().trim() : null;
+        }
+        m.put("tip", tip);
+        return m;
+    }
 
     private record Branch(String name, String tip, int lane) {
     }

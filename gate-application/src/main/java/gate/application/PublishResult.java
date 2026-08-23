@@ -14,5 +14,18 @@ public record PublishResult(
         String targetRef,
         String refBefore,
         String refAfter,
-        boolean alreadyPublished) {
+        boolean alreadyPublished,
+        String workspaceSyncStatus,
+        String workspaceSyncNote) {
+
+    /** Existing callers do not perform workspace synchronization and keep its result absent. */
+    public PublishResult(String ticketNo, int reviewRound, String treeHash, String commitSha, String targetRef,
+                         String refBefore, String refAfter, boolean alreadyPublished) {
+        this(ticketNo, reviewRound, treeHash, commitSha, targetRef, refBefore, refAfter, alreadyPublished,
+                null, null);
+    }
+
+    public PublishResult {
+        // Workspace sync is best-effort. Null means no configured project workspace or an idempotent replay.
+    }
 }

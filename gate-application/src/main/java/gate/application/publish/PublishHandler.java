@@ -37,9 +37,11 @@ import gate.ports.RefObserver;
 import gate.ports.ReviewResultRepository;
 import gate.ports.SnapshotCapture;
 import gate.ports.TicketRepository;
+import gate.ports.WorkspaceSyncer;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 
@@ -67,6 +69,7 @@ public final class PublishHandler {
     private final Clock clock;
     private final PublishProbe publishProbe;
     private final AuthoritativeGitService authoritativeGitService;
+    private final WorkspaceSyncer workspaceSyncer;
 
     public PublishHandler(GateConfig config, SnapshotCapture snapshotCapture, CommitPublisher commitPublisher,
                           RefObserver refObserver, ApprovalStore approvalStore, GatePolicy gatePolicy,
@@ -75,7 +78,7 @@ public final class PublishHandler {
                           BlobStore blobStore, AuditLog auditLog, LockManager lockManager,
                           DbTransactionRunner tx, Clock clock, PublishProbe publishProbe) {
         this(config, snapshotCapture, commitPublisher, refObserver, approvalStore, gatePolicy, tickets, presubmits,
-                reviewResults, intents, blobStore, auditLog, lockManager, tx, clock, publishProbe, null);
+                reviewResults, intents, blobStore, auditLog, lockManager, tx, clock, publishProbe, null, null, null);
     }
 
     public PublishHandler(GateConfig config, SnapshotCapture snapshotCapture, CommitPublisher commitPublisher,
@@ -87,7 +90,7 @@ public final class PublishHandler {
                           AuthoritativeGitService authoritativeGitService) {
         this(config, snapshotCapture, commitPublisher, refObserver, approvalStore, gatePolicy, tickets, presubmits,
                 reviewResults, intents, blobStore, auditLog, lockManager, tx, clock, publishProbe,
-                authoritativeGitService, null);
+                authoritativeGitService, null, null);
     }
 
     public PublishHandler(GateConfig config, SnapshotCapture snapshotCapture, CommitPublisher commitPublisher,
@@ -98,6 +101,20 @@ public final class PublishHandler {
                           DbTransactionRunner tx, Clock clock, PublishProbe publishProbe,
                           AuthoritativeGitService authoritativeGitService,
                           gate.application.project.ProjectAuthResolver authResolver) {
+        this(config, snapshotCapture, commitPublisher, refObserver, approvalStore, gatePolicy, tickets, presubmits,
+                reviewResults, intents, blobStore, auditLog, lockManager, tx, clock, publishProbe,
+                authoritativeGitService, authResolver, null);
+    }
+
+    public PublishHandler(GateConfig config, SnapshotCapture snapshotCapture, CommitPublisher commitPublisher,
+                          RefObserver refObserver, ApprovalStore approvalStore, GatePolicy gatePolicy,
+                          TicketRepository tickets, PresubmitRepository presubmits,
+                          ReviewResultRepository reviewResults, PublishIntentRepository intents,
+                          BlobStore blobStore, AuditLog auditLog, LockManager lockManager,
+                          DbTransactionRunner tx, Clock clock, PublishProbe publishProbe,
+                          AuthoritativeGitService authoritativeGitService,
+                          gate.application.project.ProjectAuthResolver authResolver,
+                          WorkspaceSyncer workspaceSyncer) {
         this.config = config;
         this.authResolver = authResolver;
         this.snapshotCapture = snapshotCapture;
@@ -116,6 +133,7 @@ public final class PublishHandler {
         this.clock = clock;
         this.publishProbe = publishProbe;
         this.authoritativeGitService = authoritativeGitService;
+        this.workspaceSyncer = workspaceSyncer;
     }
 
     public PublishResult handle(PublishCommand command) {
@@ -329,6 +347,26 @@ public final class PublishHandler {
                 "push_exit", String.valueOf(outcome.exitCode()),
                 "push_accepted", String.valueOf(outcome.accepted())));
 
+        WorkspaceSyncer.SyncOutcome workspaceOutcome = null;
+        if (published && workspaceSyncer != null && authResolver != null) {
+            Optional<java.nio.file.Path> workspace = authResolver.workspaceFor(ticket);
+            if (workspace.isPresent()) {
+                try {
+                    workspaceOutcome = workspaceSyncer.syncWorkspace(RepoRef.of(workspace.get()), auth,
+                            targetRef, commit);
+                } catch (Exception e) {
+                    String note = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
+                    workspaceOutcome = new WorkspaceSyncer.SyncOutcome(
+                            WorkspaceSyncer.SyncOutcome.Status.DEFERRED, note);
+                }
+                Map<String, String> fields = new LinkedHashMap<>();
+                fields.put("status", workspaceOutcome.status().name());
+                fields.put("note", workspaceOutcome.note() == null ? "" : workspaceOutcome.note());
+                fields.put("workspace", workspace.get().toString());
+                audit("publish.workspace_sync", ticket.ticketNo(), row.reviewRound(), fields);
+            }
+        }
+
         if (!published) {
             throw new GateException(GateErrorCode.GATE_ERROR_IO,
                     "push did not land on " + targetRef + " (exit=" + outcome.exitCode() + "): "
@@ -336,7 +374,9 @@ public final class PublishHandler {
         }
 
         return new PublishResult(ticket.ticketNo(), row.reviewRound(), row.treeHash().hex(), commit.hex(),
-                targetRef, refBefore, refAfter, false);
+                targetRef, refBefore, refAfter, false,
+                workspaceOutcome == null ? null : workspaceOutcome.status().name(),
+                workspaceOutcome == null ? null : workspaceOutcome.note());
     }
 
     private Optional<PublishResult> tryResume(PublishIntent intent, RepoRef auth, PublishAuthorization authorization) {

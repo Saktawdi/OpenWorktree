@@ -20,6 +20,7 @@ import gate.ports.ReviewEngineFactory;
 import gate.ports.ReviewResultRepository;
 import gate.ports.SnapshotCapture;
 import gate.ports.TicketRepository;
+import gate.ports.WorkspaceSyncer;
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
@@ -49,6 +50,7 @@ public final class GateServiceImpl implements GateService {
     private final gate.application.presubmit.PresubmitHandler presubmitHandler;
     private final gate.application.review.ReviewHandler reviewHandler;
     private final gate.application.publish.PublishHandler publishHandler;
+    private final gate.application.project.ProjectAuthResolver authResolver;
 
     public GateServiceImpl(GateConfig config, SnapshotCapture snapshotCapture, CommitPublisher commitPublisher,
                            RefObserver refObserver, ApprovalStore approvalStore, ReviewEngineFactory reviewEngineFactory,
@@ -57,7 +59,7 @@ public final class GateServiceImpl implements GateService {
                            AuditLog auditLog, LockManager lockManager, DbTransactionRunner tx, Clock clock) {
         this(config, snapshotCapture, commitPublisher, refObserver, approvalStore, reviewEngineFactory, gatePolicy,
                 tickets, presubmits, reviewResults, intents, blobStore, auditLog, lockManager, tx, clock,
-                gate.ports.PublishProbe.NOOP);
+                gate.ports.PublishProbe.NOOP, null, null, null);
     }
 
     public GateServiceImpl(GateConfig config, SnapshotCapture snapshotCapture, CommitPublisher commitPublisher,
@@ -67,7 +69,7 @@ public final class GateServiceImpl implements GateService {
                            AuditLog auditLog, LockManager lockManager, DbTransactionRunner tx, Clock clock,
                            gate.ports.PublishProbe publishProbe) {
         this(config, snapshotCapture, commitPublisher, refObserver, approvalStore, reviewEngineFactory, gatePolicy,
-                tickets, presubmits, reviewResults, intents, blobStore, auditLog, lockManager, tx, clock, publishProbe, null);
+                tickets, presubmits, reviewResults, intents, blobStore, auditLog, lockManager, tx, clock, publishProbe, null, null, null);
     }
 
     public GateServiceImpl(GateConfig config, SnapshotCapture snapshotCapture, CommitPublisher commitPublisher,
@@ -78,7 +80,7 @@ public final class GateServiceImpl implements GateService {
                            gate.ports.PublishProbe publishProbe, gate.ports.AuthoritativeGitService authoritativeGitService) {
         this(config, snapshotCapture, commitPublisher, refObserver, approvalStore, reviewEngineFactory, gatePolicy,
                 tickets, presubmits, reviewResults, intents, blobStore, auditLog, lockManager, tx, clock, publishProbe,
-                authoritativeGitService, null);
+                authoritativeGitService, null, null);
     }
 
     public GateServiceImpl(GateConfig config, SnapshotCapture snapshotCapture, CommitPublisher commitPublisher,
@@ -88,22 +90,34 @@ public final class GateServiceImpl implements GateService {
                            AuditLog auditLog, LockManager lockManager, DbTransactionRunner tx, Clock clock,
                            gate.ports.PublishProbe publishProbe, gate.ports.AuthoritativeGitService authoritativeGitService,
                            gate.ports.ProjectRepository projects) {
+        this(config, snapshotCapture, commitPublisher, refObserver, approvalStore, reviewEngineFactory, gatePolicy,
+                tickets, presubmits, reviewResults, intents, blobStore, auditLog, lockManager, tx, clock,
+                publishProbe, authoritativeGitService, projects, null);
+    }
+
+    public GateServiceImpl(GateConfig config, SnapshotCapture snapshotCapture, CommitPublisher commitPublisher,
+                           RefObserver refObserver, ApprovalStore approvalStore, ReviewEngineFactory reviewEngineFactory,
+                           GatePolicy gatePolicy, TicketRepository tickets, PresubmitRepository presubmits,
+                           ReviewResultRepository reviewResults, PublishIntentRepository intents, BlobStore blobStore,
+                           AuditLog auditLog, LockManager lockManager, DbTransactionRunner tx, Clock clock,
+                           gate.ports.PublishProbe publishProbe, gate.ports.AuthoritativeGitService authoritativeGitService,
+                           gate.ports.ProjectRepository projects, WorkspaceSyncer workspaceSyncer) {
         this.config = config;
         this.refObserver = refObserver;
         this.tickets = tickets;
         this.presubmits = presubmits;
         this.intents = intents;
-        gate.application.project.ProjectAuthResolver authResolver =
-                new gate.application.project.ProjectAuthResolver(projects, config);
+        this.authResolver = new gate.application.project.ProjectAuthResolver(projects, config);
         this.presubmitHandler = new gate.application.presubmit.PresubmitHandler(
-                config, snapshotCapture, tickets, presubmits, blobStore, auditLog, tx, clock, authResolver);
+                config, snapshotCapture, tickets, presubmits, blobStore, auditLog, tx, clock, this.authResolver);
         this.reviewHandler = new gate.application.review.ReviewHandler(
                 config, snapshotCapture, commitPublisher, approvalStore, reviewEngineFactory,
-                gatePolicy, tickets, presubmits, reviewResults, blobStore, auditLog, tx, clock, authResolver);
+                gatePolicy, tickets, presubmits, reviewResults, blobStore, auditLog, tx, clock, this.authResolver);
         this.publishHandler = new gate.application.publish.PublishHandler(
                 config, snapshotCapture, commitPublisher, refObserver, approvalStore,
                 gatePolicy, tickets, presubmits, reviewResults, intents, blobStore,
-                auditLog, lockManager, tx, clock, publishProbe, authoritativeGitService, authResolver);
+                auditLog, lockManager, tx, clock, publishProbe, authoritativeGitService, this.authResolver,
+                workspaceSyncer);
     }
 
     @Override
@@ -151,8 +165,10 @@ public final class GateServiceImpl implements GateService {
                 if (intent.isPresent()) {
                     intentStatus = intent.get().status().name();
                     commitSha = intent.get().commitSha() == null ? null : intent.get().commitSha().hex();
-                    publishedInAuth = authPresent && intent.get().commitSha() != null
-                            && refObserver.published(auth, intent.get().targetRef(), intent.get().commitSha());
+                    RepoRef ticketAuth = t.projectId() == null ? auth : authResolver.forTicket(t).authRepo();
+                    boolean ticketAuthPresent = Files.exists(ticketAuth.path());
+                    publishedInAuth = ticketAuthPresent && intent.get().commitSha() != null
+                            && refObserver.published(ticketAuth, intent.get().targetRef(), intent.get().commitSha());
                 }
             }
             statuses.add(new StatusResult.TicketStatus(t.ticketNo(), t.stage().name(), round, tree,

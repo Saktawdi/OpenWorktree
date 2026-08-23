@@ -304,7 +304,7 @@ export function KanbanBoard() {
       return;
     }
     if (to === "DONE") {
-      showToast("正在原子发布至主分支…");
+      showToast("正在发布至权威库主分支…");
       void actions.publish(no);
     }
   };

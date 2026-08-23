@@ -83,6 +83,7 @@ public final class WebComponents {
     private final GitCli git;
     private final Instant startedAt;
     private final gate.ports.ProjectRepository projectRepository;
+    private final gate.ports.WorkspaceSyncer workspaceSyncer;
     private final ProviderModelFetcher modelFetcher;
     private final RuntimeInfoService runtimeInfo;
 
@@ -129,6 +130,7 @@ public final class WebComponents {
 
         this.agentConfigRepository = runtime.agentConfigRepository();
         this.projectRepository = runtime.projectRepository();
+        this.workspaceSyncer = runtime.workspaceSyncer();
         this.modelFetcher = new ProviderModelFetcher(envFile);
         gate.ports.SessionRepository sessionRepo = runtime.sessionRepository();
         // abort orphaned via concrete type if available
@@ -284,6 +286,10 @@ public final class WebComponents {
 
     public gate.ports.ProjectRepository projectRepository() {
         return projectRepository;
+    }
+
+    public gate.ports.WorkspaceSyncer workspaceSyncer() {
+        return workspaceSyncer;
     }
 
     public ProviderModelFetcher modelFetcher() {

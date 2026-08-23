@@ -59,6 +59,7 @@ class ProjectRepoViewApiTest {
 
         assertTrue(body.contains("\"repo_path\":\"" + json(ws.toString()) + "\""), body);
         assertTrue(body.contains("\"head\":\"refs/heads/main\""), body);
+        assertTrue(body.contains("\"auth\":"), body);
         assertTrue(body.contains("\"name\":\"refs/heads/main\""), body);
         assertTrue(body.contains("\"name\":\"refs/heads/feature/one\""), body);
         // Root commit carries no parents; the tag is attached to its commit with the UI's "tag:" form.

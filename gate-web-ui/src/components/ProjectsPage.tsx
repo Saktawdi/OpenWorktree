@@ -10,9 +10,11 @@ import {
   PencilSimple,
   Play,
   Trash,
+  ArrowsClockwise,
+  WarningCircle,
 } from "@phosphor-icons/react";
 import { actions } from "../lib/actions";
-import { loadProjectRepoView, loadProjectTree } from "../lib/api";
+import { loadProjectRepoView, loadProjectTree, syncProjectWorkspace } from "../lib/api";
 import { relativeTime, shortHash } from "../lib/format";
 import { setView, showToast, switchProject, useApp } from "../lib/store";
 import type { GitCommit, GitRepoView, GitTreeEntry, Project } from "../lib/types";
@@ -233,12 +235,57 @@ function CommitGraph({ commits }: { commits: GitCommit[] }) {
   );
 }
 
-function GraphTab({ git }: { git: GitRepoView }) {
+function GraphTab({ git, projectId, onReload }: { git: GitRepoView; projectId: string; onReload: () => Promise<void> }) {
+  const [syncing, setSyncing] = useState(false);
   const laneCount = Math.max(1, ...git.commits.map((c) => c.lane)) + 1;
   const graphW = laneCount * LANE_W;
 
+  const auth = git.auth;
+  const authTip = auth?.tip?.trim();
+  const targetRef = auth?.target_ref || "refs/heads/main";
+  const branchName = targetRef.replace(/^refs\/heads\//, "");
+  const targetBranch = git.branches.find(
+    (b) => b.name === targetRef || b.name === branchName || b.name.replace(/^refs\/heads\//, "") === branchName
+  );
+  // 目标分支缺失（如历史发布从未回写）视作最大落后——恰是需要补同步的场景。
+  const isBehind = Boolean(authTip && targetBranch?.tip !== authTip);
+
+  const handleSync = async () => {
+    setSyncing(true);
+    try {
+      await syncProjectWorkspace(projectId);
+      await onReload();
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   return (
     <div>
+      {isBehind && (
+        <div className="flex items-center justify-between gap-3 px-4 py-2 bg-warn/10 border-b border-warn/25 text-warn text-[12px]">
+          <div className="flex items-center gap-2">
+            <WarningCircle size={15} weight="fill" className="shrink-0" />
+            <span>
+              工作区落后于权威库（<span className="font-mono">{shortHash(authTip!, 8, 0)}</span>）
+            </span>
+          </div>
+          <button
+            className="btn btn-sm border-warn/30 text-warn hover:bg-warn/15 h-6 px-2.5 text-[11.5px] cursor-pointer"
+            disabled={syncing}
+            onClick={() => void handleSync()}
+          >
+            {syncing ? (
+              <>
+                <ArrowsClockwise size={12} className="animate-spin mr-1 inline" />
+                同步中…
+              </>
+            ) : (
+              "同步工作区"
+            )}
+          </button>
+        </div>
+      )}
       <div className="flex flex-wrap gap-2 px-4 py-3 border-b border-edge">
         {git.branches.map((b) => (
           <span
@@ -447,7 +494,7 @@ function RepoViewDialog({ project, onClose }: { project: Project; onClose: () =>
             </div>
           ) : (
             <>
-              {tab === "graph" && <GraphTab git={git} />}
+              {tab === "graph" && <GraphTab git={git} projectId={project.id} onReload={reload} />}
               {tab === "tree" && <RepoTreeTab projectId={project.id} root={treeRoot} />}
             </>
           )}

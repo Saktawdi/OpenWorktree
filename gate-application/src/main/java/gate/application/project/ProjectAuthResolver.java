@@ -6,6 +6,7 @@ import gate.domain.project.Project;
 import gate.domain.ticket.Ticket;
 import gate.ports.ProjectRepository;
 import java.nio.file.Path;
+import java.util.Optional;
 
 /**
  * Resolves the authoritative repo a ticket operates on.
@@ -53,6 +54,17 @@ public final class ProjectAuthResolver {
             }
         }
         return new AuthTarget(RepoRef.of(config.authRepo()), ticket.targetRef());
+    }
+
+    /** Resolves the registered workspace for a project-bound ticket, if legacy wiring has projects. */
+    public Optional<Path> workspaceFor(Ticket ticket) {
+        if (projects == null || ticket.projectId() == null) {
+            return Optional.empty();
+        }
+        return projects.find(ticket.projectId())
+                .map(Project::workspacePath)
+                .filter(path -> path != null && !path.isBlank())
+                .map(Path::of);
     }
 
     /** Default auth repo path for a newly registered project: a sibling of the configured repo. */

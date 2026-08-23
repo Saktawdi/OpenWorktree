@@ -253,16 +253,24 @@ function OutcomeCard({
     refAfter: string;
     targetRef: string;
     publishedAt: number;
+    workspaceSyncStatus?: string | null;
+    workspaceSyncNote?: string | null;
   };
 }) {
+  const branch = outcome.targetRef.replace("refs/heads/", "");
+  const noteSha = outcome.workspaceSyncNote?.includes("->")
+    ? outcome.workspaceSyncNote.split("->").pop()?.trim()
+    : outcome.workspaceSyncNote?.trim();
+  const syncSha = noteSha || shortHash(outcome.refAfter, 8, 0) || outcome.refAfter.slice(0, 8);
+
   return (
     <div className="rounded-xl border border-accent/25 bg-accent/[0.04] p-4 animate-slide-in">
       <div className="flex items-center justify-center w-10 h-10 mx-auto rounded-full bg-accent-dim border border-accent/40">
         <Check size={20} className="text-accent" weight="bold" />
       </div>
-      <div className="mt-2.5 text-center text-[14px] font-semibold">已发布至主分支</div>
+      <div className="mt-2.5 text-center text-[14px] font-semibold">已发布至权威库主分支</div>
       <div className="mt-0.5 text-center font-mono text-[11px] text-faint">
-        {outcome.targetRef.replace("refs/heads/", "")} · {hhmmss(outcome.publishedAt)}
+        {branch} · {hhmmss(outcome.publishedAt)}
       </div>
       <div className="mt-3 rounded-lg bg-sunken border border-edge px-3 py-2 flex items-center justify-center gap-2">
         <span className="text-[11px] text-faint">提交</span>
@@ -274,6 +282,25 @@ function OutcomeCard({
         <span>{shortHash(outcome.refBefore, 6, 4)}</span>
         <ArrowRight size={11} className="text-accent" />
         <span className="text-dim">{shortHash(outcome.refAfter, 6, 4)}</span>
+      </div>
+      <div
+        className={`mt-2.5 text-center text-[11.5px] ${
+          outcome.workspaceSyncStatus === "SYNCED"
+            ? "text-accent"
+            : outcome.workspaceSyncStatus === "DEFERRED"
+              ? "text-warn"
+              : outcome.workspaceSyncStatus === "ALREADY"
+                ? "text-dim"
+                : "text-faint"
+        }`}
+      >
+        {outcome.workspaceSyncStatus === "SYNCED"
+          ? `工作区已同步：${branch} → ${syncSha}`
+          : outcome.workspaceSyncStatus === "ALREADY"
+            ? "工作区已是最新"
+            : outcome.workspaceSyncStatus === "DEFERRED"
+              ? `工作区待同步：${outcome.workspaceSyncNote ?? ""}`
+              : "工作区未同步（未配置项目工作区）"}
       </div>
       <div className="mt-2.5 pt-2.5 border-t border-edge text-center text-[11.5px] text-faint">
         审计日志已追加 · 快照指纹核验一致

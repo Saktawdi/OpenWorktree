@@ -11,6 +11,7 @@ import gate.adapters.git.GitCliPublisher;
 import gate.adapters.git.GitCliRefObserver;
 import gate.adapters.git.GitCliSnapshot;
 import gate.adapters.git.GitCliTopologyInitializer;
+import gate.adapters.git.GitCliWorkspaceSyncer;
 import gate.adapters.hook.FileHookInstaller;
 import gate.adapters.lock.FileChannelLockManager;
 import gate.adapters.preflight.DefaultPreflightChecker;
@@ -61,6 +62,7 @@ import gate.ports.SnapshotCapture;
 import gate.ports.TaskClaimPort;
 import gate.ports.TicketRepository;
 import gate.ports.TopologyInitializer;
+import gate.ports.WorkspaceSyncer;
 import java.nio.file.Path;
 import java.time.Duration;
 import javax.sql.DataSource;
@@ -105,6 +107,7 @@ public final class GateRuntime {
     private final gate.ports.AgentConfigRepository agentConfigRepository;
     private final gate.ports.SessionRepository sessionRepository;
     private final gate.ports.ProjectRepository projectRepository;
+    private final WorkspaceSyncer workspaceSyncer;
 
     public GateRuntime(GateConfig config, String gitExecutable, Path envFile) {
         this.config = config;
@@ -151,6 +154,7 @@ public final class GateRuntime {
         this.agentConfigRepository = new JdbcAgentConfigRepository(jdbc);
         this.sessionRepository = new JdbcSessionRepository(jdbc, blobStore);
         this.projectRepository = new JdbcProjectRepository(jdbc);
+        this.workspaceSyncer = new GitCliWorkspaceSyncer(git);
 
         ReviewEngineFactory reviewEngineFactory = config.engineConfigured()
                 ? new GateReviewEngineFactory(blobStore, config, processRunner, providerRepository, this.envFile)
@@ -158,7 +162,7 @@ public final class GateRuntime {
         this.gateService = new GateServiceImpl(config, snapshotCapture, commitPublisher, refObserver,
                 approvalStore, reviewEngineFactory, new GatePolicy(), ticketRepository, presubmitRepository,
                 reviewResultRepository, publishIntentRepository, blobStore, auditLog, lockManager, txRunner, clock, gate.ports.PublishProbe.NOOP, authoritativeGitService,
-                projectRepository);
+                projectRepository, workspaceSyncer);
     }
 
     public GateConfig config() { return config; }
@@ -192,6 +196,7 @@ public final class GateRuntime {
     public gate.ports.AgentConfigRepository agentConfigRepository() { return agentConfigRepository; }
     public gate.ports.SessionRepository sessionRepository() { return sessionRepository; }
     public gate.ports.ProjectRepository projectRepository() { return projectRepository; }
+    public WorkspaceSyncer workspaceSyncer() { return workspaceSyncer; }
 
     /** Seeds a provider required by the review-result foreign key. Safe to call repeatedly. */
     public void seedProvider(String id, String name, String baseUrl, String apiKeyRef, String type) {

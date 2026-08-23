@@ -33,6 +33,7 @@ import type {
   GitTreeEntry,
   Severity,
   Snapshot,
+  WorkspaceSyncResult,
 } from "./types";
 import { parseUnifiedDiff } from "./diff";
 import { approxDiffBytes } from "./diff";
@@ -897,6 +898,8 @@ export async function livePublish(no: string) {
           refAfter: r.ref_after ?? "",
           targetRef: r.target_ref ?? "refs/heads/main",
           publishedAt: Date.now(),
+          workspaceSyncStatus: r.workspace_sync_status ?? null,
+          workspaceSyncNote: r.workspace_sync_note ?? null,
         });
       }
     } catch {
@@ -992,6 +995,7 @@ interface RawGitRepoView {
   branches?: RawGitBranch[] | null;
   commits?: RawGitCommit[] | null;
   truncated?: boolean | null;
+  auth?: { repo: string | null; target_ref: string | null; tip: string | null } | null;
 }
 
 /** GET /api/projects/{id}/repo — branches + topo commits with lane numbers. */
@@ -1009,6 +1013,7 @@ export async function loadProjectRepoView(projectId: string): Promise<void> {
       lane: c.lane,
     })),
     truncated: data.truncated ?? false,
+    auth: data.auth ?? undefined,
   };
   appStore.setState((st) => ({ gitViews: { ...st.gitViews, [projectId]: view } }));
 }
@@ -1090,6 +1095,26 @@ export async function deleteProjectLive(id: string): Promise<boolean> {
   } catch (e) {
     showToast(`删除项目失败：${(e as Error).message}`);
     return false;
+  }
+}
+
+export async function syncProjectWorkspace(projectId: string): Promise<WorkspaceSyncResult | null> {
+  try {
+    const res = await api<WorkspaceSyncResult>(`/api/projects/${projectId}/workspace-sync`, {
+      method: "POST",
+      body: "{}",
+    });
+    if (res.status === "SYNCED") {
+      showToast("工作区已同步");
+    } else if (res.status === "ALREADY") {
+      showToast("工作区已是最新");
+    } else if (res.status === "DEFERRED") {
+      showToast(res.note ? `工作区待同步：${res.note}` : "工作区待同步");
+    }
+    return res;
+  } catch (e) {
+    showToast(`工作区同步失败：${(e as Error).message}`);
+    return null;
   }
 }
 

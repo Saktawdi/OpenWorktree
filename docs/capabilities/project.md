@@ -12,7 +12,7 @@
 
 - 负责的业务不变量：
   - `project.id` 全局唯一，`name` 非空
-  - `authRepo/targetRef/clonesRoot` 三元组与 gate.toml 中 `[project]` 配置一致，`TopologyInitializer.createClone` 幂等创建
+  - 项目自带专属 `authRepo` 与 `targetRef`（由 `ProjectAuthResolver` 统一解析，ADR-14/T-107）；`gate.toml` 中 `[project]` 配置仅作为无项目工单的回退拓扑；`TopologyInitializer.createClone` 幂等创建
   - workspace 路径与 clone 物理隔离（每个 project 单独立目录）
 - 明确不负责的内容：
   - ticket 内部状态机、presubmit 快照、review 判决、publish CAS（仅通过 `project_id` 关联）
@@ -26,24 +26,29 @@
 - 驱动端口：
   - `ProjectRepository.find/findAll/insert/update/delete`
   - `TopologyInitializer`（创建 clone/worktree）
+  - `WorkspaceSyncer`（项目工作区快进同步，由 `ProjectRoutes.workspaceSync` 驱动）
 - 被动端口：
   - JDBC `JdbcProjectRepository`（SQLite `project` 表）
+  - Git 适配器 `GitCli` / `GitCliWorkspaceSyncer`
 - local 实现：
   - SQLite，`project` 表 `id/name/repo_path/target_ref/clones_root`
   - `TomlGateConfigLoader` 加载 `gate.toml [project]` → 写入 project 表
+  - HTTP 端点：`GET /api/projects`、`POST /api/projects`、`POST /api/projects/{id}/workspace-sync`、`GET /api/projects/{id}/repo`、`GET /api/projects/{id}/tree`
 - production 实现：
   - PostgreSQL 同 schema（当前 `gate-adapters` 仅提供 SQLite，team 模式需 PG 适配器，关联 DEBT-005）
 - 超时、取消、错误码：
-  - `USAGE`：重复 `project.id`、缺失 `authRepo`、非法 `targetRef`
+  - `USAGE`：重复 `project.id`、缺失 `authRepo`、非法 `targetRef`、工作区非 Git 目录
   - 无长任务，不涉及 lease/fence
 
 ## 3. 数据与事件
 
 - owner 表/列：`project`（`id, name, repo_path, target_ref, clones_root, created_at, updated_at`）— 唯一 owner
-- 只读投影：`status` 通过 `projectRepository.findAll` 聚合项目列表
+- 只读投影：
+  - `status` 通过 `projectRepository.findAll` 聚合项目列表
+  - `GET /api/projects/{id}/repo` 响应新增 `"auth": {"repo": "...", "target_ref": "...", "tip": "..."}` 只读投影（权威库当前 tip，供前端比对工作区是否落后）
 - 写入事务边界：单 `insert/update` 短事务 ≤100ms，不跨 Git（Git clone 在事务外）
 - outbox 事件及 sequence：`project.created/updated/deleted`（由 project 事务 + outbox，`event` 存储，语义归 project）
-- 幂等键和 request digest：`project.id` 为幂等键；重复 `POST /api/projects` 同 id 返回 `USAGE`
+- 幂等键和 request digest：`project.id` 为幂等键；重复 `POST /api/projects` 同 id 返回 `USAGE`；`POST /api/projects/{id}/workspace-sync` 具备幂等快进与 ALREADY 状态语义
 - 对象存储引用及 GC：无；workspace 为本地目录，由 `TopologyInitializer` 管理，删除 project 时需手动清理（后续企业模式改为对象存储快照）
 
 ## 4. 并发与恢复

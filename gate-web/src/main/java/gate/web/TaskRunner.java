@@ -106,6 +106,9 @@ final class TaskRunner {
             body.put("ref_before", r.refBefore());
             body.put("ref_after", r.refAfter());
             body.put("already_published", r.alreadyPublished());
+            // 工作区同步是 best-effort 尾步：null 表示未配置项目工作区或幂等重放，前端容忍缺省。
+            body.put("workspace_sync_status", r.workspaceSyncStatus());
+            body.put("workspace_sync_note", r.workspaceSyncNote());
             success(task, Json.write(body));
         } catch (Throwable e) {
             fail(task, e);

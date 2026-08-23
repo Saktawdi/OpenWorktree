@@ -87,7 +87,8 @@ public final class ApiRoutes {
         this.modelFetcher = c.modelFetcher();
         this.git = c.git();
         this.statusRoutes = new StatusRoutes(gateService, config, c.runtimeInfo());
-        this.projectRoutes = new gate.web.project.ProjectRoutes(projects, tickets, topologyInitializer, config);
+        this.projectRoutes = new gate.web.project.ProjectRoutes(projects, tickets, topologyInitializer,
+                config, c.workspaceSyncer(), git);
         this.repoViewRoutes = new gate.web.project.RepoViewRoutes(projects, git);
         this.ticketRoutes = new gate.web.ticket.TicketRoutes(tickets, projects, c.agentConfigRepository(),
                 topologyInitializer, config, clock);
@@ -144,6 +145,11 @@ public final class ApiRoutes {
             if (method.equals("DELETE")) {
                 return projectDelete(seg[2]);
             }
+        }
+        // 发布后工作区同步（存量补同步 / DEFERRED 重试入口）：权威库目标分支 tip 尽力快进回写工作区。
+        if (seg.length == 4 && seg[1].equals("projects") && seg[3].equals("workspace-sync")
+                && method.equals("POST")) {
+            return projectRoutes.workspaceSync(seg[2]);
         }
         // 项目 → 仓库视图: branch/commit graph + lazy file tree of the workspace repo.
         if (seg.length == 4 && seg[1].equals("projects") && seg[3].equals("repo")

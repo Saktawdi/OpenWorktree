@@ -90,6 +90,7 @@ export interface GitRepoView {
   commits: GitCommit[];
   /** 超过后端提交数上限（100）时为 true，用于“仅显示最近提交”提示。 */
   truncated?: boolean;
+  auth?: { repo: string | null; target_ref: string | null; tip: string | null };
 }
 
 export interface GitTreeEntry {
@@ -255,12 +256,24 @@ export interface TaskProgress {
   failed?: boolean;
 }
 
+export interface WorkspaceSyncResult {
+  project_id: string;
+  status: "SYNCED" | "ALREADY" | "DEFERRED";
+  note?: string | null;
+  target_ref?: string | null;
+  auth_tip?: string | null;
+  workspace_tip_before?: string | null;
+  workspace_tip_after?: string | null;
+}
+
 export interface PublishOutcome {
   commitSha: string;
   refBefore: string;
   refAfter: string;
   targetRef: string;
   publishedAt: number;
+  workspaceSyncStatus?: string | null;
+  workspaceSyncNote?: string | null;
 }
 
 export interface AgentConfigOption {
