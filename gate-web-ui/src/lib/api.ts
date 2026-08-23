@@ -20,7 +20,7 @@ import {
   setVerdict,
   showToast,
 } from "./store";
-import type { ChatItem, ChatSession, CatalogProvider, DiffFile, Finding, Severity, Snapshot } from "./types";
+import type { ChatItem, ChatSession, CatalogProvider, DiffFile, Finding, PendingAttachment, Severity, Snapshot } from "./types";
 import { parseUnifiedDiff } from "./diff";
 import { approxDiffBytes } from "./diff";
 import { sleep } from "./format";
@@ -495,11 +495,12 @@ export async function loadSessionMessages(no: string, sessionId: string) {
   appStore.setState((st) => ({ chats: { ...st.chats, [no]: items } }));
 }
 
-export async function liveSendPrompt(no: string, userText: string) {
+export async function liveSendPrompt(no: string, userText: string, attachments: PendingAttachment[] = []) {
   const st = appStore.getState();
   if (st.busy[no]) return;
   const sessionId = st.activeSessionId[no] || liveSessionId;
   const sel = sessionId ? st.sessionModelSel[sessionId] : undefined;
+  // userText 已含 [图片 #n] 引用（Composer 粘贴时插入），原样推送与发送。
   pushUserMessage(no, userText);
   setBusy(no, true);
   try {
@@ -514,6 +515,11 @@ export async function liveSendPrompt(no: string, userText: string) {
         method: "POST",
         body: JSON.stringify({
           message: userText,
+          attachments: attachments.map((a) => ({
+            filename: a.filename,
+            mime: a.mime,
+            data_base64: a.dataBase64,
+          })),
           provider_id: sel?.providerId ?? undefined,
           model_id: sel?.modelId ?? undefined,
           variant: sel?.variant ?? undefined,
@@ -534,6 +540,7 @@ interface RawCatalogModel {
   id: string;
   name?: string | null;
   variants?: string[] | null;
+  image_input?: boolean | null;
 }
 
 interface RawCatalogProvider {
@@ -558,6 +565,7 @@ export async function loadSessionCatalog(no: string, sessionId: string) {
         id: m.id,
         name: m.name ?? m.id,
         variants: m.variants ?? [],
+        imageInput: m.image_input === true,
       })),
     }));
     setSessionModels(sessionId, providers);

@@ -175,6 +175,32 @@ class SessionModelSwitchTest {
                 ((java.util.List<Map<String, Object>>) provider.get("models")).get(0);
         assertEquals("m1", model.get("id"));
         assertTrue(((java.util.List<?>) model.get("variants")).isEmpty());
+        assertEquals(false, model.get("image_input"), "unknown capability defaults to false");
+    }
+
+    /** 需求①：目录为每个模型标注图片输入能力（modalities.input 优先，attachment 兜底）。 */
+    @Test
+    void image_input_is_derived_from_modalities_then_attachment_flag() {
+        Map<String, Object> out = SessionModelCatalog.reduce("{\"providers\":[{\"id\":\"p\","
+                + "\"models\":{"
+                + "\"m-mod\":{\"id\":\"m-mod\",\"modalities\":{\"input\":[\"text\",\"image\"]}},"
+                + "\"m-text\":{\"id\":\"m-text\",\"modalities\":{\"input\":[\"text\"]}},"
+                + "\"m-att\":{\"id\":\"m-att\",\"attachment\":true},"
+                + "\"m-none\":{\"id\":\"m-none\"}"
+                + "}}]}");
+        @SuppressWarnings("unchecked")
+        java.util.List<Map<String, Object>> models =
+                ((java.util.List<Map<String, Object>>) out.get("providers")).get(0)
+                        .get("models") instanceof java.util.List<?> l
+                        ? (java.util.List<Map<String, Object>>) l : java.util.List.of();
+        assertEquals(true, byId(models, "m-mod").get("image_input"));
+        assertEquals(false, byId(models, "m-text").get("image_input"));
+        assertEquals(true, byId(models, "m-att").get("image_input"));
+        assertEquals(false, byId(models, "m-none").get("image_input"));
+    }
+
+    private static Map<String, Object> byId(java.util.List<Map<String, Object>> models, String id) {
+        return models.stream().filter(m -> id.equals(m.get("id"))).findFirst().orElseThrow();
     }
 
     /** Inserts an opencode session row directly so no real CLI is needed (creates FK parents). */

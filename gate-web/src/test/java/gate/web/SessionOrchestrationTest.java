@@ -116,6 +116,43 @@ class SessionOrchestrationTest {
     }
 
     @Test
+    void send_with_attachments_validates_and_passes_through() throws Exception {
+        HttpResponse<String> cfg = post("/api/agent-configs", """
+                {"id":"claude-att","name":"Claude Att","cli":"CLAUDE","provider_id":"manual",
+                 "model":"claude-test","extra_flags":[],"description":"test"}
+                """);
+        assertEquals(201, cfg.statusCode(), cfg.body());
+        assertEquals(201, post("/api/tickets", "{\"ticket_no\":\"SESS-ATT\",\"title\":\"att\"}")
+                .statusCode());
+        HttpResponse<String> created = post("/api/tickets/SESS-ATT/sessions",
+                "{\"agent_config_id\":\"claude-att\"}");
+        assertEquals(201, created.statusCode(), created.body());
+        String sid = sessionId(created.body());
+
+        // 非法 mime 拒绝（USAGE）：仅图片附件可发。
+        assertTrue(post("/api/sessions/" + sid + "/messages", """
+                {"message":"x","attachments":[{"mime":"application/pdf","data_base64":"AA=="}]}
+                """).statusCode() >= 400);
+        // 缺 data_base64 拒绝。
+        assertTrue(post("/api/sessions/" + sid + "/messages",
+                "{\"message\":\"x\",\"attachments\":[{\"mime\":\"image/png\"}]}").statusCode() >= 400);
+
+        // 合法图片附件：透传到端口，正文原样（引用文本由前端负责）。
+        HttpResponse<String> ok = post("/api/sessions/" + sid + "/messages", """
+                {"message":"看图","attachments":[{"filename":"a.png","mime":"image/png","data_base64":"aGVsbG8="}]}
+                """);
+        assertEquals(202, ok.statusCode(), ok.body());
+        AgentSessionPort.SendRequest captured = FakeAgentSessionPort.lastSent;
+        org.junit.jupiter.api.Assertions.assertNotNull(captured, "send must reach the port");
+        assertEquals(sid, captured.sessionId());
+        assertEquals("看图", captured.message());
+        assertEquals(1, captured.attachments().size());
+        assertEquals("image/png", captured.attachments().get(0).mime());
+        assertEquals("aGVsbG8=", captured.attachments().get(0).dataBase64());
+        assertEquals("a.png", captured.attachments().get(0).filename());
+    }
+
+    @Test
     void session_create_without_prompt_creates_idle_session() throws Exception {
         HttpResponse<String> cfg = post("/api/agent-configs", """
                 {"id":"claude-idle","name":"Claude Idle","cli":"CLAUDE","provider_id":"manual",
@@ -322,6 +359,9 @@ class SessionOrchestrationTest {
     /** In-memory fake session port backed by the real SessionRepository. */
     static final class FakeAgentSessionPort implements AgentSessionPort {
 
+        /** Most recent send (attachment passthrough assertions read this). */
+        static volatile SendRequest lastSent;
+
         private SessionRepository sessions;
         private Clock clock;
         private final List<String> aborted = new ArrayList<>();
@@ -351,6 +391,7 @@ class SessionOrchestrationTest {
 
         @Override
         public String sendMessage(SendRequest request) {
+            lastSent = request;
             Session s = sessions.find(request.sessionId()).orElseThrow();
             sessions.insertMessage(new SessionMessage(UUID.randomUUID().toString(), s.id(), Role.USER,
                     request.message(), List.of(), null, false, clock.now()));
