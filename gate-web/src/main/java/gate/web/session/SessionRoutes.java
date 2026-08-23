@@ -159,14 +159,16 @@ public final class SessionRoutes {
         }
         Map<String, Object> req = parseObject(requestBody);
         String message = str(req, "message");
-        if (message == null || message.isBlank()) {
+        List<AgentSessionPort.Attachment> attachments = parseAttachments(req);
+        if ((message == null || message.isBlank()) && attachments.isEmpty()) {
             throw new GateException(GateErrorCode.USAGE, "message is required");
         }
         // Optional per-send model/variant (会话内实时切换): persisted so the async send — and every
         // later send until changed again — uses this selection (OpenChamber per-session picker
         // semantics).
         applyModelOverrideIfPresent(sessionId, req);
-        String taskId = agentSessionPort.sendMessage(new AgentSessionPort.SendRequest(sessionId, message, true));
+        String taskId = agentSessionPort.sendMessage(
+                new AgentSessionPort.SendRequest(sessionId, message == null ? "" : message, true, attachments));
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("task_id", taskId);
         return new ApiRoutes.Response(202, body);
@@ -229,6 +231,75 @@ public final class SessionRoutes {
         }
         String value = str(req, key);
         return value == null || value.isBlank() ? null : value.trim();
+    }
+
+    /** Per-send image attachment limits (粘贴图片，OpenChamber composer 同类约束). */
+    static final int MAX_ATTACHMENTS = 8;
+    /** Base64 payload cap per attachment (~9 MB binary). */
+    static final int MAX_ATTACHMENT_BASE64_CHARS = 12_000_000;
+    private static final java.util.Set<String> IMAGE_MIMES =
+            java.util.Set.of("image/png", "image/jpeg", "image/gif", "image/webp");
+
+    /**
+     * Optional {@code attachments: [{filename?, mime, data_base64}]} on a send. Images only —
+     * non-image pastes are turned into path text by the composer before they ever reach here.
+     */
+    static List<AgentSessionPort.Attachment> parseAttachments(Map<String, Object> req) {
+        Object raw = req.get("attachments");
+        if (raw == null) {
+            return List.of();
+        }
+        if (!(raw instanceof List<?> list)) {
+            throw new GateException(GateErrorCode.USAGE, "attachments must be an array");
+        }
+        if (list.isEmpty()) {
+            return List.of();
+        }
+        if (list.size() > MAX_ATTACHMENTS) {
+            throw new GateException(GateErrorCode.USAGE,
+                    "at most " + MAX_ATTACHMENTS + " attachments per message");
+        }
+        List<AgentSessionPort.Attachment> out = new ArrayList<>();
+        for (Object item : list) {
+            if (!(item instanceof Map<?, ?> m)) {
+                throw new GateException(GateErrorCode.USAGE, "each attachment must be an object");
+            }
+            String mime = attr(m, "mime");
+            String normalizedMime = mime == null ? "" : mime.trim().toLowerCase(java.util.Locale.ROOT);
+            if (!IMAGE_MIMES.contains(normalizedMime)) {
+                throw new GateException(GateErrorCode.USAGE,
+                        "attachment mime must be one of image/png, image/jpeg, image/gif, image/webp");
+            }
+            String data = attr(m, "data_base64");
+            data = data == null ? "" : stripDataUrlPrefix(data.replaceAll("\\s", ""));
+            if (data.isBlank()) {
+                throw new GateException(GateErrorCode.USAGE, "attachment data_base64 is required");
+            }
+            if (data.length() > MAX_ATTACHMENT_BASE64_CHARS) {
+                throw new GateException(GateErrorCode.USAGE, "attachment exceeds the size limit");
+            }
+            String filename = attr(m, "filename");
+            out.add(new AgentSessionPort.Attachment(
+                    filename == null || filename.isBlank() ? "image" : filename.trim(),
+                    normalizedMime,
+                    data));
+        }
+        return List.copyOf(out);
+    }
+
+    /** Tolerates a full {@code data:<mime>;base64,} URL — keeps only the payload. */
+    private static String stripDataUrlPrefix(String value) {
+        int comma = value.indexOf(',');
+        if (value.startsWith("data:") && comma >= 0
+                && value.substring(0, comma).toLowerCase(java.util.Locale.ROOT).contains("base64")) {
+            return value.substring(comma + 1);
+        }
+        return value;
+    }
+
+    private static String attr(Map<?, ?> m, String key) {
+        Object v = m.get(key);
+        return v == null ? null : v.toString();
     }
 
     public ApiRoutes.Response sessionAbort(String sessionId) {

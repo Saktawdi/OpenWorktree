@@ -471,6 +471,17 @@ body {
     @apply grid place-items-center w-8 h-8 rounded-full border border-danger/40 text-danger
       cursor-pointer shrink-0 transition-all duration-150 hover:bg-danger/10 active:scale-95;
   }
+  /* ── 粘贴的图片附件缩略卡（参考 OpenChamber AttachedFilesList） ── */
+  .composer-attach {
+    @apply flex items-center gap-2 h-12 pl-1.5 pr-2.5 rounded-xl border border-edge bg-canvas
+      transition-colors duration-150;
+  }
+  .composer-attach:hover {
+    @apply border-edge-strong bg-raised;
+  }
+  .composer-attach-thumb {
+    @apply size-9 rounded-lg object-cover border border-edge shrink-0;
+  }
 
   /* ── Markdown Body ── */
   .md-body > *:first-child { margin-top: 0; }
