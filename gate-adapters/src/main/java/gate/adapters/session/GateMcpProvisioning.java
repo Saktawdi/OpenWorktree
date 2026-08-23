@@ -61,7 +61,9 @@ public final class GateMcpProvisioning {
         appendStringArray(sb, serveArgv);
         sb.append(",\"enabled\":true,\"environment\":{\"").append(McpServer.TOKEN_ENV).append("\":\"");
         escapeInto(sb, token);
-        sb.append("\"}}}");
+        // four opens (root/mcp/gate/environment) need four closes — a missing brace makes opencode
+        // reject OPENCODE_CONFIG with ConfigJsonError CloseBraceExpected and /session returns 503.
+        sb.append("\"}}}}");
         return sb.toString();
     }
 
@@ -76,7 +78,8 @@ public final class GateMcpProvisioning {
         appendStringArray(sb, serveArgv.subList(1, serveArgv.size()));
         sb.append(",\"env\":{\"").append(McpServer.TOKEN_ENV).append("\":\"");
         escapeInto(sb, token);
-        sb.append("\"}}}");
+        // four opens (root/mcpServers/gate/env) need four closes — see opencodeConfigJson.
+        sb.append("\"}}}}");
         return sb.toString();
     }
 
