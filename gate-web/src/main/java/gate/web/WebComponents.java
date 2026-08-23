@@ -87,10 +87,15 @@ public final class WebComponents {
     private final RuntimeInfoService runtimeInfo;
 
     public WebComponents(GateConfig config, String gitExecutable, Path envFile) {
-        this(config, gitExecutable, envFile, null);
+        this(config, gitExecutable, envFile, null, null);
     }
 
-    WebComponents(GateConfig config, String gitExecutable, Path envFile, AgentSessionPort sessionPortOverride) {
+    WebComponents(GateConfig config, String gitExecutable, Path envFile, Path gateToml) {
+        this(config, gitExecutable, envFile, gateToml, null);
+    }
+
+    WebComponents(GateConfig config, String gitExecutable, Path envFile, Path gateToml,
+                  AgentSessionPort sessionPortOverride) {
         if (!config.webConfigured()) {
             throw new GateException(GateErrorCode.GATE_ERROR_CONFIG,
                     "gate-web requires a [web] section in gate.toml (执行文档-后端-web §8.1); none was found");
@@ -150,7 +155,8 @@ public final class WebComponents {
             String claudeCmd = cliLocator.locate("claude").map(Path::toString).orElse("claude");
             String opencodeCmd = cliLocator.locate("opencode").map(Path::toString).orElse("opencode");
             this.claudeAdapter = new ClaudeHeadlessAdapter(processRunner, this.agentConfigRepository, sessionRepo,
-                    tickets, this.projectRepository, taskRegistry, ticketLockManager, clock, claudeCmd, List.of());
+                    tickets, this.projectRepository, taskRegistry, ticketLockManager, clock, claudeCmd, List.of(),
+                    gateToml);
             int startTimeout = config.session() == null ? 60 : config.session().startTimeoutSeconds();
             // First-party adapter trail for incident diagnosis (spawn/stream/send/cleanup).
             AdapterLog adapterLog = AdapterLog.at(config.gateHome().resolve("adapters.log"));
@@ -160,7 +166,7 @@ public final class WebComponents {
                     new gate.adapters.io.ServePidRegistry(config.gateHome().resolve("opencode-serve.pids"));
             this.opencodeAdapter = new OpenCodeServeAdapter(processRunner, this.agentConfigRepository, sessionRepo,
                     tickets, this.projectRepository, taskRegistry, ticketLockManager, clock, portAllocator, opencodeCmd,
-                    startTimeout, adapterLog, pidRegistry);
+                    startTimeout, adapterLog, pidRegistry, gateToml);
             this.agentSessionPort = new DispatchAgentSessionPort(this.agentConfigRepository, sessionRepo,
                     claudeAdapter, opencodeAdapter);
         }
@@ -173,7 +179,8 @@ public final class WebComponents {
     public static WebComponents fromConfig(Path tomlPath, String gitExecutable) {
         GateConfig config = new TomlGateConfigLoader().load(tomlPath);
         Path envFile = tomlPath.toAbsolutePath().getParent().resolve(".env");
-        WebComponents components = new WebComponents(config, gitExecutable, envFile);
+        WebComponents components = new WebComponents(config, gitExecutable, envFile,
+                tomlPath.toAbsolutePath().normalize());
         components.seedManualProvider();
         return components;
     }

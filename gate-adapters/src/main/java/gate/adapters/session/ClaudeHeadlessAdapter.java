@@ -63,6 +63,11 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
     private final Clock clock;
     private final String claudeExecutable;
     private final List<String> claudePrefix;
+    /**
+     * gate.toml location for MCP provisioning. Null = provisioning disabled (tests); the
+     * mcp-config.json is then not written at all, as before this capability existed.
+     */
+    private final Path gateToml;
     private final ExecutorService executor;
     private final Map<String, Set<Consumer<SessionStreamChunk>>> listeners = new ConcurrentHashMap<>();
 
@@ -91,7 +96,7 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
                                  String claudeExecutable,
                                  List<String> claudePrefix) {
         this(processRunner, agentConfigs, sessions, tickets, null, tasks, ticketLocks, clock,
-                claudeExecutable, claudePrefix);
+                claudeExecutable, claudePrefix, null);
     }
 
     /** Full constructor: {@code projects} is optional (null skips the 项目 section of the injected context). */
@@ -104,7 +109,8 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
                                  TicketLockManager ticketLocks,
                                  Clock clock,
                                  String claudeExecutable,
-                                 List<String> claudePrefix) {
+                                 List<String> claudePrefix,
+                                 Path gateToml) {
         this.processRunner = processRunner;
         this.agentConfigs = agentConfigs;
         this.sessions = sessions;
@@ -115,6 +121,7 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
         this.clock = clock;
         this.claudeExecutable = claudeExecutable;
         this.claudePrefix = claudePrefix == null ? List.of() : List.copyOf(claudePrefix);
+        this.gateToml = gateToml;
         this.executor = Executors.newSingleThreadExecutor(r -> {
             Thread t = new Thread(r, "claude-session");
             t.setDaemon(true);
@@ -449,10 +456,18 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
 
     private void writeMcpConfig(Path file, Map<String, String> env) {
         try {
-            Files.createDirectories(file.getParent());
             String token = env == null ? "" : env.getOrDefault("GATE_DOMAIN_TOKEN", "");
-            String json = "{\"mcpServers\":{\"gate\":{\"command\":\"gate\",\"args\":[\"mcp\",\"serve\"],"
-                    + "\"env\":{\"GATE_DOMAIN_TOKEN\":\"" + escapeJson(token) + "\"}}}}";
+            // Without a token the MCP server refuses to start (it demands GATE_DOMAIN_TOKEN,
+            // §6.1) and without gateToml we cannot build a spawnable command ("gate" is not on
+            // PATH in this deployment) — delete any stale file so buildArgv's existence check
+            // stays truthful instead of passing claude a config that can never come up.
+            if (gateToml == null || token.isBlank()) {
+                Files.deleteIfExists(file);
+                return;
+            }
+            Files.createDirectories(file.getParent());
+            String json = GateMcpProvisioning.claudeConfigJson(
+                    GateMcpProvisioning.serveArgv(gateToml), token);
             Files.writeString(file, json, StandardCharsets.UTF_8);
         } catch (Exception e) {
             throw new GateException(GateErrorCode.GATE_ERROR_IO, "cannot write mcp config " + file, e);

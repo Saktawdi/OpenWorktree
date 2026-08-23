@@ -81,7 +81,7 @@ class OpenCodeServePermissionTest {
         PortAllocator allocator = new PortAllocator(port, port);
         adapter = new OpenCodeServeAdapter(new ProcessRunnerImpl(root.resolve("proc")),
                 agentConfigs, sessions, new JdbcTicketRepository(jdbc), null, null, ticketLocks,
-                new SystemClock(), allocator, "", 60, null, null);
+                new SystemClock(), allocator, "", 60, null, null, null);
     }
 
     @AfterEach

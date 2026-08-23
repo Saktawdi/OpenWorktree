@@ -247,7 +247,13 @@ function VerdictBanner({
 function OutcomeCard({
   outcome,
 }: {
-  outcome: { commitSha: string; refBefore: string; refAfter: string; targetRef: string; publishedAt: number };
+  outcome: {
+    commitSha: string;
+    refBefore: string;
+    refAfter: string;
+    targetRef: string;
+    publishedAt: number;
+  };
 }) {
   return (
     <div className="rounded-xl border border-accent/25 bg-accent/[0.04] p-4 animate-slide-in">
@@ -323,6 +329,92 @@ function TicketInfo({ ticketNo }: { ticketNo: string }) {
               )}
               {!ticket.description && !ticket.note && (
                 <div className="text-[12px] text-faint text-center py-2">暂无描述信息</div>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+/* ─── Gate Pipeline Section (collapsible) ─── */
+
+function GatePipeline({
+  ticketNo,
+  stage,
+  round,
+  snap,
+  task,
+  verdict,
+  findingsCount,
+  gateBusy,
+  outcome,
+}: {
+  ticketNo: string;
+  stage: string;
+  round: number;
+  snap?: Snapshot;
+  task?: { kind: string; percent: number; label: string };
+  verdict?: { verdict: string; reason: string; engineId: string; authorizationId?: string };
+  findingsCount: number;
+  gateBusy: boolean;
+  outcome?: { commitSha: string; refBefore: string; refAfter: string; targetRef: string; publishedAt: number };
+}) {
+  const [expanded, setExpanded] = useState(true);
+
+  return (
+    <div className="border-b border-edge">
+      <button
+        className="w-full flex items-center gap-2 px-4 py-2.5 text-left hover:bg-raised/50 transition-colors cursor-pointer"
+        onClick={() => setExpanded(!expanded)}
+      >
+        <ListChecks size={14} className="text-faint shrink-0" />
+        <span className="text-[12px] font-medium text-dim">门禁流水线</span>
+        {round > 0 && (
+          <span className="chip border border-edge-strong bg-raised text-dim font-mono">第 {round} 轮</span>
+        )}
+        <span className="flex-1" />
+        <span
+          className={`text-[11px] text-faint transition-transform duration-150 ${expanded ? "rotate-0" : "-rotate-90"}`}
+        >
+          ▾
+        </span>
+      </button>
+      <AnimatePresence>
+        {expanded && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+            className="overflow-hidden"
+          >
+            <div className="px-4 pt-1 pb-3 space-y-3">
+              <Stepper stage={stage} snap={snap} commitSha={outcome?.commitSha} />
+              {task && <TaskCard task={task} />}
+              {snap && !task && <TreeHashCard snap={snap} />}
+              {verdict && !task && (
+                <VerdictBanner ticketNo={ticketNo} verdict={verdict} findingsCount={findingsCount} />
+              )}
+              {outcome && <OutcomeCard outcome={outcome} />}
+              {stage === "NEEDS_HUMAN" && (
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    className="btn btn-primary h-9"
+                    disabled={gateBusy}
+                    onClick={() => actions.overridePass(ticketNo)}
+                  >
+                    人工核准放行
+                  </button>
+                  <button
+                    className="btn btn-danger-ghost h-9"
+                    disabled={gateBusy}
+                    onClick={() => actions.rejectTicket(ticketNo)}
+                  >
+                    驳回重修
+                  </button>
+                </div>
               )}
             </div>
           </motion.div>
@@ -606,45 +698,23 @@ export function GatePanel({ ticketNo }: { ticketNo: string }) {
 
   return (
     <aside className="w-[400px] shrink-0 border-l border-edge flex flex-col bg-canvas">
-      {/* ─── Header ─── */}
-      <div className="shrink-0 px-4 pt-3 pb-3 border-b border-edge bg-sunken/50">
-        <div className="flex items-center justify-between mb-3">
-          <span className="kicker">门禁流水线</span>
-          {round > 0 && (
-            <span className="chip border border-edge-strong bg-raised text-dim font-mono">第 {round} 轮</span>
-          )}
-        </div>
-        <Stepper stage={stage ?? "PENDING"} snap={snap} commitSha={outcome?.commitSha} />
-      </div>
-
       {/* ─── Scrollable Content ─── */}
       <div className="flex-1 min-h-0 flex flex-col">
         {/* Ticket Info */}
         <TicketInfo ticketNo={ticketNo} />
 
-        {/* Task / Verdict / Outcome cards */}
-        {(task || snap || verdict || outcome) && (
-          <div className="px-4 py-3 space-y-3 border-b border-edge">
-            {task && <TaskCard task={task} />}
-            {snap && !task && <TreeHashCard snap={snap} />}
-            {verdict && !task && <VerdictBanner ticketNo={ticketNo} verdict={verdict} findingsCount={findingsCount} />}
-            {outcome && <OutcomeCard outcome={outcome} />}
-            {stage === "NEEDS_HUMAN" && (
-              <div className="grid grid-cols-2 gap-2">
-                <button className="btn btn-primary h-9" disabled={gateBusy} onClick={() => actions.overridePass(ticketNo)}>
-                  人工核准放行
-                </button>
-                <button
-                  className="btn btn-danger-ghost h-9"
-                  disabled={gateBusy}
-                  onClick={() => actions.rejectTicket(ticketNo)}
-                >
-                  驳回重修
-                </button>
-              </div>
-            )}
-          </div>
-        )}
+        {/* Gate Pipeline (collapsible) */}
+        <GatePipeline
+          ticketNo={ticketNo}
+          stage={stage ?? "PENDING"}
+          round={round}
+          snap={snap}
+          task={task}
+          verdict={verdict}
+          findingsCount={findingsCount}
+          gateBusy={gateBusy}
+          outcome={outcome}
+        />
 
         {/* Session List */}
         <div className="flex-1 min-h-0 flex flex-col">

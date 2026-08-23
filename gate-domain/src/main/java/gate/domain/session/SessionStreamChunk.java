@@ -13,7 +13,8 @@ public sealed interface SessionStreamChunk permits
         SessionStreamChunk.ErrorChunk,
         SessionStreamChunk.DoneChunk,
         SessionStreamChunk.PermissionAskedChunk,
-        SessionStreamChunk.PermissionRepliedChunk {
+        SessionStreamChunk.PermissionRepliedChunk,
+        SessionStreamChunk.TitleChunk {
 
     String sessionId();
     Instant timestamp();
@@ -48,4 +49,7 @@ public sealed interface SessionStreamChunk permits
 
     /** A permission reply (user click or server auto-allow) applied to opencode. */
     record PermissionRepliedChunk(String sessionId, String permissionId, String response, boolean auto, Instant timestamp) implements SessionStreamChunk {}
+
+    /** opencode 自动生成的真实标题（session.updated）落库后立刻广播出去，前端可实时替换占位标签。 */
+    record TitleChunk(String sessionId, String title, Instant timestamp) implements SessionStreamChunk {}
 }

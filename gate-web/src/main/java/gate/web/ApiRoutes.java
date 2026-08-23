@@ -92,7 +92,8 @@ public final class ApiRoutes {
         this.ticketRoutes = new gate.web.ticket.TicketRoutes(tickets, projects, c.agentConfigRepository(),
                 topologyInitializer, config, clock);
         this.sessionRoutes = new gate.web.session.SessionRoutes(c.agentConfigRepository(),
-                c.sessionRepository(), c.agentSessionPort(), tickets, clock);
+                c.sessionRepository(), c.agentSessionPort(), tickets, clock,
+                new gate.web.session.SessionModelCatalog(), c.credentials());
     }
 
     /** A resolved response: HTTP status + a JSON-serialisable body. */

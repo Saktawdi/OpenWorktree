@@ -9,6 +9,7 @@ import gate.domain.session.Session;
 import gate.ports.AgentConfigRepository;
 import gate.ports.AgentSessionPort;
 import gate.ports.Clock;
+import gate.ports.CredentialRepository;
 import gate.ports.SessionRepository;
 import gate.ports.TicketRepository;
 import gate.web.ApiRoutes;
@@ -29,21 +30,33 @@ public final class SessionRoutes {
     private final TicketRepository tickets;
     private final Clock clock;
     private final SessionModelCatalog modelCatalog;
+    /**
+     * Mints the ticket-bound agent-domain token handed to the CLI adapter's MCP provisioning.
+     * Null (tests) = sessions start without gate MCP tools, as before this capability existed.
+     */
+    private final CredentialRepository credentials;
 
     public SessionRoutes(AgentConfigRepository agentConfigs, SessionRepository sessionRepository,
                          AgentSessionPort agentSessionPort, TicketRepository tickets, Clock clock) {
         this(agentConfigs, sessionRepository, agentSessionPort, tickets, clock, new SessionModelCatalog());
     }
 
-    SessionRoutes(AgentConfigRepository agentConfigs, SessionRepository sessionRepository,
-                  AgentSessionPort agentSessionPort, TicketRepository tickets, Clock clock,
-                  SessionModelCatalog modelCatalog) {
+    public SessionRoutes(AgentConfigRepository agentConfigs, SessionRepository sessionRepository,
+                         AgentSessionPort agentSessionPort, TicketRepository tickets, Clock clock,
+                         SessionModelCatalog modelCatalog) {
+        this(agentConfigs, sessionRepository, agentSessionPort, tickets, clock, modelCatalog, null);
+    }
+
+    public SessionRoutes(AgentConfigRepository agentConfigs, SessionRepository sessionRepository,
+                         AgentSessionPort agentSessionPort, TicketRepository tickets, Clock clock,
+                         SessionModelCatalog modelCatalog, CredentialRepository credentials) {
         this.agentConfigs = agentConfigs;
         this.sessionRepository = sessionRepository;
         this.agentSessionPort = agentSessionPort;
         this.tickets = tickets;
         this.clock = clock;
         this.modelCatalog = modelCatalog;
+        this.credentials = credentials;
     }
 
     public ApiRoutes.Response agentConfigList() {
@@ -128,9 +141,18 @@ public final class SessionRoutes {
         if (initialPrompt == null) {
             initialPrompt = "";
         }
+        // Every session gets a freshly minted agent-domain token bound to this ticket (§5.4):
+        // the plaintext rides only inside StartRequest.env → the CLI process tree / per-session
+        // MCP config under the clone's .git/, and only its hash is persisted. Without it the
+        // agent CLI cannot bring up the gate MCP server and presubmit_create stays missing
+        // (the T-110 session: "仅有 Open Design 相关（无 presubmit_create）").
+        Map<String, String> startEnv = credentials == null
+                ? Map.of()
+                : Map.of(gate.adapters.mcp.McpServer.TOKEN_ENV,
+                        credentials.issueAgentToken(ticketNo, clock.now()));
         Session s = agentSessionPort.start(new AgentSessionPort.StartRequest(
                 ticketNo, agentConfigId, ticket.clonePath(), ticket.targetRef(),
-                initialPrompt, Map.of()));
+                initialPrompt, startEnv));
         return new ApiRoutes.Response(201, sessionJson(s));
     }
 

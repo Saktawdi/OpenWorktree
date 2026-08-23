@@ -146,17 +146,24 @@ export async function createTicketLive(body: Record<string, unknown>): Promise<s
   }
 }
 
+/**
+ * 拉取工单工作区 diff（/diff 端点 = clone 内 git diff HEAD + untracked）。
+ * 除进工单时调用外，会话 done / 编辑类工具完成时也会调用——否则变更对比只在
+ * 重新触发 selectTicketLive（切走再切回工单）后才更新。
+ */
+export async function loadTicketDiff(no: string) {
+  try {
+    const diffRes = await api<{ diff: string; eol_warning?: string }>(`/api/tickets/${no}/diff`);
+    const files: DiffFile[] = diffRes.diff.trim() ? parseUnifiedDiff(diffRes.diff) : [];
+    setDiffs(no, files, diffRes.eol_warning);
+  } catch {
+    setDiffs(no, []);
+  }
+}
+
 export async function selectTicketLive(no: string) {
   appStore.setState({ selectedNo: no, centerTab: "chat", highlight: null });
-  const loadDiff = async () => {
-    try {
-      const diffRes = await api<{ diff: string; eol_warning?: string }>(`/api/tickets/${no}/diff`);
-      const files: DiffFile[] = diffRes.diff.trim() ? parseUnifiedDiff(diffRes.diff) : [];
-      setDiffs(no, files, diffRes.eol_warning);
-    } catch {
-      setDiffs(no, []);
-    }
-  };
+  const loadDiff = () => loadTicketDiff(no);
   const loadSessions = async () => {
     try {
       await loadTicketSessions(no);
@@ -631,6 +638,18 @@ export async function switchSessionModelLive(
   }
 }
 
+// 编辑类工具在一个回合里往往连续完成多次；逐次全量拉 diff 既慢也毫无增益，合并成一次。
+const diffRefreshTimers: Record<string, ReturnType<typeof setTimeout>> = {};
+function scheduleDiffRefresh(no: string) {
+  if (diffRefreshTimers[no]) clearTimeout(diffRefreshTimers[no]);
+  diffRefreshTimers[no] = setTimeout(() => {
+    delete diffRefreshTimers[no];
+    void loadTicketDiff(no);
+  }, 800);
+}
+
+const FILE_EDIT_TOOLS = ["edit", "write", "patch", "multiedit"];
+
 async function consumeSessionStream(no: string, sessionId: string) {
   const token = appStore.getState().token;
   const url = `/api/sessions/${sessionId}/events${token ? `?token=${encodeURIComponent(token)}` : ""}`;
@@ -680,6 +699,11 @@ async function consumeSessionStream(no: string, sessionId: string) {
     es.addEventListener("tool_call", (ev) => {
       arm();
       const d = JSON.parse((ev as MessageEvent).data);
+      // 编辑类工具落盘成功 → 防抖刷新该工单的变更对比，兑现"每次编辑实时反映"的文案；
+      // bash 等其它工具可能改文件但太噪，回合结束的 done 刷新兜底。
+      if (d.status === "SUCCESS" && FILE_EDIT_TOOLS.includes(String(d.tool_name ?? "").toLowerCase())) {
+        scheduleDiffRefresh(no);
+      }
       updateLiveTurn(sessionId, (a) => {
         const existing = a.tools.find((t) => t.id === d.call_id);
         if (existing) {
@@ -726,10 +750,26 @@ async function consumeSessionStream(no: string, sessionId: string) {
       const d = JSON.parse((ev as MessageEvent).data);
       resolvePermission(no, d.permission_id, d.response ?? "once", !!d.auto);
     });
+    es.addEventListener("session_title", (ev) => {
+      // 后端把 opencode 自动生成的标题上抛（HTTP Server: SessionSseHandler）。
+      // 顺手同步当前 store 里的会话条目；回合结束再拉一次可确保一致。
+      const d = JSON.parse((ev as MessageEvent).data);
+      const sid = String(d.session_id ?? "");
+      const title = String(d.title ?? "");
+      if (!sid || !title) return;
+      appStore.setState((st) => ({
+        sessions: {
+          ...st.sessions,
+          [no]: (st.sessions[no] ?? []).map((s) => (s.id === sid ? { ...s, title } : s)),
+        },
+      }));
+    });
     es.addEventListener("done", () => {
       // 后端此刻已把 opencode 的自动生成标题写库（session.updated → sessions.update）。
       // 只刷新列表数据，不动 activeSessionId，避免把用户在查看的会话顶走。
       void refreshTicketSessionsMeta(no);
+      // 回合结束：刷新变更对比的最终状态（本回合内 bash 等未跟踪的文件改动也一并覆盖）。
+      void loadTicketDiff(no);
       finish();
     });
     es.addEventListener("error", (ev) => {

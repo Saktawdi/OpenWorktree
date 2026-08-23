@@ -94,6 +94,8 @@ final class SessionSseHandler {
                         eventName = "permission_asked";
                     } else if (chunk instanceof SessionStreamChunk.PermissionRepliedChunk) {
                         eventName = "permission_replied";
+                    } else if (chunk instanceof SessionStreamChunk.TitleChunk) {
+                        eventName = "session_title";
                     }
                     Map<String, Object> chunkPayload = chunkJson(chunk);
                     String data = Json.write(chunkPayload);
@@ -171,6 +173,8 @@ final class SessionSseHandler {
             m.put("permission_id", pr.permissionId());
             m.put("response", pr.response());
             m.put("auto", pr.auto());
+        } else if (chunk instanceof SessionStreamChunk.TitleChunk t) {
+            m.put("title", t.title());
         }
         return m;
     }

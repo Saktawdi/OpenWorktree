@@ -113,6 +113,11 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
     private final Map<String, Map<String, PermissionRequest>> pendingPermissions = new ConcurrentHashMap<>();
     private final AdapterLog log;
     private final ServePidRegistry pidRegistry;
+    /**
+     * gate.toml location for MCP provisioning (presubmit_create & co.). Null = provisioning
+     * disabled (tests); sessions then start exactly as before this capability existed.
+     */
+    private final Path gateToml;
 
     public OpenCodeServeAdapter(ProcessRunner processRunner,
                                  AgentConfigRepository agentConfigs,
@@ -156,7 +161,7 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                                  AdapterLog log,
                                  ServePidRegistry pidRegistry) {
         this(processRunner, agentConfigs, sessions, tickets, null, tasks, ticketLocks, clock,
-                ports, opencodeExecutable, startTimeoutSeconds, log, pidRegistry);
+                ports, opencodeExecutable, startTimeoutSeconds, log, pidRegistry, null);
     }
 
     /** Full constructor: {@code projects} is optional (null skips the 项目 section of the injected context). */
@@ -172,7 +177,8 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                                  String opencodeExecutable,
                                  int startTimeoutSeconds,
                                  AdapterLog log,
-                                 ServePidRegistry pidRegistry) {
+                                 ServePidRegistry pidRegistry,
+                                 Path gateToml) {
         this.processRunner = processRunner;
         this.agentConfigs = agentConfigs;
         this.sessions = sessions;
@@ -186,6 +192,7 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
         this.startTimeout = Duration.ofSeconds(startTimeoutSeconds);
         this.log = log == null ? AdapterLog.noop() : log;
         this.pidRegistry = pidRegistry == null ? new ServePidRegistry(null) : pidRegistry;
+        this.gateToml = gateToml;
         this.pidRegistry.sweepOrphans();
         this.executor = Executors.newSingleThreadExecutor(r -> {
             Thread t = new Thread(r, "opencode-session");
@@ -371,7 +378,7 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                     // on this port with STALE in-memory config; our own spawned process loses the
                     // bind race and dies while waitHealthy talks to the orphan instead. Refuse.
                     assertPortFree(port);
-                    spawnServe(port, request.clonePath());
+                    spawnServe(port, request.clonePath(), request.env());
                 }
                 waitHealthy(port);
                 String cliSessionId = createSession(port);
@@ -1127,6 +1134,8 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
             }
             sessions.update(latest.withTitle(title));
             log.info("opencode", "session.title-synced", "sessionId", sessionId, "title", title);
+            // 同时通过流通道把新标题立刻广播给前端，sidebar 无需等回合结束即可替换占位标签。
+            emitChunk(sessionId, new SessionStreamChunk.TitleChunk(sessionId, title, clock.now()));
         }
 
         /** Mirrors opencode's Session.isDefaultTitle ("New session - " / "Child session - " + ISO stamp). */
@@ -1439,17 +1448,25 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
         }
     }
 
-    private void spawnServe(int port, String clonePath) {
+    private void spawnServe(int port, String clonePath, Map<String, String> env) {
         try {
             ProcessBuilder pb = new ProcessBuilder(opencodeExecutable, "serve",
                     "--port", String.valueOf(port), "--hostname", "127.0.0.1");
             if (clonePath != null) {
                 pb.directory(Path.of(clonePath).toFile());
             }
+            // MCP provisioning: without this the agent has no presubmit_create and cannot file a
+            // presubmit itself (the T-110 session ended with "仅有 Open Design 相关工具"). The
+            // config registers the gate MCP server under the clone's .git/ so it never appears in
+            // the ticket diff; OPENCODE_CONFIG MERGES with the user's global opencode config
+            // (their providers/models survive), and the domain token rides in the MCP child's
+            // environment, never argv.
+            provisionGateMcp(pb, clonePath, env);
             // A gate backend launched from inside an OpenChamber/OpenCode-managed shell inherits
             // that shell's server wiring; OPENCODE_SERVER_PASSWORD in particular makes every child
             // serve demand Bearer auth our adapter never sends (all requests 401). The spawned
-            // serve must be a clean-slate instance.
+            // serve must be a clean-slate instance. (OPENCODE_CONFIG_CONTENT is inline-config
+            // override — removed so only our file-based OPENCODE_CONFIG applies.)
             for (String key : List.of("OPENCODE_SERVER_PASSWORD", "OPENCODE_CONFIG_CONTENT",
                     "OPENCODE_BINARY", "OPENCODE_PID", "OPENCODE")) {
                 pb.environment().remove(key);
@@ -1465,6 +1482,32 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
             log.error("opencode", "serve.spawn-failed", "port", port, "error", String.valueOf(e));
             throw new GateException(GateErrorCode.GATE_ERROR_IO,
                     "cannot spawn opencode serve on port " + port, e);
+        }
+    }
+
+    /**
+     * Writes the per-session opencode config registering the gate MCP server and points the child
+     * at it via OPENCODE_CONFIG. No-op (session starts without gate tools, as before) when
+     * provisioning is disabled ({@code gateToml} null) or the start request carried no domain
+     * token — the token is minted per session by the web layer and arrives via StartRequest.env.
+     */
+    private void provisionGateMcp(ProcessBuilder pb, String clonePath, Map<String, String> env) {
+        String token = env == null ? null : env.get(gate.adapters.mcp.McpServer.TOKEN_ENV);
+        if (gateToml == null || clonePath == null || token == null || token.isBlank()) {
+            return;
+        }
+        try {
+            Path configFile = Path.of(clonePath).resolve(".git").resolve("gate-context")
+                    .resolve("opencode-config.json");
+            java.nio.file.Files.createDirectories(configFile.getParent());
+            String json = GateMcpProvisioning.opencodeConfigJson(
+                    GateMcpProvisioning.serveArgv(gateToml), token);
+            java.nio.file.Files.writeString(configFile, json, StandardCharsets.UTF_8);
+            pb.environment().put("OPENCODE_CONFIG", configFile.toAbsolutePath().toString());
+            log.info("opencode", "serve.mcp-provisioned", "config", configFile.toString());
+        } catch (IOException e) {
+            throw new GateException(GateErrorCode.GATE_ERROR_IO,
+                    "cannot write opencode MCP config for clone " + clonePath, e);
         }
     }
 
