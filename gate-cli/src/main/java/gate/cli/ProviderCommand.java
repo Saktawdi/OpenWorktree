@@ -112,7 +112,7 @@ final class ProviderCommand implements Runnable {
         private static List<String> fetchModels(String baseUrl, String apiKey) {
             String url = baseUrl.endsWith("/") ? baseUrl + "models" : baseUrl + "/models";
             try {
-                HttpClient client = HttpClient.newBuilder()
+                HttpClient client = gate.adapters.http.TrustAllTls.apply(HttpClient.newBuilder())
                         .connectTimeout(Duration.ofSeconds(15)).build();
                 HttpRequest req = HttpRequest.newBuilder(URI.create(url))
                         .timeout(Duration.ofSeconds(30))

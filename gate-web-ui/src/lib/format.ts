@@ -83,20 +83,36 @@ export const PRIORITY_COLOR: Record<Priority, string> = {
 };
 
 /**
- * 工单列表排序用的泳道序：与看板 LANES 顺序一致（REJECTED 归入进行中、
- * NEEDS_HUMAN 归入可发布），CANCELLED 为终态恒排最后。
+ * 工单列表排序权重（升序 = 自上而下）：越接近发布的活跃工单越靠上，
+ * 待处理随后，终态沉底（已完成次之，已取消恒在最末）。已驳回视同进行中。
+ * 同一状态内再按优先级 P0→P3，最后保持手动拖拽顺序。
  */
-export const STAGE_LANE_RANK: Record<Stage, number> = {
-  PENDING: 0,
-  IN_PROGRESS: 1,
-  REJECTED: 1,
-  PRESUBMITTED: 2,
-  IN_REVIEW: 3,
-  READY_TO_PUBLISH: 4,
-  NEEDS_HUMAN: 4,
-  DONE: 5,
-  CANCELLED: 6,
+export const STAGE_SORT_RANK: Record<Stage, number> = {
+  READY_TO_PUBLISH: 0,
+  NEEDS_HUMAN: 1,
+  IN_REVIEW: 2,
+  PRESUBMITTED: 3,
+  IN_PROGRESS: 4,
+  REJECTED: 4,
+  PENDING: 5,
+  DONE: 6,
+  CANCELLED: 7,
 };
+
+export const PRIORITY_RANK: Record<Priority, number> = { P0: 0, P1: 1, P2: 2, P3: 3 };
+
+/** 状态筛选面板的全集（与 Stage 类型一一对应）。 */
+export const ALL_STAGES: Stage[] = [
+  "PENDING",
+  "IN_PROGRESS",
+  "REJECTED",
+  "PRESUBMITTED",
+  "IN_REVIEW",
+  "READY_TO_PUBLISH",
+  "NEEDS_HUMAN",
+  "DONE",
+  "CANCELLED",
+];
 
 export function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));

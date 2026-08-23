@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { NotePencil, Trash } from "@phosphor-icons/react";
 import { actions } from "../lib/actions";
-import { openTicketEditor, useApp } from "../lib/store";
+import { openTicketEditor, setAgentId, useApp } from "../lib/store";
 import type { Priority } from "../lib/types";
 
 const PRIORITIES: Priority[] = ["P0", "P1", "P2", "P3"];
@@ -36,7 +36,7 @@ export function TicketEditDialog() {
   const save = async () => {
     if (!title.trim()) return;
     setSaving(true);
-    await actions.editTicket(editingNo, {
+    const ok = await actions.editTicket(editingNo, {
       title: title.trim(),
       priority,
       description: description.trim() || undefined,
@@ -49,6 +49,8 @@ export function TicketEditDialog() {
       agentConfigId: agentConfigId || null,
     });
     setSaving(false);
+    // 保存成功后同步全局默认 agent，让 composer 的选择器立刻反映新绑定。
+    if (ok && agentConfigId) setAgentId(agentConfigId);
     openTicketEditor(null);
   };
 

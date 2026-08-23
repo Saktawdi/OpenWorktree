@@ -221,14 +221,15 @@ export function TopBar() {
         : "text-dim border-edge-strong bg-raised";
 
   return (
-    <header className="h-13 shrink-0 flex items-center gap-4 px-4 border-b border-edge bg-surface">
+    <header className="relative h-13 shrink-0 flex items-center gap-4 px-4 border-b border-edge bg-surface">
       <div className="flex items-center gap-2.5 min-w-0">
         <LogoMark />
         <span className="font-semibold tracking-tight text-[15px]">Gate</span>
         <RunningAgentsBadge />
       </div>
 
-      <div className="hidden md:block">
+      {/* 左缘与工单侧栏（aside w-[268px]）右缘对齐；绝对定位以避开左侧徽标/项目名称的宽度波动 */}
+      <div className="hidden md:block absolute left-[268px] top-1/2 -translate-y-1/2">
         <ViewSwitch />
       </div>
 
@@ -249,7 +250,7 @@ export function TopBar() {
         <span className="hidden sm:inline">{connLabel}</span>
       </button>
 
-      <button className="icon-btn hidden sm:inline-flex" onClick={openConnect} title="设置" aria-label="设置">
+      <button className="icon-btn hidden sm:inline-flex" onClick={() => setView("settings")} title="设置" aria-label="设置">
         <GearSix size={16} />
       </button>
       <ThemeToggle />

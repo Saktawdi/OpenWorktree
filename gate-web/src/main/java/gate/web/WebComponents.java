@@ -82,6 +82,7 @@ public final class WebComponents {
     private final ProcessRunner processRunner;
     private final GitCli git;
     private final Instant startedAt;
+    private final Path gateToml;
     private final gate.ports.ProjectRepository projectRepository;
     private final gate.ports.WorkspaceSyncer workspaceSyncer;
     private final ProviderModelFetcher modelFetcher;
@@ -106,6 +107,7 @@ public final class WebComponents {
         this.clock = runtime.clock();
         this.envFile = runtime.envFile();
         this.startedAt = this.clock.now();
+        this.gateToml = gateToml == null ? null : gateToml.toAbsolutePath().normalize();
         this.processRunner = runtime.processRunner();
         this.git = runtime.git();
         this.gateService = runtime.gateService();
@@ -310,6 +312,10 @@ public final class WebComponents {
 
     public Instant startedAt() {
         return startedAt;
+    }
+
+    public Path gateToml() {
+        return gateToml;
     }
 
     /** Shuts down the async task executor and session adapters. Idempotent; called by {@link WebServer#close()}. */

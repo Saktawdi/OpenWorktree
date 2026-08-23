@@ -102,6 +102,19 @@ public final class GateServiceImpl implements GateService {
                            AuditLog auditLog, LockManager lockManager, DbTransactionRunner tx, Clock clock,
                            gate.ports.PublishProbe publishProbe, gate.ports.AuthoritativeGitService authoritativeGitService,
                            gate.ports.ProjectRepository projects, WorkspaceSyncer workspaceSyncer) {
+        this(config, snapshotCapture, commitPublisher, refObserver, approvalStore, reviewEngineFactory, gatePolicy,
+                tickets, presubmits, reviewResults, intents, blobStore, auditLog, lockManager, tx, clock,
+                publishProbe, authoritativeGitService, projects, workspaceSyncer, null);
+    }
+
+    public GateServiceImpl(GateConfig config, SnapshotCapture snapshotCapture, CommitPublisher commitPublisher,
+                           RefObserver refObserver, ApprovalStore approvalStore, ReviewEngineFactory reviewEngineFactory,
+                           GatePolicy gatePolicy, TicketRepository tickets, PresubmitRepository presubmits,
+                           ReviewResultRepository reviewResults, PublishIntentRepository intents, BlobStore blobStore,
+                           AuditLog auditLog, LockManager lockManager, DbTransactionRunner tx, Clock clock,
+                           gate.ports.PublishProbe publishProbe, gate.ports.AuthoritativeGitService authoritativeGitService,
+                           gate.ports.ProjectRepository projects, WorkspaceSyncer workspaceSyncer,
+                           gate.ports.CommitIdentityProvider commitIdentityProvider) {
         this.config = config;
         this.refObserver = refObserver;
         this.tickets = tickets;
@@ -117,7 +130,7 @@ public final class GateServiceImpl implements GateService {
                 config, snapshotCapture, commitPublisher, refObserver, approvalStore,
                 gatePolicy, tickets, presubmits, reviewResults, intents, blobStore,
                 auditLog, lockManager, tx, clock, publishProbe, authoritativeGitService, this.authResolver,
-                workspaceSyncer);
+                workspaceSyncer, commitIdentityProvider);
     }
 
     @Override

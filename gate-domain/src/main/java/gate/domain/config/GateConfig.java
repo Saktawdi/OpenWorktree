@@ -20,6 +20,7 @@ import java.util.List;
  * @param session            Agent session orchestration defaults (执行文档-后端-web §5, §8). Nullable
  *                           on the CLI/MCP paths.
  * @param agent              Agent config defaults (执行文档-后端-web §8). Nullable on the CLI/MCP paths.
+ * @param publishIdentity    发布提交身份覆盖（[publish_identity]）；null/空 = 自动取本机 git 作者。
  */
 public record GateConfig(
         int schemaVersion,
@@ -39,7 +40,8 @@ public record GateConfig(
         EngineConfig engine,
         WebConfig web,
         SessionConfig session,
-        AgentConfigDefaults agent) {
+        AgentConfigDefaults agent,
+        PublishIdentity publishIdentity) {
 
     public static final int CURRENT_SCHEMA_VERSION = 2;
 
@@ -53,7 +55,18 @@ public record GateConfig(
                       CommitIdentity gateIdentity, Policy policy, EngineConfig engine) {
         this(schemaVersion, project, authRepo, clonesRoot, targetRefWhitelist, gateHome, approvalsDir,
                 dbPath, blobRoot, auditPath, locksDir, indexDir, gateIdentity, policy, engine,
-                null, null, null);
+                null, null, null, null);
+    }
+
+    /** Back-compatible 18-arg constructor from before [publish_identity] existed. */
+    public GateConfig(int schemaVersion, String project, Path authRepo, Path clonesRoot,
+                      List<String> targetRefWhitelist, Path gateHome, Path approvalsDir, Path dbPath,
+                      Path blobRoot, Path auditPath, Path locksDir, Path indexDir,
+                      CommitIdentity gateIdentity, Policy policy, EngineConfig engine,
+                      WebConfig web, SessionConfig session, AgentConfigDefaults agent) {
+        this(schemaVersion, project, authRepo, clonesRoot, targetRefWhitelist, gateHome, approvalsDir,
+                dbPath, blobRoot, auditPath, locksDir, indexDir, gateIdentity, policy, engine,
+                web, session, agent, null);
     }
 
     public GateConfig {
@@ -79,6 +92,8 @@ public record GateConfig(
         if (policy == null) {
             throw new IllegalArgumentException("policy must not be null");
         }
+        // null 统一归一为 AUTO，调用方无需逐处判空。
+        publishIdentity = publishIdentity == null ? PublishIdentity.AUTO : publishIdentity;
     }
 
     public boolean webConfigured() {
@@ -163,5 +178,29 @@ public record GateConfig(
 
     /** Agent config defaults (执行文档-后端-web §8). */
     public record AgentConfigDefaults(String defaultModel, String defaultProvider, Path contextTemplate) {
+    }
+
+    /**
+     * 发布提交身份覆盖：name/email 皆空 = 自动取本机 git 作者；要覆盖必须成对提供
+     * （半截配置在加载期拒绝——匿名/无名邮件的提交没有意义）。
+     */
+    public record PublishIdentity(String name, String email) {
+
+        public static final PublishIdentity AUTO = new PublishIdentity(null, null);
+
+        public PublishIdentity {
+            boolean hasName = name != null && !name.isBlank();
+            boolean hasEmail = email != null && !email.isBlank();
+            if (hasName != hasEmail) {
+                throw new IllegalArgumentException(
+                        "publish_identity must set name and email together (or neither for auto)");
+            }
+            name = hasName ? name.trim() : null;
+            email = hasEmail ? email.trim() : null;
+        }
+
+        public boolean isAuto() {
+            return name == null;
+        }
     }
 }

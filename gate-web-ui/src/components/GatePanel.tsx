@@ -342,6 +342,14 @@ function TicketInfo({ ticketNo }: { ticketNo: string }) {
             className="overflow-hidden"
           >
             <div className="px-4 pb-3 space-y-2.5">
+              <div className="flex items-center gap-2" title="目标分支在创建时锁定，不可编辑切换">
+                <GitBranch size={12} className="text-faint shrink-0" />
+                <span className="text-[11px] text-faint">目标分支（锁定）</span>
+                <span className="flex-1" />
+                <span className="font-mono text-[11.5px] text-dim">
+                  {ticket.targetRef.replace("refs/heads/", "")}
+                </span>
+              </div>
               {ticket.description && (
                 <div>
                   <div className="text-[10.5px] uppercase tracking-wider text-faint mb-1">需求描述</div>

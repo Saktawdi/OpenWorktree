@@ -70,6 +70,7 @@ public final class PublishHandler {
     private final PublishProbe publishProbe;
     private final AuthoritativeGitService authoritativeGitService;
     private final WorkspaceSyncer workspaceSyncer;
+    private final gate.ports.CommitIdentityProvider commitIdentityProvider;
 
     public PublishHandler(GateConfig config, SnapshotCapture snapshotCapture, CommitPublisher commitPublisher,
                           RefObserver refObserver, ApprovalStore approvalStore, GatePolicy gatePolicy,
@@ -115,6 +116,21 @@ public final class PublishHandler {
                           AuthoritativeGitService authoritativeGitService,
                           gate.application.project.ProjectAuthResolver authResolver,
                           WorkspaceSyncer workspaceSyncer) {
+        this(config, snapshotCapture, commitPublisher, refObserver, approvalStore, gatePolicy, tickets, presubmits,
+                reviewResults, intents, blobStore, auditLog, lockManager, tx, clock, publishProbe,
+                authoritativeGitService, authResolver, workspaceSyncer, null);
+    }
+
+    public PublishHandler(GateConfig config, SnapshotCapture snapshotCapture, CommitPublisher commitPublisher,
+                          RefObserver refObserver, ApprovalStore approvalStore, GatePolicy gatePolicy,
+                          TicketRepository tickets, PresubmitRepository presubmits,
+                          ReviewResultRepository reviewResults, PublishIntentRepository intents,
+                          BlobStore blobStore, AuditLog auditLog, LockManager lockManager,
+                          DbTransactionRunner tx, Clock clock, PublishProbe publishProbe,
+                          AuthoritativeGitService authoritativeGitService,
+                          gate.application.project.ProjectAuthResolver authResolver,
+                          WorkspaceSyncer workspaceSyncer,
+                          gate.ports.CommitIdentityProvider commitIdentityProvider) {
         this.config = config;
         this.authResolver = authResolver;
         this.snapshotCapture = snapshotCapture;
@@ -134,6 +150,7 @@ public final class PublishHandler {
         this.publishProbe = publishProbe;
         this.authoritativeGitService = authoritativeGitService;
         this.workspaceSyncer = workspaceSyncer;
+        this.commitIdentityProvider = commitIdentityProvider;
     }
 
     public PublishResult handle(PublishCommand command) {
@@ -250,9 +267,14 @@ public final class PublishHandler {
         if (intent == null) {
             ApprovalId approvalId = approvalStore.allocate();
             String message = commitMessage(ticket, row);
+            // 身份在创建 intent 时解析一次并随 intent 落库：本地 git 作者（或 [publish_identity]
+            // 覆盖）+ 真实时刻。之后 buildCommit 恒从 intent 行取值，同 intent 重放同 SHA 不变。
+            gate.domain.publish.CommitIdentity identity = commitIdentityProvider != null
+                    ? commitIdentityProvider.forPublish()
+                    : config.gateIdentity();
             PublishIntent toInsert = tx.inTransaction(() -> intents.insertPending(
                     ticket.ticketNo(), row.reviewRound(), rebuildSnapshot(clone, row), message,
-                    config.gateIdentity(), config.gateIdentity(), approvalId, clock.now(), clone, auth));
+                    identity, identity, approvalId, clock.now(), clone, auth));
             intent = toInsert;
         }
 
@@ -427,8 +449,20 @@ public final class PublishHandler {
         return decision.authorization();
     }
 
+    /**
+     * 提交信息 = 工单号 + 标题 + 轮次。标题压成单行并截断：主题行是给人看的定位线索，
+     * 换行/超长标题会破坏 git log 的可读性；空标题退回纯工单号。锚定信息（Ticket/Tree/
+     * Reviewed-By）留在正文，与快照指纹的核验口径一致。
+     */
     private static String commitMessage(Ticket ticket, PresubmitRepository.PresubmitRow row) {
-        return ticket.ticketNo() + " round " + row.reviewRound() + "\n\n"
+        String title = ticket.title() == null ? "" : ticket.title().replaceAll("\\s+", " ").trim();
+        if (title.length() > 72) {
+            title = title.substring(0, 72);
+        }
+        String subject = title.isEmpty()
+                ? ticket.ticketNo() + " round " + row.reviewRound()
+                : ticket.ticketNo() + " " + title + " (round " + row.reviewRound() + ")";
+        return subject + "\n\n"
                 + "Ticket: " + ticket.ticketNo() + "\n"
                 + "Tree: " + row.treeHash().hex() + "\n"
                 + "Reviewed-By: gate\n";

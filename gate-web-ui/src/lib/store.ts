@@ -31,7 +31,7 @@ import {
   TREE_NEXUS,
   t102Diff,
 } from "./scenario";
-import { uid } from "./format";
+import { ALL_STAGES, uid } from "./format";
 
 export type CenterTab = "chat" | "diff" | "findings";
 
@@ -52,7 +52,7 @@ export interface AppState {
   token: string;
   connectOpen: boolean;
   theme: Theme;
-  view: "workbench" | "kanban" | "projects" | "agents";
+  view: "workbench" | "kanban" | "projects" | "agents" | "settings";
   projects: Project[];
   activeProjectId: string;
   tickets: Ticket[];
@@ -94,6 +94,21 @@ export interface AppState {
   liveTurns: Record<string, LiveTurn>;
   /** 运行中的智能体数量（GET /api/agents/busy 轮询） */
   runningAgents: { count: number; sessions: Array<{ session_id: string; title: string | null; ticket_no: string | null; cli: string | null }> };
+  /** 工单列表按状态筛选：勾选可见的状态集合。 */
+  visibleStages: Stage[];
+}
+
+/** 读取本地持久化的状态筛选；非法值回退为全部可见。 */
+function loadVisibleStages(): Stage[] {
+  try {
+    const raw = typeof window !== "undefined" ? localStorage.getItem("gate-visible-stages") : null;
+    if (!raw) return [...ALL_STAGES];
+    const parsed = JSON.parse(raw) as Stage[];
+    const valid = parsed.filter((x) => ALL_STAGES.includes(x));
+    return valid.length > 0 ? valid : [...ALL_STAGES];
+  } catch {
+    return [...ALL_STAGES];
+  }
 }
 
 export const appStore = create<AppState>(() => ({
@@ -140,6 +155,7 @@ export const appStore = create<AppState>(() => ({
   sessionModelSel: {},
   liveTurns: {},
   runningAgents: { count: 0, sessions: [] },
+  visibleStages: loadVisibleStages(),
 }));
 
 const s = () => appStore.getState();
@@ -321,6 +337,12 @@ export function setSessionModelSel(sessionId: string, sel: SessionModelSel) {
 
 export function selectTicket(no: string) {
   patch({ selectedNo: no, centerTab: "chat", highlight: null });
+  // 与 live 的 selectTicketLive 一致：进工单时把绑定 agent 同步为默认选择，
+  // 避免选择器显示与工单无关的全局默认。
+  const bound = s().tickets.find((t) => t.ticketNo === no)?.agentConfigId;
+  if (bound && s().agentId !== bound && s().agents.some((a) => a.id === bound)) {
+    setAgentId(bound);
+  }
 }
 
 export function openConnect() {
@@ -623,6 +645,17 @@ export function setTicketOrder(no: string, order: number) {
   set((st) => ({ order: { ...st.order, [no]: order } }));
 }
 
+/** 更新状态筛选（持久化到 localStorage，跨会话保留）。 */
+export function setVisibleStages(stages: Stage[]) {
+  const unique = ALL_STAGES.filter((s) => stages.includes(s));
+  patch({ visibleStages: unique });
+  try {
+    localStorage.setItem("gate-visible-stages", JSON.stringify(unique));
+  } catch {
+    /* ignore */
+  }
+}
+
 export function laneOrders(st: AppState, nos: string[]): number[] {
   return nos.map((n) => st.order[n] ?? 0);
 }
@@ -779,6 +812,16 @@ export function createSession(ticketNo: string) {
     },
   }));
   return id;
+}
+
+/**
+ * 确保工单下存在活跃会话：列表为空（或全部归档）时自动创建并切换为新会话，
+ * 返回活跃会话 id。用于「会话列表为空时发送首条消息即自动开会话」的路径。
+ */
+export function ensureActiveSession(ticketNo: string): string {
+  const existing = s().sessions[ticketNo]?.find((sess) => sess.status === "active");
+  if (existing) return existing.id;
+  return createSession(ticketNo);
 }
 
 export function archiveSession(ticketNo: string, sessionId: string) {

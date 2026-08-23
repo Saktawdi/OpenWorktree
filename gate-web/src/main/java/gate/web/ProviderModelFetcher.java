@@ -41,7 +41,9 @@ final class ProviderModelFetcher {
 
     ProviderModelFetcher(Path envFile) {
         this.envFile = envFile;
-        this.http = HttpClient.newBuilder().connectTimeout(TIMEOUT).build();
+        // 上游可能是自签/代理证书链（PKIX 拒绝），本地工具放宽 TLS（见 TrustAllTls 的边界说明）。
+        this.http = gate.adapters.http.TrustAllTls.apply(HttpClient.newBuilder())
+                .connectTimeout(TIMEOUT).build();
     }
 
     /**

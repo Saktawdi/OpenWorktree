@@ -14,6 +14,7 @@ import {
   setDiffs,
   setFindings,
   setGateBusy,
+  setAgentId,
   setOutcome,
   setSessionBusy,
   setStage,
@@ -34,6 +35,9 @@ import type {
   Severity,
   Snapshot,
   WorkspaceSyncResult,
+  GateTomlResponse,
+  McpStatus,
+  LlmProvider,
 } from "./types";
 import { parseUnifiedDiff } from "./diff";
 import { approxDiffBytes } from "./diff";
@@ -164,6 +168,13 @@ export async function loadTicketDiff(no: string) {
 
 export async function selectTicketLive(no: string) {
   appStore.setState({ selectedNo: no, centerTab: "chat", highlight: null });
+  // 工单绑定的 agent 是新会话的默认协作对象：进工单时同步全局选择，
+  // 否则选择器停留在全局默认（如 claude），首条消息会建到错误的 agent 上。
+  const st0 = appStore.getState();
+  const bound = st0.tickets.find((t) => t.ticketNo === no)?.agentConfigId;
+  if (bound && st0.agentId !== bound && st0.agents.some((a) => a.id === bound)) {
+    setAgentId(bound);
+  }
   const loadDiff = () => loadTicketDiff(no);
   const loadSessions = async () => {
     try {
@@ -542,12 +553,19 @@ export async function liveSendPrompt(no: string, userText: string) {
   let sid: string | null = sessionId || null;
   try {
     if (!sid) {
+      // 会话列表为空 → 首条消息自动创建会话并把首句作为 initial_prompt 直接开跑。
+      const agentId = st.agents.some((a) => a.id === st.agentId) ? st.agentId : (st.agents[0]?.id ?? "");
       const created = await api<{ id: string }>(`/api/tickets/${no}/sessions`, {
         method: "POST",
-        body: JSON.stringify({ agent_config_id: st.agentId, initial_prompt: userText }),
+        body: JSON.stringify({ agent_config_id: agentId, initial_prompt: userText }),
       });
       sid = created.id;
+      // 立即把新会话同步进侧栏列表并固定 active 指针，否则整个流式回合期间
+      // 会话面板仍显示「暂无活跃会话」（回合结束的 done 刷新太晚）。
+      await loadTicketSessions(no).catch(() => {});
       appStore.setState((s2) => ({ activeSessionId: { ...s2.activeSessionId, [no]: sid! } }));
+      // 模型目录按会话加载：让模型/推理强度选择器在首个回合就能用。
+      void loadSessionCatalog(no, sid);
     } else {
       const sel = st.sessionModelSel[sid];
       await api(`/api/sessions/${sid}/messages`, {
@@ -1314,4 +1332,50 @@ export function stopAgentBusyPolling() {
       appStore.setState({ runningAgents: { count: 0, sessions: [] } });
     }
   }
+}
+
+/* ─── 设置中心 ── */
+
+
+export async function fetchGateToml(): Promise<GateTomlResponse> {
+  return api<GateTomlResponse>("/api/settings/gate-toml");
+}
+
+export async function updateGateToml(updates: Record<string, unknown>): Promise<{ ok: boolean; updated: string[]; restart_required: boolean }> {
+  return api<{ ok: boolean; updated: string[]; restart_required: boolean }>("/api/settings/gate-toml", {
+    method: "PUT",
+    body: JSON.stringify({ updates }),
+  });
+}
+
+export async function fetchMcpStatus(): Promise<McpStatus> {
+  return api<McpStatus>("/api/mcp/status");
+}
+
+export async function fetchProviders(): Promise<LlmProvider[]> {
+  const data = await api<{ providers: LlmProvider[] }>("/api/providers");
+  return data.providers ?? [];
+}
+
+export async function createProvider(body: { id: string; name: string; base_url: string; type: string; api_key_ref?: string }): Promise<LlmProvider> {
+  return api<LlmProvider>("/api/providers", { method: "POST", body: JSON.stringify(body) });
+}
+
+export async function updateProvider(id: string, body: { name: string; base_url: string; type: string; api_key_ref?: string }): Promise<LlmProvider> {
+  return api<LlmProvider>(`/api/providers/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(body) });
+}
+
+export async function deleteProvider(id: string): Promise<void> {
+  await api<void>(`/api/providers/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+export async function updateProviderModels(id: string, models: string[]): Promise<LlmProvider> {
+  return api<LlmProvider>(`/api/providers/${encodeURIComponent(id)}/models`, {
+    method: "PUT",
+    body: JSON.stringify({ models }),
+  });
+}
+
+export async function fetchUpstreamModels(id: string): Promise<LlmProvider> {
+  return api<LlmProvider>(`/api/providers/${encodeURIComponent(id)}/models/fetch`, { method: "POST", body: "{}" });
 }

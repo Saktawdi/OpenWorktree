@@ -138,12 +138,18 @@ public final class TicketRoutes {
         // the gate-level topology (ProjectAuthResolver — cross-project clones caused T-107).
         gate.application.project.ProjectAuthResolver.AuthTarget topology =
                 new gate.application.project.ProjectAuthResolver(projects, config).forNewTicket(project);
-        String targetRef = topology.targetRef();
+        String primaryRef = topology.targetRef();
+        // 工单级目标分支（默认 refs/heads/<工单号>）：克隆、预提审、发布与工作区同步全部锚定它，
+        // 天然形成"一工单一分支"的协作形态。创建后锁定——分支换基会破坏 tree 锚定与审计链。
+        String targetRef = resolveTicketTargetRef(req, ticketNo);
         RepoRef auth = topology.authRepo();
         if (!java.nio.file.Files.exists(auth.path())) {
             throw new GateException(GateErrorCode.USAGE,
                     "auth repo for this ticket does not exist: " + auth.pathString()
                             + " (init it before creating tickets)");
+        }
+        if (!targetRef.equals(primaryRef)) {
+            topologyInitializer.ensureBranch(auth, targetRef, primaryRef);
         }
         Path cloneDir = config.clonesRoot().resolve(ticketNo);
         RepoRef clone = topologyInitializer.createClone(auth, targetRef, cloneDir);
@@ -206,6 +212,10 @@ public final class TicketRoutes {
 
     private ApiRoutes.Response ticketUpdate(Ticket t, String ticketNo, String requestBody) {
         Map<String, Object> req = parseObject(requestBody);
+        if (req.containsKey("target_ref") || req.containsKey("target_branch")) {
+            throw new GateException(GateErrorCode.USAGE,
+                    "target ref is locked at ticket creation and cannot be changed: " + ticketNo);
+        }
         boolean hasEditable = req.containsKey("title") || req.containsKey("description")
                 || req.containsKey("note") || req.containsKey("labels") || req.containsKey("priority");
         boolean hasAgentConfig = req.containsKey("agent_config_id");
@@ -247,6 +257,33 @@ public final class TicketRoutes {
                 tickets.find(ticketNo).orElseThrow(() -> new GateException(
                         GateErrorCode.USAGE, "no such ticket: " + ticketNo)),
                 projectNameIndex()));
+    }
+
+    /**
+     * 工单目标分支解析：接受短名（{@code fix-docs}）或完整 ref（{@code refs/heads/fix-docs}），
+     * 缺省为工单号本身。仅允许单段安全字符集——分支名会进入注入提示词、ref 与克隆参数，
+     * 拒绝斜杠/空白/元字符，杜绝 ref 伪造与提示词注入。
+     */
+    private static String resolveTicketTargetRef(Map<String, Object> req, String ticketNo) {
+        Object raw = req.get("target_branch");
+        if (raw == null) {
+            raw = req.get("target_ref");
+        }
+        String name;
+        if (raw == null || String.valueOf(raw).isBlank()) {
+            name = ticketNo;
+        } else {
+            name = String.valueOf(raw).trim();
+            if (name.startsWith("refs/heads/")) {
+                name = name.substring("refs/heads/".length());
+            }
+        }
+        if (name.isEmpty() || name.equals(".") || name.equals("..") || name.endsWith(".lock")
+                || !name.matches("[A-Za-z0-9._-]+") || name.length() > 80) {
+            throw new GateException(GateErrorCode.USAGE,
+                    "target_branch must match [A-Za-z0-9._-]+ (single segment, no slash): " + raw);
+        }
+        return "refs/heads/" + name;
     }
 
     public static String parsePriority(Map<String, Object> req) {

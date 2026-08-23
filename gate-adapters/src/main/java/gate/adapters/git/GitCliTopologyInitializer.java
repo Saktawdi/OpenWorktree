@@ -125,6 +125,20 @@ public final class GitCliTopologyInitializer implements TopologyInitializer {
     }
 
     /**
+     * 确保权威库存在 {@code targetRef} 分支：缺失时从 {@code baseRef} tip 建支（服务端
+     * {@code update-ref}，性质同种子提交的 bootstrap，不经 pre-receive），已存在则原样返回。
+     */
+    @Override
+    public void ensureBranch(RepoRef authRepo, String targetRef, String baseRef) {
+        var existing = git.run(authRepo, "rev-parse", "--verify", targetRef);
+        if (existing.ok()) {
+            return;
+        }
+        String baseTip = git.line(authRepo, "rev-parse", "--verify", baseRef);
+        git.must(authRepo, "update-ref", targetRef, baseTip.trim());
+    }
+
+    /**
      * Seeds the target branch with a single bootstrap commit if it does not exist yet.
      *
      * <p>Uses a throwaway repository rather than a clone of the (still empty) bare repo, so nothing

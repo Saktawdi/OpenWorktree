@@ -72,7 +72,7 @@ class WorkspaceSyncApiTest {
         // 3. Create ticket belonging to project
         String ticketNo = "SYNC-1";
         HttpResponse<String> tCreated = post("/api/tickets",
-                "{\"ticket_no\":\"" + ticketNo + "\",\"title\":\"sync task 1\",\"project_id\":\"" + projectId + "\"}");
+                "{\"ticket_no\":\"" + ticketNo + "\",\"title\":\"sync task 1\",\"project_id\":\"" + projectId + "\",\"target_branch\":\"main\"}");
         assertEquals(201, tCreated.statusCode(), tCreated.body());
 
         // 4. Make change in clone
@@ -126,7 +126,7 @@ class WorkspaceSyncApiTest {
         // 3. Create ticket and publish it
         String ticketNo = "SYNC-2";
         HttpResponse<String> tCreated = post("/api/tickets",
-                "{\"ticket_no\":\"" + ticketNo + "\",\"title\":\"sync task 2\",\"project_id\":\"" + projectId + "\"}");
+                "{\"ticket_no\":\"" + ticketNo + "\",\"title\":\"sync task 2\",\"project_id\":\"" + projectId + "\",\"target_branch\":\"main\"}");
         assertEquals(201, tCreated.statusCode(), tCreated.body());
 
         Path clone = harness.components().config().clonesRoot().resolve(ticketNo);

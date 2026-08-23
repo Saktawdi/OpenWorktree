@@ -6,6 +6,7 @@ import { Workbench } from "./components/Workbench";
 import { KanbanBoard } from "./components/KanbanBoard";
 import { ProjectsPage } from "./components/ProjectsPage";
 import { AgentsPage } from "./components/AgentsPage";
+import { SettingsPage } from "./components/SettingsPage";
 import { ConnectionDialog } from "./components/ConnectionDialog";
 import { Toast } from "./components/Toast";
 
@@ -36,6 +37,7 @@ export default function App() {
       {view === "kanban" && <KanbanBoard />}
       {view === "projects" && <ProjectsPage />}
       {view === "agents" && <AgentsPage />}
+      {view === "settings" && <SettingsPage />}
       <ConnectionDialog />
       <Toast />
     </div>

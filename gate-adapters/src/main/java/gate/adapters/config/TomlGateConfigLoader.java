@@ -33,6 +33,8 @@ public final class TomlGateConfigLoader {
             "schema_version", "project", "auth_repo", "clones_root", "target_ref_whitelist",
             "gate_home", "approvals_dir", "db_path", "blob_root", "audit_path", "locks_dir", "index_dir",
             "gate_identity.name", "gate_identity.email", "gate_identity.date",
+            // 发布提交身份覆盖：留空 = 自动取本机 git 作者（[publish_identity]）。
+            "publish_identity.name", "publish_identity.email",
             "policy.strictness", "policy.require_coverage", "policy.max_diff_bytes", "policy.max_diff_lines",
             "policy.engine_accept_degraded",
             "engine.cmd", "engine.args", "engine.timeout_seconds", "engine.provider_id", "engine.model",
@@ -54,6 +56,40 @@ public final class TomlGateConfigLoader {
         parse(text, tomlPath, scalars, lists);
         assertNoUnknownKeys(scalars.keySet(), lists.keySet(), tomlPath);
         return build(scalars, lists, tomlPath);
+    }
+
+    /**
+     * 文件中实际出现的键 → 原生值（Long/Boolean/String/List&lt;String&gt;），供设置中心展示"文件原始值"
+     * （缺省键由调用方另行展示 default）。只复用 {@link #load} 的解析器，不经过 build() 的默认值合并 —
+     * 校验语义仍归 {@link #load} 所有。
+     */
+    public Map<String, Object> rawValues(Path tomlPath) {
+        String text;
+        try {
+            text = Files.readString(tomlPath, StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            throw new GateException(GateErrorCode.GATE_ERROR_CONFIG, "cannot read gate.toml at " + tomlPath, e);
+        }
+        Map<String, String> scalars = new LinkedHashMap<>();
+        Map<String, List<String>> lists = new LinkedHashMap<>();
+        parse(text, tomlPath, scalars, lists);
+        Map<String, Object> out = new LinkedHashMap<>();
+        for (Map.Entry<String, String> e : scalars.entrySet()) {
+            out.put(e.getKey(), nativeScalar(e.getValue()));
+        }
+        out.putAll(lists);
+        return out;
+    }
+
+    /** parseScalar 已经脱掉引号：这里只把 "true"/"false" 和整数还原成原生类型。 */
+    private static Object nativeScalar(String raw) {
+        if ("true".equals(raw) || "false".equals(raw)) {
+            return Boolean.parseBoolean(raw);
+        }
+        if (raw.matches("-?\\d+")) {
+            return Long.parseLong(raw);
+        }
+        return raw;
     }
 
     private void parse(String text, Path tomlPath, Map<String, String> scalars, Map<String, List<String>> lists) {
@@ -179,6 +215,13 @@ public final class TomlGateConfigLoader {
                 scalars.getOrDefault("gate_identity.email", "gate@localhost"),
                 scalars.getOrDefault("gate_identity.date", "1700000000 +0000"));
 
+        // 发布提交身份：两个键都不填 = 自动；只填一个在 record 构造时失败关闭。
+        GateConfig.PublishIdentity publishIdentity = scalars.containsKey("publish_identity.name")
+                || scalars.containsKey("publish_identity.email")
+                ? new GateConfig.PublishIdentity(scalars.get("publish_identity.name"),
+                        scalars.get("publish_identity.email"))
+                : null;
+
         Policy.Strictness strictness = Policy.Strictness.valueOf(
                 scalars.getOrDefault("policy.strictness", "BLOCKER_ONLY"));
         boolean requireCoverage = Boolean.parseBoolean(scalars.getOrDefault("policy.require_coverage", "true"));
@@ -235,7 +278,8 @@ public final class TomlGateConfigLoader {
         }
 
         return new GateConfig(schemaVersion, project, authRepo, clonesRoot, whitelist, gateHome,
-                approvals, db, blobRoot, audit, locks, index, identity, policy, engine, web, session, agent);
+                approvals, db, blobRoot, audit, locks, index, identity, policy, engine, web, session, agent,
+                publishIdentity);
     }
 
     /** Resolves a config path relative to {@code gateHome} when not absolute; empty/null uses fallback. */

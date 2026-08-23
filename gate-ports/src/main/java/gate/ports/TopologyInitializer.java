@@ -34,6 +34,15 @@ public interface TopologyInitializer {
     /** {@code clone --no-hardlinks --single-branch --branch <target>}. */
     RepoRef createClone(RepoRef authRepo, String targetRef, Path cloneDir);
 
+    /**
+     * 确保权威库存在 {@code targetRef} 分支：缺失时从 {@code baseRef} 的 tip 建支，已存在则不动。
+     *
+     * <p>工单级目标分支（默认 {@code refs/heads/<工单号>}）的克隆前提；服务端 {@code update-ref}
+     * 建支不经过 pre-receive——这是与种子提交同一性质的 bootstrap 动作，不是工单产物提交。
+     */
+    default void ensureBranch(RepoRef authRepo, String targetRef, String baseRef) {
+    }
+
     record InitResult(gate.domain.git.ObjectId baseCommit, String hookSha256) {
     }
 }

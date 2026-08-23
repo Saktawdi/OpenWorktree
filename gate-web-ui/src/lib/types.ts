@@ -282,3 +282,47 @@ export interface AgentConfigOption {
   model: string;
   cli: "claude" | "opencode";
 }
+
+/* ── 设置中心 ── */
+
+export type GateTomlType = "int" | "bool" | "string" | "string_list";
+
+export interface GateTomlKey {
+  key: string;
+  value: unknown;
+  type: GateTomlType;
+  editable: boolean;
+  default: unknown;
+}
+
+export interface GateTomlSection {
+  section: string;
+  title: string;
+  keys: GateTomlKey[];
+}
+
+export interface GateTomlResponse {
+  toml_path: string;
+  restart_required: boolean;
+  sections: GateTomlSection[];
+}
+
+export interface McpStatus {
+  provisioning: string;
+  transport: string;
+  serve_command: string;
+  cli_integration: Array<{ cli: string; mechanism: string }>;
+  tools: Array<{ name: string; domain: string; description: string }>;
+  agent_tool_count: number;
+  human_tool_count: number;
+}
+
+export interface LlmProvider {
+  id: string;
+  name: string;
+  base_url: string;
+  type: string;
+  credential_configured: boolean;
+  model_count: number;
+  models: string[];
+}

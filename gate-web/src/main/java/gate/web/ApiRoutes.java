@@ -68,6 +68,7 @@ public final class ApiRoutes {
     private final gate.web.project.RepoViewRoutes repoViewRoutes;
     private final gate.web.ticket.TicketRoutes ticketRoutes;
     private final gate.web.session.SessionRoutes sessionRoutes;
+    private final SettingsRoutes settingsRoutes;
 
     ApiRoutes(WebComponents c) {
         this.gateService = c.gateService();
@@ -95,6 +96,7 @@ public final class ApiRoutes {
         this.sessionRoutes = new gate.web.session.SessionRoutes(c.agentConfigRepository(),
                 c.sessionRepository(), c.agentSessionPort(), tickets, clock,
                 new gate.web.session.SessionModelCatalog(), c.credentials());
+        this.settingsRoutes = new SettingsRoutes(c.gateToml());
     }
 
     /** A resolved response: HTTP status + a JSON-serialisable body. */
@@ -197,6 +199,18 @@ public final class ApiRoutes {
         }
         if (seg.length == 2 && seg[1].equals("config") && method.equals("GET")) {
             return configView();
+        }
+        // V5 设置中心: gate.toml 参数视图/写回 + gate MCP 工具状态。
+        if (seg.length == 3 && seg[1].equals("settings") && seg[2].equals("gate-toml")) {
+            if (method.equals("GET")) {
+                return settingsRoutes.gateTomlView();
+            }
+            if (method.equals("PUT")) {
+                return settingsRoutes.gateTomlUpdate(parseObject(requestBody));
+            }
+        }
+        if (seg.length == 3 && seg[1].equals("mcp") && seg[2].equals("status") && method.equals("GET")) {
+            return settingsRoutes.mcpStatus();
         }
         if (seg.length == 2 && seg[1].equals("providers") && method.equals("GET")) {
             return providerList();
@@ -1023,7 +1037,7 @@ public final class ApiRoutes {
     }
 
     @SuppressWarnings("unchecked")
-    private static Map<String, Object> parseObject(String body) {
+    static Map<String, Object> parseObject(String body) {
         if (body == null || body.isBlank()) {
             return Map.of();
         }

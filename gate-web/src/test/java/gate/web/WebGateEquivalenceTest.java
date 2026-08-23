@@ -120,8 +120,10 @@ class WebGateEquivalenceTest {
     // -------------------------------------------------------------------------------------------
 
     private void createTicketWithChange(String no) throws Exception {
+        // target_branch=main：本测试验证的是共享主干语义（HEAD 前移恰好一个提交）；
+        // 工单级独立分支（默认 refs/heads/<工单号>）由 TicketBranchApiTest 覆盖。
         HttpResponse<String> created = post("/api/tickets",
-                "{\"ticket_no\":\"" + no + "\",\"title\":\"eq\"}");
+                "{\"ticket_no\":\"" + no + "\",\"title\":\"eq\",\"target_branch\":\"main\"}");
         assertEquals(201, created.statusCode(), created.body());
         Path clone = harness.components().config().clonesRoot().resolve(no);
         Files.writeString(clone.resolve("feature.txt"), "web equivalence\n", StandardCharsets.UTF_8);

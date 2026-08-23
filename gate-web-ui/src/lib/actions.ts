@@ -53,7 +53,12 @@ export const actions = {
   newTicket(
     title: string,
     priority: "P0" | "P1" | "P2" | "P3",
-    extra?: { description?: string; labels?: string[]; agentConfigId?: string },
+    extra?: {
+      description?: string;
+      labels?: string[];
+      agentConfigId?: string;
+      targetBranch?: string;
+    },
   ): string | null {
     if (appStore.getState().mode === "live") {
       void (async () => {
@@ -70,6 +75,7 @@ export const actions = {
           description: extra?.description,
           labels: extra?.labels,
           agent_config_id: extra?.agentConfigId,
+          target_branch: extra?.targetBranch,
         });
         if (!no) return;
         await live.loadTickets().catch(() => {});
@@ -100,7 +106,13 @@ export const actions = {
     },
   ) {
     if (appStore.getState().mode === "live") {
-      return live.updateTicketLive(no, patch);
+      // 后端 PATCH /api/tickets/{no} 只认 snake_case 的 agent_config_id；
+      // 直接透传 camelCase 会被静默忽略，表现为绑定智能体「只改样式不落库」。
+      const { agentConfigId, ...rest } = patch;
+      return live.updateTicketLive(no, {
+        ...rest,
+        ...(agentConfigId !== undefined ? { agent_config_id: agentConfigId } : {}),
+      });
     }
     updateTicket(no, patch);
     return Promise.resolve(true);

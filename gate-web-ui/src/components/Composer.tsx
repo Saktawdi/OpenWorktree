@@ -24,9 +24,12 @@ import type { CatalogProvider, SessionModelSel } from "../lib/types";
 function AgentPicker({ ticketNo }: { ticketNo: string }) {
   const agents = useApp((s) => s.agents);
   const agentId = useApp((s) => s.agentId);
-  const locked = useApp((s) =>
-    (s.chats[ticketNo] ?? NO_CHAT).some((m) => m.kind === "user"),
-  );
+  // 会话一旦创建，agent 已随会话固化（哪怕还没发过消息），选择器同样锁定，
+  // 否则切换只改全局默认、对现有会话不生效，表现为「点了没反应」。
+  const hasSession = useApp((s) => (s.activeSessionId[ticketNo] ?? "") !== "");
+  const locked =
+    useApp((s) => (s.chats[ticketNo] ?? NO_CHAT).some((m) => m.kind === "user")) ||
+    hasSession;
   const [open, setOpen] = useState(false);
   const current = agents.find((a) => a.id === agentId) ?? agents[0];
 
@@ -48,27 +51,32 @@ function AgentPicker({ ticketNo }: { ticketNo: string }) {
   if (phase === "gone") return null;
 
   return (
-    <div
-      aria-hidden={phase === "collapsing"}
-      className={`relative overflow-hidden whitespace-nowrap transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] ${
-        phase === "collapsing"
-          ? "max-w-0 opacity-0 pointer-events-none"
-          : "max-w-[360px] animate-rise"
-      }`}
-      onTransitionEnd={(e) => {
-        if (phase === "collapsing" && e.propertyName === "max-width") setPhase("gone");
-      }}
-    >
-      <button
-        className="composer-btn disabled:opacity-50 disabled:pointer-events-none"
-        onClick={() => setOpen(!open)}
-        disabled={locked}
-        title={locked ? "已发送消息 · 协作 Agent 已锁定，新建会话可重新选择" : "选择协作的 Agent"}
+    <div className="relative">
+      {/* 收缩动画的裁剪层只包住按钮本身：若连同下拉菜单一起包住，
+          向上弹出的菜单（absolute bottom-9）会被 overflow-hidden 裁成不可见，
+          表现为点击按钮无反应。 */}
+      <div
+        aria-hidden={phase === "collapsing"}
+        className={`overflow-hidden whitespace-nowrap transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] ${
+          phase === "collapsing"
+            ? "max-w-0 opacity-0 pointer-events-none"
+            : "max-w-[360px] animate-rise"
+        }`}
+        onTransitionEnd={(e) => {
+          if (phase === "collapsing" && e.propertyName === "max-width") setPhase("gone");
+        }}
       >
-        <Sparkle size={12} className={locked ? "text-faint" : "text-accent"} weight="fill" />
-        {current ? `${current.name} · ${current.model}` : "选择 Agent"}
-        {locked ? <Lock size={11} className="text-faint" weight="fill" /> : <CaretDown size={11} />}
-      </button>
+        <button
+          className="composer-btn disabled:opacity-50 disabled:pointer-events-none"
+          onClick={() => setOpen(!open)}
+          disabled={locked}
+          title={locked ? "会话已创建 · 协作 Agent 已锁定，新建会话可重新选择" : "选择协作的 Agent"}
+        >
+          <Sparkle size={12} className={locked ? "text-faint" : "text-accent"} weight="fill" />
+          {current ? `${current.name} · ${current.model}` : "选择 Agent"}
+          {locked ? <Lock size={11} className="text-faint" weight="fill" /> : <CaretDown size={11} />}
+        </button>
+      </div>
       {open && !locked && (
         <>
           <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />

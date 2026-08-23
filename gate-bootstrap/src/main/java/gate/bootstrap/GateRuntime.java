@@ -162,7 +162,9 @@ public final class GateRuntime {
         this.gateService = new GateServiceImpl(config, snapshotCapture, commitPublisher, refObserver,
                 approvalStore, reviewEngineFactory, new GatePolicy(), ticketRepository, presubmitRepository,
                 reviewResultRepository, publishIntentRepository, blobStore, auditLog, lockManager, txRunner, clock, gate.ports.PublishProbe.NOOP, authoritativeGitService,
-                projectRepository, workspaceSyncer);
+                projectRepository, workspaceSyncer,
+                new gate.adapters.git.LocalGitCommitIdentityProvider(git, clock,
+                        config.publishIdentity().name(), config.publishIdentity().email()));
     }
 
     public GateConfig config() { return config; }

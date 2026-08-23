@@ -2,6 +2,7 @@ import {
   addSnapshot,
   addUsage,
   currentCancelSeq,
+  ensureActiveSession,
   finishAssistant,
   patchAssistant,
   pushAssistantPlaceholder,
@@ -138,6 +139,8 @@ const FIX_REPLY = [
 export async function demoSendPrompt(no: string, userText: string) {
   const st0 = appStore.getState();
   if (st0.busy[no]) return;
+  // 会话列表为空（或无活跃会话）时，首条消息自动创建新会话，与 live 模式行为一致。
+  ensureActiveSession(no);
   const seq = currentCancelSeq(no) + 1;
   appStore.setState({ cancelSeq: { ...st0.cancelSeq, [no]: seq } });
   pushUserMessage(no, userText);
@@ -306,6 +309,8 @@ export async function demoReturnWithFindings(no: string) {
   if (st.busy[no]) return;
   const findings = st.findings[no] ?? [];
   if (findings.length === 0) return;
+  // 无活跃会话（如对带 diff 的工单直接走审查→修复）时同样自动开会话。
+  ensureActiveSession(no);
   const seq = currentCancelSeq(no) + 1;
   appStore.setState({ cancelSeq: { ...st.cancelSeq, [no]: seq } });
   const lines = findings.map((f, i) => `${i + 1}. [${f.severity}] ${f.path}${f.lineStart ? ":" + f.lineStart : ""} — ${f.message}`);
