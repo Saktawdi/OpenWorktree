@@ -344,6 +344,11 @@ public final class ApiRoutes {
                 && method.equals("POST")) {
             return sessionRoutes.sessionPermissionRespond(seg[2], seg[4], requestBody);
         }
+        // 顶栏运行中的智能体数量：GET /api/agents/busy
+        if (seg.length == 3 && seg[1].equals("agents") && seg[2].equals("busy")
+                && method.equals("GET")) {
+            return sessionRoutes.agentsBusy();
+        }
 
         return new Response(404, null); // ApiHandler renders the NOT_FOUND envelope
     }

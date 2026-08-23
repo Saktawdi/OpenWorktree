@@ -4,8 +4,10 @@ import gate.domain.session.Session;
 import gate.domain.session.SessionMessage;
 import gate.domain.session.SessionStreamChunk;
 import gate.domain.session.PermissionRequest;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Consumer;
 import java.util.stream.Stream;
 
@@ -50,7 +52,15 @@ public interface AgentSessionPort {
     void respondPermission(String sessionId, String permissionId, String response);
 
     /** Live snapshot of this session's unresolved pending permission requests. */
-    java.util.List<PermissionRequest> pendingPermissions(String sessionId);
+    List<PermissionRequest> pendingPermissions(String sessionId);
+
+    /**
+     * 有进行中回合的 session id 快照（运行中 = turn in-flight）。
+     * 默认返回空集合，保持既有实现编译通过；具体适配器覆盖为排序后的不可变快照。
+     */
+    default Set<String> busySessionIds() {
+        return Collections.emptySet();
+    }
 
     record StartRequest(
             String ticketNo,

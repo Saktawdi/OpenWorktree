@@ -14,9 +14,12 @@ import gate.ports.SessionRepository;
 import gate.ports.TicketRepository;
 import gate.web.ApiRoutes;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
 
 /**
  * Session capability handler (EX-001 Phase 1).
@@ -334,6 +337,36 @@ public final class SessionRoutes {
         body.put("ok", true);
         body.put("permission_id", permissionId);
         body.put("response", response);
+        return new ApiRoutes.Response(200, body);
+    }
+
+    /** GET /api/agents/busy — 顶栏运行中智能体计数（有进行中回合的会话快照）。 */
+    public ApiRoutes.Response agentsBusy() {
+        // 有进行中回合的 session id 快照来源于各 adapter 的 in-flight registry，聚合并排序
+        Set<String> ids = agentSessionPort.busySessionIds();
+        List<String> sorted = new ArrayList<>(ids);
+        Collections.sort(sorted);
+        List<Map<String, Object>> running = new ArrayList<>();
+        for (String sid : sorted) {
+            Optional<Session> opt = sessionRepository.find(sid);
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("session_id", sid);
+            if (opt.isPresent()) {
+                Session s = opt.get();
+                m.put("title", s.title());
+                m.put("ticket_no", s.ticketNo());
+                m.put("cli", s.cli() == null ? null : s.cli().name());
+            } else {
+                // 查不到会话记录的 id 仍计入 count 并保留 session_id，其余字段为 null
+                m.put("title", null);
+                m.put("ticket_no", null);
+                m.put("cli", null);
+            }
+            running.add(m);
+        }
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("count", running.size());
+        body.put("running", running);
         return new ApiRoutes.Response(200, body);
     }
 

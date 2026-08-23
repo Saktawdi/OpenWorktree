@@ -43,15 +43,20 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 import java.util.stream.Stream;
 
 /**
@@ -106,7 +111,9 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
     private final Map<Integer, Process> serveProcesses = new ConcurrentHashMap<>();
     private final Map<String, Integer> sessionPorts = new ConcurrentHashMap<>();
     private final Map<String, Upstream> upstreams = new ConcurrentHashMap<>();
-    private final Map<String, java.util.Set<java.util.function.Consumer<SessionStreamChunk>>> listeners = new ConcurrentHashMap<>();
+    private final Map<String, Set<Consumer<SessionStreamChunk>>> listeners = new ConcurrentHashMap<>();
+    // 有进行中回合的 session id（入队即算运行，排队等待也算），用于顶栏 busy 统计；同一 session 重复 send 用计数避免误清除
+    private final Map<String, AtomicInteger> inFlightCounts = new ConcurrentHashMap<>();
     // Per-session pending permission asks: gateSessionId -> permissionId -> request. Mirrors
     // the serve instance's /permission snapshot so auto-allow and pre-send reject have a local
     // view even before the SSE permission.asked frame is replayed after a reconnect.
@@ -209,9 +216,9 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
     }
 
     @Override
-    public AutoCloseable attachListener(String sessionId, java.util.function.Consumer<SessionStreamChunk> listener) {
-        java.util.Set<java.util.function.Consumer<SessionStreamChunk>> set =
-                listeners.computeIfAbsent(sessionId, k -> java.util.Collections.newSetFromMap(new ConcurrentHashMap<>()));
+    public AutoCloseable attachListener(String sessionId, Consumer<SessionStreamChunk> listener) {
+        Set<Consumer<SessionStreamChunk>> set =
+                listeners.computeIfAbsent(sessionId, k -> Collections.newSetFromMap(new ConcurrentHashMap<>()));
         set.add(listener);
         Upstream up = upstreams.get(sessionId);
         if (up != null && !up.stopped) {
@@ -229,9 +236,9 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
     }
 
     private void emitChunk(String sessionId, SessionStreamChunk chunk) {
-        java.util.Set<java.util.function.Consumer<SessionStreamChunk>> set = listeners.get(sessionId);
+        Set<Consumer<SessionStreamChunk>> set = listeners.get(sessionId);
         if (set != null) {
-            for (java.util.function.Consumer<SessionStreamChunk> listener : set) {
+            for (Consumer<SessionStreamChunk> listener : set) {
                 try {
                     listener.accept(chunk);
                 } catch (Exception ignored) {
@@ -266,7 +273,7 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
     }
 
     @Override
-    public java.util.List<PermissionRequest> pendingPermissions(String sessionId) {
+    public List<PermissionRequest> pendingPermissions(String sessionId) {
         Map<String, PermissionRequest> merged = new LinkedHashMap<>();
         Map<String, PermissionRequest> local = pendingPermissions.get(sessionId);
         if (local != null) {
@@ -420,12 +427,16 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
         sessions.insertMessage(new SessionMessage(UUID.randomUUID().toString(), session.id(),
                 Role.USER, request.message(), List.of(), null, false, clock.now()));
         GateTask task = tasks.register("session-send", session.ticketNo(), session.id());
+        // 入队即算运行：登记发生在提交 executor 之前，排队等待也算运行中；同一 session 重复 send 用计数
+        incrementInFlight(session.id());
         executor.submit(() -> runSend(task, session, request.message(), firstTurn));
         return task.id();
     }
 
     @Override
     public void abort(String sessionId) {
+        // 兜底清除 busy：abort 即视为回合终止，应立即移出 busy 集合，避免 runSend 仍在阻塞时顶栏持续显示；完全移除以覆盖同一 session 重复 send 的计数
+        inFlightCounts.remove(sessionId);
         sessions.find(sessionId).ifPresent(s -> {
             Integer port = sessionPorts.get(sessionId);
             // Soft abort first: stop the in-flight turn but keep the serve and the session
@@ -479,6 +490,26 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
     @Override
     public List<SessionMessage> getHistory(String sessionId) {
         return sessions.findMessages(sessionId);
+    }
+
+    @Override
+    public Set<String> busySessionIds() {
+        // 排序后的不可变快照，输出稳定便于测试
+        List<String> sorted = new ArrayList<>(inFlightCounts.keySet());
+        Collections.sort(sorted);
+        return Collections.unmodifiableSet(new LinkedHashSet<>(sorted));
+    }
+
+    private void incrementInFlight(String sessionId) {
+        inFlightCounts.compute(sessionId, (k, v) -> {
+            if (v == null) return new AtomicInteger(1);
+            v.incrementAndGet();
+            return v;
+        });
+    }
+
+    private void decrementInFlight(String sessionId) {
+        inFlightCounts.computeIfPresent(sessionId, (k, v) -> v.decrementAndGet() <= 0 ? null : v);
     }
 
     @Override
@@ -581,6 +612,9 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                     List.of(), null, true, clock.now()));
             emitChunk(session.id(), new SessionStreamChunk.ErrorChunk(session.id(), "INTERNAL_ERROR", e.getMessage(), clock.now()));
             tasks.update(fail(task, e));
+        } finally {
+            // 必须覆盖正常完成、ErrorChunk、异常、中断所有出口，不得依赖是否存在 SSE 监听者
+            decrementInFlight(session.id());
         }
     }
 

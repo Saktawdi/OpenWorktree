@@ -206,6 +206,7 @@ export const actions = {
     if (!ok) return false;
     wipePersisted();
     appStore.setState({ mode: "live", token, conn: "ok" });
+    live.startAgentBusyPolling();
     try {
       await Promise.all([live.loadTickets(), live.loadProjects(), live.loadAgentConfigs(), live.loadRuntimes()]);
       // Demo leaves a demo project/agent id behind; live data is filtered by the project
@@ -223,6 +224,8 @@ export const actions = {
     return true;
   },
   useDemo() {
+    live.stopAgentBusyPolling();
+    appStore.setState({ runningAgents: { count: 0, sessions: [] } });
     wipePersisted();
     seedDemo(true);
   },
@@ -334,4 +337,25 @@ export async function boot() {
   seedDemo();
   const conn = await live.detectBackend();
   appStore.setState({ conn });
+  // 已在 live 模式且后端连通时启动运行中智能体轮询
+  const st = appStore.getState();
+  if (st.mode === "live" && conn === "ok") live.startAgentBusyPolling();
+  else if (conn !== "ok") {
+    appStore.setState({ runningAgents: { count: 0, sessions: [] } });
+    live.stopAgentBusyPolling();
+  }
+  // 监听后续模式/连接状态变化，自动启停轮询
+  let prevMode = st.mode;
+  let prevConn: string = conn;
+  appStore.subscribe((cur) => {
+    if (cur.mode !== prevMode || cur.conn !== prevConn) {
+      prevMode = cur.mode;
+      prevConn = cur.conn;
+      if (cur.mode === "live" && cur.conn === "ok") live.startAgentBusyPolling();
+      else {
+        appStore.setState({ runningAgents: { count: 0, sessions: [] } });
+        live.stopAgentBusyPolling();
+      }
+    }
+  });
 }

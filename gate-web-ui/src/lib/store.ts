@@ -92,6 +92,8 @@ export interface AppState {
   sessionModelSel: Record<string, SessionModelSel>;
   /** 生成中的回合（key = gate session id）：回合在 idle 前不落库，切走再切回时靠它恢复流式内容。 */
   liveTurns: Record<string, LiveTurn>;
+  /** 运行中的智能体数量（GET /api/agents/busy 轮询） */
+  runningAgents: { count: number; sessions: Array<{ session_id: string; title: string | null; ticket_no: string | null; cli: string | null }> };
 }
 
 export const appStore = create<AppState>(() => ({
@@ -137,6 +139,7 @@ export const appStore = create<AppState>(() => ({
   sessionModels: {},
   sessionModelSel: {},
   liveTurns: {},
+  runningAgents: { count: 0, sessions: [] },
 }));
 
 const s = () => appStore.getState();
@@ -204,6 +207,7 @@ export function seedDemo(force = false) {
     gateBusy: {},
     usage: {},
     liveTurns: {},
+    runningAgents: { count: 0, sessions: [] },
     centerTab: "chat",
     agents: DEMO_AGENTS.map((a) => ({ ...a })),
     runtimes: DEMO_RUNTIMES.map((r) => ({ ...r })),
@@ -244,6 +248,7 @@ function tryRestore(): boolean {
       ticketCreatorOpen: false,
       // 恢复时没有 EventSource，生成中的回合无法续流：丢弃 stash 并定格视图里的流式标记。
       liveTurns: {},
+      runningAgents: { count: 0, sessions: [] },
     };
     // 旧版本会把已应答的权限卡片留在 chats 里（永久挂在底部）；恢复时只保留待决的，
     // 并把残留的 streaming 占位定格（否则光标会永久闪烁）。

@@ -10,7 +10,11 @@ import gate.domain.session.PermissionRequest;
 import gate.ports.AgentConfigRepository;
 import gate.ports.AgentSessionPort;
 import gate.ports.SessionRepository;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Stream;
 
 /**
@@ -92,6 +96,21 @@ public final class DispatchAgentSessionPort implements AgentSessionPort {
                 .orElseThrow(() -> new GateException(GateErrorCode.USAGE,
                         "no such session: " + sessionId));
         return adapter(s.cli()).pendingPermissions(sessionId);
+    }
+
+    @Override
+    public Set<String> busySessionIds() {
+        // 聚合两个适配器的并集，排序后返回不可变快照，输出稳定便于测试
+        Set<String> merged = new LinkedHashSet<>();
+        if (claude != null) {
+            merged.addAll(claude.busySessionIds());
+        }
+        if (opencode != null) {
+            merged.addAll(opencode.busySessionIds());
+        }
+        List<String> sorted = new ArrayList<>(merged);
+        Collections.sort(sorted);
+        return Collections.unmodifiableSet(new LinkedHashSet<>(sorted));
     }
 
     private AgentSessionPort adapter(AgentCli cli) {
