@@ -1,6 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import type { ReactElement } from "react";
 import {
   CaretRight,
+  FileText,
   FolderOpen,
   FolderPlus,
   GitBranch,
@@ -10,9 +12,11 @@ import {
   Trash,
 } from "@phosphor-icons/react";
 import { actions } from "../lib/actions";
+import { loadProjectRepoView, loadProjectTree } from "../lib/api";
 import { relativeTime, shortHash } from "../lib/format";
-import { setView, switchProject, useApp } from "../lib/store";
-import type { GitCommit, Project } from "../lib/types";
+import { setView, showToast, switchProject, useApp } from "../lib/store";
+import type { GitCommit, GitRepoView, GitTreeEntry, Project } from "../lib/types";
+import { CopyButton } from "./ui";
 
 const SIZE_LABEL: Record<string, string> = { small: "小型", medium: "中型", large: "大型" };
 
@@ -229,7 +233,7 @@ function CommitGraph({ commits }: { commits: GitCommit[] }) {
   );
 }
 
-function GraphTab({ git }: { git: import("../lib/types").GitRepoView }) {
+function GraphTab({ git }: { git: GitRepoView }) {
   const laneCount = Math.max(1, ...git.commits.map((c) => c.lane)) + 1;
   const graphW = laneCount * LANE_W;
 
@@ -259,7 +263,6 @@ function GraphTab({ git }: { git: import("../lib/types").GitRepoView }) {
               className="flex items-center gap-3 px-4 hover:bg-raised/50 transition-colors border-b border-edge/40 last:border-b-0"
               style={{ height: ROW_H }}
             >
-              <span className="font-mono text-[11px] text-faint/70 w-[62px] shrink-0">{shortHash(c.sha, 7, 0)}</span>
               <span className="text-[12.5px] text-ink truncate max-w-[400px]">{c.message}</span>
               {c.refs.map((ref) => (
                 <span
@@ -284,8 +287,170 @@ function GraphTab({ git }: { git: import("../lib/types").GitRepoView }) {
                 <span className="mx-1 text-faint/50">·</span>
                 {relativeTime(c.time)}
               </span>
+              <CopyButton text={c.sha} label="复制提交 ID" />
             </div>
           ))}
+        </div>
+      </div>
+      {git.truncated && (
+        <div className="px-4 py-2.5 border-t border-edge text-[11.5px] text-faint">
+          仅显示最近 100 条提交，更早的历史未在图中呈现
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** 文件树：目录按需懒加载（每次展开拉取一层），子目录结果缓存在组件内。 */
+function RepoTreeTab({ projectId, root }: { projectId: string; root: GitTreeEntry[] }) {
+  const mode = useApp((s) => s.mode);
+  const [children, setChildren] = useState<Record<string, GitTreeEntry[]>>({});
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [busy, setBusy] = useState<string | null>(null);
+
+  const toggle = async (dir: string) => {
+    const nextOpen = !expanded[dir];
+    setExpanded((e) => ({ ...e, [dir]: nextOpen }));
+    if (!nextOpen || children[dir] || mode !== "live") return;
+    setBusy(dir);
+    try {
+      const list = await loadProjectTree(projectId, dir);
+      setChildren((c) => ({ ...c, [dir]: list }));
+    } catch (e) {
+      showToast(`读取目录失败：${(e as Error).message}`);
+      setExpanded((e) => ({ ...e, [dir]: false }));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const rows: ReactElement[] = [];
+  const render = (entries: GitTreeEntry[], depth: number) => {
+    for (const e of entries) {
+      const isOpen = !!expanded[e.path];
+      rows.push(
+        <div
+          key={e.path}
+          className="flex items-center gap-2 pr-3 h-9 rounded-lg hover:bg-raised/60 transition-colors"
+          style={{ paddingLeft: 10 + depth * 18 }}
+        >
+          {e.type === "dir" ? (
+            <>
+              <button
+                className="shrink-0 w-4 h-4 grid place-items-center text-faint hover:text-ink cursor-pointer bg-transparent border-0 p-0"
+                onClick={() => void toggle(e.path)}
+                aria-label={isOpen ? `折叠 ${e.path}` : `展开 ${e.path}`}
+              >
+                <CaretRight size={12} className={`transition-transform ${isOpen ? "rotate-90" : ""}`} />
+              </button>
+              <FolderOpen size={14} className="text-info/70 shrink-0" />
+            </>
+          ) : (
+            <>
+              <span className="w-4 shrink-0" />
+              <FileText size={14} className="text-faint shrink-0" />
+            </>
+          )}
+          <span className="font-mono text-[12.5px] text-ink truncate">{e.path.split("/").pop()}</span>
+          <span className="flex-1" />
+          {busy === e.path && <span className="text-[11px] text-faint shrink-0">加载中…</span>}
+          <span className="hidden md:inline text-[11.5px] text-faint truncate max-w-[280px]">{e.lastMessage}</span>
+          <span className="font-mono text-[11px] text-faint w-[60px] text-right shrink-0">
+            {e.type === "file" ? `${((e.size ?? 0) / 1024).toFixed(1)} KB` : ""}
+          </span>
+          <span className="font-mono text-[11px] text-faint w-[58px] text-right shrink-0">{e.lastCommitShort}</span>
+        </div>,
+      );
+      if (e.type === "dir" && isOpen) {
+        render(children[e.path] ?? [], depth + 1);
+      }
+    }
+  };
+  render(root, 0);
+
+  if (root.length === 0) {
+    return <div className="p-8 text-center text-[12.5px] text-faint">HEAD 中没有已提交的文件</div>;
+  }
+  return <div className="p-2">{rows}</div>;
+}
+
+/** 仓库视图弹窗：live 模式打开即拉取分支图与文件树根目录，失败可重试。 */
+function RepoViewDialog({ project, onClose }: { project: Project; onClose: () => void }) {
+  const mode = useApp((s) => s.mode);
+  const git = useApp((s) => s.gitViews[project.id]);
+  const treeRoot = useApp((s) => s.treeViews[project.id]) ?? [];
+  const [tab, setTab] = useState<"graph" | "tree">("graph");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const reload = useCallback(async () => {
+    if (mode !== "live") return;
+    setLoading(true);
+    setError(null);
+    try {
+      await Promise.all([loadProjectRepoView(project.id), loadProjectTree(project.id)]);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  }, [mode, project.id]);
+
+  useEffect(() => {
+    void reload();
+  }, [reload]);
+
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/55 backdrop-blur-[2px]" onClick={onClose}>
+      <div
+        className="w-[880px] max-h-[85vh] card shadow-2xl shadow-black/60 animate-rise overflow-hidden flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center gap-2 px-4 h-11 border-b border-edge shrink-0">
+          <TreeStructure size={14} className="text-dim" />
+          <span className="text-[13px] font-semibold">{project.name}</span>
+          <span className="font-mono text-[11px] text-faint">· 仓库视图</span>
+          <span className="flex-1" />
+          {(["graph", "tree"] as const).map((k) => (
+            <button
+              key={k}
+              onClick={() => setTab(k)}
+              className={`h-7 px-2.5 rounded-md text-[12px] cursor-pointer transition-colors ${
+                tab === k ? "bg-raised text-ink border border-edge" : "text-dim hover:text-ink border border-transparent"
+              }`}
+            >
+              {k === "graph" ? "分支图 · 提交历史" : "文件树"}
+            </button>
+          ))}
+          <button
+            className="icon-btn ml-1"
+            onClick={onClose}
+            aria-label="关闭"
+          >
+            <svg width="13" height="13" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+              <path d="M2 2l8 8M10 2l-8 8" />
+            </svg>
+          </button>
+        </div>
+
+        <div className="flex-1 min-h-0 overflow-auto">
+          {error ? (
+            <div className="p-8 text-center">
+              <div className="text-[12.5px] text-warn leading-relaxed">{error}</div>
+              <button className="btn mt-3" onClick={() => void reload()}>
+                重试
+              </button>
+            </div>
+          ) : !git ? (
+            <div className="p-8 text-center text-[12.5px] text-faint">
+              {loading ? "仓库视图加载中…" : "当前项目暂无仓库数据"}
+            </div>
+          ) : (
+            <>
+              {tab === "graph" && <GraphTab git={git} />}
+              {tab === "tree" && <RepoTreeTab projectId={project.id} root={treeRoot} />}
+            </>
+          )}
         </div>
       </div>
     </div>
@@ -296,11 +461,8 @@ export function ProjectsPage() {
   const projects = useApp((s) => s.projects);
   const activeId = useApp((s) => s.activeProjectId);
   const tickets = useApp((s) => s.tickets);
-  const gitViews = useApp((s) => s.gitViews);
-  const treeViews = useApp((s) => s.treeViews);
   const [dialog, setDialog] = useState<{ open: boolean; project: Project | null }>({ open: false, project: null });
   const [detailId, setDetailId] = useState<string | null>(null);
-  const [tab, setTab] = useState<"graph" | "tree">("graph");
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
 
   useEffect(() => {
@@ -310,8 +472,6 @@ export function ProjectsPage() {
   }, []);
 
   const detail = detailId ? projects.find((p) => p.id === detailId) : null;
-  const git = detailId ? gitViews[detailId] : undefined;
-  const tree = detailId ? treeViews[detailId] : undefined;
 
   return (
     <div className="flex-1 min-h-0 overflow-y-auto">
@@ -432,74 +592,7 @@ export function ProjectsPage() {
           )}
         </div>
 
-        {detail && (
-          <div className="fixed inset-0 z-50 grid place-items-center bg-black/55 backdrop-blur-[2px]" onClick={() => setDetailId(null)}>
-            <div
-              className="w-[880px] max-h-[85vh] card shadow-2xl shadow-black/60 animate-rise overflow-hidden flex flex-col"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="flex items-center gap-2 px-4 h-11 border-b border-edge shrink-0">
-                <TreeStructure size={14} className="text-dim" />
-                <span className="text-[13px] font-semibold">{detail.name}</span>
-                <span className="font-mono text-[11px] text-faint">· 仓库视图</span>
-                <span className="flex-1" />
-                {(["graph", "tree"] as const).map((k) => (
-                  <button
-                    key={k}
-                    onClick={() => setTab(k)}
-                    className={`h-7 px-2.5 rounded-md text-[12px] cursor-pointer transition-colors ${
-                      tab === k ? "bg-raised text-ink border border-edge" : "text-dim hover:text-ink border border-transparent"
-                    }`}
-                  >
-                    {k === "graph" ? "分支图 · 提交历史" : "文件树"}
-                  </button>
-                ))}
-                <button
-                  className="icon-btn ml-1"
-                  onClick={() => setDetailId(null)}
-                  aria-label="关闭"
-                >
-                  <svg width="13" height="13" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
-                    <path d="M2 2l8 8M10 2l-8 8" />
-                  </svg>
-                </button>
-              </div>
-
-              <div className="flex-1 min-h-0 overflow-auto">
-                {!git && (
-                  <div className="p-8 text-center text-[12.5px] text-faint leading-relaxed">
-                    当前连接下后端未提供仓库读取接口，
-                    <br />
-                    分支图与文件树仅在演示模式中展示。
-                  </div>
-                )}
-
-                {git && tab === "graph" && <GraphTab git={git} />}
-
-                {git && tab === "tree" && (
-                  <div className="p-2">
-                    {(tree ?? []).map((e) => (
-                      <div key={e.path} className="flex items-center gap-3 px-3 h-9 rounded-lg hover:bg-raised/60 transition-colors">
-                        {e.type === "dir" ? (
-                          <FolderOpen size={14} className="text-info/70 shrink-0" />
-                        ) : (
-                          <TreeStructure size={14} className="text-faint shrink-0" />
-                        )}
-                        <span className="font-mono text-[12.5px] text-ink">{e.path}</span>
-                        <span className="flex-1" />
-                        <span className="hidden md:inline text-[11.5px] text-faint truncate max-w-[320px]">{e.lastMessage}</span>
-                        <span className="font-mono text-[11px] text-faint w-[60px] text-right shrink-0">
-                          {e.type === "file" ? `${((e.size ?? 0) / 1024).toFixed(1)} KB` : ""}
-                        </span>
-                        <span className="font-mono text-[11px] text-faint w-[58px] text-right shrink-0">{e.lastCommitShort}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
+        {detail && <RepoViewDialog project={detail} onClose={() => setDetailId(null)} />}
       </div>
 
       {dialog.open && <ProjectDialog initial={dialog.project} onClose={() => setDialog({ open: false, project: null })} />}

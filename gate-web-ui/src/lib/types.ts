@@ -88,6 +88,8 @@ export interface GitBranchInfo {
 export interface GitRepoView {
   branches: GitBranchInfo[];
   commits: GitCommit[];
+  /** 超过后端提交数上限（100）时为 true，用于“仅显示最近提交”提示。 */
+  truncated?: boolean;
 }
 
 export interface GitTreeEntry {

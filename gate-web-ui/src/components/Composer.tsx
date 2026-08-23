@@ -5,8 +5,8 @@ import {
   Check,
   Cpu,
   Eye,
-  Lightning,
   Lock,
+  LockKey,
   MagnifyingGlass,
   PaperPlaneRight,
   ShieldCheck,
@@ -390,6 +390,7 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
   }, [text]);
 
   const terminal = stage === "DONE" || stage === "CANCELLED";
+  const cancelled = stage === "CANCELLED";
 
   const send = () => {
     const t = text.trim();
@@ -399,8 +400,8 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
   };
 
   const quick = [
-    diffs === 0 && !terminal
-      ? { label: "实现速率限制", prompt: "为 POST /api/checkout 添加速率限制，超限返回 429", Icon: Lightning }
+    diffs > 0 && !terminal
+      ? { label: "预提审", prompt: "__presubmit__", Icon: LockKey }
       : null,
     diffs > 0 ? { label: "解释当前变更", prompt: "请解释当前工作区的全部改动", Icon: Eye } : null,
     { label: "运行本地单测", prompt: "运行本地单元测试并汇总结果", Icon: TerminalWindow },
@@ -410,7 +411,7 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
   ].filter(Boolean) as Array<{ label: string; prompt: string; Icon: Icon }>;
 
   return (
-    <div className="shrink-0 border-t border-edge bg-panel/50 px-5 py-3">
+    <div className="shrink-0 px-5 py-3">
       <div className="max-w-[760px] mx-auto space-y-2">
         {!terminal && (quick.length > 0 || usage) && (
           <div className="flex items-center gap-3">
@@ -423,6 +424,7 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
                     className="composer-chip"
                     onClick={() => {
                       if (prompt === "__findings__") actions.returnWithFindings(ticketNo);
+                      else if (prompt === "__presubmit__") actions.presubmit(ticketNo);
                       else actions.sendPrompt(ticketNo, prompt);
                     }}
                   >
@@ -463,17 +465,23 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
             }}
             rows={1}
             placeholder={
-              terminal
-                ? "工单已完成并归档"
-                : busy
-                  ? "Agent 正在工作，可点击右下按钮中断；切换的模型/推理强度将在下一回合生效…"
-                  : "向 Agent 描述任务…（Enter 发送，Shift+Enter 换行）"
+              cancelled
+                ? "工单已取消 · 协作已锁定，不可继续操作"
+                : stage === "DONE"
+                  ? "工单已完成并归档"
+                  : busy
+                    ? "Agent 正在工作，可点击右下按钮中断；切换的模型/推理强度将在下一回合生效…"
+                    : "向 Agent 描述任务…（Enter 发送，Shift+Enter 换行）"
             }
             className="composer-ta"
           />
 
           <div className="flex items-center gap-2 px-2.5 pb-2.5 pt-0.5">
-            <div className="flex items-center gap-1 flex-wrap min-w-0">
+            <div
+              className={`flex items-center gap-1 flex-wrap min-w-0 ${
+                terminal ? "pointer-events-none opacity-45" : ""
+              }`}
+            >
               <AgentPicker ticketNo={ticketNo} />
               {live && (
                 <>

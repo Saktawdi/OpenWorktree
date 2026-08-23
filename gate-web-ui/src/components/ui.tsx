@@ -56,9 +56,13 @@ export function StageBadge({ stage }: { stage: Stage }) {
   );
 }
 
-export function PriorityChip({ priority }: { priority: Priority }) {
+export function PriorityChip({ priority, muted = false }: { priority: Priority; muted?: boolean }) {
   return (
-    <span className={`chip border font-mono ${PRIORITY_COLOR[priority] ?? PRIORITY_COLOR.P3}`}>
+    <span
+      className={`chip border font-mono ${
+        muted ? "text-faint border-edge-strong bg-raised opacity-50" : PRIORITY_COLOR[priority] ?? PRIORITY_COLOR.P3
+      }`}
+    >
       {priority}
     </span>
   );

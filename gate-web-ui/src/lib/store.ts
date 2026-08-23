@@ -37,6 +37,13 @@ export type CenterTab = "chat" | "diff" | "findings";
 
 export type Theme = "dark" | "light";
 
+/** 一条生成中的 assistant 回合。item 以 sessionId 为键保真；视图按 itemId 镜像。 */
+export interface LiveTurn {
+  ticketNo: string;
+  itemId: string;
+  item: Extract<ChatItem, { kind: "assistant" }>;
+}
+
 export interface AppState {
   booted: boolean;
   mode: "demo" | "live";
@@ -83,6 +90,8 @@ export interface AppState {
   sessionModels: Record<string, CatalogProvider[]>;
   /** Per-session live model / reasoning-effort selection (会话内实时切换). */
   sessionModelSel: Record<string, SessionModelSel>;
+  /** 生成中的回合（key = gate session id）：回合在 idle 前不落库，切走再切回时靠它恢复流式内容。 */
+  liveTurns: Record<string, LiveTurn>;
 }
 
 export const appStore = create<AppState>(() => ({
@@ -127,6 +136,7 @@ export const appStore = create<AppState>(() => ({
   activeSessionId: {},
   sessionModels: {},
   sessionModelSel: {},
+  liveTurns: {},
 }));
 
 const s = () => appStore.getState();
@@ -193,6 +203,7 @@ export function seedDemo(force = false) {
     busy: {},
     gateBusy: {},
     usage: {},
+    liveTurns: {},
     centerTab: "chat",
     agents: DEMO_AGENTS.map((a) => ({ ...a })),
     runtimes: DEMO_RUNTIMES.map((r) => ({ ...r })),
@@ -231,11 +242,16 @@ function tryRestore(): boolean {
       treeViews: saved.treeViews ?? cur.treeViews,
       editingTicketNo: null,
       ticketCreatorOpen: false,
+      // 恢复时没有 EventSource，生成中的回合无法续流：丢弃 stash 并定格视图里的流式标记。
+      liveTurns: {},
     };
-    // 旧版本会把已应答的权限卡片留在 chats 里（永久挂在底部）；恢复时只保留待决的。
+    // 旧版本会把已应答的权限卡片留在 chats 里（永久挂在底部）；恢复时只保留待决的，
+    // 并把残留的 streaming 占位定格（否则光标会永久闪烁）。
     for (const [no, items] of Object.entries(clean.chats)) {
-      const filtered = items.filter((m) => m.kind !== "permission" || m.status === "pending");
-      if (filtered.length !== items.length) clean.chats[no] = filtered;
+      const filtered = items
+        .filter((m) => m.kind !== "permission" || m.status === "pending")
+        .map((m) => (m.kind === "assistant" && m.streaming ? { ...m, streaming: false } : m));
+      clean.chats[no] = filtered;
     }
     appStore.setState(clean);
     return true;
@@ -430,6 +446,84 @@ export function finishAssistant(
     variant: meta?.variant ?? a.variant,
     thinking: a.thinking ? { ...a.thinking, done: true } : a.thinking,
   }));
+}
+
+/* ─── 生成中回合（live）：切换工单/会话后返回时保住未落库的流式内容 ─── */
+
+/** 开始一个流式回合：占位 assistant 消息进当前视图，并以 sessionId 记入 liveTurns。 */
+export function startLiveTurn(no: string, sessionId: string) {
+  const item: Extract<ChatItem, { kind: "assistant" }> = {
+    kind: "assistant",
+    id: uid("a"),
+    text: "",
+    streaming: true,
+    tools: [],
+    ts: Date.now(),
+  };
+  set((st) => ({
+    liveTurns: { ...st.liveTurns, [sessionId]: { ticketNo: no, itemId: item.id, item } },
+    chats: { ...st.chats, [no]: [...(st.chats[no] ?? []), item] },
+  }));
+}
+
+/**
+ * 流式事件更新：liveTurns 是事实来源；再按 itemId 镜像到所属工单的 chats 视图。
+ * 视图当前展示的是其他会话（找不到该 itemId）时跳过镜像——切回时
+ * loadSessionMessages 会用 liveTurns 重建条目，EventSource 仍在推流，恢复后自动续上。
+ */
+export function updateLiveTurn(
+  sessionId: string,
+  fn: (a: Extract<ChatItem, { kind: "assistant" }>) => Extract<ChatItem, { kind: "assistant" }>,
+) {
+  set((st) => {
+    const cur = st.liveTurns[sessionId];
+    if (!cur) return st;
+    const item = fn(cur.item);
+    return {
+      liveTurns: { ...st.liveTurns, [sessionId]: { ...cur, item } },
+      chats: mirrorIntoChats(st.chats, cur.ticketNo, item),
+    };
+  });
+}
+
+/**
+ * 回合结束：定格 streaming/thinking 并移出 liveTurns。后端在发出 done 之前已把整回合
+ * 落库（idle → flushTurn → done），此后历史接口必然包含完整回复，无需再靠 stash。
+ */
+export function finishLiveTurn(sessionId: string) {
+  set((st) => {
+    const cur = st.liveTurns[sessionId];
+    if (!cur) return st;
+    const item: Extract<ChatItem, { kind: "assistant" }> = {
+      ...cur.item,
+      streaming: false,
+      thinking: cur.item.thinking ? { ...cur.item.thinking, done: true } : cur.item.thinking,
+    };
+    const liveTurns = { ...st.liveTurns };
+    delete liveTurns[sessionId];
+    return { liveTurns, chats: mirrorIntoChats(st.chats, cur.ticketNo, item) };
+  });
+}
+
+/** 会话被删除时丢弃其生成中状态。 */
+export function dropLiveTurn(sessionId: string) {
+  set((st) => {
+    if (!st.liveTurns[sessionId]) return st;
+    const liveTurns = { ...st.liveTurns };
+    delete liveTurns[sessionId];
+    return { liveTurns };
+  });
+}
+
+/** 条目存在于该工单视图时原位替换（跨会话视图不含此 itemId，保持不动）。 */
+function mirrorIntoChats(
+  chats: Record<string, ChatItem[]>,
+  ticketNo: string,
+  item: Extract<ChatItem, { kind: "assistant" }>,
+): Record<string, ChatItem[]> {
+  const view = chats[ticketNo];
+  if (!view || !view.some((m) => m.id === item.id)) return chats;
+  return { ...chats, [ticketNo]: view.map((m) => (m.id === item.id ? item : m)) };
 }
 
 export function setBusy(no: string, busy: boolean) {

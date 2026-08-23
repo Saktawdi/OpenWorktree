@@ -108,7 +108,18 @@ function MetadataDetail({ permission, metadata }: { permission: string; metadata
   }
   return <pre className="psm mono-blk max-h-44">{JSON.stringify(m, null, 2)}</pre>;
 }
-export function PermissionCard({ ticketNo, sessionId, item }: { ticketNo: string; sessionId: string; item: PermissionItem }) {
+export function PermissionCard({
+  ticketNo,
+  sessionId,
+  item,
+  locked = false,
+}: {
+  ticketNo: string;
+  sessionId: string;
+  item: PermissionItem;
+  /** 工单已取消等终态：禁止应答，仅展示。 */
+  locked?: boolean;
+}) {
   const { request, status } = item;
   const [busy, setBusy] = useState<"once" | "always" | "reject" | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
@@ -174,7 +185,7 @@ export function PermissionCard({ ticketNo, sessionId, item }: { ticketNo: string
         )}
       </div>
       <div className="px-3 py-2 bg-panel/40">
-        {!decided && (
+        {!decided && !locked && (
           <div className="flex items-center gap-2">
             <button className="btn btn-primary btn-sm" disabled={!!busy} onClick={() => void respond("once")} title="允许这一次执行">
               {busy === "once" ? <CircleNotch size={12} className="animate-[spin_0.9s_linear_infinite]" /> : <Check size={12} weight="bold" />}
@@ -188,6 +199,12 @@ export function PermissionCard({ ticketNo, sessionId, item }: { ticketNo: string
               {busy === "reject" ? <CircleNotch size={12} className="animate-[spin_0.9s_linear_infinite]" /> : <X size={12} weight="bold" />}
               拒绝
             </button>
+          </div>
+        )}
+        {!decided && locked && (
+          <div className="flex items-center gap-1.5 text-[11.5px] text-faint">
+            <ShieldCheck size={12} />
+            工单已取消 · 权限应答已锁定
           </div>
         )}
       </div>

@@ -221,6 +221,33 @@ class ProjectsWorkspacesApiTest {
         assertTrue(list.body().contains("\"priority\":null"), list.body());
     }
 
+    @Test
+    void project_target_ref_persists_effective_default_and_updates() throws Exception {
+        String primary = harness.components().config().primaryTargetRef();
+        Path ws = harness.root().resolve("target-ref-ws");
+        HttpResponse<String> created = post("/api/projects",
+                "{\"name\":\"TargetRef\",\"workspace_path\":\"" + json(ws.toString()) + "\"}");
+        assertEquals(201, created.statusCode(), created.body());
+        assertTrue(created.body().contains("\"target_ref\":\"" + primary + "\""),
+                "absent target_ref must persist the gate primary, not null: " + created.body());
+        String id = extract(created.body(), "id");
+
+        HttpResponse<String> rename = put("/api/projects/" + id, "{\"name\":\"Renamed\"}");
+        assertEquals(200, rename.statusCode(), rename.body());
+        assertTrue(rename.body().contains("\"target_ref\":\"" + primary + "\""),
+                "absent target_ref key must keep the stored value: " + rename.body());
+
+        HttpResponse<String> updated = put("/api/projects/" + id,
+                "{\"target_ref\":\"refs/heads/release\"}");
+        assertEquals(200, updated.statusCode(), updated.body());
+        assertTrue(updated.body().contains("\"target_ref\":\"refs/heads/release\""), updated.body());
+
+        HttpResponse<String> reset = put("/api/projects/" + id, "{\"target_ref\":null}");
+        assertEquals(200, reset.statusCode(), reset.body());
+        assertTrue(reset.body().contains("\"target_ref\":\"" + primary + "\""),
+                "present-but-null target_ref resets to the gate primary: " + reset.body());
+    }
+
     /** JSON-escapes Windows path separators. */
     private static String json(String value) {
         return value.replace("\\", "\\\\");

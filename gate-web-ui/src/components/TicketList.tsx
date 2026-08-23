@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { motion } from "motion/react";
 import { MagnifyingGlass, Plus } from "@phosphor-icons/react";
 import { actions } from "../lib/actions";
-import { relativeTime, STAGE_LABEL } from "../lib/format";
+import { relativeTime, STAGE_LABEL, STAGE_LANE_RANK } from "../lib/format";
 import { appStore, closeTicketCreator, openTicketCreator, useApp, NO_DIFF } from "../lib/store";
 import type { Priority } from "../lib/types";
 import { PriorityChip, StageDot } from "./ui";
@@ -159,7 +159,12 @@ export function TicketList() {
         // Unassigned tickets stay visible under any project context; otherwise a ticket
         // with no project would disappear from every list/board.
         .filter((t) => t.projectId === activeProjectId || t.projectId === "")
-        .sort((a, b) => (orderMap[a.ticketNo] ?? 0) - (orderMap[b.ticketNo] ?? 0)),
+        .sort((a, b) => {
+          // 先按看板泳道序（已取消为终态恒沉底），同泳道内保持手动拖拽排序。
+          const lane = STAGE_LANE_RANK[a.stage] - STAGE_LANE_RANK[b.stage];
+          if (lane !== 0) return lane;
+          return (orderMap[a.ticketNo] ?? 0) - (orderMap[b.ticketNo] ?? 0);
+        }),
     [ticketsAll, activeProjectId, orderMap],
   );
 
@@ -214,7 +219,7 @@ export function TicketList() {
                   {t.ticketNo}
                 </span>
                 <span className="flex-1" />
-                <PriorityChip priority={t.priority} />
+                <PriorityChip priority={t.priority} muted={t.stage === "CANCELLED"} />
               </div>
               <div className={`mt-0.5 text-[13px] leading-snug line-clamp-2 ${active ? "text-ink" : "text-dim group-hover:text-ink"}`}>
                 {t.title}

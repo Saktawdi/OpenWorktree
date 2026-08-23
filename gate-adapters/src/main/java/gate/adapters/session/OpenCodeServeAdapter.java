@@ -837,6 +837,7 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                 case "message.updated" -> handleMessageUpdated(props);
                 case "session.status" -> handleSessionStatus(props);
                 case "session.error" -> handleSessionError(props);
+                case "session.updated" -> handleSessionUpdated(props);
                 case "permission.asked" -> handlePermissionAsked(props);
                 case "permission.replied" -> handlePermissionReplied(props);
                 default -> {
@@ -1102,6 +1103,35 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                     "errorName", pendingErrorName, "errorMessage", message);
             emitChunk(sessionId, new SessionStreamChunk.ErrorChunk(sessionId,
                     pendingErrorName, message, clock.now()));
+        }
+
+        /**
+         * session.updated: carries the full session info ({info:{id, title, ...}}). opencode's
+         * built-in title agent writes a real title after the first user turn; persist it so the
+         * workbench session list can show it. Default placeholders ("New session - <ISO>") are
+         * ignored — the UI falls back to a local time label until a real title arrives.
+         */
+        private void handleSessionUpdated(Map<String, Object> props) {
+            Map<String, Object> info = props.get("info") instanceof Map<?, ?> i
+                    ? castMap(i) : null;
+            if (info == null || !cliSessionId.equals(str(info.get("id")))) {
+                return;
+            }
+            String title = str(info.get("title"));
+            if (title == null || title.isBlank() || isDefaultOpencodeTitle(title)) {
+                return;
+            }
+            Session latest = sessions.find(sessionId).orElse(null);
+            if (latest == null || title.equals(latest.title())) {
+                return;
+            }
+            sessions.update(latest.withTitle(title));
+            log.info("opencode", "session.title-synced", "sessionId", sessionId, "title", title);
+        }
+
+        /** Mirrors opencode's Session.isDefaultTitle ("New session - " / "Child session - " + ISO stamp). */
+        private static boolean isDefaultOpencodeTitle(String title) {
+            return title.matches("^(New session - |Child session - )\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$");
         }
 
         /**

@@ -61,7 +61,7 @@ function CardFace({
       <div className="flex items-center gap-2">
         <span className="font-mono text-[11.5px] text-faint">{ticket.ticketNo}</span>
         <span className="flex-1" />
-        <PriorityChip priority={ticket.priority} />
+        <PriorityChip priority={ticket.priority} muted={ticket.stage === "CANCELLED"} />
       </div>
       <div className="mt-1 text-[13px] leading-snug text-ink line-clamp-2">{ticket.title}</div>
       {ticket.description && (

@@ -65,6 +65,7 @@ public final class ApiRoutes {
     private final GitCli git;
     private final StatusRoutes statusRoutes;
     private final gate.web.project.ProjectRoutes projectRoutes;
+    private final gate.web.project.RepoViewRoutes repoViewRoutes;
     private final gate.web.ticket.TicketRoutes ticketRoutes;
     private final gate.web.session.SessionRoutes sessionRoutes;
 
@@ -87,6 +88,7 @@ public final class ApiRoutes {
         this.git = c.git();
         this.statusRoutes = new StatusRoutes(gateService, config, c.runtimeInfo());
         this.projectRoutes = new gate.web.project.ProjectRoutes(projects, tickets, topologyInitializer, config);
+        this.repoViewRoutes = new gate.web.project.RepoViewRoutes(projects, git);
         this.ticketRoutes = new gate.web.ticket.TicketRoutes(tickets, projects, c.agentConfigRepository(),
                 topologyInitializer, config, clock);
         this.sessionRoutes = new gate.web.session.SessionRoutes(c.agentConfigRepository(),
@@ -142,9 +144,22 @@ public final class ApiRoutes {
                 return projectDelete(seg[2]);
             }
         }
+        // 项目 → 仓库视图: branch/commit graph + lazy file tree of the workspace repo.
+        if (seg.length == 4 && seg[1].equals("projects") && seg[3].equals("repo")
+                && method.equals("GET")) {
+            return repoViewRoutes.repoView(seg[2]);
+        }
+        if (seg.length == 4 && seg[1].equals("projects") && seg[3].equals("tree")
+                && method.equals("GET")) {
+            return repoViewRoutes.treeView(seg[2], List.of());
+        }
+        if (seg.length >= 5 && seg[1].equals("projects") && seg[3].equals("tree")
+                && method.equals("GET")) {
+            return repoViewRoutes.treeView(seg[2],
+                    List.of(java.util.Arrays.copyOfRange(seg, 4, seg.length)));
+        }
         // Project-scoped ticket board: one project owns one board with N tickets.
-        if (seg.length == 4 && seg[1].equals("projects") && seg[3].equals("tickets")) {
-            ticketRoutes.requireProject(seg[2]);
+        if (seg.length == 4 && seg[1].equals("projects") && seg[3].equals("tickets")) {            ticketRoutes.requireProject(seg[2]);
             if (method.equals("GET")) {
                 return ticketRoutes.ticketList(seg[2]);
             }
@@ -686,7 +701,8 @@ public final class ApiRoutes {
     /**
      * Body: {@code {"name", "workspace_path", "init_git"?, "target_ref"?, "priority"?, "size"?,
      * "tags"?}}. Creates the directory when missing and optionally {@code git init}s it — the
-     * console's "选择工作区 → 创建项目" flow.
+     * console's "选择工作区 → 创建项目" flow. An absent/blank {@code target_ref} is persisted as
+     * the gate's primary target ref — the same ref the project's auth repo is seeded with.
      */
     private Response projectCreate(String requestBody) {
         Map<String, Object> req = parseObject(requestBody);
@@ -729,28 +745,34 @@ public final class ApiRoutes {
         // same baseline + hook semantics as the gate-level auth repo.
         java.nio.file.Path projectAuthRepo = new gate.application.project.ProjectAuthResolver(projects, config)
                 .defaultProjectAuthRepo(id);
-        topologyInitializer.initAuthRepo(RepoRef.of(projectAuthRepo),
-                targetRef == null || targetRef.isBlank() ? config.primaryTargetRef() : targetRef,
+        // Persist the same effective ref the auth repo is seeded with; a NULL column would
+        // resurface as "项目目标分支: null" in injected session context and force every reader
+        // to re-derive the fallback.
+        String effectiveTargetRef = effectiveTargetRef(targetRef);
+        topologyInitializer.initAuthRepo(RepoRef.of(projectAuthRepo), effectiveTargetRef,
                 config.approvalsDir());
         Project p = new Project(id, name, workspace.toString(),
-                targetRef, projectAuthRepo.toString(), priority, size, tags, now, now);
+                effectiveTargetRef, projectAuthRepo.toString(), priority, size, tags, now, now);
         projects.insert(p);
         return new Response(201, projectJson(p));
     }
 
     /**
-     * Body: {@code {"name"?, "workspace_path"?, "priority"?, "size"?, "tags"?}}. Present-but-null
-     * priority/size clears the value; an absent key keeps it. {@code tags} is a full replacement
-     * list (null or [] clears all).
+     * Body: {@code {"name"?, "workspace_path"?, "target_ref"?, "priority"?, "size"?, "tags"?}}.
+     * Present-but-null priority/size clears the value; an absent key keeps it. {@code target_ref}
+     * is never clearable: a present-but-null/blank value resets it to the gate's primary target
+     * ref, and legacy NULL rows self-heal the same way on any update. {@code tags} is a full
+     * replacement list (null or [] clears all).
      */
     private Response projectUpdate(String id, String requestBody) {
         Project existing = projects.find(id).orElseThrow(() -> new GateException(
                 GateErrorCode.USAGE, "no such project: " + id));
         Map<String, Object> req = parseObject(requestBody);
         if (!req.containsKey("name") && !req.containsKey("workspace_path")
-                && !req.containsKey("priority") && !req.containsKey("size") && !req.containsKey("tags")) {
+                && !req.containsKey("target_ref") && !req.containsKey("priority")
+                && !req.containsKey("size") && !req.containsKey("tags")) {
             throw new GateException(GateErrorCode.USAGE,
-                    "nothing to update: provide name, workspace_path, priority, size or tags");
+                    "nothing to update: provide name, workspace_path, target_ref, priority, size or tags");
         }
         String name = req.containsKey("name") ? required(req, "name") : existing.name();
         String workspace = existing.workspacePath();
@@ -762,13 +784,20 @@ public final class ApiRoutes {
                         "workspace already registered as a project: " + workspace);
             }
         }
+        String targetRef = req.containsKey("target_ref")
+                ? effectiveTargetRef(str(req, "target_ref")) : effectiveTargetRef(existing.targetRef());
         String priority = req.containsKey("priority") ? gate.web.ticket.TicketRoutes.parsePriority(req) : existing.priority();
         String size = req.containsKey("size") ? parseProjectSize(req) : existing.size();
-        List<String> tags = req.containsKey("tags") ? parseProjectTags(req) : existing.tags();
-        Project updated = new Project(id, name, workspace, existing.targetRef(), existing.authRepo(),
+        List<String> tags = parseProjectTags(req);
+        Project updated = new Project(id, name, workspace, targetRef, existing.authRepo(),
                 priority, size, tags, existing.createdAt(), clock.now());
         projects.update(updated);
         return new Response(200, projectJson(updated));
+    }
+
+    /** Blank or legacy-NULL target refs resolve to the gate's primary (whitelist head). */
+    private String effectiveTargetRef(String targetRef) {
+        return targetRef == null || targetRef.isBlank() ? config.primaryTargetRef() : targetRef;
     }
 
     /** Project size bucket: small | medium | large, or null when absent/present-but-null. */

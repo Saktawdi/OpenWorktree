@@ -154,6 +154,7 @@ function SystemMessage({ item }: { item: Extract<ChatItem, { kind: "system" }> }
 export function ChatStream({ ticketNo }: { ticketNo: string }) {
   const chat = useApp((s) => s.chats[ticketNo] ?? NO_CHAT);
   const sessionId = useApp((s) => s.activeSessionId[ticketNo] ?? "");
+  const cancelled = useApp((s) => s.tickets.find((t) => t.ticketNo === ticketNo)?.stage === "CANCELLED");
   const bottomRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
@@ -186,7 +187,7 @@ export function ChatStream({ ticketNo }: { ticketNo: string }) {
             <AssistantMessage key={item.id} item={item} />
           ) : item.kind === "permission" ? (
             <div key={item.id} className="animate-rise">
-              <PermissionCard ticketNo={ticketNo} sessionId={sessionId} item={item} />
+              <PermissionCard ticketNo={ticketNo} sessionId={sessionId} item={item} locked={cancelled} />
             </div>
           ) : (
             <SystemMessage key={item.id} item={item} />

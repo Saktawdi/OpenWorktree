@@ -22,6 +22,8 @@ export function fakeSha(seed: string): string {
 }
 
 export function shortHash(hash: string, head = 10, tail = 6): string {
+  // slice(-0) === slice(0): a zero tail would append the full hash after the ellipsis.
+  if (tail <= 0) return hash.slice(0, head);
   if (hash.length <= head + tail + 1) return hash;
   return `${hash.slice(0, head)}…${hash.slice(-tail)}`;
 }
@@ -77,7 +79,23 @@ export const PRIORITY_COLOR: Record<Priority, string> = {
   P0: "text-danger border-danger/40 bg-danger/10",
   P1: "text-warn border-warn/40 bg-warn/10",
   P2: "text-info border-info/40 bg-info/10",
-  P3: "text-faint border-edge-strong bg-raised",
+  P3: "text-violet border-violet/40 bg-violet/10",
+};
+
+/**
+ * 工单列表排序用的泳道序：与看板 LANES 顺序一致（REJECTED 归入进行中、
+ * NEEDS_HUMAN 归入可发布），CANCELLED 为终态恒排最后。
+ */
+export const STAGE_LANE_RANK: Record<Stage, number> = {
+  PENDING: 0,
+  IN_PROGRESS: 1,
+  REJECTED: 1,
+  PRESUBMITTED: 2,
+  IN_REVIEW: 3,
+  READY_TO_PUBLISH: 4,
+  NEEDS_HUMAN: 4,
+  DONE: 5,
+  CANCELLED: 6,
 };
 
 export function sleep(ms: number): Promise<void> {

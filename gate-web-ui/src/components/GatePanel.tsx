@@ -334,7 +334,7 @@ function TicketInfo({ ticketNo }: { ticketNo: string }) {
 
 /* ─── Session List Section ─── */
 
-function SessionList({ ticketNo }: { ticketNo: string }) {
+function SessionList({ ticketNo, locked = false }: { ticketNo: string; locked?: boolean }) {
   const sessions = useApp((s) => s.sessions[ticketNo] ?? NO_SESSIONS);
   const activeSessionId = useApp((s) => s.activeSessionId[ticketNo]);
   const creating = useApp((s) => s.creatingSession[ticketNo] ?? false);
@@ -345,6 +345,7 @@ function SessionList({ ticketNo }: { ticketNo: string }) {
   const displayed = tab === "active" ? activeSessions : archivedSessions;
 
   const handleCreate = () => {
+    if (locked || creating) return;
     actions.createSession(ticketNo);
   };
 
@@ -379,15 +380,23 @@ function SessionList({ ticketNo }: { ticketNo: string }) {
           )}
         </button>
         <span className="flex-1" />
-        <button
-          className="icon-btn !w-6 !h-6 disabled:opacity-50 disabled:pointer-events-none"
-          onClick={handleCreate}
-          disabled={creating}
-          title="新建会话"
-          aria-label="新建会话"
-        >
-          <Plus size={13} weight="bold" />
-        </button>
+        {!locked && (
+          <button
+            className="icon-btn !w-6 !h-6 disabled:opacity-50 disabled:pointer-events-none"
+            onClick={handleCreate}
+            disabled={creating}
+            title="新建会话"
+            aria-label="新建会话"
+          >
+            <Plus size={13} weight="bold" />
+          </button>
+        )}
+        {locked && (
+          <span className="inline-flex items-center gap-1 text-[10.5px] text-faint" title="工单已取消 · 会话操作已锁定">
+            <LockKey size={11} weight="fill" />
+            已锁定
+          </span>
+        )}
       </div>
 
       {/* Session list */}
@@ -397,7 +406,7 @@ function SessionList({ ticketNo }: { ticketNo: string }) {
             <div className="text-[12px] text-faint">
               {tab === "active" ? "暂无活跃会话" : "暂无归档会话"}
             </div>
-            {tab === "active" && (
+            {tab === "active" && !locked && (
               <button
                 className="btn btn-sm mt-2 text-[11px] disabled:opacity-50 disabled:pointer-events-none"
                 onClick={handleCreate}
@@ -406,6 +415,12 @@ function SessionList({ ticketNo }: { ticketNo: string }) {
                 <Plus size={12} />
                 新建会话
               </button>
+            )}
+            {tab === "active" && locked && (
+              <div className="mt-2 inline-flex items-center gap-1 text-[11px] text-faint">
+                <LockKey size={11} weight="fill" />
+                工单已取消，无法新建会话
+              </div>
             )}
           </div>
         ) : (
@@ -416,6 +431,7 @@ function SessionList({ ticketNo }: { ticketNo: string }) {
                 session={sess}
                 isActive={sess.id === activeSessionId}
                 ticketNo={ticketNo}
+                locked={locked}
               />
             ))}
           </div>
@@ -439,19 +455,28 @@ function SessionItem({
   session,
   isActive,
   ticketNo,
+  locked = false,
 }: {
   session: ChatSession;
   isActive: boolean;
   ticketNo: string;
+  locked?: boolean;
 }) {
   const [showActions, setShowActions] = useState(false);
 
   return (
     <div
-      className={`group relative flex items-center gap-2 px-2.5 py-2 rounded-lg transition-colors cursor-pointer ${
-        isActive ? "bg-raised border border-edge" : "hover:bg-panel border border-transparent"
+      className={`group relative flex items-center gap-2 px-2.5 py-2 rounded-lg transition-colors ${
+        locked
+          ? "cursor-not-allowed border border-transparent opacity-60"
+          : `cursor-pointer ${
+              isActive ? "bg-raised border border-edge" : "hover:bg-panel border border-transparent"
+            }`
       }`}
-      onClick={() => actions.switchSession(ticketNo, session.id)}
+      onClick={() => {
+        if (locked) return;
+        actions.switchSession(ticketNo, session.id);
+      }}
       onMouseEnter={() => setShowActions(true)}
       onMouseLeave={() => setShowActions(false)}
     >
@@ -466,8 +491,14 @@ function SessionItem({
           {new Date(session.createdAt).toLocaleDateString("zh-CN", { month: "short", day: "numeric" })}
         </div>
       </div>
-      {showActions && (
+      {showActions && !locked && (
         <div className="flex items-center gap-0.5 shrink-0">
+          <span
+            className="[&>.icon-btn]:!w-5 [&>.icon-btn]:!h-5 [&>.icon-btn]:text-faint/70"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <CopyButton text={session.id} label="复制会话 ID" />
+          </span>
           {session.status === "active" ? (
             <button
               className="icon-btn !w-5 !h-5"
@@ -617,7 +648,7 @@ export function GatePanel({ ticketNo }: { ticketNo: string }) {
 
         {/* Session List */}
         <div className="flex-1 min-h-0 flex flex-col">
-          <SessionList ticketNo={ticketNo} />
+          <SessionList ticketNo={ticketNo} locked={stage === "CANCELLED"} />
         </div>
       </div>
 
@@ -642,6 +673,15 @@ export function GatePanel({ ticketNo }: { ticketNo: string }) {
             <Check size={15} weight="bold" />
             工单已完成归档
           </button>
+        </div>
+      )}
+      {stage === "CANCELLED" && (
+        <div className="shrink-0 border-t border-edge bg-surface p-3.5">
+          <button className="btn btn-lg w-full" disabled title="已取消的工单已锁定，不可再操作">
+            <LockKey size={15} weight="fill" />
+            工单已取消 · 已锁定
+          </button>
+          <div className="mt-2 text-center text-[11.5px] text-faint">会话与门禁操作均已停用</div>
         </div>
       )}
     </aside>

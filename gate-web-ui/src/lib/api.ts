@@ -2,9 +2,8 @@ import {
   addSnapshot,
   addUsage,
   appStore,
-  finishAssistant,
-  patchAssistant,
-  pushAssistantPlaceholder,
+  dropLiveTurn,
+  finishLiveTurn,
   pushPermissionRequest,
   pushSystemMessage,
   pushUserMessage,
@@ -21,8 +20,20 @@ import {
   setTask,
   setVerdict,
   showToast,
+  startLiveTurn,
+  updateLiveTurn,
 } from "./store";
-import type { ChatItem, ChatSession, CatalogProvider, DiffFile, Finding, Severity, Snapshot } from "./types";
+import type {
+  ChatItem,
+  ChatSession,
+  CatalogProvider,
+  DiffFile,
+  Finding,
+  GitRepoView,
+  GitTreeEntry,
+  Severity,
+  Snapshot,
+} from "./types";
 import { parseUnifiedDiff } from "./diff";
 import { approxDiffBytes } from "./diff";
 import { sleep } from "./format";
@@ -250,8 +261,9 @@ export async function loadReviewState(no: string) {
 
 /* ─── 会话管理 ─── */
 
-function sessionTimeLabel(): string {
-  return `会话 ${new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}`;
+function sessionTimeLabel(at?: number): string {
+  const t = at == null ? new Date() : new Date(at);
+  return `会话 ${t.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}`;
 }
 
 interface RawSession {
@@ -275,7 +287,7 @@ function mapSession(no: string, s: RawSession): ChatSession {
   return {
     id: s.id,
     ticketNo: s.ticket_no ?? no,
-    title: s.title ?? sessionTimeLabel(),
+    title: s.title ?? sessionTimeLabel(createdAt),
     status: s.archived ? "archived" : "active",
     createdAt,
     updatedAt: s.updated_at ? Date.parse(s.updated_at) : createdAt,
@@ -301,6 +313,21 @@ export async function loadTicketSessions(no: string) {
   }));
 }
 
+/**
+ * 仅同步会话列表元数据（标题、归档状态等），不改 active 指针。
+ * 用于回合结束后的被动刷新（如 opencode 自动生成标题写库后），避免把用户
+ * 正在查看的会话强行切走。
+ */
+export async function refreshTicketSessionsMeta(no: string) {
+  try {
+    const data = await api<{ sessions: RawSession[] }>(`/api/tickets/${no}/sessions`);
+    const list = (data.sessions ?? []).map((s) => mapSession(no, s));
+    appStore.setState((st) => ({ sessions: { ...st.sessions, [no]: list } }));
+  } catch {
+    /* 静默失败：下个常规动作还有一次刷新机会 */
+  }
+}
+
 export async function createSessionLive(no: string) {
   try {
     // Demo data can leave a stale agent id in the store; fall back to the first
@@ -312,14 +339,9 @@ export async function createSessionLive(no: string) {
       method: "POST",
       body: JSON.stringify({ agent_config_id: agentId, initial_prompt: "" }),
     });
-    try {
-      await api(`/api/sessions/${created.id}`, {
-        method: "PATCH",
-        body: JSON.stringify({ title: sessionTimeLabel() }),
-      });
-    } catch {
-      /* 标题设置失败不阻断 */
-    }
+    // 不再强制上以时间命名的占位标题：opencode 会在首个真实用户回合后由 title agent
+    // 异步生成正式标题（适配器监听 session.updated 写库），在标题就位前列表用本地时间
+    // 标签回退展示（见 mapSession）。
     await loadTicketSessions(no);
     appStore.setState((st) => ({ activeSessionId: { ...st.activeSessionId, [no]: created.id } }));
     await loadSessionMessages(no, created.id).catch(() => {});
@@ -424,6 +446,7 @@ export async function deleteSessionLive(id: string, ticketNo: string) {
     showToast(`删除会话失败：${(e as Error).message}`);
     return;
   }
+  dropLiveTurn(id);
   setSessionBusy(id, false);
   await loadTicketSessions(ticketNo).catch(() => {});
   refreshTicketBusy(ticketNo);
@@ -486,8 +509,17 @@ function mapHistoryMessage(m: RawMessage): ChatItem | null {
 }
 
 export async function loadSessionMessages(no: string, sessionId: string) {
+  // 生成中的回合要到 idle 才整回合落库，历史里看不到；切走再切回时把 liveTurns
+  // 里的流式条目接回视图（EventSource 仍在推流，itemId 对上后增量自动续上）。
+  const stashedAtFetch = appStore.getState().liveTurns[sessionId] !== undefined;
   const hist = await api<{ messages: RawMessage[] }>(`/api/sessions/${sessionId}/messages`);
+  if (stashedAtFetch && !appStore.getState().liveTurns[sessionId]) {
+    // 回合在请求飞行途中结束：后端发出 done 前已落库，重拉一次必然包含完整回复。
+    return loadSessionMessages(no, sessionId);
+  }
   const items: ChatItem[] = hist.messages.map(mapHistoryMessage).filter(Boolean) as ChatItem[];
+  const stash = appStore.getState().liveTurns[sessionId];
+  if (stash) items.push(stash.item);
   appStore.setState((st) => ({ chats: { ...st.chats, [no]: items } }));
 }
 
@@ -603,13 +635,21 @@ async function consumeSessionStream(no: string, sessionId: string) {
   const token = appStore.getState().token;
   const url = `/api/sessions/${sessionId}/events${token ? `?token=${encodeURIComponent(token)}` : ""}`;
   const es = new EventSource(url);
-  const assistantId = pushAssistantPlaceholder(no);
+  startLiveTurn(no, sessionId);
 
   await new Promise<void>((resolve) => {
+    // 看门狗只在 30 分钟无任何事件时判流悬挂（原固定 5 分钟截断会误杀长工具回合）。
+    let watchdog: ReturnType<typeof setTimeout> | null = null;
     const finish = () => {
+      if (watchdog) clearTimeout(watchdog);
       es.close();
       resolve();
     };
+    const arm = () => {
+      if (watchdog) clearTimeout(watchdog);
+      watchdog = setTimeout(finish, 1_800_000);
+    };
+    arm();
     es.addEventListener("message", (ev) => {
       // History replay (event: message) must not touch the live placeholder: the chat is
       // already rendered from GET /messages when the session opens, and replaying past
@@ -617,16 +657,18 @@ async function consumeSessionStream(no: string, sessionId: string) {
       void ev;
     });
     es.addEventListener("token", (ev) => {
+      arm();
       const d = JSON.parse((ev as MessageEvent).data);
-      patchAssistant(no, assistantId, (a) => ({
+      updateLiveTurn(sessionId, (a) => ({
         ...a,
         text: a.text + (d.text_delta ?? ""),
         thinking: a.thinking && !a.thinking.done ? { ...a.thinking, done: true } : a.thinking,
       }));
     });
     es.addEventListener("thinking", (ev) => {
+      arm();
       const d = JSON.parse((ev as MessageEvent).data);
-      patchAssistant(no, assistantId, (a) => ({
+      updateLiveTurn(sessionId, (a) => ({
         ...a,
         thinking: {
           text: (a.thinking?.text ?? "") + (d.thinking_delta ?? ""),
@@ -636,8 +678,9 @@ async function consumeSessionStream(no: string, sessionId: string) {
       }));
     });
     es.addEventListener("tool_call", (ev) => {
+      arm();
       const d = JSON.parse((ev as MessageEvent).data);
-      patchAssistant(no, assistantId, (a) => {
+      updateLiveTurn(sessionId, (a) => {
         const existing = a.tools.find((t) => t.id === d.call_id);
         if (existing) {
           return {
@@ -665,18 +708,30 @@ async function consumeSessionStream(no: string, sessionId: string) {
       });
     });
     es.addEventListener("usage", (ev) => {
+      arm();
       const d = JSON.parse((ev as MessageEvent).data);
       if (d.usage) addUsage(no, d.usage.prompt_tokens ?? 0, d.usage.completion_tokens ?? 0);
     });
     es.addEventListener("permission_asked", (ev) => {
+      arm();
       const d = JSON.parse((ev as MessageEvent).data);
-      pushPermissionRequest(no, mapPermissionAsk(d));
+      // 卡片只挂当前查看的会话视图；用户已切去别的会话时不挂（避免误挂 + 应答发错
+      // session），切回时 loadSessionPermissions 会重新拉取 pending 卡片。
+      if (appStore.getState().activeSessionId[no] === sessionId) {
+        pushPermissionRequest(no, mapPermissionAsk(d));
+      }
     });
     es.addEventListener("permission_replied", (ev) => {
+      arm();
       const d = JSON.parse((ev as MessageEvent).data);
       resolvePermission(no, d.permission_id, d.response ?? "once", !!d.auto);
     });
-    es.addEventListener("done", finish);
+    es.addEventListener("done", () => {
+      // 后端此刻已把 opencode 的自动生成标题写库（session.updated → sessions.update）。
+      // 只刷新列表数据，不动 activeSessionId，避免把用户在查看的会话顶走。
+      void refreshTicketSessionsMeta(no);
+      finish();
+    });
     es.addEventListener("error", (ev) => {
       let msg = "会话连接中断";
       const data = (ev as MessageEvent).data;
@@ -700,13 +755,12 @@ async function consumeSessionStream(no: string, sessionId: string) {
           /* ignore */
         }
       }
-      patchAssistant(no, assistantId, (a) => ({ ...a, streaming: false }));
+      updateLiveTurn(sessionId, (a) => ({ ...a, streaming: false }));
       pushSystemMessage(no, msg, "warn");
       finish();
     });
-    setTimeout(() => finish(), 300_000);
   });
-  finishAssistant(no, assistantId);
+  finishLiveTurn(sessionId);
 }
 
 export async function livePresubmit(no: string) {
@@ -872,6 +926,82 @@ function mapProject(p: RawProject): import("./types").Project {
 export async function loadProjects() {
   const data = await api<{ projects: RawProject[] }>("/api/projects");
   appStore.setState({ projects: data.projects.map(mapProject) });
+}
+
+/* ─── 项目 → 仓库视图（分支图 + 文件树，读工作区仓库） ─── */
+
+interface RawGitBranch {
+  name: string;
+  tip: string;
+  lane: number;
+}
+
+interface RawGitCommit {
+  sha: string;
+  parents?: string[] | null;
+  message: string;
+  author: string;
+  time: string;
+  refs?: string[] | null;
+  lane: number;
+}
+
+interface RawGitRepoView {
+  repo_path?: string | null;
+  head?: string | null;
+  branches?: RawGitBranch[] | null;
+  commits?: RawGitCommit[] | null;
+  truncated?: boolean | null;
+}
+
+/** GET /api/projects/{id}/repo — branches + topo commits with lane numbers. */
+export async function loadProjectRepoView(projectId: string): Promise<void> {
+  const data = await api<RawGitRepoView>(`/api/projects/${projectId}/repo`);
+  const view: GitRepoView = {
+    branches: (data.branches ?? []).map((b) => ({ name: b.name, tip: b.tip, lane: b.lane })),
+    commits: (data.commits ?? []).map((c) => ({
+      sha: c.sha,
+      parents: c.parents ?? [],
+      message: c.message,
+      author: c.author,
+      time: c.time,
+      refs: c.refs ?? [],
+      lane: c.lane,
+    })),
+    truncated: data.truncated ?? false,
+  };
+  appStore.setState((st) => ({ gitViews: { ...st.gitViews, [projectId]: view } }));
+}
+
+interface RawTreeEntry {
+  path: string;
+  type: string;
+  size?: number | null;
+  last_commit_short?: string | null;
+  last_message?: string | null;
+}
+
+/**
+ * GET /api/projects/{id}/tree[/{dir…}] — direct children of one directory with last-commit
+ * attribution. The root listing lands in treeViews; callers expanding deeper keep the
+ * children themselves (they refetch on reopen anyway).
+ */
+export async function loadProjectTree(projectId: string, dir = ""): Promise<GitTreeEntry[]> {
+  const suffix = dir
+    ? "/" + dir.split("/").map(encodeURIComponent).join("/")
+    : "";
+  const data = await api<{ entries?: RawTreeEntry[] }>(`/api/projects/${projectId}/tree${suffix}`);
+  const entries: GitTreeEntry[] = (data.entries ?? []).map((e) => ({
+    path: e.path,
+    type: e.type === "dir" ? "dir" : "file",
+    size: e.size ?? undefined,
+    lastCommitShort: e.last_commit_short ?? "",
+    lastMessage: e.last_message ?? "",
+  }));
+  if (!dir) {
+    appStore.setState((st) => ({ treeViews: { ...st.treeViews, [projectId]: entries } }));
+  }
+  return entries;
 }
 
 export async function createProjectLive(body: {
