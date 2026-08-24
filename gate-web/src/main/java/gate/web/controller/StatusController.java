@@ -1,32 +1,52 @@
-package gate.web;
+package gate.web.controller;
 
 import gate.application.GateService;
 import gate.application.StatusQuery;
 import gate.application.StatusResult;
 import gate.domain.config.GateConfig;
+import gate.web.service.RuntimeInfoService;
+import io.javalin.Javalin;
+import io.javalin.http.Context;
+import io.javalin.http.HttpStatus;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
 /**
- * Status capability handler (EX-001, capability-registry: status).
- * Owns /api/status, /api/runtime, /api/agent-runtimes, /api/config, /api/health.
- * Read-only projection; must not own business facts (ownership-catalog.md).
- * L2 behavior-preserving extraction from ApiRoutes (1538 lines) — facade delegates here.
+ * Status and Health Controller.
+ * Owns /api/health, /api/status, /api/runtime, /api/agent-runtimes, /api/config routes.
  */
-public final class StatusRoutes {
+public final class StatusController implements WebController {
+
     private final GateService gateService;
     private final GateConfig config;
     private final RuntimeInfoService runtimeInfo;
 
-    public StatusRoutes(GateService gateService, GateConfig config, RuntimeInfoService runtimeInfo) {
+    public StatusController(GateService gateService, GateConfig config, RuntimeInfoService runtimeInfo) {
         this.gateService = gateService;
         this.config = config;
         this.runtimeInfo = runtimeInfo;
     }
 
-    public ApiRoutes.Response status() {
+    @Override
+    public void register(Javalin app) {
+        app.get("/api/health", this::health);
+        app.get("/api/status", this::status);
+        app.get("/api/runtime", this::runtime);
+        app.get("/api/agent-runtimes", this::agentRuntimes);
+        app.get("/api/config", this::config);
+    }
+
+    public void health(Context ctx) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("status", "ok");
+        body.put("service", "gate-web");
+        ctx.status(HttpStatus.OK);
+        ctx.json(body);
+    }
+
+    public void status(Context ctx) {
         StatusResult r = gateService.status(new StatusQuery(null));
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("target_ref", r.targetRef());
@@ -45,18 +65,21 @@ public final class StatusRoutes {
             ts.add(m);
         }
         body.put("tickets", ts);
-        return new ApiRoutes.Response(200, body);
+        ctx.status(HttpStatus.OK);
+        ctx.json(body);
     }
 
-    public ApiRoutes.Response runtime() {
-        return new ApiRoutes.Response(200, runtimeInfo.snapshot());
+    public void runtime(Context ctx) {
+        ctx.status(HttpStatus.OK);
+        ctx.json(runtimeInfo.snapshot());
     }
 
-    public ApiRoutes.Response agentRuntimes() {
-        return new ApiRoutes.Response(200, runtimeInfo.agentRuntimes());
+    public void agentRuntimes(Context ctx) {
+        ctx.status(HttpStatus.OK);
+        ctx.json(runtimeInfo.agentRuntimes());
     }
 
-    public ApiRoutes.Response configView() {
+    public void config(Context ctx) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("project", config.project());
         body.put("auth_repo", config.authRepo().toString());
@@ -71,6 +94,7 @@ public final class StatusRoutes {
             web.put("allowed_origins", config.web().allowedOrigins());
             body.put("web", web);
         }
-        return new ApiRoutes.Response(200, body);
+        ctx.status(HttpStatus.OK);
+        ctx.json(body);
     }
 }

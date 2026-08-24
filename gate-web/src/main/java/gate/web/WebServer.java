@@ -3,18 +3,18 @@ package gate.web;
 import gate.domain.config.GateConfig;
 import gate.domain.error.GateErrorCode;
 import gate.domain.error.GateException;
-import gate.ports.CredentialRepository;
+import gate.web.security.AuthFilter;
+import gate.web.util.Http;
+import gate.web.util.HttpStatus;
+import gate.web.util.Json;
 import io.javalin.Javalin;
-import io.javalin.http.HttpStatus;
-import io.javalin.json.JavalinJackson;
 import java.io.InputStream;
-import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
  * Javalin-based WebServer implementation for gate-web.
  */
-final class WebServer implements AutoCloseable {
+public final class WebServer implements AutoCloseable {
 
     private static final String ROOT = "/static";
     private static final Map<String, String> CONTENT_TYPES = Map.of(
@@ -31,14 +31,14 @@ final class WebServer implements AutoCloseable {
     private final WebComponents components;
     private final int port;
 
-    WebServer(WebComponents components) {
+    public WebServer(WebComponents components) {
         this.components = components;
         GateConfig config = components.config();
         GateConfig.WebConfig web = config.web();
         AuthFilter authFilter = new AuthFilter(components.credentials(), web.allowedOrigins());
 
         this.app = Javalin.create(cfg -> {
-            cfg.jsonMapper(new JavalinJackson(Json.mapper()));
+            cfg.jsonMapper(new io.javalin.json.JavalinJackson(Json.mapper()));
             cfg.showJavalinBanner = false;
         });
 
@@ -49,7 +49,7 @@ final class WebServer implements AutoCloseable {
 
         // Global Exception Handling -> standard JSON error envelope
         app.exception(GateException.class, (e, ctx) -> {
-            int code = gate.web.HttpStatus.forGateError(e.code());
+            int code = HttpStatus.forGateError(e.code());
             ctx.status(code);
             ctx.contentType("application/json; charset=utf-8");
             ctx.result(Json.error(e.code().code(), e.code().name(), e.getMessage(), null));
@@ -61,53 +61,7 @@ final class WebServer implements AutoCloseable {
             ctx.result(Json.error(GateErrorCode.INTERNAL.code(), "INTERNAL", "internal error", null));
         });
 
-        // Whitelist endpoints (No auth required)
-        app.get("/api/health", ctx -> {
-            Map<String, Object> body = new LinkedHashMap<>();
-            body.put("status", "ok");
-            body.put("service", "gate-web");
-            ctx.status(HttpStatus.OK);
-            ctx.contentType("application/json; charset=utf-8");
-            ctx.result(Json.write(body));
-        });
-
-        app.post("/api/auth/verify", ctx -> {
-            String token = extractTokenField(ctx.body());
-            CredentialRepository.Domain domain = token == null
-                    ? CredentialRepository.Domain.invalid()
-                    : components.credentials().validate(token);
-            if (!domain.isValid() || !domain.isHuman()) {
-                ctx.status(HttpStatus.UNAUTHORIZED);
-                ctx.contentType("application/json; charset=utf-8");
-                ctx.result(Json.error(GateErrorCode.USAGE.code(), "UNAUTHORIZED", "invalid or non-HUMAN token", null));
-                return;
-            }
-            Map<String, Object> body = new LinkedHashMap<>();
-            body.put("ok", true);
-            body.put("domain", "HUMAN");
-            ctx.status(HttpStatus.OK);
-            ctx.contentType("application/json; charset=utf-8");
-            ctx.result(Json.write(body));
-        });
-
-        // Wrong method on /api/auth/verify -> 405
-        app.get("/api/auth/verify", ctx -> {
-            ctx.status(HttpStatus.METHOD_NOT_ALLOWED);
-            ctx.contentType("application/json; charset=utf-8");
-            ctx.result(Json.error(GateErrorCode.USAGE.code(), "METHOD_NOT_ALLOWED", "use POST", null));
-        });
-        app.put("/api/auth/verify", ctx -> {
-            ctx.status(HttpStatus.METHOD_NOT_ALLOWED);
-            ctx.contentType("application/json; charset=utf-8");
-            ctx.result(Json.error(GateErrorCode.USAGE.code(), "METHOD_NOT_ALLOWED", "use POST", null));
-        });
-        app.delete("/api/auth/verify", ctx -> {
-            ctx.status(HttpStatus.METHOD_NOT_ALLOWED);
-            ctx.contentType("application/json; charset=utf-8");
-            ctx.result(Json.error(GateErrorCode.USAGE.code(), "METHOD_NOT_ALLOWED", "use POST", null));
-        });
-
-        // AuthFilter for all other /api/* endpoints
+        // AuthFilter for all other /api/* endpoints (whitelist handled inside AuthFilter/endpoints)
         app.before("/api/*", ctx -> {
             String path = ctx.path();
             if (path.equals("/api/health") || path.equals("/api/auth/verify")) {
@@ -117,13 +71,13 @@ final class WebServer implements AutoCloseable {
             authFilter.authorize(ctx, sse);
         });
 
-        // Register main API routes
+        // Register all modular controllers via ApiRoutes aggregator
         ApiRoutes apiRoutes = new ApiRoutes(components);
         apiRoutes.register(app);
 
         // Fallback for API 404
         app.after("/api/*", ctx -> {
-            if (ctx.status() == HttpStatus.NOT_FOUND && (ctx.result() == null || ctx.result().isBlank())) {
+            if (ctx.status() == io.javalin.http.HttpStatus.NOT_FOUND && (ctx.result() == null || ctx.result().isBlank())) {
                 ctx.contentType("application/json; charset=utf-8");
                 ctx.result(Json.error(GateErrorCode.USAGE.code(), "NOT_FOUND",
                         "no such endpoint: " + ctx.method() + " " + ctx.path(), null));
@@ -134,7 +88,7 @@ final class WebServer implements AutoCloseable {
         app.get("/*", ctx -> {
             String path = ctx.path();
             if (path.startsWith("/api/")) {
-                ctx.status(HttpStatus.NOT_FOUND);
+                ctx.status(io.javalin.http.HttpStatus.NOT_FOUND);
                 return;
             }
             if (path.equals("/") || path.isBlank()) {
@@ -146,13 +100,13 @@ final class WebServer implements AutoCloseable {
                 body = readResource("/index.html");
                 contentType = "text/html; charset=utf-8";
                 if (body == null) {
-                    ctx.status(HttpStatus.NOT_FOUND);
+                    ctx.status(io.javalin.http.HttpStatus.NOT_FOUND);
                     return;
                 }
             } else {
                 contentType = contentType(path);
             }
-            ctx.status(HttpStatus.OK);
+            ctx.status(io.javalin.http.HttpStatus.OK);
             ctx.contentType(contentType);
             ctx.result(body);
         });
@@ -161,23 +115,10 @@ final class WebServer implements AutoCloseable {
         this.port = app.port();
     }
 
-    private static String extractTokenField(String body) {
-        if (body == null || body.isBlank()) {
-            return null;
-        }
-        try {
-            Map<String, Object> m = Json.parseObject(body.trim());
-            Object token = m.get("token");
-            return token == null ? null : token.toString();
-        } catch (Exception ignored) {
-            return null;
-        }
+    public void start() {
     }
 
-    void start() {
-    }
-
-    int port() {
+    public int port() {
         return port;
     }
 

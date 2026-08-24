@@ -1,4 +1,4 @@
-package gate.web;
+package gate.web.security;
 
 import gate.domain.error.GateErrorCode;
 import gate.domain.error.GateException;
@@ -21,7 +21,7 @@ import java.time.Instant;
  * <p>The token is never passed as argv. The Web browser sends it as {@code Authorization: Bearer}
  * (or, for SSE only, {@code ?token=}).
  */
-final class WebToken {
+public final class WebToken {
 
     private WebToken() {
     }
@@ -34,7 +34,7 @@ final class WebToken {
      * @param now         issuance time
      * @return the plaintext token (freshly minted, or read back from an existing file)
      */
-    static String ensure(Path tokenFile, CredentialRepository credentials, Instant now) {
+    public static String ensure(Path tokenFile, CredentialRepository credentials, Instant now) {
         try {
             if (Files.exists(tokenFile)) {
                 String existing = Files.readString(tokenFile, StandardCharsets.UTF_8).trim();

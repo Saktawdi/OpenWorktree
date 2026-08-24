@@ -1,4 +1,4 @@
-package gate.web;
+package gate.web.service;
 
 import gate.application.GateService;
 import gate.application.PublishCommand;
@@ -14,6 +14,7 @@ import gate.ports.Clock;
 import gate.ports.TaskRegistry;
 import gate.ports.TicketLockManager;
 import gate.ports.WorkDispatcher;
+import gate.web.util.Json;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -26,7 +27,7 @@ import java.util.Map;
  * immediately (202). This runner updates progress, then persists a terminal {@code SUCCEEDED} or
  * {@code FAILED} task. The registry emits the SSE events.
  */
-final class TaskRunner {
+public final class TaskRunner {
 
     private final WorkDispatcher dispatcher;
     private final TaskRegistry tasks;
@@ -34,7 +35,7 @@ final class TaskRunner {
     private final TicketLockManager ticketLocks;
     private final Clock clock;
 
-    TaskRunner(TaskRegistry tasks, GateService gateService, Clock clock, TicketLockManager ticketLocks) {
+    public TaskRunner(TaskRegistry tasks, GateService gateService, Clock clock, TicketLockManager ticketLocks) {
         this.tasks = tasks;
         this.gateService = gateService;
         this.clock = clock;
@@ -42,7 +43,7 @@ final class TaskRunner {
         this.dispatcher = new BoundedWorkDispatcher();
     }
 
-    TaskRunner(TaskRegistry tasks, GateService gateService, Clock clock,
+    public TaskRunner(TaskRegistry tasks, GateService gateService, Clock clock,
                TicketLockManager ticketLocks, WorkDispatcher dispatcher) {
         this.tasks = tasks;
         this.gateService = gateService;
@@ -51,7 +52,7 @@ final class TaskRunner {
         this.dispatcher = dispatcher;
     }
 
-    String submitReview(String ticketNo, Integer round, Boolean humanPass, String note) {
+    public String submitReview(String ticketNo, Integer round, Boolean humanPass, String note) {
         GateTask task = tasks.register("review", ticketNo, null);
         if (!dispatcher.trySubmit(() -> runReview(task, ticketNo, round, humanPass, note))) {
             fail(task, new GateException(GateErrorCode.GATE_ERROR_IO,
@@ -60,7 +61,7 @@ final class TaskRunner {
         return task.id();
     }
 
-    String submitPublish(String ticketNo, Integer round) {
+    public String submitPublish(String ticketNo, Integer round) {
         GateTask task = tasks.register("publish", ticketNo, null);
         if (!dispatcher.trySubmit(() -> runPublish(task, ticketNo, round))) {
             fail(task, new GateException(GateErrorCode.GATE_ERROR_IO,
@@ -69,7 +70,7 @@ final class TaskRunner {
         return task.id();
     }
 
-    void close() {
+    public void close() {
         dispatcher.close();
     }
 

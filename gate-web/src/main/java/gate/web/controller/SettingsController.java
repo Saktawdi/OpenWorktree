@@ -1,10 +1,14 @@
-package gate.web;
+package gate.web.controller;
 
 import gate.adapters.config.TomlGateConfigLoader;
 import gate.adapters.config.TomlGateConfigWriter;
 import gate.adapters.mcp.McpToolRegistry;
 import gate.domain.error.GateErrorCode;
 import gate.domain.error.GateException;
+import gate.web.util.Json;
+import io.javalin.Javalin;
+import io.javalin.http.Context;
+import io.javalin.http.HttpStatus;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -12,16 +16,11 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 设置中心端点（V5 web console 设置中心）：gate.toml 参数视图/写回 + gate MCP 工具状态。
- *
- * <p>{@code GET /api/config} 仍是脱敏只读视图；这里的可编辑目录与 {@link TomlGateConfigWriter} 的
- * KEY_TYPES/NON_EDITABLE 同源（经其 public 目录方法引用），展示与写回校验不会漂移。gate.toml 修改
- * 仅落盘，运行中的进程持有不可变 {@code GateConfig} record，因此写回响应恒带 {@code restart_required=true}；
- * fail-closed 校验（临时文件经 loader 完整加载）与 {@code .bak} 备份由 writer 负责。
+ * Settings & MCP Status Controller.
+ * Owns /api/settings/gate-toml and /api/mcp/status routes.
  */
-public final class SettingsRoutes {
+public final class SettingsController implements WebController {
 
-    /** 展示分区与标题，固定顺序（展示顺序独立于目录声明顺序）。 */
     private static final List<SectionSpec> SECTIONS = List.of(
             new SectionSpec("", "基本"),
             new SectionSpec("gate_identity", "提交身份"),
@@ -34,10 +33,6 @@ public final class SettingsRoutes {
     private record SectionSpec(String section, String title) {
     }
 
-    /**
-     * 文件未写该键时的生效回退值，与 {@link TomlGateConfigLoader} build() 的 getOrDefault 表一致
-     * （必填键无默认概念，缺省即 null）。
-     */
     private static final Map<String, Object> DEFAULTS = buildDefaults();
 
     private static Map<String, Object> buildDefaults() {
@@ -66,12 +61,18 @@ public final class SettingsRoutes {
     private final TomlGateConfigLoader loader = new TomlGateConfigLoader();
     private final TomlGateConfigWriter writer = new TomlGateConfigWriter();
 
-    SettingsRoutes(Path gateToml) {
+    public SettingsController(Path gateToml) {
         this.gateToml = gateToml == null ? null : gateToml.toAbsolutePath().normalize();
     }
 
-    /** GET /api/settings/gate-toml — 全键目录的分组原始值（value=null 表示文件未写，前端展示 default）。 */
-    public ApiRoutes.Response gateTomlView() {
+    @Override
+    public void register(Javalin app) {
+        app.get("/api/settings/gate-toml", this::getGateToml);
+        app.put("/api/settings/gate-toml", this::updateGateToml);
+        app.get("/api/mcp/status", this::getMcpStatus);
+    }
+
+    public void getGateToml(Context ctx) {
         Map<String, Object> raw = loader.rawValues(requireToml());
         List<Map<String, Object>> sections = new ArrayList<>();
         for (SectionSpec spec : SECTIONS) {
@@ -89,7 +90,7 @@ public final class SettingsRoutes {
                 keys.add(k);
             }
             if (keys.isEmpty()) {
-                continue; // 目录中该分区暂无键（防御，当前每个分区都有键）
+                continue;
             }
             Map<String, Object> s = new LinkedHashMap<>();
             s.put("section", spec.section());
@@ -101,11 +102,12 @@ public final class SettingsRoutes {
         body.put("toml_path", requireToml().toString());
         body.put("restart_required", true);
         body.put("sections", sections);
-        return new ApiRoutes.Response(200, body);
+        ctx.status(HttpStatus.OK);
+        ctx.json(body);
     }
 
-    /** PUT /api/settings/gate-toml — 只提交变更键；值 null = 删除该键回退默认。校验失败原文件不动。 */
-    public ApiRoutes.Response gateTomlUpdate(Map<String, Object> req) {
+    public void updateGateToml(Context ctx) {
+        Map<String, Object> req = Json.parseObject(ctx.body());
         Object rawUpdates = req.get("updates");
         if (!(rawUpdates instanceof Map<?, ?> map)) {
             throw new GateException(GateErrorCode.USAGE, "updates must be a JSON object");
@@ -117,11 +119,11 @@ public final class SettingsRoutes {
         body.put("ok", true);
         body.put("updated", new ArrayList<>(updates.keySet()));
         body.put("restart_required", true);
-        return new ApiRoutes.Response(200, body);
+        ctx.status(HttpStatus.OK);
+        ctx.json(body);
     }
 
-    /** GET /api/mcp/status — gate MCP 工具按会话注入 agent CLI 的状态与工具清单。 */
-    public ApiRoutes.Response mcpStatus() {
+    public void getMcpStatus(Context ctx) {
         List<Map<String, Object>> tools = new ArrayList<>();
         int agentCount = 0;
         int humanCount = 0;
@@ -147,7 +149,8 @@ public final class SettingsRoutes {
         body.put("tools", tools);
         body.put("agent_tool_count", agentCount);
         body.put("human_tool_count", humanCount);
-        return new ApiRoutes.Response(200, body);
+        ctx.status(HttpStatus.OK);
+        ctx.json(body);
     }
 
     private Path requireToml() {

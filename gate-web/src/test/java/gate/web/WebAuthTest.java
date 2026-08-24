@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import gate.domain.config.GateConfig;
+import gate.web.security.AuthFilter;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;

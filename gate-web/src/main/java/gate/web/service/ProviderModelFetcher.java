@@ -1,4 +1,4 @@
-package gate.web;
+package gate.web.service;
 
 import gate.adapters.engine.EnvFile;
 import gate.application.MiniJson;
@@ -32,14 +32,14 @@ import java.util.Set;
  * {@code {"data":[{"id":"..."}]}}, Anthropic's {@code {"models":[{"id":"..."}]}}, a bare array of
  * objects with {@code id}, or a bare array of plain strings.
  */
-final class ProviderModelFetcher {
+public final class ProviderModelFetcher {
 
     private static final Duration TIMEOUT = Duration.ofSeconds(10);
 
     private final Path envFile;
     private final HttpClient http;
 
-    ProviderModelFetcher(Path envFile) {
+    public ProviderModelFetcher(Path envFile) {
         this.envFile = envFile;
         // 上游可能是自签/代理证书链（PKIX 拒绝），本地工具放宽 TLS（见 TrustAllTls 的边界说明）。
         this.http = gate.adapters.http.TrustAllTls.apply(HttpClient.newBuilder())
@@ -51,7 +51,7 @@ final class ProviderModelFetcher {
      *         an empty list is reported as an upstream contract error instead of wiping the
      *         provider's model table).
      */
-    List<String> fetch(ProviderRepository.ProviderRow provider) {
+    public List<String> fetch(ProviderRepository.ProviderRow provider) {
         String url = provider.baseUrl().replaceAll("/+$", "") + "/models";
         HttpRequest.Builder req = HttpRequest.newBuilder(URI.create(url))
                 .timeout(TIMEOUT)

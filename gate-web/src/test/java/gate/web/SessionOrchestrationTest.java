@@ -177,69 +177,6 @@ class SessionOrchestrationTest {
     }
 
     @Test
-    void session_patch_and_delete_manage_metadata() throws Exception {
-        assertEquals(201, post("/api/agent-configs", """
-                {"id":"claude-meta","name":"Claude Meta","cli":"CLAUDE","provider_id":"manual",
-                 "model":"claude-test","extra_flags":[],"description":"test"}
-                """).statusCode());
-        assertEquals(201, post("/api/tickets",
-                "{\"ticket_no\":\"SESS-3\",\"title\":\"meta\"}").statusCode());
-
-        // ApiRoutes dispatch for PATCH/DELETE sessions is wired in a later phase; drive the
-        // route methods directly (same contract the dispatcher will call).
-        gate.web.session.SessionRoutes routes = new gate.web.session.SessionRoutes(
-                harness.components().agentConfigRepository(), harness.components().sessionRepository(),
-                fake, harness.components().ticketRepository(), harness.components().clock());
-        ApiRoutes.Response created = routes.sessionCreate("SESS-3", "{\"agent_config_id\":\"claude-meta\"}");
-        assertEquals(201, created.status());
-        String sid = String.valueOf(((Map<String, Object>) created.body()).get("id"));
-
-        // Patch title only.
-        ApiRoutes.Response titled = routes.sessionPatch(sid, "{\"title\":\"my session\"}");
-        assertEquals(200, titled.status());
-        Map<String, Object> titledJson = (Map<String, Object>) titled.body();
-        assertEquals("my session", titledJson.get("title"));
-        assertEquals(false, titledJson.get("archived"));
-
-        // Patch archived only — title must survive.
-        ApiRoutes.Response archived = routes.sessionPatch(sid, "{\"archived\":true}");
-        assertEquals(200, archived.status());
-        Map<String, Object> archivedJson = (Map<String, Object>) archived.body();
-        assertEquals("my session", archivedJson.get("title"));
-        assertEquals(true, archivedJson.get("archived"));
-
-        // Persisted roundtrip through the real (SQLite) repository.
-        Session persisted = harness.components().sessionRepository().find(sid).orElseThrow();
-        assertEquals("my session", persisted.title());
-        assertTrue(persisted.archived());
-
-        // Empty patch body is rejected.
-        GateException noFields = assertThrows(GateException.class, () -> routes.sessionPatch(sid, "{}"));
-        assertEquals(64, noFields.code().code());
-        GateException unknown = assertThrows(GateException.class,
-                () -> routes.sessionPatch("no-such-session", "{\"title\":\"x\"}"));
-        assertEquals(64, unknown.code().code());
-
-        // Blank title clears it to null.
-        ApiRoutes.Response cleared = routes.sessionPatch(sid, "{\"title\":\"\"}");
-        assertEquals(200, cleared.status());
-        assertNull(((Map<String, Object>) cleared.body()).get("title"));
-
-        // Delete: ACTIVE session -> abort first, then messages + session row gone.
-        routes.sessionSend(sid, "{\"message\":\"hello\"}");
-        assertEquals(2, harness.components().sessionRepository().findMessages(sid).size());
-        ApiRoutes.Response deleted = routes.sessionDelete(sid);
-        assertEquals(200, deleted.status());
-        assertEquals(true, ((Map<String, Object>) deleted.body()).get("ok"));
-        assertTrue(harness.components().sessionRepository().find(sid).isEmpty(), "session row must be gone");
-        assertTrue(harness.components().sessionRepository().findMessages(sid).isEmpty(),
-                "messages must be gone");
-        assertTrue(fake.aborted.contains(sid), "ACTIVE session must be aborted before delete");
-        GateException gone = assertThrows(GateException.class, () -> routes.sessionDelete(sid));
-        assertEquals(64, gone.code().code());
-    }
-
-    @Test
     void session_patch_and_delete_are_routed_over_http() throws Exception {
         assertEquals(201, post("/api/agent-configs", """
                 {"id":"claude-dispatch","name":"Claude Dispatch","cli":"CLAUDE","provider_id":"manual",

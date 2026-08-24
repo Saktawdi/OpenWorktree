@@ -10,7 +10,7 @@ import gate.domain.session.AgentCli;
 import gate.domain.session.Session;
 import gate.domain.session.SessionStatus;
 import gate.domain.session.SessionUsage;
-import gate.web.session.SessionModelCatalog;
+import gate.web.service.SessionModelCatalog;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.net.URI;

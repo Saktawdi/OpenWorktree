@@ -1,4 +1,4 @@
-package gate.web.project;
+package gate.web.controller;
 
 import gate.adapters.git.GitCli;
 import gate.domain.error.GateErrorCode;
@@ -6,7 +6,9 @@ import gate.domain.error.GateException;
 import gate.domain.project.Project;
 import gate.ports.ProcessRunner;
 import gate.ports.ProjectRepository;
-import gate.web.ApiRoutes;
+import io.javalin.Javalin;
+import io.javalin.http.Context;
+import io.javalin.http.HttpStatus;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -33,7 +35,7 @@ import java.util.Set;
  * the first lane expecting it, its first parent inherits that slot, and extra parents of a merge
  * fan out into free slots. That reproduces the gitgraph-style drawing the UI renders.
  */
-public final class RepoViewRoutes {
+public final class RepoViewController implements WebController {
 
     private static final int MAX_COMMITS = 100;
     private static final int MAX_BRANCHES = 20;
@@ -47,14 +49,24 @@ public final class RepoViewRoutes {
     private final ProjectRepository projects;
     private final GitCli git;
 
-    public RepoViewRoutes(ProjectRepository projects, GitCli git) {
+    public RepoViewController(ProjectRepository projects, GitCli git) {
         this.projects = projects;
         this.git = git;
     }
 
+    @Override
+    public void register(Javalin app) {
+        app.get("/api/projects/{id}/repo", this::repoView);
+        app.get("/api/projects/{id}/tree", ctx -> treeView(ctx, List.of()));
+        app.get("/api/projects/{id}/tree/<path>", ctx -> {
+            String pathParam = ctx.pathParam("path");
+            treeView(ctx, List.of(pathParam.split("/")));
+        });
+    }
+
     /** GET /api/projects/{id}/repo — branches + topo-ordered commits with lane numbers. */
-    public ApiRoutes.Response repoView(String projectId) {
-        Project p = requireProject(projectId);
+    public void repoView(Context ctx) {
+        Project p = requireProject(ctx.pathParam("id"));
         Path ws = Path.of(p.workspacePath());
         requireGitWorkspace(ws);
 
@@ -104,16 +116,13 @@ public final class RepoViewRoutes {
         body.put("branches", branchRows);
         body.put("commits", commitRows);
         body.put("truncated", commits.size() >= MAX_COMMITS);
-        return new ApiRoutes.Response(200, body);
+        ctx.status(HttpStatus.OK);
+        ctx.json(body);
     }
 
-    /**
-     * GET /api/projects/{id}/tree[/{path…}] — direct children of one directory in HEAD, each with
-     * the short sha and subject of the last commit that touched it. Children are listed on demand
-     * so the tree UI can expand lazily without the backend walking the whole repository.
-     */
-    public ApiRoutes.Response treeView(String projectId, List<String> pathSegments) {
-        Project p = requireProject(projectId);
+    /** GET /api/projects/{id}/tree[/{path…}] — direct children of one directory in HEAD. */
+    public void treeView(Context ctx, List<String> pathSegments) {
+        Project p = requireProject(ctx.pathParam("id"));
         Path ws = Path.of(p.workspacePath());
         requireGitWorkspace(ws);
         String dir = normalizeDir(pathSegments);
@@ -141,15 +150,12 @@ public final class RepoViewRoutes {
             }
         }
         body.put("entries", rows);
-        return new ApiRoutes.Response(200, body);
+        ctx.status(HttpStatus.OK);
+        ctx.json(body);
     }
 
     /* ─── repo graph pieces ─── */
 
-    /**
-     * 权威库只读投影（repo/target_ref/tip），供前端判定"工作区落后于权威库"。tip 读不到
-     * （空库/缺 ref/路径失效）时为 null——视图永远不该因为权威库不可读而整体失败。
-     */
     private Map<String, Object> authInfo(Project p) {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("repo", p.authRepo());
@@ -168,7 +174,6 @@ public final class RepoViewRoutes {
     private record Branch(String name, String tip, int lane) {
     }
 
-    /** Parsed commit before lane assignment. */
     private static final class Commit {
         final String sha;
         final List<String> parents;
@@ -198,14 +203,12 @@ public final class RepoViewRoutes {
         }
     }
 
-    /** HEAD as a ref name when on a branch, else the raw sha (detached); null when unborn. */
     private String resolveHead(Path ws) {
         ProcessRunner.ProcRun sym = git.run(ws, Map.of(), "symbolic-ref", "-q", "HEAD");
         if (sym.ok() && !sym.stdout().isBlank()) {
             return sym.stdout().trim();
         }
-        String sha = revParseHead(ws);
-        return sha;
+        return revParseHead(ws);
     }
 
     private String revParseHead(Path ws) {
@@ -213,11 +216,6 @@ public final class RepoViewRoutes {
         return run.ok() ? run.stdout().trim() : null;
     }
 
-    /**
-     * Branch tips in seeding order: HEAD's branch, then the gate target ref, then newest first.
-     * (Space separator: for-each-ref has no {@code %xNN} escapes, and ref names can never
-     * contain a space.)
-     */
     private List<Branch> readBranches(Path ws, String head, String targetRef) {
         ProcessRunner.ProcRun run = git.run(ws, Map.of(),
                 "for-each-ref", "--sort=-committerdate",
@@ -252,7 +250,6 @@ public final class RepoViewRoutes {
         return branches;
     }
 
-    /** Peeled tag tips: sha → tag short names (annotated tags resolve to their commit). */
     private Map<String, List<String>> readTagTips(Path ws) {
         ProcessRunner.ProcRun run = git.run(ws, Map.of(),
                 "for-each-ref",
@@ -294,11 +291,6 @@ public final class RepoViewRoutes {
         return commits;
     }
 
-    /**
-     * First-free-slot lane assignment. Lanes hold the sha each slot expects next; a commit takes
-     * the first lane expecting it (or a free slot), the slot then expects its first parent, and
-     * merge parents fan out into further free slots.
-     */
     private static void assignLanes(List<Branch> branches, List<Commit> commits) {
         List<String> lanes = new ArrayList<>();
         for (Branch b : branches) {
@@ -362,7 +354,6 @@ public final class RepoViewRoutes {
         }
     }
 
-    /** Joins and validates URL path segments; rejects anything that could escape the work tree. */
     private static String normalizeDir(List<String> segments) {
         List<String> clean = new ArrayList<>();
         for (String seg : segments) {
@@ -378,7 +369,6 @@ public final class RepoViewRoutes {
         return String.join("/", clean);
     }
 
-    /** Direct children of {@code dir} in HEAD's tree via {@code ls-tree <head>:<dir>}. */
     private List<Entry> listEntries(Path ws, String head, String dir) {
         String treeish = dir.isEmpty() ? head : head + ":" + dir;
         ProcessRunner.ProcRun run = git.run(ws, Map.of(),
@@ -394,7 +384,6 @@ public final class RepoViewRoutes {
             String name = line.substring(tab + 1).trim();
             String[] meta = line.substring(0, tab).trim().split("\\s+");
             if (meta.length < 3 || name.isEmpty()) continue;
-            // ls-tree reports git object types; the console contract is dir/file.
             String type = meta[1];
             if (!type.equals("tree") && !type.equals("blob")) continue;
             Entry e = new Entry(name, dir.isEmpty() ? name : dir + "/" + name,
@@ -403,7 +392,6 @@ public final class RepoViewRoutes {
                 try {
                     e.size = Long.parseLong(meta[3]);
                 } catch (NumberFormatException ignored) {
-                    // size column unusable — the UI treats it as unknown.
                 }
             }
             entries.add(e);
@@ -412,16 +400,6 @@ public final class RepoViewRoutes {
         return entries;
     }
 
-    /**
-     * Attributes each entry the newest commit touching it: one {@code git log --name-only} walk
-     * over the directory (bounded by {@value #MAX_LOG_WALK}), stop early once every entry is
-     * covered. A dir is attributed by any path under it.
-     *
-     * <p>Ordering: the walk is {@code --topo-order}, so a descendant always precedes its
-     * ancestors even when commits share a timestamp (the common case in fast local runs) —
-     * first hit wins for ties. A strictly newer commit re-attributes, which repairs the
-     * parallel-branch case where topo order interleaves unrelated lines.
-     */
     private void attributeLastCommits(Path ws, String head, String dir, List<Entry> entries) {
         if (entries.isEmpty()) return;
         List<String> argv = new ArrayList<>(List.of(

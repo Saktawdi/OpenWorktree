@@ -1,4 +1,4 @@
-package gate.web;
+package gate.web.service;
 
 import gate.adapters.process.CliLocator;
 import gate.application.GateService;
@@ -34,7 +34,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * and uptime are always fresh. Probing never throws — an unavailable binary reports {@code
  * available:false} rather than failing the endpoint.
  */
-final class RuntimeInfoService {
+final public class RuntimeInfoService {
 
     private static final Duration PROBE_TTL = Duration.ofSeconds(30);
     private static final Duration PROBE_TIMEOUT = Duration.ofSeconds(8);
@@ -55,7 +55,7 @@ final class RuntimeInfoService {
     private final Clock clock;
 
     /** Minimal clock seam so tests can age the probe cache deterministically. */
-    interface Clock {
+    public interface Clock {
         Instant now();
     }
 
@@ -75,7 +75,7 @@ final class RuntimeInfoService {
     private volatile ModelCatalog opencodeModelCatalog = ModelCatalog.loading();
     private final AtomicBoolean opencodeModelProbeRunning = new AtomicBoolean();
 
-    RuntimeInfoService(GateConfig config, String gitExecutable, ProcessRunner processRunner,
+    public RuntimeInfoService(GateConfig config, String gitExecutable, ProcessRunner processRunner,
                        CliLocator cliLocator, GateService gateService,
                        TicketRepository tickets, SessionRepository sessions,
                        TaskRegistry tasks, Instant startedAt, Clock clock) {
@@ -92,7 +92,7 @@ final class RuntimeInfoService {
     }
 
     /** Builds the {@code GET /api/runtime} JSON body. */
-    Map<String, Object> snapshot() {
+    public Map<String, Object> snapshot() {
         ProbeCache pc = probeAll();
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("service", "gate-web");
@@ -168,7 +168,7 @@ final class RuntimeInfoService {
      * list command, so its stable aliases are presented as hints while an empty selection means
      * "use the CLI default".
      */
-    Map<String, Object> agentRuntimes() {
+    public Map<String, Object> agentRuntimes() {
         // Version availability must not wait for a provider-aware model catalog. The latter can
         // trigger network/cache work inside OpenCode and is refreshed asynchronously below.
         ProbeCache pc = probeAll();

@@ -1,4 +1,4 @@
-package gate.web.session;
+package gate.web.service;
 
 import gate.application.MiniJson;
 import gate.domain.error.GateErrorCode;
@@ -34,7 +34,7 @@ public final class SessionModelCatalog {
     /**
      * @param port the session's opencode serve port (&gt;0), or -1 when the CLI has no server
      */
-    Map<String, Object> fetch(int port) {
+    public Map<String, Object> fetch(int port) {
         if (port <= 0) {
             Map<String, Object> empty = new LinkedHashMap<>();
             empty.put("providers", List.of());

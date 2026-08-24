@@ -1,7 +1,9 @@
-package gate.web;
+package gate.web.util;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import gate.domain.error.GateErrorCode;
+import gate.domain.error.GateException;
 import java.util.List;
 import java.util.Map;
 
@@ -30,16 +32,26 @@ public final class Json {
         }
     }
 
+    /**
+     * Parses a request body into a JSON object. Fail-closed: blank bodies yield an empty map,
+     * but malformed JSON or non-object roots (arrays, scalars) are a USAGE error.
+     */
     @SuppressWarnings("unchecked")
     public static Map<String, Object> parseObject(String text) {
         if (text == null || text.isBlank()) {
             return Map.of();
         }
         try {
-            return MAPPER.readValue(text, Map.class);
+            Object parsed = MAPPER.readValue(text.trim(), Object.class);
+            if (parsed instanceof Map<?, ?> m) {
+                return (Map<String, Object>) m;
+            }
+        } catch (GateException e) {
+            throw e;
         } catch (Exception e) {
-            return Map.of();
+            throw new GateException(GateErrorCode.USAGE, "malformed JSON body");
         }
+        throw new GateException(GateErrorCode.USAGE, "request body must be a JSON object");
     }
 
     public static String error(int errorCode, String errorName, String message, List<String> detail) {

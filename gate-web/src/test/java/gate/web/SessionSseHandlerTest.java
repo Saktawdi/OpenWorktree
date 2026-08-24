@@ -12,6 +12,7 @@ import gate.domain.session.SessionUsage;
 import gate.domain.session.PermissionRequest;
 import gate.ports.AgentSessionPort;
 import gate.ports.SessionRepository;
+import gate.web.sse.SessionSseHandler;
 import io.javalin.Javalin;
 import java.io.IOException;
 import java.io.InputStream;

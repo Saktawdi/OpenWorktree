@@ -1,0 +1,639 @@
+package gate.web.controller;
+
+import gate.domain.error.GateErrorCode;
+import gate.domain.error.GateException;
+import gate.domain.session.AgentCli;
+import gate.domain.session.AgentConfig;
+import gate.domain.session.PermissionRequest;
+import gate.domain.session.Session;
+import gate.ports.AgentConfigRepository;
+import gate.ports.AgentSessionPort;
+import gate.ports.Clock;
+import gate.ports.CredentialRepository;
+import gate.ports.SessionRepository;
+import gate.ports.TicketRepository;
+import gate.web.security.AuthFilter;
+import gate.web.service.SessionModelCatalog;
+import gate.web.sse.SessionSseHandler;
+import gate.web.util.Json;
+import io.javalin.Javalin;
+import io.javalin.http.Context;
+import io.javalin.http.HttpStatus;
+import io.javalin.http.sse.SseClient;
+import java.io.IOException;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+
+/**
+ * Agent Session & Configuration Controller.
+ * Owns /api/agent-configs/*, /api/sessions/*, /api/tickets/{no}/sessions, and /api/agents/busy routes.
+ */
+public final class SessionController implements WebController {
+
+    private static final int MAX_ATTACHMENTS = 10;
+    private static final java.util.Set<String> IMAGE_MIMES =
+            java.util.Set.of("image/png", "image/jpeg", "image/gif", "image/webp");
+
+    private final AgentConfigRepository agentConfigs;
+    private final SessionRepository sessionRepository;
+    private final AgentSessionPort agentSessionPort;
+    private final TicketRepository tickets;
+    private final Clock clock;
+    private final SessionModelCatalog modelCatalog;
+    private final CredentialRepository credentials;
+    private final SessionSseHandler sessionSseHandler;
+
+    public SessionController(AgentConfigRepository agentConfigs, SessionRepository sessionRepository,
+                             AgentSessionPort agentSessionPort, TicketRepository tickets, Clock clock,
+                             SessionModelCatalog modelCatalog, CredentialRepository credentials) {
+        this.agentConfigs = agentConfigs;
+        this.sessionRepository = sessionRepository;
+        this.agentSessionPort = agentSessionPort;
+        this.tickets = tickets;
+        this.clock = clock;
+        this.modelCatalog = modelCatalog;
+        this.credentials = credentials;
+        this.sessionSseHandler = new SessionSseHandler(agentSessionPort, sessionRepository);
+    }
+
+    @Override
+    public void register(Javalin app) {
+        // Agent Configs
+        app.get("/api/agent-configs", this::listAgentConfigs);
+        app.post("/api/agent-configs", this::createAgentConfig);
+        app.get("/api/agent-configs/{id}", this::getAgentConfig);
+        app.put("/api/agent-configs/{id}", this::updateAgentConfig);
+        app.delete("/api/agent-configs/{id}", this::deleteAgentConfig);
+        app.get("/api/agent-configs/{id}/sessions", this::listAgentConfigSessions);
+
+        // Ticket-bound sessions
+        app.get("/api/tickets/{ticketNo}/sessions", this::listTicketSessions);
+        app.post("/api/tickets/{ticketNo}/sessions", this::createTicketSession);
+
+        // Sessions (Global)
+        app.get("/api/sessions/{id}", this::getSession);
+        app.patch("/api/sessions/{id}", this::patchSession);
+        app.delete("/api/sessions/{id}", this::deleteSession);
+        app.get("/api/sessions/{id}/messages", this::listMessages);
+        app.post("/api/sessions/{id}/messages", this::sendMessage);
+        app.post("/api/sessions/{id}/abort", this::abortSession);
+        app.post("/api/sessions/{id}/model", this::setModel);
+        app.get("/api/sessions/{id}/models", this::listModels);
+        app.get("/api/sessions/{id}/permissions", this::listPermissions);
+        app.post("/api/sessions/{id}/permissions/{permissionId}", this::respondPermission);
+        app.get("/api/sessions/{id}/events", this::sessionEvents);
+
+        // Agents Busy
+        app.get("/api/agents/busy", this::agentsBusy);
+    }
+
+    public void listAgentConfigs(Context ctx) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (AgentConfig c : agentConfigs.findAll()) {
+            out.add(agentConfigJson(c));
+        }
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("agent_configs", out);
+        ctx.status(HttpStatus.OK);
+        ctx.json(body);
+    }
+
+    public void getAgentConfig(Context ctx) {
+        String id = ctx.pathParam("id");
+        AgentConfig c = agentConfigs.find(id).orElseThrow(() -> new GateException(
+                GateErrorCode.USAGE, "no such agent config: " + id));
+        ctx.status(HttpStatus.OK);
+        ctx.json(agentConfigJson(c));
+    }
+
+    public void createAgentConfig(Context ctx) {
+        Map<String, Object> req = Json.parseObject(ctx.body());
+        String id = required(req, "id");
+        if (agentConfigs.find(id).isPresent()) {
+            throw new GateException(GateErrorCode.USAGE, "agent config already exists: " + id);
+        }
+        AgentConfig config = parseAgentConfig(req, id, null);
+        agentConfigs.insert(config, clock.now());
+        ctx.status(HttpStatus.CREATED);
+        ctx.json(agentConfigJson(config));
+    }
+
+    public void updateAgentConfig(Context ctx) {
+        String id = ctx.pathParam("id");
+        AgentConfig existing = agentConfigs.find(id).orElseThrow(() -> new GateException(
+                GateErrorCode.USAGE, "no such agent config: " + id));
+        AgentConfig config = parseAgentConfig(Json.parseObject(ctx.body()), id, existing);
+        agentConfigs.update(config, clock.now());
+        ctx.status(HttpStatus.OK);
+        ctx.json(agentConfigJson(config));
+    }
+
+    public void deleteAgentConfig(Context ctx) {
+        String id = ctx.pathParam("id");
+        if (agentConfigs.find(id).isEmpty()) {
+            throw new GateException(GateErrorCode.USAGE, "no such agent config: " + id);
+        }
+        agentConfigs.delete(id);
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("ok", true);
+        ctx.status(HttpStatus.OK);
+        ctx.json(body);
+    }
+
+    public void listAgentConfigSessions(Context ctx) {
+        String id = ctx.pathParam("id");
+        if (agentConfigs.find(id).isEmpty()) {
+            throw new GateException(GateErrorCode.USAGE, "no such agent config: " + id);
+        }
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Session s : sessionRepository.findByAgentConfig(id)) {
+            out.add(sessionJson(s));
+        }
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("sessions", out);
+        ctx.status(HttpStatus.OK);
+        ctx.json(body);
+    }
+
+    public void listTicketSessions(Context ctx) {
+        String ticketNo = ctx.pathParam("ticketNo");
+        if (tickets.find(ticketNo).isEmpty()) {
+            throw new GateException(GateErrorCode.USAGE, "no such ticket: " + ticketNo);
+        }
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Session s : sessionRepository.findByTicket(ticketNo)) {
+            out.add(sessionJson(s));
+        }
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("sessions", out);
+        ctx.status(HttpStatus.OK);
+        ctx.json(body);
+    }
+
+    public void createTicketSession(Context ctx) {
+        String ticketNo = ctx.pathParam("ticketNo");
+        gate.domain.ticket.Ticket ticket = tickets.find(ticketNo).orElseThrow(() ->
+                new GateException(GateErrorCode.USAGE, "no such ticket: " + ticketNo));
+        Map<String, Object> req = Json.parseObject(ctx.body());
+        String agentConfigId = str(req, "agent_config_id");
+        if (agentConfigId == null || agentConfigId.isBlank()) {
+            throw new GateException(GateErrorCode.USAGE, "agent_config_id is required");
+        }
+        String initialPrompt = str(req, "initial_prompt");
+        if (initialPrompt == null) {
+            initialPrompt = "";
+        }
+        // Every session gets a freshly minted agent-domain token bound to this ticket (§5.4):
+        // the plaintext rides only inside StartRequest.env → the CLI process tree / per-session
+        // MCP config under the clone's .git/, and only its hash is persisted.
+        Map<String, String> startEnv = credentials == null
+                ? Map.of()
+                : Map.of(gate.adapters.mcp.McpServer.TOKEN_ENV,
+                        credentials.issueAgentToken(ticketNo, clock.now()));
+        Session s = agentSessionPort.start(new AgentSessionPort.StartRequest(
+                ticketNo, agentConfigId, ticket.clonePath(), ticket.targetRef(),
+                initialPrompt, startEnv));
+        ctx.status(HttpStatus.CREATED);
+        ctx.json(sessionJson(s));
+    }
+
+    public void getSession(Context ctx) {
+        String id = ctx.pathParam("id");
+        Session s = sessionRepository.find(id).orElseThrow(() -> new GateException(
+                GateErrorCode.USAGE, "no such session: " + id));
+        ctx.status(HttpStatus.OK);
+        ctx.json(sessionJson(s));
+    }
+
+    public void patchSession(Context ctx) {
+        String id = ctx.pathParam("id");
+        Session s = sessionRepository.find(id).orElseThrow(() -> new GateException(
+                GateErrorCode.USAGE, "no such session: " + id));
+        Map<String, Object> req = Json.parseObject(ctx.body());
+        if (!req.containsKey("title") && !req.containsKey("archived")
+                && !req.containsKey("permission_auto_accept")) {
+            throw new GateException(GateErrorCode.USAGE,
+                    "nothing to update: provide title, archived, or permission_auto_accept");
+        }
+        String title = s.title();
+        if (req.containsKey("title")) {
+            Object rawTitle = req.get("title");
+            if (rawTitle == null) {
+                title = null;
+            } else {
+                String t = rawTitle.toString().trim();
+                title = t.isEmpty() ? null : t;
+            }
+        }
+        boolean archived = req.containsKey("archived")
+                ? Boolean.parseBoolean(String.valueOf(req.get("archived"))) : s.archived();
+        boolean permissionAutoAccept = req.containsKey("permission_auto_accept")
+                ? Boolean.parseBoolean(String.valueOf(req.get("permission_auto_accept"))) : s.permissionAutoAccept();
+        Session updated = new Session(s.id(), s.ticketNo(), s.agentConfigId(), s.cli(), s.status(),
+                s.cliSessionId(), s.clonePath(), s.allocatedPort(), s.startedAt(), s.finishedAt(),
+                s.cumulativeUsage(), title, archived, s.overrideProvider(), s.overrideModel(),
+                s.overrideVariant(), permissionAutoAccept);
+        sessionRepository.update(updated);
+        ctx.status(HttpStatus.OK);
+        ctx.json(sessionJson(updated));
+    }
+
+    public void deleteSession(Context ctx) {
+        String id = ctx.pathParam("id");
+        Session s = sessionRepository.find(id).orElseThrow(() -> new GateException(
+                GateErrorCode.USAGE, "no such session: " + id));
+        // Abort unconditionally: even a non-ACTIVE row may still own an upstream reader or a
+        // serve process after edge cases (e.g. an abort that raced a status flip).
+        // Pre-mark ABORTED so the opencode adapter takes the hard path (kill serve).
+        if (s.status() != gate.domain.session.SessionStatus.ABORTED) {
+            sessionRepository.update(s.withStatus(gate.domain.session.SessionStatus.ABORTED)
+                    .withFinishedAt(clock.now()));
+        }
+        agentSessionPort.abort(id);
+        sessionRepository.deleteMessages(id);
+        sessionRepository.delete(id);
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("ok", true);
+        ctx.status(HttpStatus.OK);
+        ctx.json(body);
+    }
+
+    public void listMessages(Context ctx) {
+        String id = ctx.pathParam("id");
+        if (sessionRepository.find(id).isEmpty()) {
+            throw new GateException(GateErrorCode.USAGE, "no such session: " + id);
+        }
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (var m : sessionRepository.findMessages(id)) {
+            out.add(messageJson(m));
+        }
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("messages", out);
+        ctx.status(HttpStatus.OK);
+        ctx.json(body);
+    }
+
+    public void sendMessage(Context ctx) {
+        String sessionId = ctx.pathParam("id");
+        if (sessionRepository.find(sessionId).isEmpty()) {
+            throw new GateException(GateErrorCode.USAGE, "no such session: " + sessionId);
+        }
+        Map<String, Object> req = Json.parseObject(ctx.body());
+        String message = str(req, "message");
+        List<AgentSessionPort.Attachment> attachments = parseAttachments(req);
+        if ((message == null || message.isBlank()) && attachments.isEmpty()) {
+            throw new GateException(GateErrorCode.USAGE, "message is required");
+        }
+        applyModelOverrideIfPresent(sessionId, req);
+        String taskId = agentSessionPort.sendMessage(
+                new AgentSessionPort.SendRequest(sessionId, message == null ? "" : message, true, attachments));
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("task_id", taskId);
+        ctx.status(HttpStatus.ACCEPTED);
+        ctx.json(body);
+    }
+
+    public void abortSession(Context ctx) {
+        String id = ctx.pathParam("id");
+        if (sessionRepository.find(id).isEmpty()) {
+            throw new GateException(GateErrorCode.USAGE, "no such session: " + id);
+        }
+        agentSessionPort.abort(id);
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("ok", true);
+        ctx.status(HttpStatus.OK);
+        ctx.json(body);
+    }
+
+    public void setModel(Context ctx) {
+        String sessionId = ctx.pathParam("id");
+        Session s = sessionRepository.find(sessionId).orElseThrow(() -> new GateException(
+                GateErrorCode.USAGE, "no such session: " + sessionId));
+        Map<String, Object> req = Json.parseObject(ctx.body());
+        Session updated = s.withModelOverride(
+                mergeOverridePart(s.overrideProvider(), req, "provider_id"),
+                mergeOverridePart(s.overrideModel(), req, "model_id"),
+                mergeOverridePart(s.overrideVariant(), req, "variant"));
+        if (updated.overrideProvider() != null && updated.overrideModel() == null
+                || updated.overrideProvider() == null && updated.overrideModel() != null) {
+            throw new GateException(GateErrorCode.USAGE,
+                    "provider_id and model_id must be provided together");
+        }
+        sessionRepository.update(updated);
+        ctx.status(HttpStatus.OK);
+        ctx.json(sessionJson(updated));
+    }
+
+    public void listModels(Context ctx) {
+        String sessionId = ctx.pathParam("id");
+        Session s = sessionRepository.find(sessionId).orElseThrow(() -> new GateException(
+                GateErrorCode.USAGE, "no such session: " + sessionId));
+        ctx.status(HttpStatus.OK);
+        ctx.json(modelCatalog.fetch(s.allocatedPort()));
+    }
+
+    public void listPermissions(Context ctx) {
+        String sessionId = ctx.pathParam("id");
+        if (sessionRepository.find(sessionId).isEmpty()) {
+            throw new GateException(GateErrorCode.USAGE, "no such session: " + sessionId);
+        }
+        List<PermissionRequest> list = agentSessionPort.pendingPermissions(sessionId);
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (PermissionRequest r : list) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("permission_id", r.permissionId());
+            m.put("permission", r.permission());
+            m.put("patterns", r.patterns());
+            m.put("always", r.always());
+            m.put("metadata", r.metadata());
+            m.put("message_id", r.messageId());
+            m.put("call_id", r.callId());
+            out.add(m);
+        }
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("session_id", sessionId);
+        body.put("permissions", out);
+        ctx.status(HttpStatus.OK);
+        ctx.json(body);
+    }
+
+    public void respondPermission(Context ctx) {
+        String sessionId = ctx.pathParam("id");
+        String permissionId = ctx.pathParam("permissionId");
+        if (sessionRepository.find(sessionId).isEmpty()) {
+            throw new GateException(GateErrorCode.USAGE, "no such session: " + sessionId);
+        }
+        Map<String, Object> req = Json.parseObject(ctx.body());
+        String response = str(req, "response");
+        if (response == null || response.isBlank()) {
+            throw new GateException(GateErrorCode.USAGE, "response is required");
+        }
+        String normalized = response.trim().toLowerCase(Locale.ROOT);
+        if (!Set.of("once", "always", "reject").contains(normalized)) {
+            throw new GateException(GateErrorCode.USAGE,
+                    "response must be one of once | always | reject, got " + response);
+        }
+        agentSessionPort.respondPermission(sessionId, permissionId, normalized);
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("ok", true);
+        ctx.status(HttpStatus.OK);
+        ctx.json(body);
+    }
+
+    public void sessionEvents(Context ctx) {
+        String id = ctx.pathParam("id");
+        if (sessionRepository.find(id).isEmpty()) {
+            ctx.status(HttpStatus.NOT_FOUND);
+            ctx.contentType("application/json; charset=utf-8");
+            ctx.result(Json.error(GateErrorCode.USAGE.code(), "NOT_FOUND", "no such session: " + id, null));
+            return;
+        }
+        startSse(ctx, client -> sessionSseHandler.handle(client, id));
+    }
+
+    public void agentsBusy(Context ctx) {
+        // 有进行中回合的 session id 快照来源于各 adapter 的 in-flight registry，聚合并排序
+        Set<String> ids = agentSessionPort.busySessionIds();
+        List<String> sorted = new ArrayList<>(ids);
+        Collections.sort(sorted);
+        List<Map<String, Object>> running = new ArrayList<>();
+        for (String sid : sorted) {
+            Optional<Session> opt = sessionRepository.find(sid);
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("session_id", sid);
+            if (opt.isPresent()) {
+                Session s = opt.get();
+                m.put("title", s.title());
+                m.put("ticket_no", s.ticketNo());
+                m.put("cli", s.cli() == null ? null : s.cli().name());
+            } else {
+                // 查不到会话记录的 id 仍计入 count 并保留 session_id，其余字段为 null
+                m.put("title", null);
+                m.put("ticket_no", null);
+                m.put("cli", null);
+            }
+            running.add(m);
+        }
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("count", running.size());
+        body.put("running", running);
+        ctx.status(HttpStatus.OK);
+        ctx.json(body);
+    }
+
+    private static void startSse(Context ctx, java.util.function.Consumer<SseClient> consumer) {
+        ctx.res().setStatus(200);
+        ctx.res().setCharacterEncoding("UTF-8");
+        ctx.res().setContentType("text/event-stream");
+        ctx.res().addHeader("Connection", "close");
+        ctx.res().addHeader("Cache-Control", "no-cache");
+        ctx.res().addHeader("X-Accel-Buffering", "no");
+        try {
+            ctx.res().flushBuffer();
+        } catch (IOException ignored) {
+        }
+        SseClient client = new SseClient(ctx);
+        consumer.accept(client);
+    }
+
+    private void applyModelOverrideIfPresent(String sessionId, Map<String, Object> req) {
+        boolean hasProvider = req.containsKey("provider_id");
+        boolean hasModel = req.containsKey("model_id");
+        boolean hasVariant = req.containsKey("variant");
+        if (!hasProvider && !hasModel && !hasVariant) {
+            return;
+        }
+        Session s = sessionRepository.find(sessionId).orElseThrow(() -> new GateException(
+                GateErrorCode.USAGE, "no such session: " + sessionId));
+        Session updated = s.withModelOverride(
+                mergeOverridePart(s.overrideProvider(), req, "provider_id"),
+                mergeOverridePart(s.overrideModel(), req, "model_id"),
+                mergeOverridePart(s.overrideVariant(), req, "variant"));
+        if (updated.overrideProvider() != null && updated.overrideModel() == null
+                || updated.overrideProvider() == null && updated.overrideModel() != null) {
+            throw new GateException(GateErrorCode.USAGE,
+                    "provider_id and model_id must be provided together");
+        }
+        sessionRepository.update(updated);
+    }
+
+    private static String mergeOverridePart(String current, Map<String, Object> req, String key) {
+        if (!req.containsKey(key)) {
+            return current;
+        }
+        Object raw = req.get(key);
+        if (raw == null) {
+            return null;
+        }
+        String trimmed = raw.toString().trim();
+        return trimmed.isEmpty() ? null : trimmed;
+    }
+
+    static List<AgentSessionPort.Attachment> parseAttachments(Map<String, Object> req) {
+        Object raw = req.get("attachments");
+        if (raw == null) {
+            return List.of();
+        }
+        if (!(raw instanceof List<?> list)) {
+            throw new GateException(GateErrorCode.USAGE, "attachments must be an array");
+        }
+        if (list.isEmpty()) {
+            return List.of();
+        }
+        if (list.size() > MAX_ATTACHMENTS) {
+            throw new GateException(GateErrorCode.USAGE,
+                    "at most " + MAX_ATTACHMENTS + " attachments per message");
+        }
+        List<AgentSessionPort.Attachment> out = new ArrayList<>();
+        for (Object item : list) {
+            if (!(item instanceof Map<?, ?> m)) {
+                throw new GateException(GateErrorCode.USAGE, "each attachment must be an object");
+            }
+            String mime = attr(m, "mime");
+            String normalizedMime = mime == null ? "" : mime.trim().toLowerCase(Locale.ROOT);
+            if (!IMAGE_MIMES.contains(normalizedMime)) {
+                throw new GateException(GateErrorCode.USAGE,
+                        "unsupported attachment mime: " + mime + " (supported: " + IMAGE_MIMES + ")");
+            }
+            String dataBase64 = attr(m, "data_base64");
+            if (dataBase64 == null || dataBase64.isBlank()) {
+                throw new GateException(GateErrorCode.USAGE, "attachment data_base64 is required");
+            }
+            String filename = attr(m, "filename");
+            out.add(new AgentSessionPort.Attachment(
+                    filename == null || filename.isBlank() ? null : filename.trim(),
+                    normalizedMime,
+                    dataBase64.trim()));
+        }
+        return List.copyOf(out);
+    }
+
+    private static String attr(Map<?, ?> m, String key) {
+        Object v = m.get(key);
+        return v == null ? null : v.toString();
+    }
+
+    private static AgentConfig parseAgentConfig(Map<String, Object> req, String id, AgentConfig existing) {
+        String configId = id;
+        if (configId == null) {
+            configId = str(req, "id");
+            if (configId == null || configId.isBlank()) {
+                throw new GateException(GateErrorCode.USAGE, "agent config id is required");
+            }
+        }
+        String name = str(req, "name");
+        if (name == null || name.isBlank()) {
+            throw new GateException(GateErrorCode.USAGE, "agent config name is required");
+        }
+        String cliStr = str(req, "cli");
+        if (cliStr == null || cliStr.isBlank()) {
+            throw new GateException(GateErrorCode.USAGE, "agent config cli is required");
+        }
+        AgentCli cli;
+        try {
+            cli = AgentCli.valueOf(cliStr.toUpperCase(Locale.ROOT));
+        } catch (IllegalArgumentException e) {
+            throw new GateException(GateErrorCode.USAGE, "unknown agent cli: " + cliStr);
+        }
+        // provider/model 可空：本地 CLI 会话把选型交给 CLI 自身配置（ADR-12）。
+        String providerId = str(req, "provider_id");
+        String model = str(req, "model");
+        List<String> flags = new ArrayList<>();
+        Object flagsRaw = req.get("extra_flags");
+        if (flagsRaw instanceof List<?> list) {
+            for (Object f : list) {
+                flags.add(String.valueOf(f));
+            }
+        }
+        String systemPrompt = str(req, "system_prompt");
+        String description = str(req, "description");
+        // 缺省注入：请求未携带 inject_context 时视为开启（与 UI 开关默认值一致）。
+        Object injectRaw = req.get("inject_context");
+        boolean injectContext = !(injectRaw instanceof Boolean b) || b;
+        return new AgentConfig(configId, name, cli, providerId, model,
+                systemPrompt, flags, description, injectContext);
+    }
+
+    private static Map<String, Object> agentConfigJson(AgentConfig c) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("id", c.id());
+        m.put("name", c.name());
+        m.put("cli", c.cli().name());
+        m.put("provider_id", c.providerId());
+        m.put("model", c.model());
+        m.put("system_prompt", c.systemPrompt());
+        m.put("extra_flags", c.extraFlags());
+        m.put("description", c.description());
+        m.put("inject_context", c.injectContext());
+        return m;
+    }
+
+    public static Map<String, Object> sessionJson(Session s) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("id", s.id());
+        m.put("ticket_no", s.ticketNo());
+        m.put("agent_config_id", s.agentConfigId());
+        m.put("cli", s.cli().name());
+        m.put("status", s.status().name());
+        m.put("title", s.title());
+        m.put("archived", s.archived());
+        m.put("cli_session_id", s.cliSessionId());
+        m.put("clone_path", s.clonePath());
+        m.put("allocated_port", s.allocatedPort());
+        m.put("override_provider", s.overrideProvider());
+        m.put("override_model", s.overrideModel());
+        m.put("override_variant", s.overrideVariant());
+        m.put("permission_auto_accept", s.permissionAutoAccept());
+        m.put("started_at", s.startedAt().toString());
+        m.put("finished_at", s.finishedAt() == null ? null : s.finishedAt().toString());
+        if (s.cumulativeUsage() == null) {
+            m.put("cumulative_usage", null);
+        } else {
+            Map<String, Object> u = new LinkedHashMap<>();
+            u.put("prompt_tokens", s.cumulativeUsage().promptTokens());
+            u.put("completion_tokens", s.cumulativeUsage().completionTokens());
+            u.put("total_tokens", s.cumulativeUsage().totalTokens());
+            m.put("cumulative_usage", u);
+        }
+        return m;
+    }
+
+    private static Map<String, Object> messageJson(gate.domain.session.SessionMessage msg) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("id", msg.id());
+        m.put("session_id", msg.sessionId());
+        m.put("role", msg.role().name().toLowerCase(Locale.ROOT));
+        m.put("content", msg.content());
+        m.put("created_at", msg.timestamp().toString());
+        List<Map<String, Object>> tcs = new ArrayList<>();
+        for (var tc : msg.toolCalls()) {
+            Map<String, Object> tm = new LinkedHashMap<>();
+            tm.put("tool_name", tc.name());
+            tm.put("arguments", tc.argumentsJson());
+            tm.put("result", tc.resultJson());
+            tcs.add(tm);
+        }
+        m.put("tool_calls", tcs);
+        return m;
+    }
+
+    private static String required(Map<String, Object> req, String key) {
+        String value = str(req, key);
+        if (value == null || value.isBlank()) {
+            throw new GateException(GateErrorCode.USAGE, key + " is required");
+        }
+        return value.trim();
+    }
+
+    private static String str(Map<String, Object> map, String key) {
+        Object val = map.get(key);
+        return val == null ? null : val.toString();
+    }
+}

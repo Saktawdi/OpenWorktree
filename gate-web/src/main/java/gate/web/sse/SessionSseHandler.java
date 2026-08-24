@@ -1,10 +1,11 @@
-package gate.web;
+package gate.web.sse;
 
 import gate.domain.session.SessionMessage;
 import gate.domain.session.SessionStreamChunk;
 import gate.domain.session.ToolCall;
 import gate.ports.AgentSessionPort;
 import gate.ports.SessionRepository;
+import gate.web.util.Json;
 import io.javalin.http.sse.SseClient;
 import java.util.ArrayList;
 import java.util.Iterator;

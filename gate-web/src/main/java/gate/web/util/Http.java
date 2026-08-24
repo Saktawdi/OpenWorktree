@@ -1,4 +1,4 @@
-package gate.web;
+package gate.web.util;
 
 import io.javalin.http.Context;
 

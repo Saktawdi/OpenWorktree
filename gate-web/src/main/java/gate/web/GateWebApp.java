@@ -2,6 +2,7 @@ package gate.web;
 
 import gate.domain.config.GateConfig;
 import gate.domain.error.GateException;
+import gate.web.security.WebToken;
 import java.nio.file.Path;
 
 /**
