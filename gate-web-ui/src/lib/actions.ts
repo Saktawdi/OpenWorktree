@@ -24,11 +24,12 @@ import {
   upsertProject,
   wipePersisted,
 } from "./store";
-import type { AgentConfig, Project, Ticket } from "./types";
+import type { AgentConfig, PendingAttachment, Project, Ticket } from "./types";
 
 export const actions = {
-  sendPrompt(no: string, text: string) {
-    if (appStore.getState().mode === "live") return live.liveSendPrompt(no, text);
+  sendPrompt(no: string, text: string, attachments: PendingAttachment[] = []) {
+    // text 已含 Composer 插入的 [图片 #n] 引用；live 走 attachments 数组，demo 仅展示引用。
+    if (appStore.getState().mode === "live") return live.liveSendPrompt(no, text, attachments);
     return demo.demoSendPrompt(no, text);
   },
   returnWithFindings(no: string) {

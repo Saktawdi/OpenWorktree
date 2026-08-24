@@ -32,6 +32,7 @@ import type {
   Finding,
   GitRepoView,
   GitTreeEntry,
+  PendingAttachment,
   Severity,
   Snapshot,
   WorkspaceSyncResult,
@@ -542,10 +543,11 @@ export async function loadSessionMessages(no: string, sessionId: string) {
   appStore.setState((st) => ({ chats: { ...st.chats, [no]: items } }));
 }
 
-export async function liveSendPrompt(no: string, userText: string) {
+export async function liveSendPrompt(no: string, userText: string, attachments: PendingAttachment[] = []) {
   const st = appStore.getState();
   // 目标永远是「当前查看的会话」（activeSessionId），不再有跨工单/跨会话的全局游标；
   // 同一会话生成中不允许并发追加，其他会话不受影响。
+  // userText 已含 [图片 #n] 引用（Composer 粘贴时插入），原样推送与发送。
   const sessionId = st.activeSessionId[no];
   if (sessionId && st.sessionBusy[sessionId]) return;
   pushUserMessage(no, userText);
@@ -572,6 +574,11 @@ export async function liveSendPrompt(no: string, userText: string) {
         method: "POST",
         body: JSON.stringify({
           message: userText,
+          attachments: attachments.map((a) => ({
+            filename: a.filename,
+            mime: a.mime,
+            data_base64: a.dataBase64,
+          })),
           provider_id: sel?.providerId ?? undefined,
           model_id: sel?.modelId ?? undefined,
           variant: sel?.variant ?? undefined,
@@ -594,6 +601,7 @@ interface RawCatalogModel {
   id: string;
   name?: string | null;
   variants?: string[] | null;
+  image_input?: boolean | null;
 }
 
 interface RawCatalogProvider {
@@ -618,6 +626,7 @@ export async function loadSessionCatalog(no: string, sessionId: string) {
         id: m.id,
         name: m.name ?? m.id,
         variants: m.variants ?? [],
+        imageInput: m.image_input === true,
       })),
     }));
     setSessionModels(sessionId, providers);

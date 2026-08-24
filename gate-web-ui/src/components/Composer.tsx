@@ -14,12 +14,18 @@ import {
   Stop,
   TerminalWindow,
   Wrench,
+  X,
 } from "@phosphor-icons/react";
 import type { Icon } from "@phosphor-icons/react";
 import { actions } from "../lib/actions";
-import { appStore, NO_CHAT, setAgentId, useApp } from "../lib/store";
+import { appStore, NO_CHAT, setAgentId, showToast, useApp } from "../lib/store";
 import { formatTokens } from "../lib/format";
-import type { CatalogProvider, SessionModelSel } from "../lib/types";
+import {
+  extractAbsolutePath,
+  isAttachableImage,
+  toPendingAttachment,
+} from "../lib/attachments";
+import type { CatalogProvider, PendingAttachment, SessionModelSel } from "../lib/types";
 
 function AgentPicker({ ticketNo }: { ticketNo: string }) {
   const agents = useApp((s) => s.agents);
@@ -139,6 +145,8 @@ function useEffectiveSel(ticketNo: string): {
   sel: EffectiveSel | null;
   providers: CatalogProvider[];
   currentVariants: string[];
+  /** 当前选中模型是否支持图片输入；catalog 缺失时为 undefined（未知，不拦截）。 */
+  imageSupported?: boolean;
 } {
   const sessionId = useApp((s) => s.activeSessionId[ticketNo] ?? "");
   const providers = useApp((s) => (sessionId ? s.sessionModels[sessionId] : undefined)) ?? [];
@@ -168,7 +176,13 @@ function useEffectiveSel(ticketNo: string): {
     const modelEntry = providers
       .find((p) => p.id === sel.providerId)
       ?.models.find((m) => m.id === sel.modelId);
-    return { sessionId, sel, providers, currentVariants: modelEntry?.variants ?? [] };
+    return {
+      sessionId,
+      sel,
+      providers,
+      currentVariants: modelEntry?.variants ?? [],
+      imageSupported: modelEntry?.imageInput,
+    };
   }, [sessionId, providers, stored, sess, agents]);
 }
 
@@ -380,9 +394,10 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
   );
   const autoAccept = activeSession?.permissionAutoAccept ?? false;
   const [text, setText] = useState("");
+  const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const live = mode === "live";
-  const { sel, providers, currentVariants } = useEffectiveSel(ticketNo);
+  const { sel, providers, currentVariants, imageSupported } = useEffectiveSel(ticketNo);
 
   const resize = () => {
     const ta = taRef.current;
@@ -400,11 +415,111 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
   const terminal = stage === "DONE" || stage === "CANCELLED";
   const cancelled = stage === "CANCELLED";
 
+  /** 在光标处插入文本（粘贴引用/绝对路径），插入后把光标移到插入文本之后。 */
+  const insertAtCursor = (insert: string) => {
+    if (!insert) return;
+    const ta = taRef.current;
+    const start = ta?.selectionStart ?? text.length;
+    const end = ta?.selectionEnd ?? start;
+    setText((prev) => prev.slice(0, start) + insert + prev.slice(end));
+    requestAnimationFrame(() => {
+      const el = taRef.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(start + insert.length, start + insert.length);
+    });
+  };
+
+  const addPendingImages = async (files: File[]) => {
+    for (const file of files) {
+      try {
+        const att = await toPendingAttachment(file);
+        if (att) setPendingAttachments((prev) => [...prev, att]);
+      } catch {
+        showToast(`读取图片失败：${file.name}`);
+      }
+    }
+  };
+
+  /* 粘贴（参考 OpenChamber ChatInput.handlePaste）：
+   * · 图片 → 模型支持时暂存为附件并插入 [图片 #n] 引用；不支持则提示后丢弃；
+   * · 非图片文件 → 自动转为绝对路径文本（浏览器拿不到路径时给出指引）。 */
+  const handlePaste = async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    if (terminal) return;
+    const dt = e.clipboardData;
+    if (!dt) return;
+
+    const seen = new Map<string, File>();
+    for (const file of Array.from(dt.files ?? [])) {
+      if (file.size >= 0 && !seen.has(`${file.name}-${file.size}`)) seen.set(`${file.name}-${file.size}`, file);
+    }
+    for (const item of Array.from(dt.items ?? [])) {
+      if (item.kind !== "file") continue;
+      const file = item.getAsFile();
+      if (file && !seen.has(`${file.name}-${file.size}`)) seen.set(`${file.name}-${file.size}`, file);
+    }
+    const allFiles = Array.from(seen.values());
+    if (allFiles.length === 0) return;
+
+    const imageFiles = allFiles.filter(isAttachableImage);
+
+    if (imageFiles.length > 0) {
+      // 需求①：判断当前选择模型是否支持输入 image。
+      if (live && sel && imageSupported === false) {
+        e.preventDefault();
+        showToast(`当前模型 ${sel.providerId}/${sel.modelId} 不支持图片输入，已忽略 ${imageFiles.length} 张图片`);
+        return;
+      }
+      e.preventDefault();
+      const caretStart = taRef.current?.selectionStart ?? text.length;
+      const caretEnd = taRef.current?.selectionEnd ?? caretStart;
+      let citations = "";
+      for (let i = 0; i < imageFiles.length; i++) {
+        if (i > 0 || text.slice(0, caretStart).trim().length > 0) citations += "\n\n";
+        citations += `[图片 #${pendingAttachments.length + i + 1}] ${imageFiles[i].name}`;
+      }
+      setText((prev) => prev.slice(0, caretStart) + citations + prev.slice(caretEnd));
+      await addPendingImages(imageFiles);
+      return;
+    }
+
+    // 需求②：非图片文件 → 自动转为绝对路径。
+    e.preventDefault();
+    const nonImage = allFiles[0];
+    const absPath = extractAbsolutePath([
+      (() => {
+        try {
+          return dt.getData("text/uri-list");
+        } catch {
+          return "";
+        }
+      })(),
+      (() => {
+        try {
+          return dt.getData("text/plain");
+        } catch {
+          return "";
+        }
+      })(),
+    ]);
+    if (absPath) {
+      insertAtCursor(absPath + " ");
+      showToast(`已将「${nonImage.name}」转为绝对路径`);
+    } else {
+      insertAtCursor(`[文件] ${nonImage.name} `);
+      showToast("浏览器无法获取该文件的绝对路径：请直接拖拽文件到输入框，或在资源管理器中复制文件路径后粘贴");
+    }
+  };
+
+  const removeAttachment = (id: string) =>
+    setPendingAttachments((prev) => prev.filter((a) => a.id !== id));
+
   const send = () => {
     const t = text.trim();
-    if (!t || busy || terminal) return;
+    if ((!t && pendingAttachments.length === 0) || busy || terminal) return;
     setText("");
-    actions.sendPrompt(ticketNo, t);
+    setPendingAttachments([]);
+    actions.sendPrompt(ticketNo, t, pendingAttachments);
   };
 
   const quick = [
@@ -460,6 +575,34 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
             terminal ? " composer-shell-done" : ""
           }`}
         >
+          {pendingAttachments.length > 0 && (
+            <div className="flex flex-wrap gap-2 px-3 pt-3">
+              {pendingAttachments.map((att, i) => (
+                <div key={att.id} className="composer-attach" title={`${att.filename} · ${att.mime}`}>
+                  <img src={att.dataUrl} alt={att.filename} className="composer-attach-thumb" />
+                  <div className="min-w-0">
+                    <div className="truncate text-[11px] font-medium text-ink max-w-[120px]">
+                      [图片 #{i + 1}] {att.filename}
+                    </div>
+                    <div className="font-mono text-[10px] text-faint">{att.mime}</div>
+                  </div>
+                  <button
+                    className="ml-1 grid place-items-center size-5 rounded-full text-faint hover:text-ink hover:bg-raised cursor-pointer transition-colors"
+                    title="移除附件"
+                    aria-label={`移除附件 ${att.filename}`}
+                    onClick={() => removeAttachment(att.id)}
+                  >
+                    <X size={11} weight="bold" />
+                  </button>
+                </div>
+              ))}
+              {live && sel && imageSupported === false && (
+                <span className="self-center text-[11px] text-warning">
+                  当前模型不支持图片输入，发送前请切换模型
+                </span>
+              )}
+            </div>
+          )}
           <textarea
             ref={taRef}
             value={text}
@@ -471,6 +614,7 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
                 send();
               }
             }}
+            onPaste={(e) => void handlePaste(e)}
             rows={1}
             placeholder={
               cancelled
@@ -479,7 +623,7 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
                   ? "工单已完成并归档"
                   : busy
                     ? "Agent 正在工作，可点击右下按钮中断；切换的模型/推理强度将在下一回合生效…"
-                    : "向 Agent 描述任务…（Enter 发送，Shift+Enter 换行）"
+                    : "向 Agent 描述任务…（Enter 发送，Shift+Enter 换行，可粘贴图片/文件）"
             }
             className="composer-ta"
           />
@@ -526,9 +670,9 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
             ) : (
               <button
                 className="composer-send"
-                title="发送"
+                title={pendingAttachments.length > 0 ? "发送（含图片附件）" : "发送"}
                 aria-label="发送"
-                disabled={!text.trim() || terminal}
+                disabled={(!text.trim() && pendingAttachments.length === 0) || terminal}
                 onClick={send}
               >
                 <PaperPlaneRight size={15} weight="fill" />

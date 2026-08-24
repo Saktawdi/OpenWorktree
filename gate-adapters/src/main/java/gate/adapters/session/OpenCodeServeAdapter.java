@@ -429,7 +429,7 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
         GateTask task = tasks.register("session-send", session.ticketNo(), session.id());
         // 入队即算运行：登记发生在提交 executor 之前，排队等待也算运行中；同一 session 重复 send 用计数
         incrementInFlight(session.id());
-        executor.submit(() -> runSend(task, session, request.message(), firstTurn));
+        executor.submit(() -> runSend(task, session, request.message(), request.attachments(), firstTurn));
         return task.id();
     }
 
@@ -540,7 +540,8 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
     // Send path: fire prompt_async, streaming happens on the upstream event reader
     // -------------------------------------------------------------------------------------------
 
-    private void runSend(GateTask task, Session session, String message, boolean firstTurn) {
+    private void runSend(GateTask task, Session session, String message,
+                         List<AgentSessionPort.Attachment> attachments, boolean firstTurn) {
         try (AutoCloseable ignored = ticketLocks.acquire(session.ticketNo())) {
             Integer port = sessionPorts.get(session.id());
             if (port == null || session.cliSessionId() == null) {
@@ -569,7 +570,7 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                     outgoing = context + "\n\n---\n\n" + message;
                 }
             }
-            String body = messageBody(config, outgoing,
+            String body = messageBody(config, outgoing, attachments,
                     latest.overrideProvider(), latest.overrideModel(), latest.overrideVariant());
             Upstream up = upstreams.get(session.id());
             if (up != null) {
@@ -630,8 +631,27 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
      */
     static String messageBody(AgentConfig config, String message,
                               String overrideProvider, String overrideModel, String overrideVariant) {
+        return messageBody(config, message, List.of(), overrideProvider, overrideModel, overrideVariant);
+    }
+
+    /**
+     * Full shape: image attachments ride along as {@code file} parts after the text part — the
+     * same contract the OpenChamber composer uses ({@code {type:"file", mime, filename?, url}} with
+     * a {@code data:} URL payload).
+     */
+    static String messageBody(AgentConfig config, String message,
+                              List<AgentSessionPort.Attachment> attachments,
+                              String overrideProvider, String overrideModel, String overrideVariant) {
         StringBuilder body = new StringBuilder("{\"parts\":[{\"type\":\"text\",\"text\":\"")
-                .append(escapeJson(message)).append("\"}]");
+                .append(escapeJson(message)).append("\"}");
+        for (AgentSessionPort.Attachment attachment : attachments == null ? List.<AgentSessionPort.Attachment>of() : attachments) {
+            body.append(",{\"type\":\"file\",\"mime\":\"").append(escapeJson(attachment.mime()))
+                    .append("\",\"filename\":\"").append(escapeJson(attachment.filename() == null ? "image" : attachment.filename()))
+                    .append("\",\"url\":\"data:").append(escapeJson(attachment.mime()))
+                    .append(";base64,").append(escapeJson(attachment.dataBase64()))
+                    .append("\"}");
+        }
+        body.append(']');
         ModelRef model = resolveModel(config, overrideProvider, overrideModel);
         if (model != null) {
             body.append(",\"model\":{\"providerID\":\"")

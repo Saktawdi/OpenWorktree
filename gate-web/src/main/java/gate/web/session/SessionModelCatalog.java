@@ -105,6 +105,9 @@ public final class SessionModelCatalog {
                         model.put("id", mid);
                         model.put("name", str(mm.get("name")) == null ? mid : str(mm.get("name")));
                         model.put("variants", variantKeys(mm.get("variants")));
+                        // 图片输入能力（粘贴图片是否可发）：优先 modalities.input 列表，
+                        // 回退 models.dev 的 attachment 布尔位 —— 与 OpenChamber 的判断顺序一致。
+                        model.put("image_input", imageInput(mm));
                         modelsOut.add(model);
                     }
                 }
@@ -131,6 +134,24 @@ public final class SessionModelCatalog {
         }
         keys.sort(String.CASE_INSENSITIVE_ORDER);
         return keys;
+    }
+
+    /**
+     * Whether the model accepts image input: {@code modalities.input} containing {@code image}
+     * when the modality list is present, else the legacy {@code attachment} flag, else false.
+     */
+    static boolean imageInput(Map<?, ?> rawModel) {
+        Object modalities = rawModel.get("modalities");
+        if (modalities instanceof Map<?, ?> m && m.get("input") instanceof List<?> list) {
+            for (Object entry : list) {
+                String value = str(entry);
+                if ("image".equalsIgnoreCase(value == null ? "" : value.trim())) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        return Boolean.TRUE.equals(rawModel.get("attachment"));
     }
 
     private static String str(Object v) {

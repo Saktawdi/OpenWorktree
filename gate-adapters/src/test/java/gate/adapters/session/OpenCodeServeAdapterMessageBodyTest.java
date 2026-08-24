@@ -3,6 +3,7 @@ package gate.adapters.session;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import gate.domain.session.AgentCli;
 import gate.domain.session.AgentConfig;
@@ -75,5 +76,33 @@ class OpenCodeServeAdapterMessageBodyTest {
         assertFalse(withBlank.contains("variant"), withBlank);
         String legacy = OpenCodeServeAdapter.messageBody(config("p/m", List.of()), "hi");
         assertFalse(legacy.contains("variant"), legacy);
+    }
+
+    @Test
+    void attachmentsBecomeFilePartsWithDataUrls() {
+        var attachment = new gate.ports.AgentSessionPort.Attachment(
+                "截图.png", "image/png", "aGVsbG8=");
+        String body = OpenCodeServeAdapter.messageBody(
+                config("own/deepseek-v4-flash", List.of()), "看这张图",
+                List.of(attachment), null, null, null);
+        assertEquals(
+                "{\"parts\":[{\"type\":\"text\",\"text\":\"看这张图\"},"
+                        + "{\"type\":\"file\",\"mime\":\"image/png\",\"filename\":\"截图.png\","
+                        + "\"url\":\"data:image/png;base64,aGVsbG8=\"}],"
+                        + "\"model\":{\"providerID\":\"own\",\"modelID\":\"deepseek-v4-flash\"}}",
+                body);
+    }
+
+    @Test
+    void multipleAttachmentsAndEscapedFilenames() {
+        var one = new gate.ports.AgentSessionPort.Attachment("a\"b.png", "image/png", "AA==");
+        var two = new gate.ports.AgentSessionPort.Attachment(null, "image/jpeg", "BB=");
+        String body = OpenCodeServeAdapter.messageBody(config(null, List.of()), "",
+                List.of(one, two), "px", "mx", "high");
+        assertTrue(body.contains("\"filename\":\"a\\\"b.png\""), body);
+        assertTrue(body.contains("\"filename\":\"image\""), body);
+        // 空正文也允许：附件本身构成有效回合。
+        assertTrue(body.startsWith("{\"parts\":[{\"type\":\"text\",\"text\":\"\"},"), body);
+        assertTrue(body.endsWith("\"variant\":\"high\"}"), body);
     }
 }

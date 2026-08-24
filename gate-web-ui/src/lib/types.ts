@@ -184,6 +184,8 @@ export interface CatalogModel {
   name: string;
   /** OpenCode reasoning-effort keys ("high"/"medium"/"low"/…); empty when the model has none. */
   variants: string[];
+  /** 该模型是否支持图片输入（modalities.input 含 image，或 attachment 标志）。 */
+  imageInput: boolean;
 }
 
 export interface CatalogProvider {
@@ -197,6 +199,15 @@ export interface SessionModelSel {
   providerId: string | null;
   modelId: string | null;
   variant: string | null;
+}
+
+/** Composer 里待发送的图片附件（data URL 仅用于本地预览）。 */
+export interface PendingAttachment {
+  id: string;
+  filename: string;
+  mime: string;
+  dataBase64: string;
+  dataUrl: string;
 }
 
 export interface DiffLine {

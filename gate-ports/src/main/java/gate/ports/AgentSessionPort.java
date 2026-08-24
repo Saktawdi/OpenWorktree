@@ -71,10 +71,27 @@ public interface AgentSessionPort {
             Map<String, String> env) {
     }
 
+    /**
+     * One image attachment carried alongside a send. {@code dataBase64} is the raw base64
+     * payload (no data-URL prefix); adapters turn it into a data URL file part.
+     */
+    record Attachment(String filename, String mime, String dataBase64) {
+    }
+
     record SendRequest(
             String sessionId,
             String message,
-            boolean resume) {
+            boolean resume,
+            List<Attachment> attachments) {
+
+        public SendRequest {
+            attachments = attachments == null ? List.of() : List.copyOf(attachments);
+        }
+
+        /** Legacy shape: no attachments (still the common case). */
+        public SendRequest(String sessionId, String message, boolean resume) {
+            this(sessionId, message, resume, List.of());
+        }
     }
 
     record SessionEvent(
