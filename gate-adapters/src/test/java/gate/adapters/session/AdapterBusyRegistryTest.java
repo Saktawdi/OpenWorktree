@@ -180,6 +180,45 @@ class AdapterBusyRegistryTest {
         adapter.close();
     }
 
+    // ---- Claude：start(initial_prompt) 的首个回合同样计入 busy ----
+    @Test
+    void claude_initial_prompt_turn_counts_busy() throws Exception {
+        CountDownLatch started = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        ProcessRunner blocking = new ProcessRunner() {
+            @Override public ProcRun run(List<String> argv, Path cwd, Map<String, String> env, Duration timeout) { return new ProcRun(argv, 0, "", "", Duration.ofMillis(10), false); }
+            @Override public ProcRun runStreaming(List<String> argv, Path cwd, Map<String, String> env, Duration timeout, java.util.function.Consumer<String> a, java.util.function.Consumer<String> b) {
+                started.countDown();
+                try { release.await(10, TimeUnit.SECONDS); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+                return new ProcRun(argv, 0, "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"init done\"}]}}", "", Duration.ofMillis(10), false);
+            }
+        };
+        agentConfigs.insert(new AgentConfig("claude-init", "C", AgentCli.CLAUDE, "manual", "m", null, List.of(), "d"), Instant.now());
+        Path clone = root.resolve("clone-init");
+        Files.createDirectories(clone.resolve(".git"));
+        insertTicket("BUSY-4", clone);
+        ClaudeHeadlessAdapter adapter = new ClaudeHeadlessAdapter(blocking, agentConfigs, sessions, tickets, tasks, ticketLocks, clock,
+                "claude", List.of());
+
+        // start() 在首个回合上阻塞（initial_prompt 非空）→ 后台线程执行
+        Thread t = new Thread(() -> adapter.start(new AgentSessionPort.StartRequest(
+                "BUSY-4", "claude-init", clone.toString(), "refs/heads/main", "build it", Map.of())));
+        t.setDaemon(true);
+        t.start();
+        assertTrue(started.await(5, TimeUnit.SECONDS));
+        // 首回合运行中：busy 必须包含该会话（旧实现不计 initial_prompt 回合 → 顶栏显示 0）
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (System.nanoTime() < deadline && adapter.busySessionIds().isEmpty()) {
+            Thread.sleep(20);
+        }
+        assertEquals(1, adapter.busySessionIds().size(), "initial_prompt turn must count as busy");
+        release.countDown();
+        t.join(5000);
+        assertFalse(t.isAlive());
+        assertTrue(adapter.busySessionIds().isEmpty(), "busy must clear after the initial turn ends");
+        adapter.close();
+    }
+
     // ---- Dispatch 聚合并集 ----
     @Test
     void dispatch_merges_busy_ids_sorted() {

@@ -114,6 +114,10 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
     private final Map<String, Set<Consumer<SessionStreamChunk>>> listeners = new ConcurrentHashMap<>();
     // 有进行中回合的 session id（入队即算运行，排队等待也算），用于顶栏 busy 统计；同一 session 重复 send 用计数避免误清除
     private final Map<String, AtomicInteger> inFlightCounts = new ConcurrentHashMap<>();
+    // 回合已被 prompt_async 受理、且尚未收到回合终点（session.status=idle / session.error）的 session 集合。
+    // busy 释放只允许发生在“受理之后出现的终点”上：连接快照、重连重放等陈旧 idle 帧因无受理记录而被忽略，
+    // 否则它们会把新回合的 busy 标记提前清零（实际运行一个智能体、统计却返回 0 的根因）。
+    private final Set<String> acceptedSinceRelease = ConcurrentHashMap.newKeySet();
     // Per-session pending permission asks: gateSessionId -> permissionId -> request. Mirrors
     // the serve instance's /permission snapshot so auto-allow and pre-send reject have a local
     // view even before the SSE permission.asked frame is replayed after a reconnect.
@@ -438,6 +442,7 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
     public void abort(String sessionId) {
         // 兜底清除 busy：abort 即视为回合终止，应立即移出 busy 集合，避免 runSend 仍在阻塞时顶栏持续显示；完全移除以覆盖同一 session 重复 send 的计数
         inFlightCounts.remove(sessionId);
+        acceptedSinceRelease.remove(sessionId);
         sessions.find(sessionId).ifPresent(s -> {
             Integer port = sessionPorts.get(sessionId);
             // Soft abort first: stop the in-flight turn but keep the serve and the session
@@ -511,6 +516,29 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
 
     private void decrementInFlight(String sessionId) {
         inFlightCounts.computeIfPresent(sessionId, (k, v) -> v.decrementAndGet() <= 0 ? null : v);
+    }
+
+    /**
+     * 回合终点（idle/error）到达时消耗一次受理计数。只有“已受理”的回合才能被终点释放：
+     * 连接快照、重连重放等陈旧终点帧没有受理记录，直接忽略，不会误清新回合的 busy。
+     * 引用计数归零（entry 移除）时才关闭受理状态，重复 send 排队时后续终点仍可逐次消耗。
+     */
+    private void releaseBusyOnTurnEnd(String sessionId) {
+        if (!acceptedSinceRelease.contains(sessionId)) {
+            return;
+        }
+        decrementInFlight(sessionId);
+        if (!inFlightCounts.containsKey(sessionId)) {
+            acceptedSinceRelease.remove(sessionId);
+        }
+    }
+
+    /** 无条件兜底释放（prompt_async 被拒等永远不会有终点的路径），并同步关闭受理状态。 */
+    private void releaseBusyUnconditionally(String sessionId) {
+        decrementInFlight(sessionId);
+        if (!inFlightCounts.containsKey(sessionId)) {
+            acceptedSinceRelease.remove(sessionId);
+        }
     }
 
     @Override
@@ -603,6 +631,8 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
             }
             log.info("opencode", "prompt_async.accepted", "sessionId", session.id(),
                     "cliSessionId", session.cliSessionId(), "chars", message.length());
+            // 受理即进入“等待终点释放”状态：busy 只能被本回合之后的 idle/error 终点消耗一次。
+            acceptedSinceRelease.add(session.id());
             // The turn itself runs asynchronously; token/tool/done chunks arrive on the upstream
             // reader and the final assistant message is persisted from its completion snapshot.
             tasks.update(success(task, "{\"accepted\":true}"));
@@ -615,7 +645,7 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
             emitChunk(session.id(), new SessionStreamChunk.ErrorChunk(session.id(), "INTERNAL_ERROR", e.getMessage(), clock.now()));
             tasks.update(fail(task, e));
             // 回合根本没被受理：不会有 idle 事件到来，立即释放 busy 计数。
-            decrementInFlight(session.id());
+            releaseBusyUnconditionally(session.id());
         }
         // 正常路径不在此清除 busy：prompt_async 只表示“已受理”，回合本身异步运行——
         // busy 生命周期到上游读取线程收到 session.status=idle 为止（handleSessionStatus）。
@@ -1147,8 +1177,8 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                     lastDoneAt = nowMs;
                     emitChunk(sessionId, new SessionStreamChunk.DoneChunk(sessionId, cliSessionId, clock.now()));
                 }
-                // 回合终点：释放 sendMessage 入队时的 busy 计数（幂等——key 不存在/重复 idle 均安全）。
-                decrementInFlight(sessionId);
+                // 回合终点：只有“已受理”的回合才能消耗 busy 计数（幂等——key 不存在/重复 idle 均安全）。
+                releaseBusyOnTurnEnd(sessionId);
             }
             // busy/retry drive no chat chunks; the UI spinner is bounded by done/error.
         }
@@ -1168,6 +1198,9 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                     "errorName", pendingErrorName, "errorMessage", message);
             emitChunk(sessionId, new SessionStreamChunk.ErrorChunk(sessionId,
                     pendingErrorName, message, clock.now()));
+            // session.error 同样是回合终止信号：无 idle 跟随（reader 恰在此后掉线）也必须释放，
+            // 否则 busy 泄漏为常驻 1；陈旧 error 帧因无受理记录被上面的守卫忽略。
+            releaseBusyOnTurnEnd(sessionId);
         }
 
         /**

@@ -68,12 +68,14 @@ class OpenCodeServeAdapterTest {
     // 放行 deferredIdleGate 后再补发 idle。模拟"accepted 但仍在思考中"与"排队第二回合"两种窗口。
     private boolean holdResponseParts;
     private CountDownLatch deferredIdleGate;
+    private boolean rejectPrompt;
 
     @BeforeEach
     void setUp() throws Exception {
         root = Files.createTempDirectory("gate-opencode-test-");
         partialTurnOnly = false;
         holdResponseParts = false;
+        rejectPrompt = false;
         DataSource ds = SqliteDataSourceFactory.create(root.resolve("gate.db"));
         SqliteDataSourceFactory.migrate(ds);
         JdbcTemplate jdbc = new JdbcTemplate(ds);
@@ -197,6 +199,74 @@ class OpenCodeServeAdapterTest {
                 lastMessageRequest);
     }
 
+    @Test
+    void busy_counts_session_from_enqueue_until_turn_end_idle() throws Exception {
+        holdResponseParts = true;
+        deferredIdleGate = new CountDownLatch(1);
+        Session session = adapter.start(new AgentSessionPort.StartRequest(
+                "OPEN-1", "opencode-test", root.resolve("clone").toString(), "refs/heads/main",
+                "hello", Map.of()));
+        // 空闲会话 + 连接快照 idle 均不计 busy（快照无受理记录，必须被忽略）。
+        Thread.sleep(300);
+        assertTrue(adapter.busySessionIds().isEmpty());
+
+        adapter.sendMessage(new AgentSessionPort.SendRequest(session.id(), "hi", true));
+        awaitBusy(adapter, session.id());
+        // 核心回归：prompt_async 已受理、回合仍在思考（idle 被扣住）——busy 必须保持。
+        // 旧实现（runSend finally 释放）会在受理瞬间清零：实际运行一个智能体，统计却返回 0。
+        Thread.sleep(800);
+        assertTrue(adapter.busySessionIds().contains(session.id()),
+                "busy must survive prompt acceptance until the turn truly ends");
+
+        // 回合终点到达 → 释放；重复 idle 不得破坏状态。
+        deferredIdleGate.countDown();
+        awaitBusyGone(adapter, session.id());
+        Thread.sleep(300);
+        assertTrue(adapter.busySessionIds().isEmpty());
+    }
+
+    @Test
+    void busy_released_when_prompt_async_is_rejected() throws Exception {
+        rejectPrompt = true;
+        Session session = adapter.start(new AgentSessionPort.StartRequest(
+                "OPEN-1", "opencode-test", root.resolve("clone").toString(), "refs/heads/main",
+                "hello", Map.of()));
+        String taskId = adapter.sendMessage(new AgentSessionPort.SendRequest(session.id(), "hi", true));
+        awaitBusy(adapter, session.id());
+        // prompt_async 被拒：该回合永远不会有 idle，任务失败且 busy 兜底释放。
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (System.nanoTime() < deadline) {
+            if (tasks.find(taskId).map(t -> t.status() == GateTaskStatus.FAILED).orElse(false)) {
+                break;
+            }
+            Thread.sleep(50);
+        }
+        assertEquals(GateTaskStatus.FAILED, tasks.find(taskId).orElseThrow().status());
+        awaitBusyGone(adapter, session.id());
+    }
+
+    private void awaitBusy(OpenCodeServeAdapter adapter, String sessionId) throws Exception {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (System.nanoTime() < deadline) {
+            if (adapter.busySessionIds().contains(sessionId)) {
+                return;
+            }
+            Thread.sleep(20);
+        }
+        throw new AssertionError("busy never registered for " + sessionId);
+    }
+
+    private void awaitBusyGone(OpenCodeServeAdapter adapter, String sessionId) throws Exception {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (System.nanoTime() < deadline) {
+            if (!adapter.busySessionIds().contains(sessionId)) {
+                return;
+            }
+            Thread.sleep(50);
+        }
+        throw new AssertionError("busy never cleared for " + sessionId);
+    }
+
     private SessionMessage waitForAssistant(String sessionId) throws Exception {
         return waitForAssistantContent(sessionId, "hello opencode");
     }
@@ -247,6 +317,13 @@ class OpenCodeServeAdapterTest {
 
     private void promptAsync(HttpExchange exchange) throws java.io.IOException {
         lastMessageRequest = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+        if (rejectPrompt) {
+            byte[] err = "{\"error\":\"rejected\"}".getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(500, err.length);
+            exchange.getResponseBody().write(err);
+            exchange.close();
+            return;
+        }
         byte[] body = "{}".getBytes(StandardCharsets.UTF_8);
         exchange.getResponseHeaders().set("Content-Type", "application/json");
         exchange.sendResponseHeaders(200, body.length);
@@ -282,6 +359,10 @@ class OpenCodeServeAdapterTest {
                 // busy 回归：回合内容完整推送但 idle 被扣住，模拟“prompt_async 已受理、
                 // 模型仍在思考”的长窗口；主线程放行 deferredIdleGate 后补发两个 idle
                 // （第二个用于验证重复 send 的引用计数逐次递减）。
+                // 连接建立时先补一帧快照 idle（opencode 重连/初次连接的 status 快照语义）：
+                // 无受理记录，必须被忽略，不得影响后续任何计数。
+                sse(os, "{\"id\":\"evt_b0s\",\"type\":\"session.status\",\"properties\":"
+                        + "{\"sessionID\":\"sess-1\",\"status\":{\"type\":\"idle\"}}}");
                 sse(os, "{\"id\":\"evt_b0\",\"type\":\"server.connected\",\"properties\":{}}");
                 sse(os, "{\"id\":\"evt_b1\",\"type\":\"message.updated\",\"properties\":{\"info\":"
                         + "{\"id\":\"msg_b1\",\"sessionID\":\"sess-1\",\"role\":\"assistant\","

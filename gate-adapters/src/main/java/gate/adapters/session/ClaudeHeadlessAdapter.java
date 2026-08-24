@@ -198,8 +198,12 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
 
         insertUserMessage(sessionId, request.initialPrompt(), now);
 
-        ProcessRunner.ProcRun run = processRunner.runStreaming(argv, clone, request.env(), Duration.ofMinutes(10),
-                line -> handleStreamLine(sessionId, line), null);
+        // 首个回合（initial_prompt 非空即开跑）同样计入 busy：会话创建即运行，
+        // 此前不在统计内，顶栏在该回合运行期间会错误显示 0。
+        incrementInFlight(sessionId);
+        try {
+            ProcessRunner.ProcRun run = processRunner.runStreaming(argv, clone, request.env(), Duration.ofMinutes(10),
+                    line -> handleStreamLine(sessionId, line), null);
 
         ParsedOutput parsed = parseStream(run.stdout());
         Session withUsage = session;
@@ -224,6 +228,10 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
             emitChunk(sessionId, new SessionStreamChunk.DoneChunk(sessionId, sessionId, now));
         }
         return sessions.find(sessionId).orElse(withUsage);
+        } finally {
+            // 覆盖正常完成、ErrorChunk、异常、中断所有出口，不得依赖是否存在 SSE 监听者
+            decrementInFlight(sessionId);
+        }
     }
 
     @Override

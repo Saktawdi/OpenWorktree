@@ -141,7 +141,8 @@ class WebReadOnlyApiTest {
                 "round 1 touched one file: " + list.body());
         assertEquals(2L, ((Number) rows.get(1).get("changed_count")).longValue(),
                 "round 2 covers both files: " + list.body());
-        assertEquals("refs/heads/main", rows.get(0).get("target_ref"), list.body());
+        // 工单级目标分支（per-ticket branch）：工单创建即锚定 refs/heads/<工单号>，presubmit 记录同源。
+        assertEquals("refs/heads/WEB-PRE", rows.get(0).get("target_ref"), list.body());
         assertTrue(((Number) rows.get(0).get("diff_bytes")).longValue() > 0, list.body());
         assertTrue(String.valueOf(rows.get(0).get("tree_hash")).matches("[0-9a-f]{40}"), list.body());
         assertTrue(String.valueOf(rows.get(0).get("created_at")).startsWith("2"), list.body());
