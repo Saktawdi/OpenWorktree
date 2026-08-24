@@ -427,7 +427,8 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
         sessions.insertMessage(new SessionMessage(UUID.randomUUID().toString(), session.id(),
                 Role.USER, request.message(), List.of(), null, false, clock.now()));
         GateTask task = tasks.register("session-send", session.ticketNo(), session.id());
-        // 入队即算运行：登记发生在提交 executor 之前，排队等待也算运行中；同一 session 重复 send 用计数
+        // 入队即算运行，且 busy 持续到回合真正结束（opencode 是异步回合：终点是上游
+        // session.status=idle，不是 prompt_async 的 HTTP 受理）。失败路径在 catch 里兜底释放。
         incrementInFlight(session.id());
         executor.submit(() -> runSend(task, session, request.message(), request.attachments(), firstTurn));
         return task.id();
@@ -613,10 +614,11 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                     List.of(), null, true, clock.now()));
             emitChunk(session.id(), new SessionStreamChunk.ErrorChunk(session.id(), "INTERNAL_ERROR", e.getMessage(), clock.now()));
             tasks.update(fail(task, e));
-        } finally {
-            // 必须覆盖正常完成、ErrorChunk、异常、中断所有出口，不得依赖是否存在 SSE 监听者
+            // 回合根本没被受理：不会有 idle 事件到来，立即释放 busy 计数。
             decrementInFlight(session.id());
         }
+        // 正常路径不在此清除 busy：prompt_async 只表示“已受理”，回合本身异步运行——
+        // busy 生命周期到上游读取线程收到 session.status=idle 为止（handleSessionStatus）。
     }
 
     static String messageBody(AgentConfig config, String message) {
@@ -1145,6 +1147,8 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                     lastDoneAt = nowMs;
                     emitChunk(sessionId, new SessionStreamChunk.DoneChunk(sessionId, cliSessionId, clock.now()));
                 }
+                // 回合终点：释放 sendMessage 入队时的 busy 计数（幂等——key 不存在/重复 idle 均安全）。
+                decrementInFlight(sessionId);
             }
             // busy/retry drive no chat chunks; the UI spinner is bounded by done/error.
         }

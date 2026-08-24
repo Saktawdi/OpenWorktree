@@ -64,11 +64,16 @@ class OpenCodeServeAdapterTest {
     // When true the fake /event frame pushes a partial assistant turn (one text part +
     // completion, NO idle) so the test can exercise the abort/supersede recovery flush.
     private boolean partialTurnOnly;
+    // busy 回归测试专用：SSE 只推半个 text part + step-finish 快照（不发 idle）；主线程
+    // 放行 deferredIdleGate 后再补发 idle。模拟"accepted 但仍在思考中"与"排队第二回合"两种窗口。
+    private boolean holdResponseParts;
+    private CountDownLatch deferredIdleGate;
 
     @BeforeEach
     void setUp() throws Exception {
         root = Files.createTempDirectory("gate-opencode-test-");
         partialTurnOnly = false;
+        holdResponseParts = false;
         DataSource ds = SqliteDataSourceFactory.create(root.resolve("gate.db"));
         SqliteDataSourceFactory.migrate(ds);
         JdbcTemplate jdbc = new JdbcTemplate(ds);
@@ -269,6 +274,30 @@ class OpenCodeServeAdapterTest {
                 // Deliberately NO message.updated(completed) and NO session.status=idle: the
                 // turn is cut mid-step, so recovery must drain the per-message buffers.
                 // Hold the stream open so the adapter does not churn on reconnects mid-test.
+                eventStreamHeld = new CountDownLatch(1);
+                eventStreamHeld.await(15, TimeUnit.SECONDS);
+                return;
+            }
+            if (holdResponseParts) {
+                // busy 回归：回合内容完整推送但 idle 被扣住，模拟“prompt_async 已受理、
+                // 模型仍在思考”的长窗口；主线程放行 deferredIdleGate 后补发两个 idle
+                // （第二个用于验证重复 send 的引用计数逐次递减）。
+                sse(os, "{\"id\":\"evt_b0\",\"type\":\"server.connected\",\"properties\":{}}");
+                sse(os, "{\"id\":\"evt_b1\",\"type\":\"message.updated\",\"properties\":{\"info\":"
+                        + "{\"id\":\"msg_b1\",\"sessionID\":\"sess-1\",\"role\":\"assistant\","
+                        + "\"time\":{\"created\":1}}}}");
+                sse(os, "{\"id\":\"evt_b2\",\"type\":\"message.part.updated\",\"properties\":{\"part\":"
+                        + "{\"id\":\"prt_b1\",\"sessionID\":\"sess-1\",\"messageID\":\"msg_b1\","
+                        + "\"type\":\"text\",\"text\":\"hello \"}}}");
+                sse(os, "{\"id\":\"evt_b3\",\"type\":\"message.part.updated\",\"properties\":{\"part\":"
+                        + "{\"id\":\"prt_b2\",\"sessionID\":\"sess-1\",\"messageID\":\"msg_b1\","
+                        + "\"type\":\"step-finish\",\"reason\":\"stop\",\"cost\":0,"
+                        + "\"tokens\":{\"input\":10,\"output\":5,\"reasoning\":0}}}}");
+                deferredIdleGate.await(15, TimeUnit.SECONDS);
+                sse(os, "{\"id\":\"evt_b4\",\"type\":\"session.status\",\"properties\":"
+                        + "{\"sessionID\":\"sess-1\",\"status\":{\"type\":\"idle\"}}}");
+                sse(os, "{\"id\":\"evt_b5\",\"type\":\"session.status\",\"properties\":"
+                        + "{\"sessionID\":\"sess-1\",\"status\":{\"type\":\"idle\"}}}");
                 eventStreamHeld = new CountDownLatch(1);
                 eventStreamHeld.await(15, TimeUnit.SECONDS);
                 return;
