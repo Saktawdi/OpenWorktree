@@ -24,22 +24,22 @@ import gate.domain.review.ReviewEvidence;
 import gate.domain.snapshot.Snapshot;
 import gate.domain.ticket.Ticket;
 import gate.domain.ticket.TicketStage;
-import gate.ports.ApprovalStore;
-import gate.ports.AuditLog;
-import gate.ports.BlobStore;
-import gate.ports.Clock;
-import gate.ports.AuthoritativeGitService;
-import gate.ports.CommitPublisher;
-import gate.ports.DbTransactionRunner;
-import gate.ports.LockManager;
-import gate.ports.PresubmitRepository;
-import gate.ports.PublishIntentRepository;
-import gate.ports.PublishProbe;
-import gate.ports.RefObserver;
-import gate.ports.ReviewResultRepository;
-import gate.ports.SnapshotCapture;
-import gate.ports.TicketRepository;
-import gate.ports.WorkspaceSyncer;
+import gate.ports.store.ApprovalStore;
+import gate.ports.store.AuditLog;
+import gate.ports.store.BlobStore;
+import gate.ports.infra.Clock;
+import gate.ports.git.AuthoritativeGitService;
+import gate.ports.git.CommitPublisher;
+import gate.ports.infra.DbTransactionRunner;
+import gate.ports.infra.LockManager;
+import gate.ports.store.PresubmitRepository;
+import gate.ports.store.PublishIntentRepository;
+import gate.ports.engine.PublishProbe;
+import gate.ports.git.RefObserver;
+import gate.ports.store.ReviewResultRepository;
+import gate.ports.git.SnapshotCapture;
+import gate.ports.store.TicketRepository;
+import gate.ports.git.WorkspaceSyncer;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
@@ -72,7 +72,7 @@ public final class PublishHandler {
     private final PublishProbe publishProbe;
     private final AuthoritativeGitService authoritativeGitService;
     private final WorkspaceSyncer workspaceSyncer;
-    private final gate.ports.CommitIdentityProvider commitIdentityProvider;
+    private final gate.ports.git.CommitIdentityProvider commitIdentityProvider;
 
     public PublishHandler(GateConfig config, SnapshotCapture snapshotCapture, CommitPublisher commitPublisher,
                           RefObserver refObserver, ApprovalStore approvalStore, GatePolicy gatePolicy,
@@ -132,7 +132,7 @@ public final class PublishHandler {
                           AuthoritativeGitService authoritativeGitService,
                           gate.application.project.ProjectAuthResolver authResolver,
                           WorkspaceSyncer workspaceSyncer,
-                          gate.ports.CommitIdentityProvider commitIdentityProvider) {
+                          gate.ports.git.CommitIdentityProvider commitIdentityProvider) {
         this.config = config;
         this.authResolver = authResolver;
         this.snapshotCapture = snapshotCapture;

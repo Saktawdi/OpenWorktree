@@ -1,6 +1,6 @@
 package gate.adapters.store;
 
-import gate.ports.ProviderRepository;
+import gate.ports.store.ProviderRepository;
 import java.sql.ResultSet;
 import java.time.Instant;
 import java.util.List;

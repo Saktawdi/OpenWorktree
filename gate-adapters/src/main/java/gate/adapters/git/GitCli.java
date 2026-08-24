@@ -3,7 +3,7 @@ package gate.adapters.git;
 import gate.domain.error.GateErrorCode;
 import gate.domain.error.GateException;
 import gate.domain.git.RepoRef;
-import gate.ports.ProcessRunner;
+import gate.ports.infra.ProcessRunner;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;

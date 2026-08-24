@@ -1,6 +1,6 @@
 package gate.adapters.runtime;
 
-import gate.ports.WorkDispatcher;
+import gate.ports.task.WorkDispatcher;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;

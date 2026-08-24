@@ -1,6 +1,6 @@
 package gate.adapters.process;
 
-import gate.ports.ProcessRunner;
+import gate.ports.infra.ProcessRunner;
 import java.io.File;
 import java.nio.file.Files;
 import java.nio.file.Path;

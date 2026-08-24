@@ -2,7 +2,7 @@ package gate.bypass;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import gate.ports.ProcessRunner;
+import gate.ports.infra.ProcessRunner;
 import org.junit.jupiter.api.Test;
 
 /**

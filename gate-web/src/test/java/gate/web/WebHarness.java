@@ -29,7 +29,7 @@ final class WebHarness implements AutoCloseable {
         this(gitExecutable, bind, null);
     }
 
-    WebHarness(String gitExecutable, String bind, gate.ports.AgentSessionPort sessionPortOverride) {
+    WebHarness(String gitExecutable, String bind, gate.ports.session.AgentSessionPort sessionPortOverride) {
         try {
             this.root = Files.createTempDirectory("gate-web-test-");
             Path gateHome = root.resolve("gate-home");
@@ -58,7 +58,7 @@ final class WebHarness implements AutoCloseable {
             this.components = new WebComponents(config, gitExecutable, root.resolve(".env"), null, sessionPortOverride);
             // Seed manual provider (same bootstrap as fromConfig).
             if (components.providerRepository().find("manual").isEmpty()) {
-                components.providerRepository().upsert(new gate.ports.ProviderRepository.ProviderRow(
+                components.providerRepository().upsert(new gate.ports.store.ProviderRepository.ProviderRow(
                         "manual", "manual", "local://manual", "none", "manual",
                         components.clock().now()), components.clock().now());
             }

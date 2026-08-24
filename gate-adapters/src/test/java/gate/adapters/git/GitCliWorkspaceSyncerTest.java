@@ -6,7 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import gate.domain.git.ObjectId;
 import gate.domain.git.RepoRef;
-import gate.ports.WorkspaceSyncer;
+import gate.ports.git.WorkspaceSyncer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;

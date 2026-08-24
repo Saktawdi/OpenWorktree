@@ -2,7 +2,7 @@ package gate.web.security;
 
 import gate.domain.error.GateErrorCode;
 import gate.domain.error.GateException;
-import gate.ports.CredentialRepository;
+import gate.ports.store.CredentialRepository;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;

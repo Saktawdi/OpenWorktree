@@ -2,8 +2,8 @@ package gate.web.controller;
 
 import gate.domain.error.GateErrorCode;
 import gate.domain.error.GateException;
-import gate.ports.Clock;
-import gate.ports.ProviderRepository;
+import gate.ports.infra.Clock;
+import gate.ports.store.ProviderRepository;
 import gate.web.service.ProviderModelFetcher;
 import gate.web.util.Json;
 import io.javalin.Javalin;

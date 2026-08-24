@@ -7,7 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import gate.domain.git.RepoRef;
 import gate.domain.publish.ApprovalId;
-import gate.ports.ProcessRunner;
+import gate.ports.infra.ProcessRunner;
 import java.nio.file.Files;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
@@ -202,7 +202,7 @@ class BypassMatrixTest extends BypassTestBase {
         assertTrue(Files.isRegularFile(lw.resolve(".git")), "linked worktree .git must be a file");
 
         // The gate must refuse to operate on a linked worktree (SnapshotCapture guard, §2.2).
-        gate.ports.SnapshotCapture capture = new gate.adapters.git.GitCliSnapshot(h.gitCli(), h.config().indexDir());
+        gate.ports.git.SnapshotCapture capture = new gate.adapters.git.GitCliSnapshot(h.gitCli(), h.config().indexDir());
         org.junit.jupiter.api.Assertions.assertThrows(gate.domain.error.GateException.class,
                 () -> capture.capture(linked, h.authRepo(), h.targetRef()),
                 "the gate must refuse to operate on a linked worktree (B14)");

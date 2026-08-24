@@ -5,7 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import com.sun.net.httpserver.HttpsConfigurator;
 import com.sun.net.httpserver.HttpsServer;
-import gate.ports.ProviderRepository;
+import gate.ports.store.ProviderRepository;
 import gate.web.service.ProviderModelFetcher;
 import java.io.IOException;
 import java.net.InetSocketAddress;

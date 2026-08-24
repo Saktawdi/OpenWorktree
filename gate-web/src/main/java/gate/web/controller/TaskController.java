@@ -3,7 +3,7 @@ package gate.web.controller;
 import gate.domain.error.GateErrorCode;
 import gate.domain.error.GateException;
 import gate.domain.task.GateTask;
-import gate.ports.TaskRegistry;
+import gate.ports.task.TaskRegistry;
 import gate.web.service.TaskRunner;
 import gate.web.sse.SseHandler;
 import gate.web.util.Json;

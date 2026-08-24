@@ -1,6 +1,6 @@
 package gate.adapters.store;
 
-import gate.ports.DbTransactionRunner;
+import gate.ports.infra.DbTransactionRunner;
 import java.util.function.Supplier;
 import org.springframework.transaction.support.TransactionTemplate;
 

@@ -3,7 +3,7 @@ package gate.adapters.store;
 import gate.domain.blob.BlobRef;
 import gate.domain.policy.Decision;
 import gate.domain.review.EngineDescriptor;
-import gate.ports.ReviewResultRepository;
+import gate.ports.store.ReviewResultRepository;
 import java.sql.ResultSet;
 import java.time.Instant;
 import java.util.List;

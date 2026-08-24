@@ -16,11 +16,11 @@ import gate.domain.session.AgentConfig;
 import gate.domain.session.Session;
 import gate.domain.session.SessionStatus;
 import gate.domain.session.SessionUsage;
-import gate.ports.AgentSessionPort;
-import gate.ports.Clock;
-import gate.ports.ProcessRunner;
-import gate.ports.ProviderRepository;
-import gate.ports.SessionRepository;
+import gate.ports.session.AgentSessionPort;
+import gate.ports.infra.Clock;
+import gate.ports.infra.ProcessRunner;
+import gate.ports.store.ProviderRepository;
+import gate.ports.store.SessionRepository;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;

@@ -4,15 +4,15 @@ import gate.bootstrap.GateRuntime;
 import gate.adapters.config.TomlGateConfigLoader;
 import gate.domain.config.GateConfig;
 import gate.application.GateService;
-import gate.ports.BlobStore;
-import gate.ports.Clock;
-import gate.ports.CredentialRepository;
-import gate.ports.PreflightChecker;
-import gate.ports.PresubmitRepository;
-import gate.ports.ProviderRepository;
-import gate.ports.ReviewResultRepository;
-import gate.ports.TicketRepository;
-import gate.ports.TopologyInitializer;
+import gate.ports.store.BlobStore;
+import gate.ports.infra.Clock;
+import gate.ports.store.CredentialRepository;
+import gate.ports.engine.PreflightChecker;
+import gate.ports.store.PresubmitRepository;
+import gate.ports.store.ProviderRepository;
+import gate.ports.store.ReviewResultRepository;
+import gate.ports.store.TicketRepository;
+import gate.ports.git.TopologyInitializer;
 import java.nio.file.Path;
 
 /**

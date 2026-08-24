@@ -1,10 +1,10 @@
 package gate.application.metrics;
 
-import gate.ports.PresubmitRepository;
-import gate.ports.ReviewResultRepository;
-import gate.ports.ReviewResultRepository.CostRecord;
-import gate.ports.ReviewResultRepository.ReviewResultRow;
-import gate.ports.TicketRepository;
+import gate.ports.store.PresubmitRepository;
+import gate.ports.store.ReviewResultRepository;
+import gate.ports.store.ReviewResultRepository.CostRecord;
+import gate.ports.store.ReviewResultRepository.ReviewResultRow;
+import gate.ports.store.TicketRepository;
 import gate.domain.policy.Decision;
 import gate.domain.ticket.Ticket;
 import java.util.ArrayList;

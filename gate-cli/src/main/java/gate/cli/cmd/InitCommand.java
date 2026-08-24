@@ -5,7 +5,7 @@ import gate.cli.util.JsonOut;
 
 
 import gate.domain.git.RepoRef;
-import gate.ports.TopologyInitializer;
+import gate.ports.git.TopologyInitializer;
 import java.util.Map;
 import picocli.CommandLine;
 

@@ -1,7 +1,7 @@
 package gate.application.ticket;
 
 import gate.domain.ticket.Ticket;
-import gate.ports.TicketRepository;
+import gate.ports.store.TicketRepository;
 import java.time.Instant;
 
 /**

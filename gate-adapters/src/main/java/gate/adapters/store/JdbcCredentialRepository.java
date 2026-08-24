@@ -1,6 +1,6 @@
 package gate.adapters.store;
 
-import gate.ports.CredentialRepository;
+import gate.ports.store.CredentialRepository;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.time.Instant;

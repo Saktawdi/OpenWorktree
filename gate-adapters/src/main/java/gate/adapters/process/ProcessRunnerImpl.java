@@ -2,7 +2,7 @@ package gate.adapters.process;
 
 import gate.domain.error.GateErrorCode;
 import gate.domain.error.GateException;
-import gate.ports.ProcessRunner;
+import gate.ports.infra.ProcessRunner;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;

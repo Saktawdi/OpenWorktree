@@ -80,7 +80,7 @@ class OpenCodeServeAdapterMessageBodyTest {
 
     @Test
     void attachmentsBecomeFilePartsWithDataUrls() {
-        var attachment = new gate.ports.AgentSessionPort.Attachment(
+        var attachment = new gate.ports.session.AgentSessionPort.Attachment(
                 "截图.png", "image/png", "aGVsbG8=");
         String body = OpenCodeServeAdapter.messageBody(
                 config("own/deepseek-v4-flash", List.of()), "看这张图",
@@ -95,8 +95,8 @@ class OpenCodeServeAdapterMessageBodyTest {
 
     @Test
     void multipleAttachmentsAndEscapedFilenames() {
-        var one = new gate.ports.AgentSessionPort.Attachment("a\"b.png", "image/png", "AA==");
-        var two = new gate.ports.AgentSessionPort.Attachment(null, "image/jpeg", "BB=");
+        var one = new gate.ports.session.AgentSessionPort.Attachment("a\"b.png", "image/png", "AA==");
+        var two = new gate.ports.session.AgentSessionPort.Attachment(null, "image/jpeg", "BB=");
         String body = OpenCodeServeAdapter.messageBody(config(null, List.of()), "",
                 List.of(one, two), "px", "mx", "high");
         assertTrue(body.contains("\"filename\":\"a\\\"b.png\""), body);

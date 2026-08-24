@@ -2,7 +2,7 @@ package gate.adapters.s3;
 
 import gate.domain.error.GateErrorCode;
 import gate.domain.error.GateException;
-import gate.ports.S3Store;
+import gate.ports.store.S3Store;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;

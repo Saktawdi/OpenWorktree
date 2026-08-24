@@ -4,7 +4,7 @@ import gate.domain.error.GateErrorCode;
 import gate.domain.error.GateException;
 import gate.domain.publish.ApprovalGrant;
 import gate.domain.publish.ApprovalId;
-import gate.ports.ApprovalStore;
+import gate.ports.store.ApprovalStore;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;

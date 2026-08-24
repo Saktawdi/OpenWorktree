@@ -7,7 +7,7 @@ import gate.domain.publish.CommitIdentity;
 import gate.domain.publish.PublishIntent;
 import gate.domain.publish.PublishStatus;
 import gate.domain.snapshot.Snapshot;
-import gate.ports.PublishIntentRepository;
+import gate.ports.store.PublishIntentRepository;
 import java.nio.file.Path;
 import java.sql.ResultSet;
 import java.time.Instant;

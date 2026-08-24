@@ -7,7 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import gate.domain.git.RepoRef;
 import gate.domain.publish.ApprovalId;
-import gate.ports.ProcessRunner;
+import gate.ports.infra.ProcessRunner;
 import gate.testkit.GateHarness;
 import gate.testkit.PushKit;
 import org.junit.jupiter.api.AfterEach;

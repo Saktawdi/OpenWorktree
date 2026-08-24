@@ -1,9 +1,9 @@
 package gate.adapters.git;
 
 import gate.domain.publish.CommitIdentity;
-import gate.ports.Clock;
-import gate.ports.CommitIdentityProvider;
-import gate.ports.ProcessRunner;
+import gate.ports.infra.Clock;
+import gate.ports.git.CommitIdentityProvider;
+import gate.ports.infra.ProcessRunner;
 
 /**
  * 默认身份解析：本机 git 配置（{@code git config --get user.name/user.email}，global+system

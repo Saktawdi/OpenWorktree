@@ -3,7 +3,7 @@ package gate.adapters.lock;
 import gate.domain.error.GateBusyException;
 import gate.domain.error.GateErrorCode;
 import gate.domain.error.GateException;
-import gate.ports.LockManager;
+import gate.ports.infra.LockManager;
 import java.io.IOException;
 import java.nio.channels.FileChannel;
 import java.nio.channels.FileLock;

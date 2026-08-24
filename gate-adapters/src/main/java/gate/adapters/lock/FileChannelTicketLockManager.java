@@ -2,7 +2,7 @@ package gate.adapters.lock;
 
 import gate.domain.error.GateErrorCode;
 import gate.domain.error.GateException;
-import gate.ports.TicketLockManager;
+import gate.ports.infra.TicketLockManager;
 import java.io.IOException;
 import java.nio.channels.FileChannel;
 import java.nio.channels.FileLock;

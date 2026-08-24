@@ -7,7 +7,7 @@ import java.time.Instant;
  * Nonce consumption store for OID CAS (ADR-003). Nonce + ref update are атомic via same DB TX / git ref TX.
  * Team mode: refs/gate/authorizations/<nonce> ; local: DB table gate_nonce enforces uniqueness.
  */
-public final class JdbcNonceStore implements gate.ports.NonceStore {
+public final class JdbcNonceStore implements gate.ports.store.NonceStore {
     private final JdbcTemplate jdbc;
     public JdbcNonceStore(JdbcTemplate jdbc) { this.jdbc = jdbc; }
 

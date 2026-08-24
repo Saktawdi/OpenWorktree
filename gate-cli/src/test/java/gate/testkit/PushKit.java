@@ -4,7 +4,7 @@ import gate.domain.git.ObjectId;
 import gate.domain.git.RepoRef;
 import gate.domain.publish.ApprovalGrant;
 import gate.domain.publish.ApprovalId;
-import gate.ports.ProcessRunner;
+import gate.ports.infra.ProcessRunner;
 import java.util.Map;
 
 /**

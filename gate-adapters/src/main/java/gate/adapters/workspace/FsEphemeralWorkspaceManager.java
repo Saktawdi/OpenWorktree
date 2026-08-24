@@ -2,8 +2,8 @@ package gate.adapters.workspace;
 
 import gate.domain.error.GateErrorCode;
 import gate.domain.error.GateException;
-import gate.ports.EphemeralWorkspaceManager;
-import gate.ports.ProcessRunner;
+import gate.ports.infra.EphemeralWorkspaceManager;
+import gate.ports.infra.ProcessRunner;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
@@ -44,7 +44,7 @@ public final class FsEphemeralWorkspaceManager implements EphemeralWorkspaceMana
             ProcessRunner.ProcRun clone = git.run(null, java.util.Map.of(), "clone", authRepoPath.toString(), ws.toString());
             if (!clone.ok()) throw new GateException(GateErrorCode.GATE_ERROR_IO, "clone failed: " + clone.stderrFirstLine());
             if (baseCommitOid != null && !baseCommitOid.isBlank()) {
-                gate.ports.ProcessRunner.ProcRun checkout = git.run(ws, java.util.Map.of(), "checkout", "--detach", baseCommitOid);
+                gate.ports.infra.ProcessRunner.ProcRun checkout = git.run(ws, java.util.Map.of(), "checkout", "--detach", baseCommitOid);
                 if (!checkout.ok()) throw new GateException(GateErrorCode.GATE_ERROR_IO, "checkout failed: " + checkout.stderrFirstLine());
             }
             active.put(taskId, ws);

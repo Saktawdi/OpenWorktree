@@ -1,6 +1,6 @@
 package gate.adapters.clock;
 
-import gate.ports.Clock;
+import gate.ports.infra.Clock;
 import java.time.Instant;
 
 /** System clock. */

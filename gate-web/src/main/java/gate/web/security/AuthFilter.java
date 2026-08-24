@@ -1,7 +1,7 @@
 package gate.web.security;
 
 import gate.domain.error.GateErrorCode;
-import gate.ports.CredentialRepository;
+import gate.ports.store.CredentialRepository;
 import gate.web.util.Json;
 import io.javalin.http.Context;
 import io.javalin.http.HttpStatus;

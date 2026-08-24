@@ -8,7 +8,7 @@ import gate.adapters.engine.EnvFile;
 import gate.application.util.MiniJson;
 import gate.domain.error.GateErrorCode;
 import gate.domain.error.GateException;
-import gate.ports.ProviderRepository;
+import gate.ports.store.ProviderRepository;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;

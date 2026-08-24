@@ -1,7 +1,7 @@
 package gate.web.sse;
 
 import gate.domain.error.GateErrorCode;
-import gate.ports.TaskRegistry;
+import gate.ports.task.TaskRegistry;
 import gate.web.util.Json;
 import io.javalin.http.Context;
 import io.javalin.http.HttpStatus;

@@ -2,8 +2,8 @@ package gate.adapters.git;
 
 import gate.domain.git.ObjectId;
 import gate.domain.git.RepoRef;
-import gate.ports.ProcessRunner;
-import gate.ports.WorkspaceSyncer;
+import gate.ports.infra.ProcessRunner;
+import gate.ports.git.WorkspaceSyncer;
 import java.nio.file.Files;
 
 /**

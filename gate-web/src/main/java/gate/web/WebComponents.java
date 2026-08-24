@@ -15,22 +15,22 @@ import gate.application.metrics.MetricsService;
 import gate.domain.config.GateConfig;
 import gate.domain.error.GateErrorCode;
 import gate.domain.error.GateException;
-import gate.ports.AgentConfigRepository;
-import gate.ports.AgentSessionPort;
-import gate.ports.BlobStore;
-import gate.ports.Clock;
-import gate.ports.CredentialRepository;
-import gate.ports.PreflightChecker;
-import gate.ports.PresubmitRepository;
-import gate.ports.ProcessRunner;
-import gate.ports.ProviderRepository;
-import gate.ports.PublishIntentRepository;
-import gate.ports.ReviewResultRepository;
-import gate.ports.SessionRepository;
-import gate.ports.TaskRegistry;
-import gate.ports.TicketLockManager;
-import gate.ports.TicketRepository;
-import gate.ports.TopologyInitializer;
+import gate.ports.store.AgentConfigRepository;
+import gate.ports.session.AgentSessionPort;
+import gate.ports.store.BlobStore;
+import gate.ports.infra.Clock;
+import gate.ports.store.CredentialRepository;
+import gate.ports.engine.PreflightChecker;
+import gate.ports.store.PresubmitRepository;
+import gate.ports.infra.ProcessRunner;
+import gate.ports.store.ProviderRepository;
+import gate.ports.store.PublishIntentRepository;
+import gate.ports.store.ReviewResultRepository;
+import gate.ports.store.SessionRepository;
+import gate.ports.task.TaskRegistry;
+import gate.ports.infra.TicketLockManager;
+import gate.ports.store.TicketRepository;
+import gate.ports.git.TopologyInitializer;
 import gate.web.service.ProviderModelFetcher;
 import gate.web.service.RuntimeInfoService;
 import gate.web.service.TaskRunner;
@@ -70,8 +70,8 @@ public final class WebComponents {
     private final GitCli git;
     private final Instant startedAt;
     private final Path gateToml;
-    private final gate.ports.ProjectRepository projectRepository;
-    private final gate.ports.WorkspaceSyncer workspaceSyncer;
+    private final gate.ports.store.ProjectRepository projectRepository;
+    private final gate.ports.git.WorkspaceSyncer workspaceSyncer;
     private final ProviderModelFetcher modelFetcher;
     private final RuntimeInfoService runtimeInfo;
 
@@ -119,7 +119,7 @@ public final class WebComponents {
         this.projectRepository = runtime.projectRepository();
         this.workspaceSyncer = runtime.workspaceSyncer();
         this.modelFetcher = new ProviderModelFetcher(envFile);
-        gate.ports.SessionRepository sessionRepo = runtime.sessionRepository();
+        gate.ports.store.SessionRepository sessionRepo = runtime.sessionRepository();
         if (sessionRepo instanceof gate.adapters.store.JdbcSessionRepository jsr) {
             jsr.abortOrphanedActive(clock.now());
         }
@@ -200,8 +200,8 @@ public final class WebComponents {
     public SessionRepository sessionRepository() { return sessionRepository; }
     public AgentSessionPort agentSessionPort() { return agentSessionPort; }
     public TicketLockManager ticketLockManager() { return ticketLockManager; }
-    public gate.ports.ProjectRepository projectRepository() { return projectRepository; }
-    public gate.ports.WorkspaceSyncer workspaceSyncer() { return workspaceSyncer; }
+    public gate.ports.store.ProjectRepository projectRepository() { return projectRepository; }
+    public gate.ports.git.WorkspaceSyncer workspaceSyncer() { return workspaceSyncer; }
     public ProviderModelFetcher modelFetcher() { return modelFetcher; }
     public RuntimeInfoService runtimeInfo() { return runtimeInfo; }
     public GitCli git() { return git; }

@@ -2,7 +2,7 @@ package gate.adapters.store;
 
 import gate.domain.ticket.Ticket;
 import gate.domain.ticket.TicketStage;
-import gate.ports.TicketRepository;
+import gate.ports.store.TicketRepository;
 import java.sql.ResultSet;
 import java.time.Instant;
 import java.util.ArrayList;

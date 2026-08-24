@@ -1,8 +1,8 @@
 package gate.adapters.engine;
 
-import gate.ports.BlobStore;
-import gate.ports.ReviewEngine;
-import gate.ports.ReviewEngineFactory;
+import gate.ports.store.BlobStore;
+import gate.ports.engine.ReviewEngine;
+import gate.ports.engine.ReviewEngineFactory;
 
 /** P1 factory: every review is a manual verdict expressed as a degenerate engine. */
 public final class ManualReviewEngineFactory implements ReviewEngineFactory {

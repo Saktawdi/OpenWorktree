@@ -3,7 +3,7 @@ package gate.adapters.store;
 import gate.application.util.MiniJson;
 import gate.domain.session.AgentCli;
 import gate.domain.session.AgentConfig;
-import gate.ports.AgentConfigRepository;
+import gate.ports.store.AgentConfigRepository;
 import java.sql.ResultSet;
 import java.time.Instant;
 import java.util.ArrayList;

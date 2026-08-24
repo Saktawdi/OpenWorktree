@@ -3,7 +3,7 @@ package gate.adapters.audit;
 import gate.domain.audit.AuditEvent;
 import gate.domain.error.GateErrorCode;
 import gate.domain.error.GateException;
-import gate.ports.AuditLog;
+import gate.ports.store.AuditLog;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;

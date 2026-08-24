@@ -3,7 +3,7 @@ package gate.adapters.blob;
 import gate.domain.blob.BlobRef;
 import gate.domain.error.GateErrorCode;
 import gate.domain.error.GateException;
-import gate.ports.BlobStore;
+import gate.ports.store.BlobStore;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;

@@ -2,7 +2,7 @@ package gate.adapters.kms;
 
 import gate.domain.error.GateErrorCode;
 import gate.domain.error.GateException;
-import gate.ports.KmsService;
+import gate.ports.infra.KmsService;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.Instant;

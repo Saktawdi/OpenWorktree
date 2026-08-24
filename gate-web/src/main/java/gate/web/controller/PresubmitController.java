@@ -9,11 +9,11 @@ import gate.domain.config.GateConfig;
 import gate.domain.error.GateErrorCode;
 import gate.domain.error.GateException;
 import gate.domain.ticket.Ticket;
-import gate.ports.BlobStore;
-import gate.ports.PresubmitRepository;
-import gate.ports.ReviewResultRepository;
-import gate.ports.TicketLockManager;
-import gate.ports.TicketRepository;
+import gate.ports.store.BlobStore;
+import gate.ports.store.PresubmitRepository;
+import gate.ports.store.ReviewResultRepository;
+import gate.ports.infra.TicketLockManager;
+import gate.ports.store.TicketRepository;
 import gate.web.util.Json;
 import io.javalin.Javalin;
 import io.javalin.http.Context;
@@ -106,14 +106,14 @@ public final class PresubmitController implements WebController {
         if (latestPresubmit.isPresent()) {
             baseCommit = latestPresubmit.get().baseCommit().hex();
         }
-        gate.ports.ProcessRunner.ProcRun tracked = baseCommit == null
+        gate.ports.infra.ProcessRunner.ProcRun tracked = baseCommit == null
                 ? git.run(clone, Map.of(), "diff")
                 : git.run(clone, Map.of(), "diff", "HEAD");
         String trackedDiff = tracked.ok() ? tracked.stdout() : "";
 
         String eolWarning = null;
         if (trackedDiff.length() > EOL_NOISE_THRESHOLD_CHARS) {
-            gate.ports.ProcessRunner.ProcRun normalized = baseCommit == null
+            gate.ports.infra.ProcessRunner.ProcRun normalized = baseCommit == null
                     ? git.run(clone, Map.of(), "diff", "--ignore-cr-at-eol")
                     : git.run(clone, Map.of(), "diff", "HEAD", "--ignore-cr-at-eol");
             if (normalized.ok() && normalized.stdout().length() * 10 < trackedDiff.length()) {
@@ -127,7 +127,7 @@ public final class PresubmitController implements WebController {
         if (!trackedDiff.isBlank()) {
             diff.append(trackedDiff.stripTrailing()).append('\n');
         }
-        gate.ports.ProcessRunner.ProcRun untracked = git.run(clone, Map.of(), "ls-files", "--others", "--exclude-standard");
+        gate.ports.infra.ProcessRunner.ProcRun untracked = git.run(clone, Map.of(), "ls-files", "--others", "--exclude-standard");
         if (untracked.ok()) {
             for (String file : untracked.stdout().split("\n")) {
                 String rel = file.trim();

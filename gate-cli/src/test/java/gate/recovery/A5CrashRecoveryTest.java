@@ -5,7 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import gate.application.status.ReconcileResult;
 import gate.domain.git.RepoRef;
-import gate.ports.PublishProbe;
+import gate.ports.engine.PublishProbe;
 import gate.testkit.PersistentGate;
 import java.nio.file.Files;
 import java.nio.file.Path;

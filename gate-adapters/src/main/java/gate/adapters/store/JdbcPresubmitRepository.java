@@ -3,7 +3,7 @@ package gate.adapters.store;
 import gate.domain.blob.BlobRef;
 import gate.domain.git.ObjectId;
 import gate.domain.snapshot.Snapshot;
-import gate.ports.PresubmitRepository;
+import gate.ports.store.PresubmitRepository;
 import java.sql.ResultSet;
 import java.time.Instant;
 import java.util.List;

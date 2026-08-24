@@ -7,9 +7,9 @@ import gate.domain.session.AgentConfig;
 import gate.domain.session.Session;
 import gate.domain.session.SessionStatus;
 import gate.domain.session.SessionUsage;
-import gate.ports.AgentSessionPort;
-import gate.ports.Clock;
-import gate.ports.SessionRepository;
+import gate.ports.session.AgentSessionPort;
+import gate.ports.infra.Clock;
+import gate.ports.store.SessionRepository;
 
 import java.net.URI;
 import java.net.http.HttpClient;

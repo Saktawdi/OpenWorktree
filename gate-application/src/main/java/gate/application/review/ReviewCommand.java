@@ -3,7 +3,7 @@ package gate.application.review;
 /**
  * Input for {@code review}.
  *
- * <p>Two review modes coexist behind the same {@link gate.ports.ReviewEngine} contract:
+ * <p>Two review modes coexist behind the same {@link gate.ports.engine.ReviewEngine} contract:
  * <ul>
  *   <li><b>manual</b> (P1, and still used by A6 to exercise the GatePolicy blocker branch): a human
  *       verdict flows in as a BLOCKER finding, not an {@code EngineFailure};</li>

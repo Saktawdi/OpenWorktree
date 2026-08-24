@@ -6,7 +6,7 @@ import gate.cli.util.JsonOut;
 
 import gate.domain.error.GateErrorCode;
 import gate.domain.error.GateException;
-import gate.ports.PreflightChecker;
+import gate.ports.engine.PreflightChecker;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;

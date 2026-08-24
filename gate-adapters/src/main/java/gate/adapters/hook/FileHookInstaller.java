@@ -3,7 +3,7 @@ package gate.adapters.hook;
 import gate.domain.error.GateErrorCode;
 import gate.domain.error.GateException;
 import gate.domain.git.RepoRef;
-import gate.ports.HookInstaller;
+import gate.ports.git.HookInstaller;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;

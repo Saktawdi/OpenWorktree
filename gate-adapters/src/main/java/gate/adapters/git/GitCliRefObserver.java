@@ -2,8 +2,8 @@ package gate.adapters.git;
 
 import gate.domain.git.ObjectId;
 import gate.domain.git.RepoRef;
-import gate.ports.ProcessRunner;
-import gate.ports.RefObserver;
+import gate.ports.infra.ProcessRunner;
+import gate.ports.git.RefObserver;
 import java.util.Optional;
 
 /** Read-only view of a repository's refs, backed by the real git binary. */

@@ -3,9 +3,9 @@ package gate.adapters.git;
 import gate.domain.git.ObjectId;
 import gate.domain.git.RepoRef;
 import gate.domain.policy.PublishAuthorization;
-import gate.ports.AuthoritativeGitService;
-import gate.ports.NonceStore;
-import gate.ports.RefObserver;
+import gate.ports.git.AuthoritativeGitService;
+import gate.ports.store.NonceStore;
+import gate.ports.git.RefObserver;
 import java.util.Optional;
 
 /**
@@ -18,9 +18,9 @@ public final class LocalAuthoritativeGitService implements AuthoritativeGitServi
     private final GitCli git;
     private final RefObserver refObserver;
     private final NonceStore nonceStore;
-    private final gate.ports.LockManager lockManager;
+    private final gate.ports.infra.LockManager lockManager;
 
-    public LocalAuthoritativeGitService(GitCli git, RefObserver refObserver, NonceStore nonceStore, gate.ports.LockManager lockManager) {
+    public LocalAuthoritativeGitService(GitCli git, RefObserver refObserver, NonceStore nonceStore, gate.ports.infra.LockManager lockManager) {
         this.git = git;
         this.refObserver = refObserver;
         this.nonceStore = nonceStore;
@@ -50,7 +50,7 @@ public final class LocalAuthoritativeGitService implements AuthoritativeGitServi
         // Legacy minimal authorizations (targetRef==null) still enforce commit structure when real tree provided.
         boolean isTreePlaceholder = treeHash.equals(newCommitOid);
         if (!isTreePlaceholder) {
-            gate.ports.ProcessRunner.ProcRun cat = git.run(authRepo.path(), java.util.Map.of(), "cat-file", "-p", newCommitOid.hex());
+            gate.ports.infra.ProcessRunner.ProcRun cat = git.run(authRepo.path(), java.util.Map.of(), "cat-file", "-p", newCommitOid.hex());
             if (!cat.ok()) {
                 // object not yet in auth (should have been pushed by ensureObject); best-effort skip
             } else {
@@ -117,7 +117,7 @@ public final class LocalAuthoritativeGitService implements AuthoritativeGitServi
             // Do CAS git update: use git update-ref with --force-with-lease sim via git push --force-with-lease or direct update-ref
             // For local bare repo, we can use git update-ref with expected old value via `git update-ref <ref> <new> <old>`
             // This is atomic on filesystem.
-            gate.ports.ProcessRunner.ProcRun run;
+            gate.ports.infra.ProcessRunner.ProcRun run;
             if (!tipOpt.isPresent()) {
                 // create new ref, expect 0
                 run = git.run(authRepo.path(), java.util.Map.of(), "update-ref", targetRef, newCommitOid.hex(), "0000000000000000000000000000000000000000");

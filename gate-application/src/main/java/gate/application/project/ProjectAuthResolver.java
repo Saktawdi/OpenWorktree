@@ -4,7 +4,7 @@ import gate.domain.config.GateConfig;
 import gate.domain.git.RepoRef;
 import gate.domain.project.Project;
 import gate.domain.ticket.Ticket;
-import gate.ports.ProjectRepository;
+import gate.ports.store.ProjectRepository;
 import java.nio.file.Path;
 import java.util.Optional;
 

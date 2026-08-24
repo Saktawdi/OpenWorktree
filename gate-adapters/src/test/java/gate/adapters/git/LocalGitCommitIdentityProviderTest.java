@@ -5,7 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import gate.adapters.process.ProcessRunnerImpl;
-import gate.ports.Clock;
+import gate.ports.infra.Clock;
 import java.nio.file.Path;
 import java.time.Instant;
 import org.junit.jupiter.api.Test;

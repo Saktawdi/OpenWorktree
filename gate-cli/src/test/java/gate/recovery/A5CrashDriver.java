@@ -4,7 +4,7 @@ import gate.application.presubmit.PresubmitCommand;
 import gate.application.publish.PublishCommand;
 import gate.application.review.ReviewCommand;
 import gate.domain.git.RepoRef;
-import gate.ports.PublishProbe;
+import gate.ports.engine.PublishProbe;
 import gate.testkit.PersistentGate;
 import java.nio.file.Path;
 

@@ -10,7 +10,7 @@ import gate.adapters.store.JdbcGateTaskRepository;
 import gate.adapters.store.SqliteDataSourceFactory;
 import gate.domain.task.GateTask;
 import gate.domain.task.GateTaskStatus;
-import gate.ports.TaskRegistry;
+import gate.ports.task.TaskRegistry;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;

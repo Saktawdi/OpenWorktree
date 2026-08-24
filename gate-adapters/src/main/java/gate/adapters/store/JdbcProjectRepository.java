@@ -1,7 +1,7 @@
 package gate.adapters.store;
 
 import gate.domain.project.Project;
-import gate.ports.ProjectRepository;
+import gate.ports.store.ProjectRepository;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;

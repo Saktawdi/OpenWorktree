@@ -37,32 +37,32 @@ import gate.application.GateService;
 import gate.application.GateServiceImpl;
 import gate.domain.config.GateConfig;
 import gate.domain.policy.GatePolicy;
-import gate.ports.ApprovalStore;
-import gate.ports.AuditLog;
-import gate.ports.AuthoritativeGitService;
-import gate.ports.BlobStore;
-import gate.ports.Clock;
-import gate.ports.CommitPublisher;
-import gate.ports.CredentialRepository;
-import gate.ports.DbTransactionRunner;
-import gate.ports.EphemeralWorkspaceManager;
-import gate.ports.HookInstaller;
-import gate.ports.KmsService;
-import gate.ports.LockManager;
-import gate.ports.PreflightChecker;
-import gate.ports.PresubmitRepository;
-import gate.ports.ProcessRunner;
-import gate.ports.ProviderRepository;
-import gate.ports.PublishIntentRepository;
-import gate.ports.RefObserver;
-import gate.ports.ReviewEngineFactory;
-import gate.ports.ReviewResultRepository;
-import gate.ports.S3Store;
-import gate.ports.SnapshotCapture;
-import gate.ports.TaskClaimPort;
-import gate.ports.TicketRepository;
-import gate.ports.TopologyInitializer;
-import gate.ports.WorkspaceSyncer;
+import gate.ports.store.ApprovalStore;
+import gate.ports.store.AuditLog;
+import gate.ports.git.AuthoritativeGitService;
+import gate.ports.store.BlobStore;
+import gate.ports.infra.Clock;
+import gate.ports.git.CommitPublisher;
+import gate.ports.store.CredentialRepository;
+import gate.ports.infra.DbTransactionRunner;
+import gate.ports.infra.EphemeralWorkspaceManager;
+import gate.ports.git.HookInstaller;
+import gate.ports.infra.KmsService;
+import gate.ports.infra.LockManager;
+import gate.ports.engine.PreflightChecker;
+import gate.ports.store.PresubmitRepository;
+import gate.ports.infra.ProcessRunner;
+import gate.ports.store.ProviderRepository;
+import gate.ports.store.PublishIntentRepository;
+import gate.ports.git.RefObserver;
+import gate.ports.engine.ReviewEngineFactory;
+import gate.ports.store.ReviewResultRepository;
+import gate.ports.store.S3Store;
+import gate.ports.git.SnapshotCapture;
+import gate.ports.task.TaskClaimPort;
+import gate.ports.store.TicketRepository;
+import gate.ports.git.TopologyInitializer;
+import gate.ports.git.WorkspaceSyncer;
 import java.nio.file.Path;
 import java.time.Duration;
 import javax.sql.DataSource;
@@ -99,14 +99,14 @@ public final class GateRuntime {
     // Phase3
     private final JdbcGateTaskRepository gateTaskRepository;
     private final TaskClaimPort taskClaimPort;
-    private final gate.ports.NonceStore nonceStore;
+    private final gate.ports.store.NonceStore nonceStore;
     private final AuthoritativeGitService authoritativeGitService;
     private final EphemeralWorkspaceManager ephemeralWorkspaceManager;
     private final S3Store s3Store;
     private final KmsService kmsService;
-    private final gate.ports.AgentConfigRepository agentConfigRepository;
-    private final gate.ports.SessionRepository sessionRepository;
-    private final gate.ports.ProjectRepository projectRepository;
+    private final gate.ports.store.AgentConfigRepository agentConfigRepository;
+    private final gate.ports.store.SessionRepository sessionRepository;
+    private final gate.ports.store.ProjectRepository projectRepository;
     private final WorkspaceSyncer workspaceSyncer;
 
     public GateRuntime(GateConfig config, String gitExecutable, Path envFile) {
@@ -161,7 +161,7 @@ public final class GateRuntime {
                 : new ManualReviewEngineFactory(blobStore);
         this.gateService = new GateServiceImpl(config, snapshotCapture, commitPublisher, refObserver,
                 approvalStore, reviewEngineFactory, new GatePolicy(), ticketRepository, presubmitRepository,
-                reviewResultRepository, publishIntentRepository, blobStore, auditLog, lockManager, txRunner, clock, gate.ports.PublishProbe.NOOP, authoritativeGitService,
+                reviewResultRepository, publishIntentRepository, blobStore, auditLog, lockManager, txRunner, clock, gate.ports.engine.PublishProbe.NOOP, authoritativeGitService,
                 projectRepository, workspaceSyncer,
                 new gate.adapters.git.LocalGitCommitIdentityProvider(git, clock,
                         config.publishIdentity().name(), config.publishIdentity().email()));
@@ -188,16 +188,16 @@ public final class GateRuntime {
     public CredentialRepository credentials() { return credentials; }
     // Phase3 getters – expose PORT types, not implementation, to keep composition root sealed
     public JdbcGateTaskRepository gateTaskRepository() { return gateTaskRepository; }
-    public gate.ports.TaskRegistry taskRegistry() { return gateTaskRepository; }
+    public gate.ports.task.TaskRegistry taskRegistry() { return gateTaskRepository; }
     public TaskClaimPort taskClaimPort() { return taskClaimPort; }
-    public gate.ports.NonceStore nonceStore() { return nonceStore; }
+    public gate.ports.store.NonceStore nonceStore() { return nonceStore; }
     public AuthoritativeGitService authoritativeGitService() { return authoritativeGitService; }
     public EphemeralWorkspaceManager ephemeralWorkspaceManager() { return ephemeralWorkspaceManager; }
     public S3Store s3Store() { return s3Store; }
     public KmsService kmsService() { return kmsService; }
-    public gate.ports.AgentConfigRepository agentConfigRepository() { return agentConfigRepository; }
-    public gate.ports.SessionRepository sessionRepository() { return sessionRepository; }
-    public gate.ports.ProjectRepository projectRepository() { return projectRepository; }
+    public gate.ports.store.AgentConfigRepository agentConfigRepository() { return agentConfigRepository; }
+    public gate.ports.store.SessionRepository sessionRepository() { return sessionRepository; }
+    public gate.ports.store.ProjectRepository projectRepository() { return projectRepository; }
     public WorkspaceSyncer workspaceSyncer() { return workspaceSyncer; }
 
     /** Seeds a provider required by the review-result foreign key. Safe to call repeatedly. */

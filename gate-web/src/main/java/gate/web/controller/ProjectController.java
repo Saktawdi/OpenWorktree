@@ -8,11 +8,11 @@ import gate.domain.git.ObjectId;
 import gate.domain.git.RepoRef;
 import gate.domain.project.Project;
 import gate.domain.ticket.Ticket;
-import gate.ports.ProcessRunner;
-import gate.ports.ProjectRepository;
-import gate.ports.TicketRepository;
-import gate.ports.TopologyInitializer;
-import gate.ports.WorkspaceSyncer;
+import gate.ports.infra.ProcessRunner;
+import gate.ports.store.ProjectRepository;
+import gate.ports.store.TicketRepository;
+import gate.ports.git.TopologyInitializer;
+import gate.ports.git.WorkspaceSyncer;
 import gate.web.util.Json;
 import io.javalin.Javalin;
 import io.javalin.http.Context;
@@ -41,11 +41,11 @@ public final class ProjectController implements WebController {
     private final GateConfig config;
     private final WorkspaceSyncer workspaceSyncer;
     private final GitCli git;
-    private final gate.ports.Clock clock;
+    private final gate.ports.infra.Clock clock;
 
     public ProjectController(ProjectRepository projects, TicketRepository tickets,
                              TopologyInitializer topologyInitializer, GateConfig config,
-                             WorkspaceSyncer workspaceSyncer, GitCli git, gate.ports.Clock clock) {
+                             WorkspaceSyncer workspaceSyncer, GitCli git, gate.ports.infra.Clock clock) {
         this.projects = projects;
         this.tickets = tickets;
         this.topologyInitializer = topologyInitializer;
@@ -109,7 +109,7 @@ public final class ProjectController implements WebController {
         }
         boolean initGit = Boolean.parseBoolean(String.valueOf(req.getOrDefault("init_git", "false")));
         if (initGit && !Files.exists(workspace.resolve(".git"))) {
-            gate.ports.ProcessRunner.ProcRun r = git.run(workspace, Map.of(), "init", "-b", "main");
+            gate.ports.infra.ProcessRunner.ProcRun r = git.run(workspace, Map.of(), "init", "-b", "main");
             if (!r.ok()) {
                 r = git.run(workspace, Map.of(), "init");
             }

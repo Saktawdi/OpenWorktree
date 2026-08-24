@@ -5,7 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import gate.domain.publish.ApprovalId;
-import gate.ports.ProcessRunner;
+import gate.ports.infra.ProcessRunner;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Callable;
