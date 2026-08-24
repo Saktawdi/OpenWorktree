@@ -24,6 +24,9 @@ import gate.ports.TicketRepository;
 import gate.ports.TopologyInitializer;
 import gate.domain.git.RepoRef;
 import gate.adapters.git.GitCli;
+import io.javalin.Javalin;
+import io.javalin.http.Context;
+import io.javalin.http.sse.SseClient;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -36,16 +39,11 @@ import java.util.Locale;
 import java.util.Map;
 
 /**
- * The S1 read-only + synchronous {@code /api/*} routes (执行文档-后端-web §4.1, §10 S1).
- *
- * <p>Each route is a thin driver over {@link GateService} / the repositories, returning structured
- * data that {@link ApiHandler} serialises to JSON. It reuses the exact application types the MCP
- * dispatcher and CLI use — no verdict is minted here, no exit code is known here (§5.4). The JSON
- * field shapes mirror {@code McpToolDispatcher} so the two driver adapters stay contract-compatible.
- *
- * <p>Async operations (review/publish) are NOT here — they land in S2 as {@code GateTask} + SSE.
+ * Main API Route Registrar using Javalin.
  */
 public final class ApiRoutes {
+
+    private static final int EOL_NOISE_THRESHOLD_CHARS = 10_000;
 
     private final GateService gateService;
     private final MetricsService metricsService;
@@ -68,9 +66,15 @@ public final class ApiRoutes {
     private final gate.web.project.RepoViewRoutes repoViewRoutes;
     private final gate.web.ticket.TicketRoutes ticketRoutes;
     private final gate.web.session.SessionRoutes sessionRoutes;
+    private final gate.ports.SessionRepository sessions;
     private final SettingsRoutes settingsRoutes;
+    private final SseHandler sseHandler;
+    private final SessionSseHandler sessionSseHandler;
 
-    ApiRoutes(WebComponents c) {
+    public record Response(int status, Object body) {
+    }
+
+    public ApiRoutes(WebComponents c) {
         this.gateService = c.gateService();
         this.metricsService = c.metricsService();
         this.topologyInitializer = c.topologyInitializer();
@@ -96,275 +100,159 @@ public final class ApiRoutes {
         this.sessionRoutes = new gate.web.session.SessionRoutes(c.agentConfigRepository(),
                 c.sessionRepository(), c.agentSessionPort(), tickets, clock,
                 new gate.web.session.SessionModelCatalog(), c.credentials());
+        this.sessions = c.sessionRepository();
         this.settingsRoutes = new SettingsRoutes(c.gateToml());
+        this.sseHandler = new SseHandler(c.taskRegistry());
+        this.sessionSseHandler = new SessionSseHandler(c.agentSessionPort(), c.sessionRepository());
     }
 
-    /** A resolved response: HTTP status + a JSON-serialisable body. */
-    public record Response(int status, Object body) {
+    public void register(Javalin app) {
+        // Status & Runtime
+        app.get("/api/status", ctx -> respond(ctx, statusRoutes.status()));
+        app.get("/api/runtime", ctx -> respond(ctx, statusRoutes.runtime()));
+        app.get("/api/agent-runtimes", ctx -> respond(ctx, statusRoutes.agentRuntimes()));
+        app.get("/api/config", ctx -> respond(ctx, configView()));
+
+        // Workspaces & Projects
+        app.get("/api/workspaces", ctx -> respond(ctx, projectRoutes.workspaces(null)));
+        app.post("/api/workspaces", ctx -> respond(ctx, projectRoutes.workspaces(str(Json.parseObject(ctx.body()), "path"))));
+
+        app.get("/api/projects", ctx -> respond(ctx, projectRoutes.projectList()));
+        app.post("/api/projects", ctx -> respond(ctx, projectCreate(ctx.body())));
+        app.put("/api/projects/{id}", ctx -> respond(ctx, projectUpdate(ctx.pathParam("id"), ctx.body())));
+        app.delete("/api/projects/{id}", ctx -> respond(ctx, projectDelete(ctx.pathParam("id"))));
+        app.post("/api/projects/{id}/workspace-sync", ctx -> respond(ctx, projectRoutes.workspaceSync(ctx.pathParam("id"))));
+
+        // Project Repo & Tree View
+        app.get("/api/projects/{id}/repo", ctx -> respond(ctx, repoViewRoutes.repoView(ctx.pathParam("id"))));
+        app.get("/api/projects/{id}/tree", ctx -> respond(ctx, repoViewRoutes.treeView(ctx.pathParam("id"), List.of())));
+        app.get("/api/projects/{id}/tree/<path>", ctx -> {
+            String pathParam = ctx.pathParam("path");
+            String[] segments = pathParam.split("/");
+            respond(ctx, repoViewRoutes.treeView(ctx.pathParam("id"), List.of(segments)));
+        });
+
+        // Project-scoped Tickets
+        app.get("/api/projects/{projectId}/tickets", ctx -> {
+            ticketRoutes.requireProject(ctx.pathParam("projectId"));
+            respond(ctx, ticketRoutes.ticketList(ctx.pathParam("projectId")));
+        });
+        app.post("/api/projects/{projectId}/tickets", ctx -> {
+            ticketRoutes.requireProject(ctx.pathParam("projectId"));
+            respond(ctx, ticketRoutes.ticketCreate(ctx.body(), ctx.pathParam("projectId")));
+        });
+        app.get("/api/projects/{projectId}/tickets/{ticketNo}", ctx ->
+                respond(ctx, ticketRoutes.ticketDetail(ctx.pathParam("projectId"), ctx.pathParam("ticketNo"))));
+        app.patch("/api/projects/{projectId}/tickets/{ticketNo}", ctx ->
+                respond(ctx, ticketRoutes.ticketUpdate(ctx.pathParam("projectId"), ctx.pathParam("ticketNo"), ctx.body())));
+        app.put("/api/projects/{projectId}/tickets/{ticketNo}", ctx ->
+                respond(ctx, ticketRoutes.ticketUpdate(ctx.pathParam("projectId"), ctx.pathParam("ticketNo"), ctx.body())));
+
+        // Settings & MCP
+        app.get("/api/settings/gate-toml", ctx -> respond(ctx, settingsRoutes.gateTomlView()));
+        app.put("/api/settings/gate-toml", ctx -> respond(ctx, settingsRoutes.gateTomlUpdate(Json.parseObject(ctx.body()))));
+        app.get("/api/mcp/status", ctx -> respond(ctx, settingsRoutes.mcpStatus()));
+
+        // Providers
+        app.get("/api/providers", ctx -> respond(ctx, providerList()));
+        app.post("/api/providers", ctx -> respond(ctx, providerCreate(ctx.body())));
+        app.put("/api/providers/{id}", ctx -> respond(ctx, providerUpdate(ctx.pathParam("id"), ctx.body())));
+        app.delete("/api/providers/{id}", ctx -> respond(ctx, providerDelete(ctx.pathParam("id"))));
+        app.put("/api/providers/{id}/models", ctx -> respond(ctx, providerModelsUpdate(ctx.pathParam("id"), ctx.body())));
+        app.post("/api/providers/{id}/models/fetch", ctx -> respond(ctx, providerModelsFetch(ctx.pathParam("id"))));
+
+        // Reconcile & Metrics
+        app.post("/api/reconcile", ctx -> respond(ctx, reconcile(ctx.body())));
+        app.get("/api/metrics", ctx -> respond(ctx, metrics()));
+        app.get("/api/metrics/h1", ctx -> respond(ctx, metricsH1()));
+
+        // Tickets (Global)
+        app.get("/api/tickets", ctx -> respond(ctx, ticketRoutes.ticketList()));
+        app.post("/api/tickets", ctx -> respond(ctx, ticketRoutes.ticketCreate(ctx.body())));
+        app.get("/api/tickets/{ticketNo}", ctx -> respond(ctx, ticketRoutes.ticketDetail(ctx.pathParam("ticketNo"))));
+        app.patch("/api/tickets/{ticketNo}", ctx ->
+                respond(ctx, ticketRoutes.ticketUpdate(ctx.pathParam("ticketNo"), ctx.body())));
+        app.put("/api/tickets/{ticketNo}", ctx ->
+                respond(ctx, ticketRoutes.ticketUpdate(ctx.pathParam("ticketNo"), ctx.body())));
+        app.get("/api/tickets/{ticketNo}/diff", ctx -> respond(ctx, workingDiff(ctx.pathParam("ticketNo"))));
+        app.post("/api/tickets/{ticketNo}/presubmit", ctx -> respond(ctx, presubmit(ctx.pathParam("ticketNo"))));
+        app.get("/api/tickets/{ticketNo}/review-result", ctx -> respond(ctx, reviewResult(ctx.pathParam("ticketNo"))));
+        app.get("/api/tickets/{ticketNo}/presubmits", ctx -> respond(ctx, presubmitList(ctx.pathParam("ticketNo"))));
+        app.get("/api/tickets/{ticketNo}/presubmit/{round}/diff", ctx ->
+                respond(ctx, presubmitDiff(ctx.pathParam("ticketNo"), ctx.pathParam("round"))));
+
+        // Tasks (Async review / publish)
+        app.post("/api/tickets/{ticketNo}/review", ctx -> respond(ctx, review(ctx.pathParam("ticketNo"), ctx.body())));
+        app.post("/api/tickets/{ticketNo}/publish", ctx -> respond(ctx, publish(ctx.pathParam("ticketNo"), ctx.body())));
+        app.get("/api/tasks/{id}", ctx -> respond(ctx, taskDetail(ctx.pathParam("id"))));
+
+        // Agent Configs
+        app.get("/api/agent-configs", ctx -> respond(ctx, sessionRoutes.agentConfigList()));
+        app.post("/api/agent-configs", ctx -> respond(ctx, sessionRoutes.agentConfigCreate(ctx.body())));
+        app.get("/api/agent-configs/{id}", ctx -> respond(ctx, sessionRoutes.agentConfigDetail(ctx.pathParam("id"))));
+        app.put("/api/agent-configs/{id}", ctx -> respond(ctx, sessionRoutes.agentConfigUpdate(ctx.pathParam("id"), ctx.body())));
+        app.delete("/api/agent-configs/{id}", ctx -> respond(ctx, sessionRoutes.agentConfigDelete(ctx.pathParam("id"))));
+        app.get("/api/agent-configs/{id}/sessions", ctx -> respond(ctx, sessionRoutes.agentConfigSessions(ctx.pathParam("id"))));
+
+        // Sessions
+        app.get("/api/tickets/{ticketNo}/sessions", ctx -> respond(ctx, sessionRoutes.ticketSessions(ctx.pathParam("ticketNo"))));
+        app.post("/api/tickets/{ticketNo}/sessions", ctx -> respond(ctx, sessionRoutes.sessionCreate(ctx.pathParam("ticketNo"), ctx.body())));
+        app.get("/api/sessions/{id}", ctx -> respond(ctx, sessionRoutes.sessionDetail(ctx.pathParam("id"))));
+        app.patch("/api/sessions/{id}", ctx ->
+                respond(ctx, sessionRoutes.sessionPatch(ctx.pathParam("id"), ctx.body())));
+        app.delete("/api/sessions/{id}", ctx -> respond(ctx, sessionRoutes.sessionDelete(ctx.pathParam("id"))));
+        app.get("/api/sessions/{id}/messages", ctx -> respond(ctx, sessionRoutes.sessionHistory(ctx.pathParam("id"))));
+        app.post("/api/sessions/{id}/messages", ctx -> respond(ctx, sessionRoutes.sessionSend(ctx.pathParam("id"), ctx.body())));
+        app.post("/api/sessions/{id}/abort", ctx -> respond(ctx, sessionRoutes.sessionAbort(ctx.pathParam("id"))));
+        app.post("/api/sessions/{id}/model", ctx -> respond(ctx, sessionRoutes.sessionModelSet(ctx.pathParam("id"), ctx.body())));
+        app.get("/api/sessions/{id}/models", ctx -> respond(ctx, sessionRoutes.sessionModels(ctx.pathParam("id"))));
+        app.get("/api/sessions/{id}/permissions", ctx -> respond(ctx, sessionRoutes.permissionList(ctx.pathParam("id"))));
+        app.post("/api/sessions/{id}/permissions/{permissionId}", ctx ->
+                respond(ctx, sessionRoutes.sessionPermissionRespond(ctx.pathParam("id"), ctx.pathParam("permissionId"), ctx.body())));
+        app.get("/api/agents/busy", ctx -> respond(ctx, sessionRoutes.agentsBusy()));
+
+        // SSE endpoints (handle both standard SSE and requests without strict Accept header)
+        app.get("/api/tasks/{id}/events", ctx -> {
+            String id = ctx.pathParam("id");
+            if (taskRegistry.find(id).isEmpty()) {
+                ctx.status(io.javalin.http.HttpStatus.NOT_FOUND);
+                ctx.contentType("application/json; charset=utf-8");
+                ctx.result(Json.error(GateErrorCode.USAGE.code(), "NOT_FOUND", "no such task: " + id, null));
+                return;
+            }
+            startSse(ctx, client -> sseHandler.handle(client, id));
+        });
+
+        app.get("/api/sessions/{id}/events", ctx -> {
+            String id = ctx.pathParam("id");
+            if (sessions.find(id).isEmpty()) {
+                ctx.status(io.javalin.http.HttpStatus.NOT_FOUND);
+                ctx.contentType("application/json; charset=utf-8");
+                ctx.result(Json.error(GateErrorCode.USAGE.code(), "NOT_FOUND", "no such session: " + id, null));
+                return;
+            }
+            startSse(ctx, client -> sessionSseHandler.handle(client, id));
+        });
     }
 
-    /**
-     * Routes an authorised {@code /api/*} request. Throws {@link GateException} for gate-level
-     * failures ({@link ApiHandler} maps to HTTP); returns a 404 {@link Response} for unknown paths.
-     */
-    Response route(String method, String path, String requestBody) {
-        String[] seg = split(path);
-        // seg[0] == "api"
+    private static void startSse(Context ctx, java.util.function.Consumer<SseClient> consumer) {
+        ctx.res().setStatus(200);
+        ctx.res().setCharacterEncoding("UTF-8");
+        ctx.res().setContentType("text/event-stream");
+        ctx.res().addHeader("Connection", "close");
+        ctx.res().addHeader("Cache-Control", "no-cache");
+        ctx.res().addHeader("X-Accel-Buffering", "no");
+        try {
+            ctx.res().flushBuffer();
+        } catch (IOException ignored) {
+        }
+        SseClient client = new SseClient(ctx);
+        consumer.accept(client);
+    }
 
-        if (seg.length == 2 && seg[1].equals("status") && method.equals("GET")) {
-            return statusRoutes.status();
-        }
-        // V5 web console: real runtime environment (服务状态运行环境).
-        if (seg.length == 2 && seg[1].equals("runtime") && method.equals("GET")) {
-            return statusRoutes.runtime();
-        }
-        // Agent settings: detected local CLIs plus models exposed by the CLI itself.
-        if (seg.length == 2 && seg[1].equals("agent-runtimes") && method.equals("GET")) {
-            return statusRoutes.agentRuntimes();
-        }
-        // V5 web console: codex-style workspace picker (POST carries the path — no query-string seam).
-        if (seg.length == 2 && seg[1].equals("workspaces")) {
-            if (method.equals("GET")) {
-                return projectRoutes.workspaces(null);
-            }
-            if (method.equals("POST")) {
-                return projectRoutes.workspaces(str(parseObject(requestBody), "path"));
-            }
-        }
-        // V5 web console: project registry (select workspace → create project).
-        if (seg.length == 2 && seg[1].equals("projects")) {
-            if (method.equals("GET")) {
-                return projectRoutes.projectList();
-            }
-            if (method.equals("POST")) {
-                return projectCreate(requestBody);
-            }
-        }
-        if (seg.length == 3 && seg[1].equals("projects")) {
-            if (method.equals("PUT")) {
-                return projectUpdate(seg[2], requestBody);
-            }
-            if (method.equals("DELETE")) {
-                return projectDelete(seg[2]);
-            }
-        }
-        // 发布后工作区同步（存量补同步 / DEFERRED 重试入口）：权威库目标分支 tip 尽力快进回写工作区。
-        if (seg.length == 4 && seg[1].equals("projects") && seg[3].equals("workspace-sync")
-                && method.equals("POST")) {
-            return projectRoutes.workspaceSync(seg[2]);
-        }
-        // 项目 → 仓库视图: branch/commit graph + lazy file tree of the workspace repo.
-        if (seg.length == 4 && seg[1].equals("projects") && seg[3].equals("repo")
-                && method.equals("GET")) {
-            return repoViewRoutes.repoView(seg[2]);
-        }
-        if (seg.length == 4 && seg[1].equals("projects") && seg[3].equals("tree")
-                && method.equals("GET")) {
-            return repoViewRoutes.treeView(seg[2], List.of());
-        }
-        if (seg.length >= 5 && seg[1].equals("projects") && seg[3].equals("tree")
-                && method.equals("GET")) {
-            return repoViewRoutes.treeView(seg[2],
-                    List.of(java.util.Arrays.copyOfRange(seg, 4, seg.length)));
-        }
-        // Project-scoped ticket board: one project owns one board with N tickets.
-        if (seg.length == 4 && seg[1].equals("projects") && seg[3].equals("tickets")) {            ticketRoutes.requireProject(seg[2]);
-            if (method.equals("GET")) {
-                return ticketRoutes.ticketList(seg[2]);
-            }
-            if (method.equals("POST")) {
-                return ticketRoutes.ticketCreate(requestBody, seg[2]);
-            }
-        }
-        if (seg.length == 5 && seg[1].equals("projects") && seg[3].equals("tickets")
-                && method.equals("GET")) {
-            return ticketRoutes.ticketDetail(seg[2], seg[4]);
-        }
-        if (seg.length == 5 && seg[1].equals("projects") && seg[3].equals("tickets")
-                && (method.equals("PATCH") || method.equals("PUT"))) {
-            return ticketRoutes.ticketUpdate(seg[2], seg[4], requestBody);
-        }
-        if (seg.length == 5 && seg[1].equals("providers") && seg[3].equals("models")
-                && seg[4].equals("fetch") && method.equals("POST")) {
-            return providerModelsFetch(seg[2]);
-        }
-        if (seg.length == 2 && seg[1].equals("reconcile") && method.equals("POST")) {
-            return reconcile(requestBody);
-        }
-        if (seg.length == 2 && seg[1].equals("metrics") && method.equals("GET")) {
-            return metrics();
-        }
-        if (seg.length == 3 && seg[1].equals("metrics") && seg[2].equals("h1") && method.equals("GET")) {
-            return metricsH1();
-        }
-        if (seg.length == 2 && seg[1].equals("config") && method.equals("GET")) {
-            return configView();
-        }
-        // V5 设置中心: gate.toml 参数视图/写回 + gate MCP 工具状态。
-        if (seg.length == 3 && seg[1].equals("settings") && seg[2].equals("gate-toml")) {
-            if (method.equals("GET")) {
-                return settingsRoutes.gateTomlView();
-            }
-            if (method.equals("PUT")) {
-                return settingsRoutes.gateTomlUpdate(parseObject(requestBody));
-            }
-        }
-        if (seg.length == 3 && seg[1].equals("mcp") && seg[2].equals("status") && method.equals("GET")) {
-            return settingsRoutes.mcpStatus();
-        }
-        if (seg.length == 2 && seg[1].equals("providers") && method.equals("GET")) {
-            return providerList();
-        }
-        if (seg.length == 2 && seg[1].equals("providers") && method.equals("POST")) {
-            return providerCreate(requestBody);
-        }
-        if (seg.length == 3 && seg[1].equals("providers")) {
-            if (method.equals("PUT")) {
-                return providerUpdate(seg[2], requestBody);
-            }
-            if (method.equals("DELETE")) {
-                return providerDelete(seg[2]);
-            }
-        }
-        if (seg.length == 4 && seg[1].equals("providers") && seg[3].equals("models")
-                && method.equals("PUT")) {
-            return providerModelsUpdate(seg[2], requestBody);
-        }
-        if (seg.length == 2 && seg[1].equals("tickets")) {
-            if (method.equals("GET")) {
-                return ticketRoutes.ticketList();
-            }
-            if (method.equals("POST")) {
-                return ticketRoutes.ticketCreate(requestBody);
-            }
-        }
-        if (seg.length == 3 && seg[1].equals("tickets") && method.equals("GET")) {
-            return ticketRoutes.ticketDetail(seg[2]);
-        }
-        // V5: editable ticket metadata (priority/title/queue stage).
-        if (seg.length == 3 && seg[1].equals("tickets") && (method.equals("PATCH") || method.equals("PUT"))) {
-            return ticketRoutes.ticketUpdate(seg[2], requestBody);
-        }
-        // V5: live working-tree diff of the ticket clone (replaces the UI's sample diff).
-        if (seg.length == 4 && seg[1].equals("tickets") && seg[3].equals("diff")
-                && method.equals("GET")) {
-            return workingDiff(seg[2]);
-        }
-        if (seg.length == 4 && seg[1].equals("tickets") && seg[3].equals("presubmit")
-                && method.equals("POST")) {
-            return presubmit(seg[2]);
-        }
-        if (seg.length == 4 && seg[1].equals("tickets") && seg[3].equals("review-result")
-                && method.equals("GET")) {
-            return reviewResult(seg[2]);
-        }
-        // Multi-round review history: every captured presubmit round for the ticket.
-        if (seg.length == 4 && seg[1].equals("tickets") && seg[3].equals("presubmits")
-                && method.equals("GET")) {
-            return presubmitList(seg[2]);
-        }
-        // /api/tickets/{no}/presubmit/{round}/diff
-        if (seg.length == 6 && seg[1].equals("tickets") && seg[3].equals("presubmit")
-                && seg[5].equals("diff") && method.equals("GET")) {
-            return presubmitDiff(seg[2], seg[4]);
-        }
-
-        // S2 async gate operations (§4.1, §4.3): 202 + task id, SSE follows on /api/tasks/{id}/events.
-        if (seg.length == 4 && seg[1].equals("tickets") && seg[3].equals("review")
-                && method.equals("POST")) {
-            return review(seg[2], requestBody);
-        }
-        if (seg.length == 4 && seg[1].equals("tickets") && seg[3].equals("publish")
-                && method.equals("POST")) {
-            return publish(seg[2], requestBody);
-        }
-        if (seg.length == 3 && seg[1].equals("tasks") && method.equals("GET")) {
-            return taskDetail(seg[2]);
-        }
-
-        // S3 AgentConfig CRUD + session history (执行文档-后端-web §4.1).
-        if (seg.length == 2 && seg[1].equals("agent-configs")) {
-            if (method.equals("GET")) {
-                return sessionRoutes.agentConfigList();
-            }
-            if (method.equals("POST")) {
-                return sessionRoutes.agentConfigCreate(requestBody);
-            }
-        }
-        if (seg.length == 3 && seg[1].equals("agent-configs")) {
-            if (method.equals("GET")) {
-                return sessionRoutes.agentConfigDetail(seg[2]);
-            }
-            if (method.equals("PUT")) {
-                return sessionRoutes.agentConfigUpdate(seg[2], requestBody);
-            }
-            if (method.equals("DELETE")) {
-                return sessionRoutes.agentConfigDelete(seg[2]);
-            }
-        }
-        if (seg.length == 4 && seg[1].equals("agent-configs") && seg[3].equals("sessions")
-                && method.equals("GET")) {
-            return sessionRoutes.agentConfigSessions(seg[2]);
-        }
-
-        // S4 session routes (执行文档-后端-web §4.1 会话路由约定).
-        if (seg.length == 4 && seg[1].equals("tickets") && seg[3].equals("sessions")) {
-            if (method.equals("GET")) {
-                return sessionRoutes.ticketSessions(seg[2]);
-            }
-            if (method.equals("POST")) {
-                return sessionRoutes.sessionCreate(seg[2], requestBody);
-            }
-        }
-        if (seg.length == 3 && seg[1].equals("sessions")) {
-            if (method.equals("GET")) {
-                return sessionRoutes.sessionDetail(seg[2]);
-            }
-            // Workbench session-list metadata (title/archived) and row removal.
-            if (method.equals("PATCH")) {
-                return sessionRoutes.sessionPatch(seg[2], requestBody);
-            }
-            if (method.equals("DELETE")) {
-                return sessionRoutes.sessionDelete(seg[2]);
-            }
-        }
-        if (seg.length == 4 && seg[1].equals("sessions") && seg[3].equals("messages")) {
-            if (method.equals("GET")) {
-                return sessionRoutes.sessionHistory(seg[2]);
-            }
-            if (method.equals("POST")) {
-                return sessionRoutes.sessionSend(seg[2], requestBody);
-            }
-        }
-        if (seg.length == 4 && seg[1].equals("sessions") && seg[3].equals("abort")
-                && method.equals("POST")) {
-            return sessionRoutes.sessionAbort(seg[2]);
-        }
-        // Live model / reasoning-effort switch (会话内实时切换, OpenChamber-style per-session picker).
-        if (seg.length == 4 && seg[1].equals("sessions") && seg[3].equals("model")
-                && method.equals("POST")) {
-            return sessionRoutes.sessionModelSet(seg[2], requestBody);
-        }
-        if (seg.length == 4 && seg[1].equals("sessions") && seg[3].equals("models")
-                && method.equals("GET")) {
-            return sessionRoutes.sessionModels(seg[2]);
-        }
-        // Permission asks: pending snapshot + per-request replies (opencode sessions).
-        if (seg.length == 4 && seg[1].equals("sessions") && seg[3].equals("permissions")
-                && method.equals("GET")) {
-            return sessionRoutes.permissionList(seg[2]);
-        }
-        if (seg.length == 5 && seg[1].equals("sessions") && seg[3].equals("permissions")
-                && method.equals("POST")) {
-            return sessionRoutes.sessionPermissionRespond(seg[2], seg[4], requestBody);
-        }
-        // 顶栏运行中的智能体数量：GET /api/agents/busy
-        if (seg.length == 3 && seg[1].equals("agents") && seg[2].equals("busy")
-                && method.equals("GET")) {
-            return sessionRoutes.agentsBusy();
-        }
-
-        return new Response(404, null); // ApiHandler renders the NOT_FOUND envelope
+    private static void respond(Context ctx, Response res) {
+        ctx.status(res.status());
+        ctx.json(res.body());
     }
 
     // --- presubmit (synchronous) ----------------------------------------------------------------
@@ -411,12 +299,6 @@ public final class ApiRoutes {
         return new Response(200, body);
     }
 
-    /**
-     * GET /api/tickets/{no}/presubmits — every round captured so far, ascending. {@code
-     * changed_count} is derived from the diff blob (number of {@code "diff --git a/"} headers), the
-     * same blob the round-diff endpoint reads back. A ticket with no rounds yet is an empty list,
-     * not an error — the console renders it as "no review history".
-     */
     private Response presubmitList(String ticketNo) {
         if (tickets.find(ticketNo).isEmpty()) {
             throw new GateException(GateErrorCode.USAGE, "no such ticket: " + ticketNo);
@@ -442,7 +324,6 @@ public final class ApiRoutes {
         return new Response(200, body);
     }
 
-    /** Non-overlapping occurrence count ({@link String#split} would need quoting + edge care). */
     private static int countOccurrences(String text, String needle) {
         int count = 0;
         for (int i = text.indexOf(needle); i >= 0; i = text.indexOf(needle, i + needle.length())) {
@@ -451,7 +332,7 @@ public final class ApiRoutes {
         return count;
     }
 
-    // --- review-result (reject feedback) --------------------------------------------------------
+    // --- review-result --------------------------------------------------------------------------
 
     private Response reviewResult(String ticketNo) {
         var presubmitRow = presubmits.findLatest(ticketNo).orElseThrow(() -> new GateException(
@@ -471,17 +352,14 @@ public final class ApiRoutes {
         return new Response(200, body);
     }
 
-    // --- S2 async tasks: review / publish / task detail ------------------------------------------
+    // --- S2 async tasks -------------------------------------------------------------------------
 
     private Response review(String ticketNo, String requestBody) {
-        Map<String, Object> req = parseObject(requestBody);
+        Map<String, Object> req = Json.parseObject(requestBody);
         Integer round = null;
         if (req.containsKey("round") && req.get("round") != null) {
             round = Integer.parseInt(req.get("round").toString());
         }
-        // Tri-state: absent/null human_pass stays null ("nobody decided yet"), so with no engine
-        // configured the round degrades fail-closed to REQUIRES_HUMAN instead of collapsing a
-        // missing decision into a false → auto-reject (架构规范 I7; handled in ReviewHandler).
         Boolean humanPass = req.get("human_pass") == null ? null
                 : Boolean.parseBoolean(req.get("human_pass").toString());
         String note = str(req, "note");
@@ -492,7 +370,7 @@ public final class ApiRoutes {
     }
 
     private Response publish(String ticketNo, String requestBody) {
-        Map<String, Object> req = parseObject(requestBody);
+        Map<String, Object> req = Json.parseObject(requestBody);
         Integer round = null;
         if (req.containsKey("round") && req.get("round") != null) {
             round = Integer.parseInt(req.get("round").toString());
@@ -523,12 +401,12 @@ public final class ApiRoutes {
         return m;
     }
 
-    // --- reconcile ------------------------------------------------------------------------------
+    // --- reconcile & metrics --------------------------------------------------------------------
 
     private Response reconcile(String requestBody) {
         String ticketNo = null;
         if (requestBody != null && !requestBody.isBlank()) {
-            ticketNo = str(parseObject(requestBody), "ticket_no");
+            ticketNo = str(Json.parseObject(requestBody), "ticket_no");
         }
         ReconcileResult r = gateService.reconcile(new ReconcileCommand(ticketNo));
         List<Map<String, Object>> outcomes = new ArrayList<>();
@@ -548,8 +426,6 @@ public final class ApiRoutes {
         body.put("outcomes", outcomes);
         return new Response(200, body);
     }
-
-    // --- metrics --------------------------------------------------------------------------------
 
     private Response metrics() {
         List<Map<String, Object>> rows = new ArrayList<>();
@@ -587,7 +463,7 @@ public final class ApiRoutes {
         return new Response(200, body);
     }
 
-    // --- config (redacted) / providers ----------------------------------------------------------
+    // --- config / providers ---------------------------------------------------------------------
 
     private Response configView() {
         Map<String, Object> body = new LinkedHashMap<>();
@@ -604,7 +480,6 @@ public final class ApiRoutes {
             web.put("allowed_origins", config.web().allowedOrigins());
             body.put("web", web);
         }
-        // Deliberately NO api_key / base_url secrets (脱敏, §4.1).
         return new Response(200, body);
     }
 
@@ -631,7 +506,7 @@ public final class ApiRoutes {
     }
 
     private Response providerCreate(String requestBody) {
-        Map<String, Object> req = parseObject(requestBody);
+        Map<String, Object> req = Json.parseObject(requestBody);
         String id = required(req, "id");
         if (providers.find(id).isPresent()) {
             throw new GateException(GateErrorCode.USAGE, "provider already exists: " + id);
@@ -644,7 +519,7 @@ public final class ApiRoutes {
     private Response providerUpdate(String id, String requestBody) {
         ProviderRepository.ProviderRow existing = providers.find(id).orElseThrow(() ->
                 new GateException(GateErrorCode.USAGE, "no such provider: " + id));
-        ProviderRepository.ProviderRow row = parseProvider(parseObject(requestBody), id, existing);
+        ProviderRepository.ProviderRow row = parseProvider(Json.parseObject(requestBody), id, existing);
         providers.upsert(row, clock.now());
         return providerDetail(id);
     }
@@ -666,7 +541,7 @@ public final class ApiRoutes {
         if (providers.find(id).isEmpty()) {
             throw new GateException(GateErrorCode.USAGE, "no such provider: " + id);
         }
-        Map<String, Object> req = parseObject(requestBody);
+        Map<String, Object> req = Json.parseObject(requestBody);
         Object rawModels = req.get("models");
         if (!(rawModels instanceof List<?> list)) {
             throw new GateException(GateErrorCode.USAGE, "models must be an array");
@@ -678,6 +553,17 @@ public final class ApiRoutes {
                 models.add(model);
             }
         }
+        providers.replaceModels(id, models, clock.now());
+        return providerDetail(id);
+    }
+
+    private Response providerModelsFetch(String id) {
+        ProviderRepository.ProviderRow p = providers.find(id).orElseThrow(() ->
+                new GateException(GateErrorCode.USAGE, "no such provider: " + id));
+        if ("manual".equals(id)) {
+            throw new GateException(GateErrorCode.USAGE, "manual provider has no upstream");
+        }
+        List<String> models = modelFetcher.fetch(p);
         providers.replaceModels(id, models, clock.now());
         return providerDetail(id);
     }
@@ -718,20 +604,14 @@ public final class ApiRoutes {
         return value.trim();
     }
 
-    // --- V5: workspaces / projects / model fetch / working diff ---------------------------------
+    // --- V5: projects / working diff ------------------------------------------------------------
 
     private static Path normalizeWorkspace(String raw) {
         return Path.of(raw.trim()).toAbsolutePath().normalize();
     }
 
-    /**
-     * Body: {@code {"name", "workspace_path", "init_git"?, "target_ref"?, "priority"?, "size"?,
-     * "tags"?}}. Creates the directory when missing and optionally {@code git init}s it — the
-     * console's "选择工作区 → 创建项目" flow. An absent/blank {@code target_ref} is persisted as
-     * the gate's primary target ref — the same ref the project's auth repo is seeded with.
-     */
     private Response projectCreate(String requestBody) {
-        Map<String, Object> req = parseObject(requestBody);
+        Map<String, Object> req = Json.parseObject(requestBody);
         String name = required(req, "name");
         String workspaceRaw = required(req, "workspace_path");
         Path workspace = normalizeWorkspace(workspaceRaw);
@@ -752,7 +632,6 @@ public final class ApiRoutes {
         if (initGit && !Files.exists(workspace.resolve(".git"))) {
             gate.ports.ProcessRunner.ProcRun r = git.run(workspace, Map.of(), "init", "-b", "main");
             if (!r.ok()) {
-                // Older git without -b: retry with the default branch name.
                 r = git.run(workspace, Map.of(), "init");
             }
             if (!r.ok()) {
@@ -766,14 +645,8 @@ public final class ApiRoutes {
         List<String> tags = parseProjectTags(req);
         Instant now = clock.now();
         String id = uniqueProjectId(name);
-        // Each project gets its own auth repo so one project's published history can never
-        // become another project's clone base (T-107 incident). The repo is seeded with the
-        // same baseline + hook semantics as the gate-level auth repo.
         java.nio.file.Path projectAuthRepo = new gate.application.project.ProjectAuthResolver(projects, config)
                 .defaultProjectAuthRepo(id);
-        // Persist the same effective ref the auth repo is seeded with; a NULL column would
-        // resurface as "项目目标分支: null" in injected session context and force every reader
-        // to re-derive the fallback.
         String effectiveTargetRef = effectiveTargetRef(targetRef);
         topologyInitializer.initAuthRepo(RepoRef.of(projectAuthRepo), effectiveTargetRef,
                 config.approvalsDir());
@@ -783,17 +656,10 @@ public final class ApiRoutes {
         return new Response(201, projectJson(p));
     }
 
-    /**
-     * Body: {@code {"name"?, "workspace_path"?, "target_ref"?, "priority"?, "size"?, "tags"?}}.
-     * Present-but-null priority/size clears the value; an absent key keeps it. {@code target_ref}
-     * is never clearable: a present-but-null/blank value resets it to the gate's primary target
-     * ref, and legacy NULL rows self-heal the same way on any update. {@code tags} is a full
-     * replacement list (null or [] clears all).
-     */
     private Response projectUpdate(String id, String requestBody) {
         Project existing = projects.find(id).orElseThrow(() -> new GateException(
                 GateErrorCode.USAGE, "no such project: " + id));
-        Map<String, Object> req = parseObject(requestBody);
+        Map<String, Object> req = Json.parseObject(requestBody);
         if (!req.containsKey("name") && !req.containsKey("workspace_path")
                 && !req.containsKey("target_ref") && !req.containsKey("priority")
                 && !req.containsKey("size") && !req.containsKey("tags")) {
@@ -821,12 +687,10 @@ public final class ApiRoutes {
         return new Response(200, projectJson(updated));
     }
 
-    /** Blank or legacy-NULL target refs resolve to the gate's primary (whitelist head). */
     private String effectiveTargetRef(String targetRef) {
         return targetRef == null || targetRef.isBlank() ? config.primaryTargetRef() : targetRef;
     }
 
-    /** Project size bucket: small | medium | large, or null when absent/present-but-null. */
     private static String parseProjectSize(Map<String, Object> req) {
         Object raw = req.get("size");
         if (raw == null) {
@@ -840,7 +704,6 @@ public final class ApiRoutes {
         return size;
     }
 
-    /** Tags: array of strings, trimmed, blanks dropped, de-duplicated, capped by the domain. */
     private static List<String> parseProjectTags(Map<String, Object> req) {
         Object raw = req.get("tags");
         if (raw == null) {
@@ -876,7 +739,6 @@ public final class ApiRoutes {
         return new Response(200, body);
     }
 
-    /** Real per-project ticket counters — same derivation as {@code ProjectRoutes.projectList}. */
     private Map<String, Object> projectJson(Project p) {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("id", p.id());
@@ -896,65 +758,39 @@ public final class ApiRoutes {
         return m;
     }
 
-    /** Slugified id from the name ("My App!" → "my-app"), de-duplicated with a numeric suffix. */
     private String uniqueProjectId(String name) {
-        String base = name.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]+", "-")
-                .replaceAll("(^-+|-+$)", "");
-        if (base.isBlank()) {
+        String base = name.trim().toLowerCase(Locale.ROOT)
+                .replaceAll("[^a-z0-9_-]+", "-")
+                .replaceAll("^-+|-+$", "");
+        if (base.isEmpty()) {
             base = "project";
         }
-        String id = base;
-        int suffix = 2;
-        while (projects.find(id).isPresent()) {
-            id = base + "-" + suffix++;
+        String candidate = base;
+        int seq = 1;
+        while (projects.find(candidate).isPresent()) {
+            candidate = base + "-" + (++seq);
         }
-        return id;
+        return candidate;
     }
 
-    /**
-     * V5: pulls the provider's model list from its upstream {@code /models} endpoint and persists
-     * it (an explicit action, matching the {@code model} table's contract — never implicit).
-     */
-    private Response providerModelsFetch(String id) {
-        ProviderRepository.ProviderRow p = providers.find(id).orElseThrow(() ->
-                new GateException(GateErrorCode.USAGE, "no such provider: " + id));
-        if ("manual".equals(id)) {
-            throw new GateException(GateErrorCode.USAGE, "manual provider has no upstream");
-        }
-        List<String> models = modelFetcher.fetch(p);
-        providers.replaceModels(id, models, clock.now());
-        return providerDetail(id);
-    }
-
-    /** Diff payloads above this size get the --ignore-cr-at-eol cross-check in {@link #workingDiff}. */
-    private static final int EOL_NOISE_THRESHOLD_CHARS = 100_000;
-
-    /**
-     * V5: live working-tree diff of the ticket clone — {@code git diff HEAD} plus untracked files
-     * synthesized as new-file hunks. This is what the review console shows before the first
-     * presubmit round exists (previously the UI fell back to a hardcoded sample diff).
-     */
     private Response workingDiff(String ticketNo) {
         Ticket t = tickets.find(ticketNo).orElseThrow(() -> new GateException(
                 GateErrorCode.USAGE, "no such ticket: " + ticketNo));
         Path clone = Path.of(t.clonePath());
         if (!Files.isDirectory(clone)) {
-            throw new GateException(GateErrorCode.USAGE, "clone not found: " + t.clonePath());
+            throw new GateException(GateErrorCode.USAGE,
+                    "clone directory does not exist for " + ticketNo + ": " + clone);
         }
-        gate.ports.ProcessRunner.ProcRun head = git.run(clone, Map.of(), "rev-parse", "HEAD");
-        String baseCommit = head.ok() ? head.stdout().trim() : null;
-
+        String baseCommit = null;
+        var latestPresubmit = presubmits.findLatest(ticketNo);
+        if (latestPresubmit.isPresent()) {
+            baseCommit = latestPresubmit.get().baseCommit().hex();
+        }
         gate.ports.ProcessRunner.ProcRun tracked = baseCommit == null
                 ? git.run(clone, Map.of(), "diff")
                 : git.run(clone, Map.of(), "diff", "HEAD");
         String trackedDiff = tracked.ok() ? tracked.stdout() : "";
 
-        // EOL sentinel (T-107 incident): a clone re-checked-out without the pinned
-        // core.autocrlf=false holds CRLF bytes over LF blobs, and git then reports every line
-        // of every file as changed — tens of thousands of noise lines that freeze the diff
-        // console. When the diff is huge but collapses under --ignore-cr-at-eol, serve the
-        // normalized diff plus a warning instead. Genuine large diffs (lock files, vendored
-        // trees) survive normalization unchanged and pass through as-is.
         String eolWarning = null;
         if (trackedDiff.length() > EOL_NOISE_THRESHOLD_CHARS) {
             gate.ports.ProcessRunner.ProcRun normalized = baseCommit == null
@@ -992,7 +828,6 @@ public final class ApiRoutes {
         return new Response(200, body);
     }
 
-    /** Synthesizes a {@code new file} hunk for one untracked file; binary files get a header only. */
     private static void appendNewFileDiff(StringBuilder out, Path clone, String rel) {
         Path file = clone.resolve(rel);
         out.append("diff --git a/").append(rel).append(" b/").append(rel).append('\n');
@@ -1017,7 +852,7 @@ public final class ApiRoutes {
         }
         String[] lines = new String(bytes, StandardCharsets.UTF_8).split("\n", -1);
         if (lines.length > 0 && lines[lines.length - 1].isEmpty()) {
-            lines = java.util.Arrays.copyOf(lines, lines.length - 1); // drop the trailing empty split
+            lines = java.util.Arrays.copyOf(lines, lines.length - 1);
         }
         out.append("--- /dev/null\n+++ b/").append(rel).append('\n');
         out.append("@@ -0,0 +1,").append(lines.length).append(" @@\n");
@@ -1026,42 +861,19 @@ public final class ApiRoutes {
         }
     }
 
-    // --- helpers --------------------------------------------------------------------------------
-
-    private static String[] split(String path) {
-        String p = path.startsWith("/") ? path.substring(1) : path;
-        if (p.endsWith("/")) {
-            p = p.substring(0, p.length() - 1);
-        }
-        return p.isEmpty() ? new String[0] : p.split("/");
+    private static String str(Map<String, Object> map, String key) {
+        Object val = map.get(key);
+        return val == null ? null : val.toString();
     }
 
-    @SuppressWarnings("unchecked")
-    static Map<String, Object> parseObject(String body) {
-        if (body == null || body.isBlank()) {
-            return Map.of();
+    private static int parseIntOr(String str, int defaultVal) {
+        if (str == null || str.isBlank()) {
+            return defaultVal;
         }
         try {
-            Object parsed = gate.application.MiniJson.parse(body.trim());
-            if (parsed instanceof Map<?, ?> m) {
-                return (Map<String, Object>) m;
-            }
-        } catch (Exception e) {
-            throw new GateException(GateErrorCode.USAGE, "malformed JSON body");
-        }
-        throw new GateException(GateErrorCode.USAGE, "request body must be a JSON object");
-    }
-
-    private static String str(Map<String, Object> m, String key) {
-        Object v = m.get(key);
-        return v == null ? null : v.toString();
-    }
-
-    private static int parseIntOr(String s, int fallback) {
-        try {
-            return Integer.parseInt(s);
+            return Integer.parseInt(str.trim());
         } catch (NumberFormatException e) {
-            return fallback;
+            return defaultVal;
         }
     }
 }

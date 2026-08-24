@@ -5,8 +5,8 @@
   depend on gate-cli (ArchUnit enforces this, §2.1). It depends on application + adapters +
   ports + domain, reusing GateService and the existing adapters wholesale.
 
-  HTTP layer: JDK com.sun.net.httpserver (ADR-8 consistency — no second web framework, §2.4).
-  No Spring web. Spring is pulled transitively only for the adapter wiring (JdbcTemplate etc.).
+  HTTP layer: Javalin 5.x over Jetty 11 (ADR-8 amendment). No Spring web. Spring is pulled
+  transitively only for the adapter wiring (JdbcTemplate etc.). JSON is Jackson.
 -->
 <project xmlns="http://maven.apache.org/POM/4.0.0"
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
@@ -19,6 +19,15 @@
   </parent>
   <artifactId>gate-web</artifactId>
   <name>gate-web</name>
+
+  <properties>
+    <!--
+      Javalin 5.6.3 requires Jetty 11 (MimeTypes.getInferredEncodings exists in 11.0.20 but NOT
+      in Jetty 12.0.x). Spring Boot's dependencyManagement pins Jetty to 12.0.8, so every Jetty
+      artifact used by Javalin is pinned explicitly here to keep a single consistent version.
+    -->
+    <jetty.version>11.0.20</jetty.version>
+  </properties>
 
   <dependencies>
     <dependency>
@@ -40,6 +49,89 @@
     <dependency>
       <groupId>gate</groupId>
       <artifactId>gate-bootstrap</artifactId>
+    </dependency>
+
+    <!-- Lightweight mature Web framework: Javalin 5.x over Jetty 11 (Jakarta). -->
+    <dependency>
+      <groupId>io.javalin</groupId>
+      <artifactId>javalin</artifactId>
+      <version>5.6.3</version>
+    </dependency>
+    <dependency>
+      <groupId>org.eclipse.jetty</groupId>
+      <artifactId>jetty-server</artifactId>
+      <version>${jetty.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.eclipse.jetty</groupId>
+      <artifactId>jetty-http</artifactId>
+      <version>${jetty.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.eclipse.jetty</groupId>
+      <artifactId>jetty-util</artifactId>
+      <version>${jetty.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.eclipse.jetty</groupId>
+      <artifactId>jetty-io</artifactId>
+      <version>${jetty.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.eclipse.jetty</groupId>
+      <artifactId>jetty-webapp</artifactId>
+      <version>${jetty.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.eclipse.jetty</groupId>
+      <artifactId>jetty-servlet</artifactId>
+      <version>${jetty.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.eclipse.jetty</groupId>
+      <artifactId>jetty-security</artifactId>
+      <version>${jetty.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.eclipse.jetty</groupId>
+      <artifactId>jetty-xml</artifactId>
+      <version>${jetty.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.eclipse.jetty.websocket</groupId>
+      <artifactId>websocket-jetty-server</artifactId>
+      <version>${jetty.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.eclipse.jetty.websocket</groupId>
+      <artifactId>websocket-jetty-api</artifactId>
+      <version>${jetty.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.eclipse.jetty.websocket</groupId>
+      <artifactId>websocket-jetty-common</artifactId>
+      <version>${jetty.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.eclipse.jetty.websocket</groupId>
+      <artifactId>websocket-servlet</artifactId>
+      <version>${jetty.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.eclipse.jetty.websocket</groupId>
+      <artifactId>websocket-core-common</artifactId>
+      <version>${jetty.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.eclipse.jetty.websocket</groupId>
+      <artifactId>websocket-core-server</artifactId>
+      <version>${jetty.version}</version>
+    </dependency>
+
+    <!-- Jackson (version managed by spring-boot-dependencies BOM: 2.15.4, consistent set). -->
+    <dependency>
+      <groupId>com.fasterxml.jackson.core</groupId>
+      <artifactId>jackson-databind</artifactId>
     </dependency>
 
     <!-- Adapter wiring (SqliteDataSourceFactory, JdbcTemplate, TransactionTemplate) needs Spring

@@ -1,15 +1,11 @@
 package gate.web;
 
-import com.sun.net.httpserver.HttpExchange;
-import gate.domain.error.GateErrorCode;
 import gate.domain.session.SessionMessage;
 import gate.domain.session.SessionStreamChunk;
 import gate.domain.session.ToolCall;
 import gate.ports.AgentSessionPort;
 import gate.ports.SessionRepository;
-import java.io.IOException;
-import java.io.OutputStream;
-import java.nio.charset.StandardCharsets;
+import io.javalin.http.sse.SseClient;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
@@ -20,65 +16,40 @@ import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
 /**
- * SSE writer for agent session events (执行文档-后端-web §4.1, §9.3).
- *
- * <p>Emits initial message history snapshot, attaches a real-time listener for live SessionStreamChunks,
- * and flushes SSE data frames (`event: token | thinking | tool_call | usage | done | error`).
- *
- * <p>The connection stays open until a terminal done/error chunk arrives (or the client disconnects);
- * while idle, a `: ping` comment frame is written every heartbeat interval (15s by default) so
- * proxies / load balancer read timeouts do not cut the stream.
- *
- * <p>Current limitation: the session stream carries no per-event sequence numbers, so the SSE
- * Last-Event-ID reconnect cursor is unsupported; after a reconnect the client recovers by replaying
- * the full history snapshot.
+ * SSE writer for agent session events (Javalin).
  */
-final class SessionSseHandler {
+public final class SessionSseHandler {
 
-    /** Default idle heartbeat interval; package-visible so tests can pick a shorter value. */
     static final long DEFAULT_HEARTBEAT_MILLIS = 15_000L;
 
     private final AgentSessionPort sessions;
     private final SessionRepository sessionRepository;
     private final long heartbeatMillis;
 
-    SessionSseHandler(AgentSessionPort sessions, SessionRepository sessionRepository) {
+    public SessionSseHandler(AgentSessionPort sessions, SessionRepository sessionRepository) {
         this(sessions, sessionRepository, DEFAULT_HEARTBEAT_MILLIS);
     }
 
-    SessionSseHandler(AgentSessionPort sessions, SessionRepository sessionRepository, long heartbeatMillis) {
+    public SessionSseHandler(AgentSessionPort sessions, SessionRepository sessionRepository, long heartbeatMillis) {
         this.sessions = sessions;
         this.sessionRepository = sessionRepository;
         this.heartbeatMillis = heartbeatMillis;
     }
 
-    int handle(HttpExchange exchange, String sessionId) throws IOException {
+    public void handle(SseClient client, String sessionId) {
         if (sessionRepository.find(sessionId).isEmpty()) {
-            Http.json(exchange, 404, Json.error(GateErrorCode.USAGE.code(),
-                    "NOT_FOUND", "no such session: " + sessionId, null));
-            return 404;
+            client.close();
+            return;
         }
-        exchange.getResponseHeaders().set("Content-Type", "text/event-stream; charset=utf-8");
-        exchange.getResponseHeaders().set("Cache-Control", "no-cache, no-transform");
-        exchange.getResponseHeaders().set("Connection", "keep-alive");
-        exchange.sendResponseHeaders(200, 0);
-        try (OutputStream os = exchange.getResponseBody()) {
-            // 1. Emit current history snapshot
-            try (Stream<AgentSessionPort.SessionEvent> events = sessions.streamEvents(sessionId)) {
-                Iterator<AgentSessionPort.SessionEvent> it = events.iterator();
-                while (it.hasNext()) {
-                    AgentSessionPort.SessionEvent e = it.next();
-                    String data = Json.write(sessionEventJson(e));
-                    os.write(("event: " + e.kind() + "\n").getBytes(StandardCharsets.UTF_8));
-                    os.write(("data: " + data + "\n\n").getBytes(StandardCharsets.UTF_8));
-                    os.flush();
-                }
-            }
 
-            // 2. Attach live streaming listener
+        try {
             CountDownLatch doneLatch = new CountDownLatch(1);
             try (AutoCloseable handle = sessions.attachListener(sessionId, chunk -> {
                 try {
+                    if (client.terminated()) {
+                        doneLatch.countDown();
+                        return;
+                    }
                     String eventName = "token";
                     if (chunk instanceof SessionStreamChunk.ThinkingChunk) {
                         eventName = "thinking";
@@ -99,39 +70,43 @@ final class SessionSseHandler {
                     }
                     Map<String, Object> chunkPayload = chunkJson(chunk);
                     String data = Json.write(chunkPayload);
-                    synchronized (os) {
-                        os.write(("event: " + eventName + "\n").getBytes(StandardCharsets.UTF_8));
-                        os.write(("data: " + data + "\n\n").getBytes(StandardCharsets.UTF_8));
-                        os.flush();
-                    }
+                    client.sendEvent(eventName, data);
                     if (chunk instanceof SessionStreamChunk.DoneChunk || chunk instanceof SessionStreamChunk.ErrorChunk) {
                         doneLatch.countDown();
                     }
-                } catch (IOException ex) {
+                } catch (Exception ex) {
                     doneLatch.countDown();
                 }
             })) {
-                // Keep the stream open until a terminal done/error chunk arrives or the client
-                // disconnects. Every heartbeat interval with no terminal chunk, write a `: ping`
-                // comment frame so idle periods do not trip proxy read timeouts. A client
-                // disconnect makes the ping write throw IOException, which propagates to the
-                // outer catch below.
-                while (!doneLatch.await(heartbeatMillis, TimeUnit.MILLISECONDS)) {
-                    synchronized (os) {
-                        os.write(": ping\n\n".getBytes(StandardCharsets.UTF_8));
-                        os.flush();
+                // 1. Emit current history snapshot
+                try (Stream<AgentSessionPort.SessionEvent> events = sessions.streamEvents(sessionId)) {
+                    Iterator<AgentSessionPort.SessionEvent> it = events.iterator();
+                    while (it.hasNext() && !client.terminated()) {
+                        AgentSessionPort.SessionEvent e = it.next();
+                        String data = Json.write(sessionEventJson(e));
+                        client.sendEvent(e.kind() != null ? e.kind() : "message", data);
                     }
+                } catch (Exception ignored) {
+                }
+
+                while (!doneLatch.await(heartbeatMillis, TimeUnit.MILLISECONDS)) {
+                    if (client.terminated() || doneLatch.getCount() == 0) {
+                        break;
+                    }
+                    client.sendComment("ping");
                 }
             } catch (Exception ignored) {
             }
 
-            // Final ping before closing
-            os.write(": ping\n\n".getBytes(StandardCharsets.UTF_8));
-            os.flush();
-        } catch (IOException ignored) {
-            // client disconnected
+            try {
+                if (!client.terminated()) {
+                    client.sendComment("ping");
+                }
+            } catch (Exception ignored) {
+            }
+        } finally {
+            client.close();
         }
-        return 200;
     }
 
     private static Map<String, Object> chunkJson(SessionStreamChunk chunk) {
@@ -188,32 +163,24 @@ final class SessionSseHandler {
     }
 
     private static Map<String, Object> messageJson(SessionMessage msg) {
+        if (msg == null) {
+            return null;
+        }
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("id", msg.id());
         m.put("session_id", msg.sessionId());
-        m.put("role", msg.role().name());
+        m.put("role", msg.role().name().toLowerCase(java.util.Locale.ROOT));
         m.put("content", msg.content());
-        List<Map<String, Object>> calls = new ArrayList<>();
+        m.put("created_at", msg.timestamp().toString());
+        List<Map<String, Object>> tcs = new ArrayList<>();
         for (ToolCall tc : msg.toolCalls()) {
-            Map<String, Object> cm = new LinkedHashMap<>();
-            cm.put("name", tc.name());
-            cm.put("arguments_json", tc.argumentsJson());
-            cm.put("result_json", tc.resultJson());
-            calls.add(cm);
+            Map<String, Object> tm = new LinkedHashMap<>();
+            tm.put("tool_name", tc.name());
+            tm.put("arguments", tc.argumentsJson());
+            tm.put("result", tc.resultJson());
+            tcs.add(tm);
         }
-        m.put("tool_calls", calls);
-        if (msg.usage() == null) {
-            m.put("usage", null);
-        } else {
-            Map<String, Object> u = new LinkedHashMap<>();
-            u.put("prompt_tokens", msg.usage().promptTokens());
-            u.put("completion_tokens", msg.usage().completionTokens());
-            u.put("total_tokens", msg.usage().totalTokens());
-            m.put("usage", u);
-        }
-        m.put("degraded", msg.degraded());
-        m.put("timestamp", msg.timestamp().toString());
+        m.put("tool_calls", tcs);
         return m;
     }
 }
-
