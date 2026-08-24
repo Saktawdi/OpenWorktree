@@ -56,14 +56,22 @@ public final class SessionModelCatalog {
             throw new GateException(GateErrorCode.GATE_ERROR_IO,
                     "interrupted while fetching the model catalog from " + url, e);
         } catch (Exception e) {
-            throw new GateException(GateErrorCode.GATE_ERROR_IO,
-                    "model catalog unreachable (opencode serve on port " + port + "): " + e.getMessage(), e);
+            // Stale/dead serve: degrade to an empty catalog instead of a 503 storm —
+            // the picker treats this best-effort and the browser logs every failed fetch.
+            return unavailable("opencode serve on port " + port + " unreachable: " + e.getMessage());
         }
         if (resp.statusCode() / 100 != 2) {
-            throw new GateException(GateErrorCode.GATE_ERROR_IO,
-                    "model catalog request failed: HTTP " + resp.statusCode());
+            return unavailable("model catalog request failed: HTTP " + resp.statusCode());
         }
         return reduce(resp.body());
+    }
+
+    private static Map<String, Object> unavailable(String note) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("providers", List.of());
+        out.put("source", "unreachable");
+        out.put("note", note);
+        return out;
     }
 
     /** Maps the raw providers payload onto the lean picker shape; never throws on odd shapes. */

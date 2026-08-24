@@ -39,6 +39,7 @@ class SessionModelSwitchTest {
     private String token;
     private HttpServer fakeServe;
     private int fakeServePort;
+    private int deadPort;
 
     @BeforeEach
     void setUp() throws Exception {
@@ -156,6 +157,20 @@ class SessionModelSwitchTest {
         HttpResponse<String> res = get("/api/sessions/sess-claude-1/models");
         assertEquals(200, res.statusCode(), res.body());
         assertTrue(res.body().contains("\"source\":\"no-server\""), res.body());
+        assertTrue(res.body().contains("\"providers\":[]"), res.body());
+    }
+
+    /** A stale serve port (process died) degrades to an empty catalog, not a 503. */
+    @Test
+    void models_endpoint_degrades_gracefully_when_serve_is_down() throws Exception {
+        try (java.net.ServerSocket socket = new java.net.ServerSocket(0,
+                1, java.net.InetAddress.getByName("127.0.0.1"))) {
+            deadPort = socket.getLocalPort();
+        }
+        insertSessionWithPort("sess-dead-1", deadPort);
+        HttpResponse<String> res = get("/api/sessions/sess-dead-1/models");
+        assertEquals(200, res.statusCode(), res.body());
+        assertTrue(res.body().contains("\"source\":\"unreachable\""), res.body());
         assertTrue(res.body().contains("\"providers\":[]"), res.body());
     }
 
