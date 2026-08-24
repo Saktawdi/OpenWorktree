@@ -6,7 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 import gate.adapters.mcp.McpServer;
-import gate.application.ReviewCommand;
+import gate.application.review.ReviewCommand;
 import gate.domain.config.GateConfig;
 import gate.domain.git.RepoRef;
 import gate.testkit.GateHarness;

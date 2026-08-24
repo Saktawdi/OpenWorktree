@@ -1,4 +1,4 @@
-package gate.application;
+package gate.application.publish;
 
 /**
  * Outcome of a publish.

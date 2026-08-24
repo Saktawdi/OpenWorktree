@@ -116,7 +116,7 @@ class WebReadOnlyApiTest {
         // No round captured yet: an empty list, never an error (console renders "no history").
         HttpResponse<String> empty = get("/api/tickets/WEB-PRE/presubmits");
         assertEquals(200, empty.statusCode(), empty.body());
-        Map<String, Object> emptyBody = (Map<String, Object>) gate.application.MiniJson.parse(
+        Map<String, Object> emptyBody = (Map<String, Object>) gate.application.util.MiniJson.parse(
                 empty.body().trim());
         assertEquals("WEB-PRE", emptyBody.get("ticket_no"));
         assertTrue(((List<?>) emptyBody.get("presubmits")).isEmpty(), empty.body());
@@ -131,7 +131,7 @@ class WebReadOnlyApiTest {
 
         HttpResponse<String> list = get("/api/tickets/WEB-PRE/presubmits");
         assertEquals(200, list.statusCode(), list.body());
-        Map<String, Object> body = (Map<String, Object>) gate.application.MiniJson.parse(
+        Map<String, Object> body = (Map<String, Object>) gate.application.util.MiniJson.parse(
                 list.body().trim());
         List<Map<String, Object>> rows = (List<Map<String, Object>>) body.get("presubmits");
         assertEquals(2, rows.size(), list.body());

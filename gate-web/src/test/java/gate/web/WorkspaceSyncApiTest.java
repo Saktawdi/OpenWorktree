@@ -214,20 +214,20 @@ class WorkspaceSyncApiTest {
 
     @SuppressWarnings("unchecked")
     private static String taskId(String responseBody) {
-        Map<String, Object> m = (Map<String, Object>) gate.application.MiniJson.parse(responseBody.trim());
+        Map<String, Object> m = (Map<String, Object>) gate.application.util.MiniJson.parse(responseBody.trim());
         return String.valueOf(m.get("task_id"));
     }
 
     @SuppressWarnings("unchecked")
     private static String taskStatus(String body) {
-        Map<String, Object> m = (Map<String, Object>) gate.application.MiniJson.parse(body.trim());
+        Map<String, Object> m = (Map<String, Object>) gate.application.util.MiniJson.parse(body.trim());
         return String.valueOf(m.get("status"));
     }
 
     @SuppressWarnings("unchecked")
     private String taskResultJson(String taskId) throws Exception {
         String body = get("/api/tasks/" + taskId).body();
-        Map<String, Object> m = (Map<String, Object>) gate.application.MiniJson.parse(body.trim());
+        Map<String, Object> m = (Map<String, Object>) gate.application.util.MiniJson.parse(body.trim());
         return String.valueOf(m.get("result_json"));
     }
 

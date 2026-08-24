@@ -130,7 +130,7 @@ class PublishIdentityApiTest {
         HttpResponse<String> res = post(path, body);
         assertEquals(202, res.statusCode(), res.body());
         @SuppressWarnings("unchecked")
-        Map<String, Object> m = (Map<String, Object>) gate.application.MiniJson.parse(res.body().trim());
+        Map<String, Object> m = (Map<String, Object>) gate.application.util.MiniJson.parse(res.body().trim());
         return String.valueOf(m.get("task_id"));
     }
 
@@ -139,7 +139,7 @@ class PublishIdentityApiTest {
         while (System.nanoTime() < deadline) {
             String body = get("/api/tasks/" + taskId).body();
             @SuppressWarnings("unchecked")
-            Map<String, Object> m = (Map<String, Object>) gate.application.MiniJson.parse(body.trim());
+            Map<String, Object> m = (Map<String, Object>) gate.application.util.MiniJson.parse(body.trim());
             String status = String.valueOf(m.get("status"));
             if (expected.equals(status)) {
                 return;
@@ -154,7 +154,7 @@ class PublishIdentityApiTest {
 
     private String taskResultJson(String taskId) throws Exception {
         @SuppressWarnings("unchecked")
-        Map<String, Object> m = (Map<String, Object>) gate.application.MiniJson.parse(
+        Map<String, Object> m = (Map<String, Object>) gate.application.util.MiniJson.parse(
                 get("/api/tasks/" + taskId).body().trim());
         return String.valueOf(m.get("result_json"));
     }

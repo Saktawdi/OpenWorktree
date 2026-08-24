@@ -1,4 +1,4 @@
-package gate.application;
+package gate.application.status;
 
 import java.util.List;
 

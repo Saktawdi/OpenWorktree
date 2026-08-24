@@ -1,9 +1,9 @@
 package gate.metrics;
 
-import gate.application.MetricsService;
-import gate.application.MetricsService.MetricRecord;
-import gate.application.PresubmitCommand;
-import gate.application.ReviewCommand;
+import gate.application.metrics.MetricsService;
+import gate.application.metrics.MetricsService.MetricRecord;
+import gate.application.presubmit.PresubmitCommand;
+import gate.application.review.ReviewCommand;
 import gate.domain.git.RepoRef;
 import gate.testkit.GateHarness;
 import java.util.List;

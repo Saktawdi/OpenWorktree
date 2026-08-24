@@ -8,7 +8,7 @@ import java.util.Map;
 /**
  * Minimal JSON parser specialised for prism's output shape (docs/archive/prism-schema-validation.md).
  *
- * <p>This is deliberately self-contained rather than reusing {@code gate.application.MiniJson}: that
+ * <p>This is deliberately self-contained rather than reusing {@code gate.application.util.MiniJson}: that
  * class is package-private to the application layer, the adapter must not reach across, and the
  * fail-closed contract wants a boundary where any structural problem becomes an
  * {@link gate.domain.review.EngineFailure}({@code UNPARSEABLE}). Anything thrown here is caught by

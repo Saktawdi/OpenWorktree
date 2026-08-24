@@ -289,7 +289,7 @@ class SessionOrchestrationTest {
 
     @SuppressWarnings("unchecked")
     private static String sessionId(String body) {
-        Map<String, Object> m = (Map<String, Object>) gate.application.MiniJson.parse(body.trim());
+        Map<String, Object> m = (Map<String, Object>) gate.application.util.MiniJson.parse(body.trim());
         return String.valueOf(m.get("id"));
     }
 

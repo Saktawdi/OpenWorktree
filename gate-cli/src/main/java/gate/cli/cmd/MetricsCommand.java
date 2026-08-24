@@ -1,8 +1,12 @@
-package gate.cli;
+package gate.cli.cmd;
+import gate.cli.BaseCommand;
+import gate.cli.GateComponents;
+import gate.cli.util.JsonOut;
 
-import gate.application.H1Verdict;
-import gate.application.MetricsService;
-import gate.application.MetricsService.MetricRecord;
+
+import gate.application.metrics.H1Verdict;
+import gate.application.metrics.MetricsService;
+import gate.application.metrics.MetricsService.MetricRecord;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -30,7 +34,7 @@ import picocli.CommandLine;
                 MetricsCommand.Export.class,
                 MetricsCommand.Verdict.class
         })
-final class MetricsCommand implements Runnable {
+public final class MetricsCommand implements Runnable {
 
     @Override
     public void run() {

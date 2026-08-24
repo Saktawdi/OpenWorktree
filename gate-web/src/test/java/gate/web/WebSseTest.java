@@ -110,7 +110,7 @@ class WebSseTest {
 
     @SuppressWarnings("unchecked")
     private static String taskId(String responseBody) {
-        Object parsed = gate.application.MiniJson.parse(responseBody.trim());
+        Object parsed = gate.application.util.MiniJson.parse(responseBody.trim());
         if (parsed instanceof java.util.Map<?, ?> m) {
             return String.valueOf(((java.util.Map<String, Object>) m).get("task_id"));
         }

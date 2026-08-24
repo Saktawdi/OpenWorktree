@@ -4,10 +4,10 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import gate.application.PresubmitCommand;
-import gate.application.PublishCommand;
-import gate.application.ReviewCommand;
-import gate.application.ReviewResult;
+import gate.application.presubmit.PresubmitCommand;
+import gate.application.publish.PublishCommand;
+import gate.application.review.ReviewCommand;
+import gate.application.review.ReviewResult;
 import gate.domain.blob.BlobRef;
 import gate.domain.git.RepoRef;
 import gate.domain.error.GateErrorCode;

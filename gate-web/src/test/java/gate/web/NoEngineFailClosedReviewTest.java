@@ -78,7 +78,7 @@ class NoEngineFailClosedReviewTest {
         HttpResponse<String> reviewResult = get("/api/tickets/" + no + "/review-result");
         assertEquals(200, reviewResult.statusCode(), reviewResult.body());
         @SuppressWarnings("unchecked")
-        Map<String, Object> row = (Map<String, Object>) gate.application.MiniJson.parse(
+        Map<String, Object> row = (Map<String, Object>) gate.application.util.MiniJson.parse(
                 reviewResult.body().trim());
         assertEquals("REQUIRES_HUMAN", row.get("verdict"), reviewResult.body());
         assertEquals(Boolean.TRUE, row.get("degraded"), "undecided round must be recorded degraded");
@@ -101,7 +101,7 @@ class NoEngineFailClosedReviewTest {
         assertEquals("READY_TO_PUBLISH", ticketStage(no));
 
         @SuppressWarnings("unchecked")
-        Map<String, Object> row = (Map<String, Object>) gate.application.MiniJson.parse(
+        Map<String, Object> row = (Map<String, Object>) gate.application.util.MiniJson.parse(
                 get("/api/tickets/" + no + "/review-result").body().trim());
         assertEquals(Boolean.FALSE, row.get("degraded"), "a decided human round is not degraded");
     }
@@ -140,7 +140,7 @@ class NoEngineFailClosedReviewTest {
         HttpResponse<String> res = post("/api/tickets/" + no + "/review", body);
         assertEquals(202, res.statusCode(), res.body());
         @SuppressWarnings("unchecked")
-        Map<String, Object> m = (Map<String, Object>) gate.application.MiniJson.parse(res.body().trim());
+        Map<String, Object> m = (Map<String, Object>) gate.application.util.MiniJson.parse(res.body().trim());
         return String.valueOf(m.get("task_id"));
     }
 
@@ -150,7 +150,7 @@ class NoEngineFailClosedReviewTest {
             HttpResponse<String> res = get("/api/tasks/" + taskId);
             assertEquals(200, res.statusCode(), res.body());
             @SuppressWarnings("unchecked")
-            Map<String, Object> m = (Map<String, Object>) gate.application.MiniJson.parse(res.body().trim());
+            Map<String, Object> m = (Map<String, Object>) gate.application.util.MiniJson.parse(res.body().trim());
             String status = String.valueOf(m.get("status"));
             if (expected.equals(status)) {
                 return;
@@ -165,7 +165,7 @@ class NoEngineFailClosedReviewTest {
 
     @SuppressWarnings("unchecked")
     private String taskResultJson(String taskId) throws Exception {
-        Map<String, Object> m = (Map<String, Object>) gate.application.MiniJson.parse(
+        Map<String, Object> m = (Map<String, Object>) gate.application.util.MiniJson.parse(
                 get("/api/tasks/" + taskId).body().trim());
         return String.valueOf(m.get("result_json"));
     }
@@ -174,13 +174,13 @@ class NoEngineFailClosedReviewTest {
         HttpResponse<String> res = get("/api/tickets/" + no);
         assertEquals(200, res.statusCode(), res.body());
         @SuppressWarnings("unchecked")
-        Map<String, Object> m = (Map<String, Object>) gate.application.MiniJson.parse(res.body().trim());
+        Map<String, Object> m = (Map<String, Object>) gate.application.util.MiniJson.parse(res.body().trim());
         return String.valueOf(m.get("stage"));
     }
 
     @SuppressWarnings("unchecked")
     private Map<String, Object> rowOfReviewResult(String no) throws Exception {
-        return (Map<String, Object>) gate.application.MiniJson.parse(
+        return (Map<String, Object>) gate.application.util.MiniJson.parse(
                 get("/api/tickets/" + no + "/review-result").body().trim());
     }
 

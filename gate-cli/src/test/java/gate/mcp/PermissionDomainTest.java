@@ -2,7 +2,7 @@ package gate.mcp;
 
 import gate.adapters.mcp.McpToolDispatcher;
 import gate.adapters.mcp.McpToolRegistry;
-import gate.application.MiniJson;
+import gate.application.util.MiniJson;
 import gate.ports.CredentialRepository.Domain;
 import gate.testkit.GateHarness;
 import java.util.Map;

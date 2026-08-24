@@ -1,8 +1,8 @@
 package gate.web.controller;
 
 import gate.application.GateService;
-import gate.application.StatusQuery;
-import gate.application.StatusResult;
+import gate.application.status.StatusQuery;
+import gate.application.status.StatusResult;
 import gate.domain.config.GateConfig;
 import gate.web.service.RuntimeInfoService;
 import io.javalin.Javalin;

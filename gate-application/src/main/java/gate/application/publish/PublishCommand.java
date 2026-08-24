@@ -1,4 +1,4 @@
-package gate.application;
+package gate.application.publish;
 
 /**
  * Input for {@code publish}.

@@ -1,4 +1,6 @@
-package gate.application;
+package gate.application.metrics;
+import gate.application.util.MiniJson;
+
 
 import gate.domain.blob.BlobRef;
 import gate.domain.review.EngineDescriptor;

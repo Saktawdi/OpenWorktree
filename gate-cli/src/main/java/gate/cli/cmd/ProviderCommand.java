@@ -1,7 +1,11 @@
-package gate.cli;
+package gate.cli.cmd;
+import gate.cli.BaseCommand;
+import gate.cli.GateComponents;
+import gate.cli.util.JsonOut;
+
 
 import gate.adapters.engine.EnvFile;
-import gate.application.MiniJson;
+import gate.application.util.MiniJson;
 import gate.domain.error.GateErrorCode;
 import gate.domain.error.GateException;
 import gate.ports.ProviderRepository;
@@ -34,7 +38,7 @@ import picocli.CommandLine;
                 ProviderCommand.Pull.class,
                 ProviderCommand.ListAll.class
         })
-final class ProviderCommand implements Runnable {
+public final class ProviderCommand implements Runnable {
 
     @Override
     public void run() {

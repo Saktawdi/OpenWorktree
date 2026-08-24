@@ -1,5 +1,6 @@
 package gate.cli;
 
+import gate.cli.util.GateExceptionHandler;
 import org.springframework.boot.Banner;
 import org.springframework.boot.WebApplicationType;
 import org.springframework.boot.autoconfigure.SpringBootApplication;

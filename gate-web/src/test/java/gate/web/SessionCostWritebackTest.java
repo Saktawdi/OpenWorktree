@@ -106,11 +106,11 @@ class SessionCostWritebackTest {
         // Seed a review result with review tokens so H1's cost ratio denominator is complete.
         seedReviewResult(jdbc);
 
-        gate.application.MetricsService metrics = new gate.application.MetricsService(
+        gate.application.metrics.MetricsService metrics = new gate.application.metrics.MetricsService(
                 new gate.adapters.store.JdbcReviewResultRepository(jdbc),
                 new gate.adapters.store.JdbcPresubmitRepository(jdbc),
                 ticketRepo);
-        double costRatio = gate.application.MetricsService.computeCostRatioMedian(metrics.export());
+        double costRatio = gate.application.metrics.MetricsService.computeCostRatioMedian(metrics.export());
         assertTrue(!Double.isNaN(costRatio),
                 "cost ratio must be non-NaN after agent_cli writeback, got " + costRatio);
     }

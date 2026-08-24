@@ -1,7 +1,7 @@
 package gate.web.service;
 
 import gate.adapters.engine.EnvFile;
-import gate.application.MiniJson;
+import gate.application.util.MiniJson;
 import gate.domain.error.GateErrorCode;
 import gate.domain.error.GateException;
 import gate.ports.ProviderRepository;

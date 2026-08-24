@@ -1,4 +1,4 @@
-package gate.cli;
+package gate.cli.util;
 
 import gate.domain.error.GateErrorCode;
 import gate.domain.error.GateException;
@@ -12,7 +12,7 @@ import picocli.CommandLine;
  * (EX_USAGE). Everything else is 70 (EX_SOFTWARE) — an unclassified failure is a bug, not a
  * silent success. Human-readable text goes to stderr; stdout is reserved for the JSON channel.
  */
-final class GateExceptionHandler implements CommandLine.IExecutionExceptionHandler {
+public final class GateExceptionHandler implements CommandLine.IExecutionExceptionHandler {
 
     @Override
     public int handleExecutionException(Exception ex, CommandLine cmd, CommandLine.ParseResult parseResult) {

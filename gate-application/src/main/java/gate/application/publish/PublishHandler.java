@@ -1,9 +1,11 @@
 package gate.application.publish;
+import gate.application.metrics.EvidenceCodec;
 
-import gate.application.PublishCommand;
-import gate.application.PublishResult;
-import gate.application.ReconcileCommand;
-import gate.application.ReconcileResult;
+
+import gate.application.publish.PublishCommand;
+import gate.application.publish.PublishResult;
+import gate.application.status.ReconcileCommand;
+import gate.application.status.ReconcileResult;
 import gate.domain.audit.AuditEvent;
 import gate.domain.blob.BlobRef;
 import gate.domain.config.GateConfig;
@@ -438,7 +440,7 @@ public final class PublishHandler {
         byte[] evidenceBytes = blobStore.get(new BlobRef(reviewRow.findingsBlobPath(),
                 0L, "0".repeat(64)));
         String evidenceJson = new String(evidenceBytes, StandardCharsets.UTF_8);
-        ReviewEvidence evidence = gate.application.EvidenceCodec.fromJson(evidenceJson,
+        ReviewEvidence evidence = gate.application.metrics.EvidenceCodec.fromJson(evidenceJson,
                 new BlobRef(reviewRow.rawBlobPath(), 0, "0".repeat(64)));
         Snapshot snapshot = rebuildSnapshot(clone, row);
         Decision decision = gatePolicy.decide(ticket.ticketNo(), row.reviewRound(), evidence, snapshot, config.policy());

@@ -1,4 +1,6 @@
-package gate.application;
+package gate.application.util;
+import gate.application.metrics.EvidenceCodec;
+
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -34,7 +36,7 @@ public final class MiniJson {
     }
 
     @SuppressWarnings("unchecked")
-    static Map<String, Object> parseObject(String text) {
+    public static Map<String, Object> parseObject(String text) {
         Object v = parse(text);
         if (!(v instanceof Map)) {
             throw new IllegalArgumentException("expected a JSON object");

@@ -5,7 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import gate.application.MiniJson;
+import gate.application.util.MiniJson;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;

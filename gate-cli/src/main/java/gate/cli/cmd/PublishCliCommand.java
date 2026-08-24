@@ -1,13 +1,17 @@
-package gate.cli;
+package gate.cli.cmd;
+import gate.cli.BaseCommand;
+import gate.cli.GateComponents;
+import gate.cli.util.JsonOut;
 
-import gate.application.PublishCommand;
-import gate.application.PublishResult;
+
+import gate.application.publish.PublishCommand;
+import gate.application.publish.PublishResult;
 import java.util.Map;
 import picocli.CommandLine;
 
 /** {@code gate publish}: commit-tree, issue approval, push through the gate (§6, §7). */
 @CommandLine.Command(name = "publish", description = "Commit the reviewed tree and push it through the gate")
-final class PublishCliCommand extends BaseCommand {
+public final class PublishCliCommand extends BaseCommand {
 
     @CommandLine.Option(names = "--ticket", required = true, description = "Ticket number")
     String ticketNo;

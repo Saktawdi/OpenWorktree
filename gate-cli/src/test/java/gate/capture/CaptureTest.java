@@ -6,8 +6,8 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import gate.application.PresubmitCommand;
-import gate.application.PresubmitResult;
+import gate.application.presubmit.PresubmitCommand;
+import gate.application.presubmit.PresubmitResult;
 import gate.domain.error.GateException;
 import gate.domain.git.ObjectId;
 import gate.domain.git.RepoRef;

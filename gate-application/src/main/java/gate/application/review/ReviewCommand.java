@@ -1,4 +1,4 @@
-package gate.application;
+package gate.application.review;
 
 /**
  * Input for {@code review}.

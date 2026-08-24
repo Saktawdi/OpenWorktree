@@ -1,7 +1,11 @@
-package gate.cli;
+package gate.cli.cmd;
+import gate.cli.BaseCommand;
+import gate.cli.GateComponents;
+import gate.cli.util.JsonOut;
 
-import gate.application.StatusQuery;
-import gate.application.StatusResult;
+
+import gate.application.status.StatusQuery;
+import gate.application.status.StatusResult;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -9,7 +13,7 @@ import picocli.CommandLine;
 
 /** {@code gate status}: read-only projection over the DB plus a live auth.git query. */
 @CommandLine.Command(name = "status", description = "Show ticket and authoritative-repo status")
-final class StatusCliCommand extends BaseCommand {
+public final class StatusCliCommand extends BaseCommand {
 
     @CommandLine.Option(names = "--ticket", description = "Limit to one ticket (default: all)")
     String ticketNo;

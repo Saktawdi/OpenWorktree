@@ -1,6 +1,6 @@
 package gate.adapters.store;
 
-import gate.application.MiniJson;
+import gate.application.util.MiniJson;
 import gate.domain.blob.BlobRef;
 import gate.domain.session.AgentCli;
 import gate.domain.session.Role;

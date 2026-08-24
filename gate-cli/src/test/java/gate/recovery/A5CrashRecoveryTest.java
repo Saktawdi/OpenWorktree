@@ -3,7 +3,7 @@ package gate.recovery;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import gate.application.ReconcileResult;
+import gate.application.status.ReconcileResult;
 import gate.domain.git.RepoRef;
 import gate.ports.PublishProbe;
 import gate.testkit.PersistentGate;
@@ -37,13 +37,13 @@ class A5CrashRecoveryTest {
             PersistentGate gate = new PersistentGate(root, "git", PublishProbe.NOOP);
             long countBefore = gate.authCommitCount();
 
-            ReconcileResult r = gate.service().reconcile(new gate.application.ReconcileCommand(null));
+            ReconcileResult r = gate.service().reconcile(new gate.application.status.ReconcileCommand(null));
             assertTrue(r.outcomes().size() >= 1, "reconcile must observe the pending intent");
 
             // After a C3 kill the tip has not moved; reconcile leaves it retryable (base intact), and
             // a subsequent publish lands exactly one commit.
             long afterReconcile = gate.authCommitCount();
-            gate.service().publish(new gate.application.PublishCommand("TICKET-1", null));
+            gate.service().publish(new gate.application.publish.PublishCommand("TICKET-1", null));
             assertEquals(afterReconcile + 1, gate.authCommitCount(),
                     "completing the interrupted publish must add exactly one commit (no duplicate)");
         } finally {
@@ -62,12 +62,12 @@ class A5CrashRecoveryTest {
 
             // The push may or may not have landed before the halt. Either way, reconcile must
             // converge to a single, non-duplicated commit, deriving truth from auth.git.
-            ReconcileResult r = gate.service().reconcile(new gate.application.ReconcileCommand(null));
+            ReconcileResult r = gate.service().reconcile(new gate.application.status.ReconcileCommand(null));
             assertTrue(r.outcomes().size() >= 1);
 
             long count = gate.authCommitCount();
             // Complete/replay the publish; idempotence guarantees at most one ticket commit total.
-            gate.service().publish(new gate.application.PublishCommand("TICKET-1", null));
+            gate.service().publish(new gate.application.publish.PublishCommand("TICKET-1", null));
             long finalCount = gate.authCommitCount();
             // base + exactly one ticket commit.
             assertEquals(2, finalCount, "there must be exactly base + one ticket commit after recovery");

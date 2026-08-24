@@ -1,13 +1,17 @@
-package gate.cli;
+package gate.cli.cmd;
+import gate.cli.BaseCommand;
+import gate.cli.GateComponents;
+import gate.cli.util.JsonOut;
 
-import gate.application.PresubmitCommand;
-import gate.application.PresubmitResult;
+
+import gate.application.presubmit.PresubmitCommand;
+import gate.application.presubmit.PresubmitResult;
 import java.util.Map;
 import picocli.CommandLine;
 
 /** {@code gate presubmit}: capture the worktree into an immutable tree (§3.2). */
 @CommandLine.Command(name = "presubmit", description = "Freeze the worktree into an immutable tree")
-final class PresubmitCliCommand extends BaseCommand {
+public final class PresubmitCliCommand extends BaseCommand {
 
     @CommandLine.Option(names = "--ticket", required = true, description = "Ticket number")
     String ticketNo;

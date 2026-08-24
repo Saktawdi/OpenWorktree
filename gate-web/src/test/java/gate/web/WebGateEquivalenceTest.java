@@ -154,21 +154,21 @@ class WebGateEquivalenceTest {
 
     @SuppressWarnings("unchecked")
     private static String taskStatus(String body) {
-        Map<String, Object> m = (Map<String, Object>) gate.application.MiniJson.parse(body.trim());
+        Map<String, Object> m = (Map<String, Object>) gate.application.util.MiniJson.parse(body.trim());
         return String.valueOf(m.get("status"));
     }
 
     @SuppressWarnings("unchecked")
     private String taskResultJson(String taskId) throws Exception {
         String body = get("/api/tasks/" + taskId).body();
-        Map<String, Object> m = (Map<String, Object>) gate.application.MiniJson.parse(body.trim());
+        Map<String, Object> m = (Map<String, Object>) gate.application.util.MiniJson.parse(body.trim());
         return String.valueOf(m.get("result_json"));
     }
 
     @SuppressWarnings("unchecked")
     private String taskErrorJson(String taskId) throws Exception {
         String body = get("/api/tasks/" + taskId).body();
-        Map<String, Object> m = (Map<String, Object>) gate.application.MiniJson.parse(body.trim());
+        Map<String, Object> m = (Map<String, Object>) gate.application.util.MiniJson.parse(body.trim());
         return String.valueOf(m.get("error_json"));
     }
 
@@ -204,7 +204,7 @@ class WebGateEquivalenceTest {
 
     @SuppressWarnings("unchecked")
     private static String taskId(String responseBody) {
-        Map<String, Object> m = (Map<String, Object>) gate.application.MiniJson.parse(responseBody.trim());
+        Map<String, Object> m = (Map<String, Object>) gate.application.util.MiniJson.parse(responseBody.trim());
         return String.valueOf(m.get("task_id"));
     }
 }

@@ -1,4 +1,5 @@
-package gate.cli;
+package gate.cli.util;
+
 
 import java.io.PrintStream;
 import java.util.Map;
@@ -10,14 +11,14 @@ import java.util.TreeMap;
  * <p>Every payload carries {@code schema_version}. stdout is flushed before the process exits so
  * Spring's {@code System.exit} cannot truncate it.
  */
-final class JsonOut {
+public final class JsonOut {
 
-    static final int SCHEMA_VERSION = 1;
+    public static final int SCHEMA_VERSION = 1;
 
     private JsonOut() {
     }
 
-    static void emit(PrintStream out, String command, Map<String, ?> fields) {
+    public static void emit(PrintStream out, String command, Map<String, ?> fields) {
         StringBuilder sb = new StringBuilder();
         sb.append("{\"schema_version\":").append(SCHEMA_VERSION);
         sb.append(",\"command\":").append(quote(command));

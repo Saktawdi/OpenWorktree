@@ -1,10 +1,10 @@
 package gate.web.service;
 
 import gate.application.GateService;
-import gate.application.PublishCommand;
-import gate.application.PublishResult;
-import gate.application.ReviewCommand;
-import gate.application.ReviewResult;
+import gate.application.publish.PublishCommand;
+import gate.application.publish.PublishResult;
+import gate.application.review.ReviewCommand;
+import gate.application.review.ReviewResult;
 import gate.adapters.runtime.BoundedWorkDispatcher;
 import gate.domain.error.GateErrorCode;
 import gate.domain.error.GateException;

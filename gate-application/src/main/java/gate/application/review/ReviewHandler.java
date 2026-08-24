@@ -1,8 +1,8 @@
 package gate.application.review;
 
-import gate.application.EvidenceCodec;
-import gate.application.ReviewCommand;
-import gate.application.ReviewResult;
+import gate.application.metrics.EvidenceCodec;
+import gate.application.review.ReviewCommand;
+import gate.application.review.ReviewResult;
 import gate.domain.audit.AuditEvent;
 import gate.domain.blob.BlobRef;
 import gate.domain.config.GateConfig;

@@ -1,6 +1,6 @@
 package gate.adapters.mcp;
 
-import gate.application.MiniJson;
+import gate.application.util.MiniJson;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;

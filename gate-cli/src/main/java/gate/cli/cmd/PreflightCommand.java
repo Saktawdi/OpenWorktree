@@ -1,4 +1,8 @@
-package gate.cli;
+package gate.cli.cmd;
+import gate.cli.BaseCommand;
+import gate.cli.GateComponents;
+import gate.cli.util.JsonOut;
+
 
 import gate.domain.error.GateErrorCode;
 import gate.domain.error.GateException;
@@ -13,7 +17,7 @@ import picocli.CommandLine;
  * checks are skipped in P1 (no engine configured) and cannot fail the command.
  */
 @CommandLine.Command(name = "preflight", description = "Run startup preflight checks (fail-closed)")
-final class PreflightCommand extends BaseCommand {
+public final class PreflightCommand extends BaseCommand {
 
     @Override
     public void run() {

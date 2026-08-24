@@ -1,8 +1,8 @@
 package gate.recovery;
 
-import gate.application.PresubmitCommand;
-import gate.application.PublishCommand;
-import gate.application.ReviewCommand;
+import gate.application.presubmit.PresubmitCommand;
+import gate.application.publish.PublishCommand;
+import gate.application.review.ReviewCommand;
 import gate.domain.git.RepoRef;
 import gate.ports.PublishProbe;
 import gate.testkit.PersistentGate;

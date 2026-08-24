@@ -2,7 +2,7 @@ package gate.adapters.session;
 
 import gate.adapters.io.AdapterLog;
 import gate.adapters.io.ServePidRegistry;
-import gate.application.MiniJson;
+import gate.application.util.MiniJson;
 import gate.domain.error.GateErrorCode;
 import gate.domain.error.GateException;
 import gate.domain.project.Project;

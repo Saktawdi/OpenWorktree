@@ -11,7 +11,7 @@ import gate.adapters.session.OpenCodeServeAdapter;
 import gate.adapters.session.PortAllocator;
 import gate.bootstrap.GateRuntime;
 import gate.application.GateService;
-import gate.application.MetricsService;
+import gate.application.metrics.MetricsService;
 import gate.domain.config.GateConfig;
 import gate.domain.error.GateErrorCode;
 import gate.domain.error.GateException;

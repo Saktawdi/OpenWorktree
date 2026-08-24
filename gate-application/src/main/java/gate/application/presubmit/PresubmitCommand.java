@@ -1,4 +1,4 @@
-package gate.application;
+package gate.application.presubmit;
 
 /** Input for {@code presubmit} (T2 — the only transition an agent may trigger). */
 public record PresubmitCommand(String ticketNo) {

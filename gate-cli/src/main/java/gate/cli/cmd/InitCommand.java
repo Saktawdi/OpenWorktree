@@ -1,4 +1,8 @@
-package gate.cli;
+package gate.cli.cmd;
+import gate.cli.BaseCommand;
+import gate.cli.GateComponents;
+import gate.cli.util.JsonOut;
+
 
 import gate.domain.git.RepoRef;
 import gate.ports.TopologyInitializer;
@@ -11,7 +15,7 @@ import picocli.CommandLine;
  * baseline on top of which a ticket adds exactly one commit.
  */
 @CommandLine.Command(name = "init", description = "Initialise auth.git, seed base, install pre-receive hook")
-final class InitCommand extends BaseCommand {
+public final class InitCommand extends BaseCommand {
 
     @Override
     public void run() {

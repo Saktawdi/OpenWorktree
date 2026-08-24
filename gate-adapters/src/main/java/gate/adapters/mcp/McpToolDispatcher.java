@@ -1,11 +1,11 @@
 package gate.adapters.mcp;
 
-import gate.application.PresubmitCommand;
-import gate.application.PresubmitResult;
-import gate.application.PublishCommand;
-import gate.application.PublishResult;
-import gate.application.ReviewCommand;
-import gate.application.ReviewResult;
+import gate.application.presubmit.PresubmitCommand;
+import gate.application.presubmit.PresubmitResult;
+import gate.application.publish.PublishCommand;
+import gate.application.publish.PublishResult;
+import gate.application.review.ReviewCommand;
+import gate.application.review.ReviewResult;
 import gate.domain.config.GateConfig;
 import gate.domain.error.GateException;
 import gate.domain.git.ObjectId;

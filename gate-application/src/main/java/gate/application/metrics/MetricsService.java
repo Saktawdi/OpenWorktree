@@ -1,4 +1,4 @@
-package gate.application;
+package gate.application.metrics;
 
 import gate.ports.PresubmitRepository;
 import gate.ports.ReviewResultRepository;

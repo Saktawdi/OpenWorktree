@@ -1,7 +1,7 @@
 package gate.application.presubmit;
 
-import gate.application.PresubmitCommand;
-import gate.application.PresubmitResult;
+import gate.application.presubmit.PresubmitCommand;
+import gate.application.presubmit.PresubmitResult;
 import gate.domain.audit.AuditEvent;
 import gate.domain.blob.BlobRef;
 import gate.domain.config.GateConfig;

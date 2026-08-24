@@ -2,8 +2,8 @@ package gate.web.service;
 
 import gate.adapters.process.CliLocator;
 import gate.application.GateService;
-import gate.application.StatusQuery;
-import gate.application.StatusResult;
+import gate.application.status.StatusQuery;
+import gate.application.status.StatusResult;
 import gate.domain.config.GateConfig;
 import gate.domain.session.SessionStatus;
 import gate.domain.task.GateTaskStatus;

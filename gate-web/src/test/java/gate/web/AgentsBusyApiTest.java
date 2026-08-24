@@ -132,7 +132,7 @@ class AgentsBusyApiTest {
 
     @SuppressWarnings("unchecked")
     private static Map<String, Object> parse(String body) {
-        return (Map<String, Object>) gate.application.MiniJson.parse(body.trim());
+        return (Map<String, Object>) gate.application.util.MiniJson.parse(body.trim());
     }
 
     @SuppressWarnings("unchecked")

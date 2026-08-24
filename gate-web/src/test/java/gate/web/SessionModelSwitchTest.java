@@ -251,12 +251,12 @@ class SessionModelSwitchTest {
 
     @SuppressWarnings("unchecked")
     private static String sessionId(String body) {
-        return String.valueOf(((Map<String, Object>) gate.application.MiniJson.parse(body.trim())).get("id"));
+        return String.valueOf(((Map<String, Object>) gate.application.util.MiniJson.parse(body.trim())).get("id"));
     }
 
     @SuppressWarnings("unchecked")
     private static String jsonField(String body, String field) {
-        Object v = ((Map<String, Object>) gate.application.MiniJson.parse(body.trim())).get(field);
+        Object v = ((Map<String, Object>) gate.application.util.MiniJson.parse(body.trim())).get(field);
         return v == null ? null : String.valueOf(v);
     }
 }

@@ -82,7 +82,7 @@ class McpEndToEndTest {
         // directly to model the human verdict (the MCP review_run tool wraps engine mode; in the
         // no-engine harness it behaves as manual). To keep the MCP path honest we drive the manual
         // reject through the service, matching how a human-domain caller would supply the verdict.
-        harness.service().review(new gate.application.ReviewCommand("T-1", null, false, "fix the bug"));
+        harness.service().review(new gate.application.review.ReviewCommand("T-1", null, false, "fix the bug"));
 
         // Agent reads the rejection.
         String rr = call(agentServer, "review_result_get", "{\"ticket_no\":\"T-1\"}");
@@ -95,7 +95,7 @@ class McpEndToEndTest {
                 "second presubmit must be round 2: " + r2);
 
         // Human runs review → manual pass.
-        harness.service().review(new gate.application.ReviewCommand("T-1", null, true, null));
+        harness.service().review(new gate.application.review.ReviewCommand("T-1", null, true, null));
 
         // Human publishes through the MCP tool.
         String pub = call(humanServer, "commit_and_publish", "{\"ticket_no\":\"T-1\"}");
@@ -113,7 +113,7 @@ class McpEndToEndTest {
                 harness.config().clonesRoot().resolve("T-1").toString()));
         harness.writeFile(clone, "feature.txt", "content\n");
         call(agentServer, "presubmit_create", "{\"ticket_no\":\"T-1\"}");
-        harness.service().review(new gate.application.ReviewCommand("T-1", null, true, null));
+        harness.service().review(new gate.application.review.ReviewCommand("T-1", null, true, null));
 
         // Agent tries to publish via the human-domain tool → JSON-RPC error (permission denied).
         String pub = call(agentServer, "commit_and_publish", "{\"ticket_no\":\"T-1\"}");

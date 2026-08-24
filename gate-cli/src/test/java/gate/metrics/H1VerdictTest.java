@@ -1,8 +1,8 @@
 package gate.metrics;
 
-import gate.application.H1Verdict;
-import gate.application.MetricsService;
-import gate.application.MetricsService.MetricRecord;
+import gate.application.metrics.H1Verdict;
+import gate.application.metrics.MetricsService;
+import gate.application.metrics.MetricsService.MetricRecord;
 import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.Test;

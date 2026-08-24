@@ -2,8 +2,8 @@ package gate.web.controller;
 
 import gate.adapters.git.GitCli;
 import gate.application.GateService;
-import gate.application.PresubmitCommand;
-import gate.application.PresubmitResult;
+import gate.application.presubmit.PresubmitCommand;
+import gate.application.presubmit.PresubmitResult;
 import gate.domain.blob.BlobRef;
 import gate.domain.config.GateConfig;
 import gate.domain.error.GateErrorCode;

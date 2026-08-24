@@ -1,4 +1,4 @@
-package gate.application;
+package gate.application.review;
 
 import gate.domain.policy.Decision;
 import java.util.List;

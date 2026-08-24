@@ -1,4 +1,4 @@
-package gate.application;
+package gate.application.presubmit;
 
 import gate.domain.snapshot.CaptureIntegrityReport;
 import java.util.List;

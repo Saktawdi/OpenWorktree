@@ -1,7 +1,11 @@
-package gate.cli;
+package gate.cli.cmd;
+import gate.cli.BaseCommand;
+import gate.cli.GateComponents;
+import gate.cli.util.JsonOut;
 
-import gate.application.ReconcileCommand;
-import gate.application.ReconcileResult;
+
+import gate.application.status.ReconcileCommand;
+import gate.application.status.ReconcileResult;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -9,7 +13,7 @@ import picocli.CommandLine;
 
 /** {@code gate reconcile}: converge pending intents against auth.git (§7.4, A5). */
 @CommandLine.Command(name = "reconcile", description = "Converge pending publish intents against auth.git")
-final class ReconcileCliCommand extends BaseCommand {
+public final class ReconcileCliCommand extends BaseCommand {
 
     @CommandLine.Option(names = "--ticket", description = "Limit to one ticket (default: all pending)")
     String ticketNo;

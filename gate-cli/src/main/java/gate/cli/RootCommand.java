@@ -1,5 +1,16 @@
 package gate.cli;
 
+import gate.cli.cmd.InitCommand;
+import gate.cli.cmd.McpCommand;
+import gate.cli.cmd.MetricsCommand;
+import gate.cli.cmd.PreflightCommand;
+import gate.cli.cmd.PresubmitCliCommand;
+import gate.cli.cmd.ProviderCommand;
+import gate.cli.cmd.PublishCliCommand;
+import gate.cli.cmd.ReconcileCliCommand;
+import gate.cli.cmd.ReviewCliCommand;
+import gate.cli.cmd.StatusCliCommand;
+import gate.cli.cmd.TicketCommand;
 import picocli.CommandLine;
 
 /** Root command. Subcommands carry the behaviour; this only groups them and prints help. */

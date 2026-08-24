@@ -1,8 +1,12 @@
-package gate.cli;
+package gate.cli.cmd;
+import gate.cli.BaseCommand;
+import gate.cli.GateComponents;
+import gate.cli.util.JsonOut;
+
 
 import gate.adapters.mcp.McpServer;
 import gate.adapters.mcp.McpToolDispatcher;
-import gate.application.MiniJson;
+import gate.application.util.MiniJson;
 import gate.domain.error.GateErrorCode;
 import gate.domain.error.GateException;
 import java.util.Map;
@@ -25,7 +29,7 @@ import picocli.CommandLine;
                 McpCommand.Serve.class,
                 McpCommand.IssueToken.class
         })
-final class McpCommand implements Runnable {
+public final class McpCommand implements Runnable {
 
     @Override
     public void run() {

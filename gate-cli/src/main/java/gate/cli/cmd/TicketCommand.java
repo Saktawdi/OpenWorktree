@@ -1,4 +1,8 @@
-package gate.cli;
+package gate.cli.cmd;
+import gate.cli.BaseCommand;
+import gate.cli.GateComponents;
+import gate.cli.util.JsonOut;
+
 
 import gate.domain.git.RepoRef;
 import gate.domain.ticket.Ticket;
@@ -16,7 +20,7 @@ import picocli.CommandLine;
  */
 @CommandLine.Command(name = "ticket", description = "Ticket operations",
         subcommands = {TicketCommand.Create.class})
-final class TicketCommand {
+public final class TicketCommand {
 
     @CommandLine.Command(name = "create", description = "Register a ticket and create its independent clone")
     static final class Create extends BaseCommand {

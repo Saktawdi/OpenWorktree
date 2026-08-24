@@ -1,9 +1,9 @@
 package gate.web.controller;
 
 import gate.application.GateService;
-import gate.application.MetricsService;
-import gate.application.ReconcileCommand;
-import gate.application.ReconcileResult;
+import gate.application.metrics.MetricsService;
+import gate.application.status.ReconcileCommand;
+import gate.application.status.ReconcileResult;
 import gate.web.util.Json;
 import io.javalin.Javalin;
 import io.javalin.http.Context;

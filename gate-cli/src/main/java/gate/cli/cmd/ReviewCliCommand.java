@@ -1,7 +1,11 @@
-package gate.cli;
+package gate.cli.cmd;
+import gate.cli.BaseCommand;
+import gate.cli.GateComponents;
+import gate.cli.util.JsonOut;
 
-import gate.application.ReviewCommand;
-import gate.application.ReviewResult;
+
+import gate.application.review.ReviewCommand;
+import gate.application.review.ReviewResult;
 import gate.domain.error.GateErrorCode;
 import gate.domain.error.GateException;
 import java.util.Map;
@@ -20,7 +24,7 @@ import picocli.CommandLine;
  * A REJECT exits 10 (feed findings back), a NEEDS_HUMAN exits 13, matching §8.3.
  */
 @CommandLine.Command(name = "review", description = "Run a review round for a presubmit")
-final class ReviewCliCommand extends BaseCommand {
+public final class ReviewCliCommand extends BaseCommand {
 
     @CommandLine.Option(names = "--ticket", required = true, description = "Ticket number")
     String ticketNo;
