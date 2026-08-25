@@ -605,23 +605,33 @@ public final class SessionController implements WebController {
         return m;
     }
 
-    private static Map<String, Object> messageJson(gate.domain.session.SessionMessage msg) {
-        Map<String, Object> m = new LinkedHashMap<>();
-        m.put("id", msg.id());
-        m.put("session_id", msg.sessionId());
-        m.put("role", msg.role().name().toLowerCase(Locale.ROOT));
-        m.put("content", msg.content());
-        m.put("created_at", msg.timestamp().toString());
-        List<Map<String, Object>> tcs = new ArrayList<>();
-        for (var tc : msg.toolCalls()) {
-            Map<String, Object> tm = new LinkedHashMap<>();
-            tm.put("tool_name", tc.name());
-            tm.put("arguments", tc.argumentsJson());
-            tm.put("result", tc.resultJson());
-            tcs.add(tm);
+    private static Map<String, Object> messageJson(gate.domain.session.SessionMessage m) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("id", m.id());
+        out.put("session_id", m.sessionId());
+        out.put("role", m.role().name());
+        out.put("content", m.content());
+        List<Map<String, Object>> calls = new ArrayList<>();
+        for (gate.domain.session.ToolCall tc : m.toolCalls()) {
+            Map<String, Object> cm = new LinkedHashMap<>();
+            cm.put("name", tc.name());
+            cm.put("arguments_json", tc.argumentsJson());
+            cm.put("result_json", tc.resultJson());
+            calls.add(cm);
         }
-        m.put("tool_calls", tcs);
-        return m;
+        out.put("tool_calls", calls);
+        if (m.usage() == null) {
+            out.put("usage", null);
+        } else {
+            Map<String, Object> u = new LinkedHashMap<>();
+            u.put("prompt_tokens", m.usage().promptTokens());
+            u.put("completion_tokens", m.usage().completionTokens());
+            u.put("total_tokens", m.usage().totalTokens());
+            out.put("usage", u);
+        }
+        out.put("degraded", m.degraded());
+        out.put("timestamp", m.timestamp().toString());
+        return out;
     }
 
     private static String required(Map<String, Object> req, String key) {

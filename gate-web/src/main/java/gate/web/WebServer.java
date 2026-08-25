@@ -55,6 +55,11 @@ public final class WebServer implements AutoCloseable {
             ctx.result(Json.error(e.code().code(), e.code().name(), e.getMessage(), null));
         });
 
+        app.exception(io.javalin.http.HttpResponseException.class, (e, ctx) -> {
+            ctx.status(e.getStatus());
+            // response body & content-type were already written in filter
+        });
+
         app.exception(Exception.class, (e, ctx) -> {
             ctx.status(500);
             ctx.contentType("application/json; charset=utf-8");
