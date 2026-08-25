@@ -5,28 +5,51 @@ import {
   CaretRight,
   Check,
   CircleNotch,
+  Code,
   FileCode,
+  FileText,
+  Globe,
   Info,
   MagnifyingGlass,
   PencilSimple,
+  Question,
   Sparkle,
   TerminalWindow,
   Warning,
   X,
 } from "@phosphor-icons/react";
 import { NO_CHAT, useApp } from "../lib/store";
-import type { ChatItem, ToolCallView } from "../lib/types";
+import type { ChatItem, ToolCallView, ToolIconKind } from "../lib/types";
 import { hhmmss } from "../lib/format";
 import { PermissionCard } from "./PermissionCard";
+import { QuestionCard } from "./QuestionCard";
 import { Markdown } from "./Markdown";
 
-const TOOL_ICONS = {
-  file: FileCode,
+const TOOL_ICONS: Record<ToolIconKind, typeof TerminalWindow> = {
+  file: FileText,
   search: MagnifyingGlass,
   edit: PencilSimple,
   terminal: TerminalWindow,
   test: TerminalWindow,
-} as const;
+  code: Code,
+  question: Question,
+  web: Globe,
+  custom: FileCode,
+};
+
+function splitToolArgs(tool: ToolCallView): { toolName: string; argsPart: string } {
+  if (tool.toolName) {
+    const rawArgs = tool.args !== undefined ? tool.args : tool.argsSummary.slice(tool.toolName.length);
+    return { toolName: tool.toolName, argsPart: rawArgs };
+  }
+  // 兼容未单独拆出 toolName 的历史旧数据：如 "bash{\"command\":\"...\"}" 或 "read_file ..."
+  const summary = tool.argsSummary || tool.name || "";
+  const match = summary.match(/^([a-zA-Z0-9_\-.:]+)([\s({[].*|$)/);
+  if (match) {
+    return { toolName: match[1], argsPart: match[2] || "" };
+  }
+  return { toolName: summary, argsPart: "" };
+}
 
 function ThinkingBlock({ thinking }: { thinking: NonNullable<Extract<ChatItem, { kind: "assistant" }>["thinking"]> }) {
   const [expanded, setExpanded] = useState(!thinking.done);
@@ -72,6 +95,8 @@ function ThinkingBlock({ thinking }: { thinking: NonNullable<Extract<ChatItem, {
 function ToolRow({ tool }: { tool: ToolCallView }) {
   const [open, setOpen] = useState(false);
   const Icon = TOOL_ICONS[tool.icon] ?? TerminalWindow;
+  const { toolName, argsPart } = splitToolArgs(tool);
+
   return (
     <div>
       <button
@@ -86,8 +111,10 @@ function ToolRow({ tool }: { tool: ToolCallView }) {
           <X size={14} className="text-danger" weight="bold" />
         )}
         <Icon size={14} className="text-dim shrink-0" />
-        <span className="text-[12.5px] font-medium text-ink shrink-0">{tool.name}</span>
-        <span className="font-mono text-[11.5px] text-dim truncate flex-1 min-w-0">{tool.argsSummary}</span>
+        <span className="font-mono text-[11.5px] truncate flex-1 min-w-0">
+          <strong className="font-semibold text-ink">{toolName}</strong>
+          {argsPart && <span className="text-faint">{argsPart}</span>}
+        </span>
         {tool.resultSummary && (
           <span className="font-mono text-[11px] text-faint shrink-0 hidden sm:inline">{tool.resultSummary}</span>
         )}
@@ -188,6 +215,10 @@ export function ChatStream({ ticketNo }: { ticketNo: string }) {
           ) : item.kind === "permission" ? (
             <div key={item.id} className="animate-rise">
               <PermissionCard ticketNo={ticketNo} sessionId={sessionId} item={item} locked={cancelled} />
+            </div>
+          ) : item.kind === "question" ? (
+            <div key={item.id} className="animate-rise">
+              <QuestionCard ticketNo={ticketNo} sessionId={sessionId} item={item} locked={cancelled} />
             </div>
           ) : (
             <SystemMessage key={item.id} item={item} />

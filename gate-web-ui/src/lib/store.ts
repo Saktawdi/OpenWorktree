@@ -12,6 +12,7 @@ import type {
   Project,
   PublishOutcome,
   PermissionRequestView,
+  QuestionRequestView,
   SessionModelSel,
   Snapshot,
   TaskProgress,
@@ -266,11 +267,15 @@ function tryRestore(): boolean {
       liveTurns: {},
       runningAgents: { count: 0, sessions: [] },
     };
-    // 旧版本会把已应答的权限卡片留在 chats 里（永久挂在底部）；恢复时只保留待决的，
+    // 旧版本会把已应答的权限/提问卡片留在 chats 里（永久挂在底部）；恢复时只保留待决的，
     // 并把残留的 streaming 占位定格（否则光标会永久闪烁）。
     for (const [no, items] of Object.entries(clean.chats)) {
       const filtered = items
-        .filter((m) => m.kind !== "permission" || m.status === "pending")
+        .filter(
+          (m) =>
+            (m.kind !== "permission" && m.kind !== "question") ||
+            m.status === "pending",
+        )
         .map((m) => (m.kind === "assistant" && m.streaming ? { ...m, streaming: false } : m));
       clean.chats[no] = filtered;
     }
@@ -435,6 +440,42 @@ export function resolvePermission(
 /** 应答提交失败：清掉墓碑，调用方随后重新 pushPermissionRequest 恢复待决卡片。 */
 export function revertPermission(_no: string, permissionId: string) {
   resolvedPermissions.delete(permissionId);
+}
+
+/** 已作答/已跳过 question id 的墓碑：阻止重放的 asked 事件复活卡片。 */
+const resolvedQuestions = new Set<string>();
+
+/** 入队一个 question 请求卡片；按 requestId 去重（id 恒为 ques-<request_id>）。 */
+export function pushQuestionRequest(no: string, request: QuestionRequestView) {
+  if (resolvedQuestions.has(request.requestId)) return;
+  const id = `ques-${request.requestId}`;
+  set((st) => {
+    const list = st.chats[no] ?? [];
+    if (list.some((m) => m.kind === "question" && m.id === id)) return st;
+    return {
+      chats: {
+        ...st.chats,
+        [no]: [...list, { kind: "question" as const, id, request, status: "pending" as const, ts: Date.now() }],
+      },
+    };
+  });
+}
+
+/** question 已有结论（用户提交/跳过，或上游 replied/rejected）：移除卡片并记墓碑。 */
+export function resolveQuestion(no: string, requestId: string, _rejected: boolean) {
+  resolvedQuestions.add(requestId);
+  const id = `ques-${requestId}`;
+  set((st) => ({
+    chats: {
+      ...st.chats,
+      [no]: (st.chats[no] ?? []).filter((m) => !(m.kind === "question" && m.id === id)),
+    },
+  }));
+}
+
+/** 提交失败：清掉墓碑，调用方随后重新 pushQuestionRequest 恢复待决卡片。 */
+export function revertQuestion(_no: string, requestId: string) {
+  resolvedQuestions.delete(requestId);
 }
 
 export function pushAssistantPlaceholder(no: string): string {

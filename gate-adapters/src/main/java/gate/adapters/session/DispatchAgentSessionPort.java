@@ -99,6 +99,30 @@ public final class DispatchAgentSessionPort implements AgentSessionPort {
     }
 
     @Override
+    public List<gate.domain.session.QuestionRequest> pendingQuestions(String sessionId) {
+        Session s = sessions.find(sessionId)
+                .orElseThrow(() -> new GateException(GateErrorCode.USAGE,
+                        "no such session: " + sessionId));
+        return adapter(s.cli()).pendingQuestions(sessionId);
+    }
+
+    @Override
+    public void respondQuestion(String sessionId, String requestId, List<List<String>> answers) {
+        Session s = sessions.find(sessionId)
+                .orElseThrow(() -> new GateException(GateErrorCode.USAGE,
+                        "no such session: " + sessionId));
+        adapter(s.cli()).respondQuestion(sessionId, requestId, answers);
+    }
+
+    @Override
+    public void rejectQuestion(String sessionId, String requestId) {
+        Session s = sessions.find(sessionId)
+                .orElseThrow(() -> new GateException(GateErrorCode.USAGE,
+                        "no such session: " + sessionId));
+        adapter(s.cli()).rejectQuestion(sessionId, requestId);
+    }
+
+    @Override
     public Set<String> busySessionIds() {
         // 聚合两个适配器的并集，排序后返回不可变快照，输出稳定便于测试
         Set<String> merged = new LinkedHashSet<>();

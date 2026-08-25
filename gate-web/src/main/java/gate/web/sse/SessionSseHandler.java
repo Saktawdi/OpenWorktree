@@ -66,6 +66,10 @@ public final class SessionSseHandler {
                         eventName = "permission_asked";
                     } else if (chunk instanceof SessionStreamChunk.PermissionRepliedChunk) {
                         eventName = "permission_replied";
+                    } else if (chunk instanceof SessionStreamChunk.QuestionAskedChunk) {
+                        eventName = "question_asked";
+                    } else if (chunk instanceof SessionStreamChunk.QuestionRepliedChunk) {
+                        eventName = "question_replied";
                     } else if (chunk instanceof SessionStreamChunk.TitleChunk) {
                         eventName = "session_title";
                     }
@@ -149,10 +153,41 @@ public final class SessionSseHandler {
             m.put("permission_id", pr.permissionId());
             m.put("response", pr.response());
             m.put("auto", pr.auto());
+        } else if (chunk instanceof SessionStreamChunk.QuestionAskedChunk qa) {
+            m.put("request_id", qa.request().requestId());
+            m.put("questions", questionPromptsJson(qa.request()));
+            m.put("message_id", qa.request().messageId());
+            m.put("call_id", qa.request().callId());
+        } else if (chunk instanceof SessionStreamChunk.QuestionRepliedChunk qr) {
+            m.put("request_id", qr.requestId());
+            m.put("rejected", qr.rejected());
+            m.put("answers", qr.answers());
+            m.put("auto", qr.auto());
         } else if (chunk instanceof SessionStreamChunk.TitleChunk t) {
             m.put("title", t.title());
         }
         return m;
+    }
+
+    private static List<Object> questionPromptsJson(gate.domain.session.QuestionRequest request) {
+        List<Object> out = new ArrayList<>();
+        for (gate.domain.session.QuestionRequest.QuestionPrompt p : request.questions()) {
+            Map<String, Object> q = new LinkedHashMap<>();
+            q.put("question", p.question());
+            q.put("header", p.header());
+            List<Object> options = new ArrayList<>();
+            for (gate.domain.session.QuestionRequest.QuestionOption o : p.options()) {
+                Map<String, Object> om = new LinkedHashMap<>();
+                om.put("label", o.label());
+                om.put("description", o.description());
+                options.add(om);
+            }
+            q.put("options", options);
+            q.put("multiple", p.multiple());
+            q.put("custom", p.custom());
+            out.add(q);
+        }
+        return out;
     }
 
     private static Map<String, Object> sessionEventJson(AgentSessionPort.SessionEvent e) {

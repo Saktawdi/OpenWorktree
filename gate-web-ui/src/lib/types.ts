@@ -103,10 +103,14 @@ export interface GitTreeEntry {
 
 export type ToolStatus = "running" | "ok" | "error";
 
+export type ToolIconKind = "file" | "search" | "edit" | "terminal" | "test" | "code" | "question" | "web" | "custom";
+
 export interface ToolCallView {
   id: string;
   name: string;
-  icon: "file" | "search" | "edit" | "terminal" | "test";
+  toolName?: string;
+  args?: string;
+  icon: ToolIconKind;
   argsSummary: string;
   resultSummary?: string;
   resultDetail?: string;
@@ -137,6 +141,33 @@ export interface PermissionRequestView {
 
 export type PermissionStatus = "pending" | "once" | "always" | "reject" | "auto";
 
+/** One selectable choice of an agent question (opencode question 工具). */
+export interface QuestionOptionView {
+  label: string;
+  description?: string;
+}
+
+/** One question shown to the user. */
+export interface QuestionPromptView {
+  question: string;
+  header: string;
+  options: QuestionOptionView[];
+  /** 允许多选。 */
+  multiple: boolean;
+  /** 允许自定义输入（opencode 缺省为 true）。 */
+  custom: boolean;
+}
+
+/** One pending question request from the agent (question 工具等待用户作答). */
+export interface QuestionRequestView {
+  requestId: string;
+  questions: QuestionPromptView[];
+  messageId?: string;
+  callId?: string;
+}
+
+export type QuestionStatus = "pending" | "answered" | "rejected";
+
 export type ChatItem =
   | { kind: "user"; id: string; text: string; ts: number }
   | {
@@ -158,6 +189,13 @@ export type ChatItem =
       id: string;
       request: PermissionRequestView;
       status: PermissionStatus;
+      ts: number;
+    }
+  | {
+      kind: "question";
+      id: string;
+      request: QuestionRequestView;
+      status: QuestionStatus;
       ts: number;
     };
 
@@ -184,7 +222,7 @@ export interface CatalogModel {
   name: string;
   /** OpenCode reasoning-effort keys ("high"/"medium"/"low"/…); empty when the model has none. */
   variants: string[];
-  /** 该模型是否支持图片输入（modalities.input 含 image，或 attachment 标志）。 */
+  /** 该模型是否支持图片输入（serve 归一化 capabilities.input.image，attachment 兜底）。 */
   imageInput: boolean;
 }
 

@@ -88,6 +88,9 @@ public final class SessionController implements WebController {
         app.get("/api/sessions/{id}/models", this::listModels);
         app.get("/api/sessions/{id}/permissions", this::listPermissions);
         app.post("/api/sessions/{id}/permissions/{permissionId}", this::respondPermission);
+        app.get("/api/sessions/{id}/questions", this::listQuestions);
+        app.post("/api/sessions/{id}/questions/{requestId}/reply", this::answerQuestion);
+        app.post("/api/sessions/{id}/questions/{requestId}/reject", this::rejectQuestion);
         app.get("/api/sessions/{id}/events", this::sessionEvents);
 
         // Agents Busy
@@ -385,6 +388,110 @@ public final class SessionController implements WebController {
         body.put("ok", true);
         ctx.status(HttpStatus.OK);
         ctx.json(body);
+    }
+
+    public void listQuestions(Context ctx) {
+        String sessionId = ctx.pathParam("id");
+        if (sessionRepository.find(sessionId).isEmpty()) {
+            throw new GateException(GateErrorCode.USAGE, "no such session: " + sessionId);
+        }
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (gate.domain.session.QuestionRequest r : agentSessionPort.pendingQuestions(sessionId)) {
+            out.add(questionJson(r));
+        }
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("session_id", sessionId);
+        body.put("questions", out);
+        ctx.status(HttpStatus.OK);
+        ctx.json(body);
+    }
+
+    public void answerQuestion(Context ctx) {
+        String sessionId = ctx.pathParam("id");
+        String requestId = ctx.pathParam("requestId");
+        if (sessionRepository.find(sessionId).isEmpty()) {
+            throw new GateException(GateErrorCode.USAGE, "no such session: " + sessionId);
+        }
+        Map<String, Object> req = Json.parseObject(ctx.body());
+        List<List<String>> answers = parseAnswers(req.get("answers"));
+        if (answers.isEmpty()) {
+            throw new GateException(GateErrorCode.USAGE,
+                    "answers is required: one selected-label array per question, in order");
+        }
+        agentSessionPort.respondQuestion(sessionId, requestId, answers);
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("ok", true);
+        ctx.status(HttpStatus.OK);
+        ctx.json(body);
+    }
+
+    public void rejectQuestion(Context ctx) {
+        String sessionId = ctx.pathParam("id");
+        String requestId = ctx.pathParam("requestId");
+        if (sessionRepository.find(sessionId).isEmpty()) {
+            throw new GateException(GateErrorCode.USAGE, "no such session: " + sessionId);
+        }
+        agentSessionPort.rejectQuestion(sessionId, requestId);
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("ok", true);
+        ctx.status(HttpStatus.OK);
+        ctx.json(body);
+    }
+
+    /** answers: [[label,…],…] — one entry per question; entries must be non-null. */
+    private static List<List<String>> parseAnswers(Object raw) {
+        if (raw == null) {
+            return List.of();
+        }
+        if (!(raw instanceof List<?> list)) {
+            throw new GateException(GateErrorCode.USAGE, "answers must be an array of label arrays");
+        }
+        List<List<String>> out = new ArrayList<>();
+        for (Object item : list) {
+            List<String> picked = new ArrayList<>();
+            if (item instanceof List<?> labels) {
+                for (Object label : labels) {
+                    if (label == null) {
+                        continue;
+                    }
+                    String v = String.valueOf(label).trim();
+                    if (!v.isEmpty()) {
+                        picked.add(v);
+                    }
+                }
+            } else if (item != null && !String.valueOf(item).isBlank()) {
+                // Tolerate a bare string per question (single-select shorthand).
+                picked.add(String.valueOf(item).trim());
+            }
+            out.add(picked);
+        }
+        return out;
+    }
+
+    private static Map<String, Object> questionJson(gate.domain.session.QuestionRequest r) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("request_id", r.requestId());
+        List<Object> prompts = new ArrayList<>();
+        for (gate.domain.session.QuestionRequest.QuestionPrompt p : r.questions()) {
+            Map<String, Object> q = new LinkedHashMap<>();
+            q.put("question", p.question());
+            q.put("header", p.header());
+            List<Object> options = new ArrayList<>();
+            for (gate.domain.session.QuestionRequest.QuestionOption o : p.options()) {
+                Map<String, Object> om = new LinkedHashMap<>();
+                om.put("label", o.label());
+                om.put("description", o.description());
+                options.add(om);
+            }
+            q.put("options", options);
+            q.put("multiple", p.multiple());
+            q.put("custom", p.custom());
+            prompts.add(q);
+        }
+        m.put("questions", prompts);
+        m.put("message_id", r.messageId());
+        m.put("call_id", r.callId());
+        return m;
     }
 
     public void sessionEvents(Context ctx) {

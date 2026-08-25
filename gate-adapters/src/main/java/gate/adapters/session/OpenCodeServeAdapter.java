@@ -9,6 +9,7 @@ import gate.domain.project.Project;
 import gate.domain.session.AgentCli;
 import gate.domain.session.AgentConfig;
 import gate.domain.session.PermissionRequest;
+import gate.domain.session.QuestionRequest;
 import gate.domain.session.Role;
 import gate.domain.session.Session;
 import gate.domain.session.SessionMessage;
@@ -122,6 +123,10 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
     // the serve instance's /permission snapshot so auto-allow and pre-send reject have a local
     // view even before the SSE permission.asked frame is replayed after a reconnect.
     private final Map<String, Map<String, PermissionRequest>> pendingPermissions = new ConcurrentHashMap<>();
+    // Per-session pending question asks (question 工具): gateSessionId -> requestId -> request.
+    // Same shape as pendingPermissions; the /question snapshot is merged in on read so a page
+    // reload restores the interactive card while the agent waits for the answer.
+    private final Map<String, Map<String, QuestionRequest>> pendingQuestions = new ConcurrentHashMap<>();
     private final AdapterLog log;
     private final ServePidRegistry pidRegistry;
     /**
@@ -327,6 +332,108 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
         }
     }
 
+    @Override
+    public List<QuestionRequest> pendingQuestions(String sessionId) {
+        Map<String, QuestionRequest> merged = new LinkedHashMap<>();
+        Map<String, QuestionRequest> local = pendingQuestions.get(sessionId);
+        if (local != null) {
+            merged.putAll(local);
+        }
+        Integer port = sessionPorts.get(sessionId);
+        Session session = sessions.find(sessionId).orElse(null);
+        if (port != null && session != null && session.cliSessionId() != null) {
+            try {
+                HttpRequest req = HttpRequest.newBuilder(
+                                URI.create("http://127.0.0.1:" + port + "/question"))
+                        .timeout(PERMISSION_HTTP_TIMEOUT).GET().build();
+                HttpResponse<String> resp = http.send(req,
+                        HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+                if (resp.statusCode() / 100 == 2) {
+                    Object parsed = MiniJson.parse(resp.body().trim());
+                    if (parsed instanceof List<?> list) {
+                        for (Object item : list) {
+                            if (!(item instanceof Map<?, ?> m)) {
+                                continue;
+                            }
+                            Map<String, Object> obj = castMap(m);
+                            // The /question snapshot is instance-wide; keep this session's asks.
+                            if (!session.cliSessionId().equals(str(obj.get("sessionID")))) {
+                                continue;
+                            }
+                            QuestionRequest r = questionFromProps(obj);
+                            if (r.requestId() != null) {
+                                merged.put(r.requestId(), r);
+                            }
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                // Serve unreachable (restarting / down): fall back to the in-memory table only.
+                log.warn("opencode", "question.list-failed", "sessionId", sessionId,
+                        "error", e.getClass().getSimpleName());
+            }
+        }
+        return List.copyOf(merged.values());
+    }
+
+    @Override
+    public void respondQuestion(String sessionId, String requestId, List<List<String>> answers) {
+        Integer port = sessionPorts.get(sessionId);
+        if (port == null) {
+            throw new GateException(GateErrorCode.USAGE, "session has no opencode endpoint");
+        }
+        List<String> encoded = new ArrayList<>();
+        for (List<String> picked : answers == null ? List.<List<String>>of() : answers) {
+            encoded.add(jsonValue(picked == null ? List.of() : picked));
+        }
+        String body = "{\"answers\":[" + String.join(",", encoded) + "]}";
+        HttpResponse<String> resp;
+        try {
+            resp = post("http://127.0.0.1:" + port + "/question/" + requestId + "/reply",
+                    body, PERMISSION_HTTP_TIMEOUT);
+        } catch (Exception e) {
+            throw new GateException(GateErrorCode.GATE_ERROR_IO,
+                    "opencode question reply failed: " + requestId, e);
+        }
+        if (resp.statusCode() == 404) {
+            // Already answered/rejected elsewhere; treat as resolved.
+            log.info("opencode", "question.already-resolved", "sessionId", sessionId,
+                    "requestId", requestId);
+        } else if (resp.statusCode() / 100 != 2) {
+            throw new GateException(GateErrorCode.GATE_ERROR_IO,
+                    "opencode question reply failed: HTTP " + resp.statusCode() + " " + resp.body());
+        }
+        removePendingQuestion(sessionId, requestId);
+    }
+
+    @Override
+    public void rejectQuestion(String sessionId, String requestId) {
+        Integer port = sessionPorts.get(sessionId);
+        if (port == null) {
+            throw new GateException(GateErrorCode.USAGE, "session has no opencode endpoint");
+        }
+        HttpResponse<String> resp;
+        try {
+            resp = post("http://127.0.0.1:" + port + "/question/" + requestId + "/reject",
+                    "{}", PERMISSION_HTTP_TIMEOUT);
+        } catch (Exception e) {
+            throw new GateException(GateErrorCode.GATE_ERROR_IO,
+                    "opencode question reject failed: " + requestId, e);
+        }
+        if (resp.statusCode() != 404 && resp.statusCode() / 100 != 2) {
+            throw new GateException(GateErrorCode.GATE_ERROR_IO,
+                    "opencode question reject failed: HTTP " + resp.statusCode() + " " + resp.body());
+        }
+        removePendingQuestion(sessionId, requestId);
+    }
+
+    private void removePendingQuestion(String sessionId, String requestId) {
+        Map<String, QuestionRequest> local = pendingQuestions.get(sessionId);
+        if (local != null) {
+            local.remove(requestId);
+        }
+    }
+
     /** Best-effort reject of all in-memory pending asks so a new turn cannot be blocked by one. */
     private void rejectPendingPermissions(String sessionId, int port) {
         Map<String, PermissionRequest> local = pendingPermissions.get(sessionId);
@@ -374,6 +481,70 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
             return list.stream().map(String::valueOf).toList();
         }
         return List.of();
+    }
+
+    /**
+     * Maps a {@code question.asked} property map (or a {@code /question} snapshot entry) onto
+     * {@link QuestionRequest}: {id, sessionID, questions:[{question, header, options, multiple?,
+     * custom?}], tool?{messageID, callID}}.
+     */
+    @SuppressWarnings("unchecked")
+    private static QuestionRequest questionFromProps(Map<String, Object> props) {
+        Map<String, Object> tool = props.get("tool") instanceof Map<?, ?> t
+                ? (Map<String, Object>) t : Map.of();
+        List<QuestionRequest.QuestionPrompt> prompts = new ArrayList<>();
+        if (props.get("questions") instanceof List<?> list) {
+            for (Object item : list) {
+                if (!(item instanceof Map<?, ?> q)) {
+                    continue;
+                }
+                Map<String, Object> qm = castMap(q);
+                List<QuestionRequest.QuestionOption> options = new ArrayList<>();
+                if (qm.get("options") instanceof List<?> opts) {
+                    for (Object o : opts) {
+                        if (!(o instanceof Map<?, ?> om)) {
+                            continue;
+                        }
+                        Map<String, Object> opt = castMap(om);
+                        options.add(new QuestionRequest.QuestionOption(
+                                str(opt.get("label")), str(opt.get("description"))));
+                    }
+                }
+                // opencode defaults custom (free-text answer) to true; only an explicit false disables it.
+                prompts.add(new QuestionRequest.QuestionPrompt(
+                        str(qm.get("question")),
+                        str(qm.get("header")),
+                        options,
+                        Boolean.TRUE.equals(qm.get("multiple")),
+                        !Boolean.FALSE.equals(qm.get("custom"))));
+            }
+        }
+        return new QuestionRequest(
+                str(props.get("id")),
+                prompts,
+                str(tool.get("messageID")),
+                str(tool.get("callID")));
+    }
+
+    /** question.replied answers payload: {@code [[label,…],…]} → typed lists. */
+    private static List<List<String>> answerLists(Object raw) {
+        if (!(raw instanceof List<?> list)) {
+            return List.of();
+        }
+        List<List<String>> out = new ArrayList<>();
+        for (Object item : list) {
+            if (!(item instanceof List<?> picked)) {
+                continue;
+            }
+            List<String> labels = new ArrayList<>();
+            for (Object label : picked) {
+                if (label != null) {
+                    labels.add(String.valueOf(label));
+                }
+            }
+            out.add(labels);
+        }
+        return out;
     }
 
     @Override
@@ -488,6 +659,7 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
         }
         sessions.update(s.withStatus(SessionStatus.ABORTED).withFinishedAt(clock.now()));
         pendingPermissions.remove(sessionId);
+        pendingQuestions.remove(sessionId);
         // stopUpstream already detached the reader, so no natural done/error will ever reach
         // the browser — emit one ourselves or the UI keeps its stop button until timeout.
         emitChunk(sessionId, new SessionStreamChunk.DoneChunk(sessionId, s.cliSessionId(), clock.now()));
@@ -562,6 +734,7 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
         }
         sessionPorts.clear();
         pendingPermissions.clear();
+        pendingQuestions.clear();
         executor.shutdown();
     }
 
@@ -933,6 +1106,9 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                 case "session.updated" -> handleSessionUpdated(props);
                 case "permission.asked" -> handlePermissionAsked(props);
                 case "permission.replied" -> handlePermissionReplied(props);
+                case "question.asked" -> handleQuestionAsked(props);
+                case "question.replied" -> handleQuestionResolved(props, false);
+                case "question.rejected" -> handleQuestionResolved(props, true);
                 default -> {
                     // server.connected, file.watcher.*, pty.*, ... are irrelevant here
                 }
@@ -1271,6 +1447,40 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
             removePending(sessionId, requestId);
             emitChunk(sessionId, new SessionStreamChunk.PermissionRepliedChunk(
                     sessionId, requestId, str(props.get("reply")), false, clock.now()));
+        }
+
+        /**
+         * question.asked (question 工具): the property map IS the request ({id, sessionID,
+         * questions[], tool?}). Record it for the /questions endpoint and surface an interactive
+         * card to the UI — questions are always for the human, never auto-answered.
+         */
+        private void handleQuestionAsked(Map<String, Object> props) {
+            if (!cliSessionId.equals(str(props.get("sessionID")))) {
+                return;
+            }
+            QuestionRequest request = questionFromProps(props);
+            if (request.requestId() == null) {
+                return;
+            }
+            pendingQuestions.computeIfAbsent(sessionId, k -> new ConcurrentHashMap<>())
+                    .put(request.requestId(), request);
+            log.info("opencode", "question.asked", "sessionId", sessionId,
+                    "requestId", request.requestId(), "questions", request.questions().size());
+            emitChunk(sessionId, new SessionStreamChunk.QuestionAskedChunk(sessionId, request, clock.now()));
+        }
+
+        /** question.replied / question.rejected: {sessionID, requestID, answers?}. */
+        private void handleQuestionResolved(Map<String, Object> props, boolean rejected) {
+            if (!cliSessionId.equals(str(props.get("sessionID")))) {
+                return;
+            }
+            String requestId = str(props.get("requestID"));
+            if (requestId == null) {
+                return;
+            }
+            removePendingQuestion(sessionId, requestId);
+            emitChunk(sessionId, new SessionStreamChunk.QuestionRepliedChunk(
+                    sessionId, requestId, rejected, answerLists(props.get("answers")), false, clock.now()));
         }
 
         /** Server-side auto-allow: answer "once" on the user's behalf, then reflect the outcome. */

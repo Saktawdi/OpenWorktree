@@ -5,10 +5,12 @@ import {
   dropLiveTurn,
   finishLiveTurn,
   pushPermissionRequest,
+  pushQuestionRequest,
   pushSystemMessage,
   pushUserMessage,
   refreshTicketBusy,
   resolvePermission,
+  resolveQuestion,
   setBusy,
   setCenterTab,
   setDiffs,
@@ -33,6 +35,7 @@ import type {
   GitRepoView,
   GitTreeEntry,
   PendingAttachment,
+  QuestionRequestView,
   Severity,
   Snapshot,
   WorkspaceSyncResult,
@@ -185,9 +188,12 @@ export async function selectTicketLive(no: string) {
       if (target) {
         await loadSessionMessages(no, target);
         void loadSessionCatalog(no, target);
-        // 目标会话为 ACTIVE 时恢复未决的权限询问卡片（若已就绪）。
+        // 目标会话为 ACTIVE 时恢复未决的权限/提问卡片（若已就绪）。
         const sess = st.sessions[no]?.find((x) => x.id === target);
-        if (sess?.status === "active") void loadSessionPermissions(no, target);
+        if (sess?.status === "active") {
+          void loadSessionPermissions(no, target);
+          void loadSessionQuestions(no, target);
+        }
       }
     } catch {
       /* 会话可能尚未创建 */
@@ -365,8 +371,9 @@ export async function createSessionLive(no: string) {
     await loadTicketSessions(no);
     appStore.setState((st) => ({ activeSessionId: { ...st.activeSessionId, [no]: created.id } }));
     await loadSessionMessages(no, created.id).catch(() => {});
-    // 新建会话为 ACTIVE，预拉未决权限（一般为空，保持路径一致）。
+    // 新建会话为 ACTIVE，预拉未决权限/提问（一般为空，保持路径一致）。
     void loadSessionPermissions(no, created.id);
+    void loadSessionQuestions(no, created.id);
     void loadSessionCatalog(no, created.id);
   } catch (e) {
     showToast(`新建会话失败：${(e as Error).message}`);
@@ -459,6 +466,83 @@ export async function loadSessionPermissions(no: string, sessionId: string) {
   }
 }
 
+/* ─── 智能体提问（opencode question 工具） ─── */
+
+interface RawQuestionAsk {
+  request_id?: string;
+  questions?: Array<{
+    question?: string;
+    header?: string;
+    options?: Array<{ label?: string; description?: string }>;
+    multiple?: boolean;
+    custom?: boolean;
+  }>;
+  message_id?: string | null;
+  call_id?: string | null;
+}
+
+function mapQuestionAsk(q: RawQuestionAsk): QuestionRequestView {
+  return {
+    requestId: q.request_id ?? "",
+    questions: (q.questions ?? []).map((x) => ({
+      question: x.question ?? "",
+      header: x.header ?? "",
+      options: (x.options ?? []).map((o) => ({ label: o.label ?? "", description: o.description })),
+      multiple: x.multiple === true,
+      // opencode 缺省允许自定义输入；仅显式 false 时关闭
+      custom: x.custom !== false,
+    })),
+    messageId: q.message_id ?? undefined,
+    callId: q.call_id ?? undefined,
+  };
+}
+
+/** 恢复未决的提问卡片（页面刷新后 SSE 不会回放已经过去的 question_asked）。 */
+export async function loadSessionQuestions(no: string, sessionId: string) {
+  try {
+    const data = await api<{ questions: RawQuestionAsk[] }>(
+      `/api/sessions/${sessionId}/questions`,
+    );
+    for (const q of data.questions ?? []) {
+      if (q.request_id) pushQuestionRequest(no, mapQuestionAsk(q));
+    }
+  } catch (e) {
+    /* 提问恢复失败不阻断会话打开 */
+  }
+}
+
+/** 提交一次提问回答：POST /api/sessions/{sid}/questions/{rid}/reply，body {answers}。 */
+export async function answerSessionQuestion(
+  sessionId: string,
+  requestId: string,
+  answers: string[][],
+): Promise<boolean> {
+  try {
+    await api(`/api/sessions/${sessionId}/questions/${encodeURIComponent(requestId)}/reply`, {
+      method: "POST",
+      body: JSON.stringify({ answers }),
+    });
+    return true;
+  } catch (e) {
+    showToast(`回答提交失败：${(e as Error).message}`);
+    return false;
+  }
+}
+
+/** 跳过一次提问：POST /api/sessions/{sid}/questions/{rid}/reject。 */
+export async function rejectSessionQuestion(sessionId: string, requestId: string): Promise<boolean> {
+  try {
+    await api(`/api/sessions/${sessionId}/questions/${encodeURIComponent(requestId)}/reject`, {
+      method: "POST",
+      body: "{}",
+    });
+    return true;
+  } catch (e) {
+    showToast(`跳过失败：${(e as Error).message}`);
+    return false;
+  }
+}
+
 export async function deleteSessionLive(id: string, ticketNo: string) {
   try {
     await api(`/api/sessions/${id}`, { method: "DELETE" });
@@ -502,6 +586,32 @@ interface RawMessage {
   timestamp: string;
 }
 
+function resolveToolIcon(name: string): import("./types").ToolIconKind {
+  const n = name.toLowerCase().trim();
+  if (n.includes("bash") || n.includes("exec") || n.includes("shell") || n.includes("terminal") || n.includes("cmd")) {
+    return "terminal";
+  }
+  if (n.includes("read") || n.includes("view") || n.includes("cat") || n.includes("get_file") || n.includes("load")) {
+    return "file";
+  }
+  if (n.includes("edit") || n.includes("write") || n.includes("patch") || n.includes("multiedit") || n.includes("create") || n.includes("modify")) {
+    return "edit";
+  }
+  if (n.includes("grep") || n.includes("glob") || n.includes("search") || n.includes("find") || n.includes("locate")) {
+    return "search";
+  }
+  if (n.includes("test")) {
+    return "test";
+  }
+  if (n.includes("web") || n.includes("fetch") || n.includes("http") || n.includes("browser")) {
+    return "web";
+  }
+  if (n.includes("ask") || n.includes("question") || n.includes("prompt")) {
+    return "question";
+  }
+  return "terminal";
+}
+
 function mapHistoryMessage(m: RawMessage): ChatItem | null {
   if (m.role === "USER") {
     return { kind: "user", id: m.id, text: m.content, ts: Date.parse(m.timestamp) };
@@ -512,16 +622,22 @@ function mapHistoryMessage(m: RawMessage): ChatItem | null {
       id: m.id,
       text: m.content,
       streaming: false,
-      tools: (m.tool_calls ?? []).map((tc, i) => ({
-        id: `${m.id}-${i}`,
-        name: "工具调用",
-        icon: "terminal" as const,
-        // Match the live-streamed row: tool name followed by its full arguments JSON.
-        argsSummary: `${tc.name}${tc.arguments_json ?? ""}`,
-        resultSummary: tc.result_json?.slice(0, 80),
-        resultDetail: tc.result_json,
-        status: "ok" as const,
-      })),
+      tools: (m.tool_calls ?? []).map((tc, i) => {
+        const toolName = tc.name || "";
+        const args = tc.arguments_json ?? "";
+        return {
+          id: `${m.id}-${i}`,
+          name: toolName,
+          toolName,
+          args,
+          icon: resolveToolIcon(toolName),
+          // Match the live-streamed row: tool name followed by its full arguments JSON.
+          argsSummary: `${toolName}${args}`,
+          resultSummary: tc.result_json?.slice(0, 80),
+          resultDetail: tc.result_json,
+          status: "ok" as const,
+        };
+      }),
       ts: Date.parse(m.timestamp),
     };
   }
@@ -735,24 +851,34 @@ async function consumeSessionStream(no: string, sessionId: string) {
       updateLiveTurn(sessionId, (a) => {
         const existing = a.tools.find((t) => t.id === d.call_id);
         if (existing) {
+          const newArgs = (existing.args ?? "") + (d.argument_delta ?? "");
           return {
             ...a,
             tools: a.tools.map((t) =>
               t.id === d.call_id
-                ? { ...t, argsSummary: t.argsSummary + (d.argument_delta ?? ""), status: d.status === "SUCCESS" ? "ok" : d.status === "FAILED" ? "error" : "running" }
+                ? {
+                    ...t,
+                    args: newArgs,
+                    argsSummary: `${t.toolName ?? t.name}${newArgs}`,
+                    status: d.status === "SUCCESS" ? "ok" : d.status === "FAILED" ? "error" : "running",
+                  }
                 : t,
             ),
           };
         }
+        const toolName = String(d.tool_name ?? "");
+        const argsDelta = String(d.argument_delta ?? "");
         return {
           ...a,
           tools: [
             ...a.tools,
             {
               id: d.call_id,
-              name: "工具调用",
-              icon: "terminal" as const,
-              argsSummary: d.tool_name ?? "",
+              name: toolName,
+              toolName,
+              args: argsDelta,
+              icon: resolveToolIcon(toolName),
+              argsSummary: `${toolName}${argsDelta}`,
               status: "running" as const,
             },
           ],
@@ -777,6 +903,19 @@ async function consumeSessionStream(no: string, sessionId: string) {
       arm();
       const d = JSON.parse((ev as MessageEvent).data);
       resolvePermission(no, d.permission_id, d.response ?? "once", !!d.auto);
+    });
+    es.addEventListener("question_asked", (ev) => {
+      arm();
+      const d = JSON.parse((ev as MessageEvent).data);
+      // 与权限卡片同策略：只挂当前查看的会话视图，切回时 loadSessionQuestions 重新拉取。
+      if (d.request_id && appStore.getState().activeSessionId[no] === sessionId) {
+        pushQuestionRequest(no, mapQuestionAsk(d));
+      }
+    });
+    es.addEventListener("question_replied", (ev) => {
+      arm();
+      const d = JSON.parse((ev as MessageEvent).data);
+      if (d.request_id) resolveQuestion(no, d.request_id, !!d.rejected);
     });
     es.addEventListener("session_title", (ev) => {
       // 后端把 opencode 自动生成的标题上抛（HTTP Server: SessionSseHandler）。

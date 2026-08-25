@@ -6,6 +6,7 @@ import gate.domain.session.Session;
 import gate.domain.session.SessionMessage;
 import gate.domain.session.SessionStreamChunk;
 import gate.domain.session.PermissionRequest;
+import gate.domain.session.QuestionRequest;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -55,6 +56,29 @@ public interface AgentSessionPort {
 
     /** Live snapshot of this session's unresolved pending permission requests. */
     List<PermissionRequest> pendingPermissions(String sessionId);
+
+    /**
+     * Live snapshot of this session's unresolved pending question requests (question 工具).
+     * Default: none — only the opencode adapter produces asks.
+     */
+    default List<QuestionRequest> pendingQuestions(String sessionId) {
+        return List.of();
+    }
+
+    /**
+     * Answer a pending question request: one selected-label list per question, in order.
+     * Only meaningful for opencode sessions.
+     */
+    default void respondQuestion(String sessionId, String requestId, List<List<String>> answers) {
+        throw new UnsupportedOperationException(
+                "questions are only supported for opencode sessions");
+    }
+
+    /** Reject (dismiss) a pending question request; the agent sees the ask as aborted. */
+    default void rejectQuestion(String sessionId, String requestId) {
+        throw new UnsupportedOperationException(
+                "questions are only supported for opencode sessions");
+    }
 
     /**
      * 有进行中回合的 session id 快照（运行中 = turn in-flight）。

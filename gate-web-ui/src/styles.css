@@ -417,6 +417,9 @@ body {
   .permission-decided {
     opacity: 0.6;
   }
+  .question-pending {
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-info) 45%, transparent);
+  }
 
   /* ── Composer（会话输入卡，参考 OpenChamber：输入区与控制栏同卡） ── */
   .composer-shell {

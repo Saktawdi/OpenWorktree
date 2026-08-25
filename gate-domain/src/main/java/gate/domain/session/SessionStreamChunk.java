@@ -1,6 +1,7 @@
 package gate.domain.session;
 
 import java.time.Instant;
+import java.util.List;
 
 /**
  * Fine-grained streaming chunk emitted during an agent interaction round.
@@ -14,6 +15,8 @@ public sealed interface SessionStreamChunk permits
         SessionStreamChunk.DoneChunk,
         SessionStreamChunk.PermissionAskedChunk,
         SessionStreamChunk.PermissionRepliedChunk,
+        SessionStreamChunk.QuestionAskedChunk,
+        SessionStreamChunk.QuestionRepliedChunk,
         SessionStreamChunk.TitleChunk {
 
     String sessionId();
@@ -49,6 +52,23 @@ public sealed interface SessionStreamChunk permits
 
     /** A permission reply (user click or server auto-allow) applied to opencode. */
     record PermissionRepliedChunk(String sessionId, String permissionId, String response, boolean auto, Instant timestamp) implements SessionStreamChunk {}
+
+    /** An opencode question.asked request (question 工具) surfaced for the user to answer. */
+    record QuestionAskedChunk(String sessionId, QuestionRequest request, Instant timestamp) implements SessionStreamChunk {}
+
+    /** A question resolution (user answer, user reject, or the ask being aborted upstream). */
+    record QuestionRepliedChunk(
+            String sessionId,
+            String requestId,
+            boolean rejected,
+            List<List<String>> answers,
+            boolean auto,
+            Instant timestamp) implements SessionStreamChunk {
+
+        public QuestionRepliedChunk {
+            answers = answers == null ? List.of() : List.copyOf(answers);
+        }
+    }
 
     /** opencode 自动生成的真实标题（session.updated）落库后立刻广播出去，前端可实时替换占位标签。 */
     record TitleChunk(String sessionId, String title, Instant timestamp) implements SessionStreamChunk {}
