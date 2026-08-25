@@ -132,6 +132,20 @@ class OpenCodeServeResurrectTest {
     }
 
     @Test
+    void ensure_endpoint_resurrects_even_a_swept_aborted_session() {
+        Session stale = startSessionOnFirstRun();
+        // 历史版本启动清扫会把 ACTIVE 全量打成 ABORTED（含 finished_at）；复活不得被终态挡住，
+        // 且复活后回到 ACTIVE。
+        sessions.update(stale.withStatus(gate.domain.session.SessionStatus.ABORTED)
+                .withFinishedAt(Instant.now()));
+        int live = restartedRun.ensureEndpoint(stale.id());
+        assertEquals(port, live);
+        Session row = sessions.find(stale.id()).orElseThrow();
+        assertEquals(port, row.allocatedPort());
+        assertEquals(gate.domain.session.SessionStatus.ACTIVE, row.status());
+    }
+
+    @Test
     void send_after_restart_resurrects_and_delivers_prompt() throws Exception {
         Session stale = startSessionOnFirstRun();
         String taskId = restartedRun.sendMessage(

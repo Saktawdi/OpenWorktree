@@ -298,11 +298,14 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
     }
 
     /**
-     * 懒复活：后端重启后 {@code sessionPorts} 内存映射为空，但 SQLite 会话行仍是 ACTIVE。
-     * 该会话首次被使用时按行内记录重新拉起 serve（同一 clonePath），把新端口写回会话行并
-     * 重接上游事件流。opencode 会话数据在全局存储里，新 serve + 旧 cliSessionId 天然续接
-     * （等价于 CLI 的 {@code opencode -s <id>}）。MCP provisioning 用重新铸造的 agent token
-     * 重做；credentials 未注入时退化为无 gate 工具的裸 serve（会话对话不受影响）。
+     * 懒复活：后端重启后 {@code sessionPorts} 内存映射为空，但 SQLite 会话行仍在。该会话
+     * 首次被使用时按行内记录重新拉起 serve（同一 clonePath），把新端口写回会话行并重接上游
+     * 事件流。opencode 会话数据在全局存储里，新 serve + 旧 cliSessionId 天然续接（等价于
+     * CLI 的 {@code opencode -s <id>}）。MCP provisioning 用重新铸造的 agent token 重做；
+     * credentials 未注入时退化为无 gate 工具的裸 serve（会话对话不受影响）。
+     *
+     * <p>状态不是门槛：ABORTED 行（历史启动清扫或硬中止）同样可复活——用户对旧会话再次
+     * 发送即是明确的继续意图，opencode 侧数据完好。只缺 cliSessionId 的行无从续接，拒绝。
      */
     private int ensureServe(String sessionId) {
         Integer existing = sessionPorts.get(sessionId);
@@ -318,9 +321,9 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
             Session s = sessions.find(sessionId)
                     .orElseThrow(() -> new GateException(GateErrorCode.USAGE,
                             "no such session: " + sessionId));
-            if (s.isTerminal() || s.cliSessionId() == null) {
+            if (s.cliSessionId() == null || s.cliSessionId().isBlank()) {
                 throw new GateException(GateErrorCode.USAGE,
-                        "session has no opencode endpoint: " + sessionId);
+                        "session has no cli session id to resume: " + sessionId);
             }
             int port = ports.allocate();
             try {
@@ -339,7 +342,11 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                 throw e;
             }
             sessionPorts.put(sessionId, port);
-            sessions.update(s.withAllocatedPort(port));
+            // 终态行复活即回到 ACTIVE（清 finished_at），后续软中止等路径恢复正常语义。
+            Session resumed = s.status() == SessionStatus.ACTIVE
+                    ? s.withAllocatedPort(port)
+                    : s.withStatus(SessionStatus.ACTIVE).withFinishedAt(null).withAllocatedPort(port);
+            sessions.update(resumed);
             ensureUpstream(sessionId, port, s.cliSessionId());
             log.info("opencode", "session.resurrected", "sessionId", sessionId,
                     "port", port, "cliSessionId", s.cliSessionId());

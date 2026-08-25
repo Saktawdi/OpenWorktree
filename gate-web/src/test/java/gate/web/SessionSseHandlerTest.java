@@ -219,10 +219,6 @@ class SessionSseHandlerTest {
         }
 
         @Override
-        public void abortOrphanedActive(Instant now) {
-        }
-
-        @Override
         public void insertMessage(SessionMessage message) {
         }
 

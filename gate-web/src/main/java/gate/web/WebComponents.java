@@ -120,9 +120,9 @@ public final class WebComponents {
         this.workspaceSyncer = runtime.workspaceSyncer();
         this.modelFetcher = new ProviderModelFetcher(envFile);
         gate.ports.store.SessionRepository sessionRepo = runtime.sessionRepository();
-        if (sessionRepo instanceof gate.adapters.store.JdbcSessionRepository jsr) {
-            jsr.abortOrphanedActive(clock.now());
-        }
+        // 旧版启动例程会把所有 ACTIVE 会话清扫成 ABORTED（前提是"会话活不过重启"）。
+        // 懒复活机制下该前提不再成立：ACTIVE 会话在重启后仍可按行重建 serve 续接，
+        // 清扫反而把可复活的会话错误标记为终态——已移除。
         this.sessionRepository = sessionRepo;
 
         this.metricsService = new MetricsService(reviewResultRepository, presubmitRepository, ticketRepository);
