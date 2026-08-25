@@ -81,6 +81,16 @@ public interface AgentSessionPort {
     }
 
     /**
+     * 确保会话的 CLI 端点可用并返回端口；必要时按会话记录重新拉起 CLI 进程并重接事件流
+     * （opencode 懒复活：后端重启后旧会话首次使用时重建 serve）。仅 opencode 适配器实现，
+     * 其余实现抛 {@link UnsupportedOperationException}。
+     */
+    default int ensureEndpoint(String sessionId) {
+        throw new UnsupportedOperationException(
+                "endpoint resurrection is only supported for opencode sessions");
+    }
+
+    /**
      * 有进行中回合的 session id 快照（运行中 = turn in-flight）。
      * 默认返回空集合，保持既有实现编译通过；具体适配器覆盖为排序后的不可变快照。
      */

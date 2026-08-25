@@ -149,7 +149,7 @@ public final class WebComponents {
                     new gate.adapters.io.ServePidRegistry(config.gateHome().resolve("opencode-serve.pids"));
             this.opencodeAdapter = new OpenCodeServeAdapter(processRunner, this.agentConfigRepository, sessionRepo,
                     tickets, this.projectRepository, taskRegistry, ticketLockManager, clock, portAllocator, opencodeCmd,
-                    startTimeout, adapterLog, pidRegistry, gateToml);
+                    startTimeout, adapterLog, pidRegistry, gateToml, this.credentials);
             this.agentSessionPort = new DispatchAgentSessionPort(this.agentConfigRepository, sessionRepo,
                     claudeAdapter, opencodeAdapter);
         }

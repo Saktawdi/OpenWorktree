@@ -21,6 +21,7 @@ import gate.domain.task.GateTask;
 import gate.domain.task.GateTaskStatus;
 import gate.domain.ticket.Ticket;
 import gate.ports.store.AgentConfigRepository;
+import gate.ports.store.CredentialRepository;
 import gate.ports.session.AgentSessionPort;
 import gate.ports.infra.Clock;
 import gate.ports.infra.ProcessRunner;
@@ -134,6 +135,8 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
      * disabled (tests); sessions then start exactly as before this capability existed.
      */
     private final Path gateToml;
+    /** Optional: re-mints an agent-domain token when a stale session's serve is resurrected. */
+    private final CredentialRepository credentials;
 
     public OpenCodeServeAdapter(ProcessRunner processRunner,
                                  AgentConfigRepository agentConfigs,
@@ -195,6 +198,29 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                                  AdapterLog log,
                                  ServePidRegistry pidRegistry,
                                  Path gateToml) {
+        this(processRunner, agentConfigs, sessions, tickets, projects, tasks, ticketLocks, clock,
+                ports, opencodeExecutable, startTimeoutSeconds, log, pidRegistry, gateToml, null);
+    }
+
+    /**
+     * Full constructor with credentials: {@code credentials} is optional (null disables token
+     * re-minting on resurrection — resumed serves then start without the gate MCP tools).
+     */
+    public OpenCodeServeAdapter(ProcessRunner processRunner,
+                                 AgentConfigRepository agentConfigs,
+                                 SessionRepository sessions,
+                                 TicketRepository tickets,
+                                 ProjectRepository projects,
+                                 TaskRegistry tasks,
+                                 TicketLockManager ticketLocks,
+                                 Clock clock,
+                                 PortAllocator ports,
+                                 String opencodeExecutable,
+                                 int startTimeoutSeconds,
+                                 AdapterLog log,
+                                 ServePidRegistry pidRegistry,
+                                 Path gateToml,
+                                 CredentialRepository credentials) {
         this.processRunner = processRunner;
         this.agentConfigs = agentConfigs;
         this.sessions = sessions;
@@ -209,6 +235,7 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
         this.log = log == null ? AdapterLog.noop() : log;
         this.pidRegistry = pidRegistry == null ? new ServePidRegistry(null) : pidRegistry;
         this.gateToml = gateToml;
+        this.credentials = credentials;
         this.pidRegistry.sweepOrphans();
         this.executor = Executors.newSingleThreadExecutor(r -> {
             Thread t = new Thread(r, "opencode-session");
@@ -241,7 +268,83 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                 }
             }
         }
+        // 快速失败错误补偿：send 在浏览器挂上 SSE 之前就失败时（如懒复活失败），ErrorChunk
+        // 没有听众、ERROR 行也只随 history 快照以前端忽略的 message 帧重放——不补发的话
+        // UI 会一直转圈到客户端看门狗超时。3 秒内新挂的监听者补收一次。
+        RecentError recent = recentErrors.get(sessionId);
+        if (recent != null && System.currentTimeMillis() - recent.at() < 3_000L) {
+            recentErrors.remove(sessionId);
+            try {
+                listener.accept(new SessionStreamChunk.ErrorChunk(
+                        sessionId, recent.code(), recent.message(), clock.now()));
+            } catch (Exception ignored) {
+            }
+        }
         return () -> set.remove(listener);
+    }
+
+    /** 快速失败错误的补偿快照（attachListener 补发用）。 */
+    private record RecentError(long at, String code, String message) {
+    }
+
+    // sessionId -> 最近一次 send 快速失败的错误（3 秒窗口内对迟到的 SSE 订阅者补发）。
+    private final Map<String, RecentError> recentErrors = new ConcurrentHashMap<>();
+    // 复活互斥锁：同一会话并发首用（发消息 + 拉模型目录）只允许一次重建。
+    private final Map<String, Object> resurrectLocks = new ConcurrentHashMap<>();
+
+    @Override
+    public int ensureEndpoint(String sessionId) {
+        return ensureServe(sessionId);
+    }
+
+    /**
+     * 懒复活：后端重启后 {@code sessionPorts} 内存映射为空，但 SQLite 会话行仍是 ACTIVE。
+     * 该会话首次被使用时按行内记录重新拉起 serve（同一 clonePath），把新端口写回会话行并
+     * 重接上游事件流。opencode 会话数据在全局存储里，新 serve + 旧 cliSessionId 天然续接
+     * （等价于 CLI 的 {@code opencode -s <id>}）。MCP provisioning 用重新铸造的 agent token
+     * 重做；credentials 未注入时退化为无 gate 工具的裸 serve（会话对话不受影响）。
+     */
+    private int ensureServe(String sessionId) {
+        Integer existing = sessionPorts.get(sessionId);
+        if (existing != null) {
+            return existing;
+        }
+        Object lock = resurrectLocks.computeIfAbsent(sessionId, k -> new Object());
+        synchronized (lock) {
+            existing = sessionPorts.get(sessionId);
+            if (existing != null) {
+                return existing;
+            }
+            Session s = sessions.find(sessionId)
+                    .orElseThrow(() -> new GateException(GateErrorCode.USAGE,
+                            "no such session: " + sessionId));
+            if (s.isTerminal() || s.cliSessionId() == null) {
+                throw new GateException(GateErrorCode.USAGE,
+                        "session has no opencode endpoint: " + sessionId);
+            }
+            int port = ports.allocate();
+            try {
+                if (opencodeExecutable != null && !opencodeExecutable.isBlank()) {
+                    assertPortFree(port);
+                    Map<String, String> env = credentials == null
+                            ? Map.of()
+                            : Map.of(gate.adapters.mcp.McpServer.TOKEN_ENV,
+                                    credentials.issueAgentToken(s.ticketNo(), clock.now()));
+                    spawnServe(port, s.clonePath(), env);
+                }
+                waitHealthy(port);
+            } catch (Exception e) {
+                killProcess(port);
+                ports.release(port);
+                throw e;
+            }
+            sessionPorts.put(sessionId, port);
+            sessions.update(s.withAllocatedPort(port));
+            ensureUpstream(sessionId, port, s.cliSessionId());
+            log.info("opencode", "session.resurrected", "sessionId", sessionId,
+                    "port", port, "cliSessionId", s.cliSessionId());
+            return port;
+        }
     }
 
     private void emitChunk(String sessionId, SessionStreamChunk chunk) {
@@ -735,6 +838,7 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
         sessionPorts.clear();
         pendingPermissions.clear();
         pendingQuestions.clear();
+        recentErrors.clear();
         executor.shutdown();
     }
 
@@ -745,8 +849,11 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
     private void runSend(GateTask task, Session session, String message,
                          List<AgentSessionPort.Attachment> attachments, boolean firstTurn) {
         try (AutoCloseable ignored = ticketLocks.acquire(session.ticketNo())) {
-            Integer port = sessionPorts.get(session.id());
-            if (port == null || session.cliSessionId() == null) {
+            // 后端重启后 sessionPorts 为空：懒复活按会话行重建 serve（同一 clonePath、新端口、
+            // 重接上游事件流），旧 cliSessionId 由 opencode 全局存储续接。复活失败抛错走下方
+            // 统一失败路径（ERROR 落库 + attachListener 补发）。
+            int port = ensureServe(session.id());
+            if (session.cliSessionId() == null) {
                 throw new GateException(GateErrorCode.USAGE, "session has no opencode endpoint");
             }
             // Fresh read: a model/variant switch persisted after this task was enqueued must
@@ -816,9 +923,19 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                     Role.ERROR, e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage(),
                     List.of(), null, true, clock.now()));
             emitChunk(session.id(), new SessionStreamChunk.ErrorChunk(session.id(), "INTERNAL_ERROR", e.getMessage(), clock.now()));
-            tasks.update(fail(task, e));
-            // 回合根本没被受理：不会有 idle 事件到来，立即释放 busy 计数。
+            // 浏览器的 SSE 多半还没挂上（POST /messages 刚返回）：记入 3 秒补偿窗口，
+            // attachListener 迟到即补发，否则 UI 转圈到看门狗超时。
+            recentErrors.put(session.id(), new RecentError(System.currentTimeMillis(),
+                    "INTERNAL_ERROR", e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()));
+            // 回合根本没被受理：不会有 idle 事件到来，立即释放 busy 计数。必须先于任务簿记——
+            // 簿记失败（fence 冲突等）绝不允许把 busy 泄漏成常驻 1。
             releaseBusyUnconditionally(session.id());
+            try {
+                tasks.update(fail(task, e));
+            } catch (Exception taskEx) {
+                log.warn("opencode", "send.fail-task-update", "sessionId", session.id(),
+                        "error", taskEx.getClass().getSimpleName());
+            }
         }
         // 正常路径不在此清除 busy：prompt_async 只表示“已受理”，回合本身异步运行——
         // busy 生命周期到上游读取线程收到 session.status=idle 为止（handleSessionStatus）。

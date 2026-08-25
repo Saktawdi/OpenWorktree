@@ -123,6 +123,14 @@ public final class DispatchAgentSessionPort implements AgentSessionPort {
     }
 
     @Override
+    public int ensureEndpoint(String sessionId) {
+        Session s = sessions.find(sessionId)
+                .orElseThrow(() -> new GateException(GateErrorCode.USAGE,
+                        "no such session: " + sessionId));
+        return adapter(s.cli()).ensureEndpoint(sessionId);
+    }
+
+    @Override
     public Set<String> busySessionIds() {
         // 聚合两个适配器的并集，排序后返回不可变快照，输出稳定便于测试
         Set<String> merged = new LinkedHashSet<>();

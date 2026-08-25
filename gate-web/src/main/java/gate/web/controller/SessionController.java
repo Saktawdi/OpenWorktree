@@ -338,8 +338,17 @@ public final class SessionController implements WebController {
         String sessionId = ctx.pathParam("id");
         Session s = sessionRepository.find(sessionId).orElseThrow(() -> new GateException(
                 GateErrorCode.USAGE, "no such session: " + sessionId));
+        int port;
+        try {
+            // opencode：端口可能已随后端重启失效——懒复活重建 serve 后再拉目录，
+            // 否则模型选择器在旧会话上永远为空（无法切换）。
+            port = agentSessionPort.ensureEndpoint(sessionId);
+        } catch (UnsupportedOperationException e) {
+            // claude 等无端口管理语义的适配器：维持旧行为（用会话行记录的端口，-1 → 空目录）。
+            port = s.allocatedPort();
+        }
         ctx.status(HttpStatus.OK);
-        ctx.json(modelCatalog.fetch(s.allocatedPort()));
+        ctx.json(modelCatalog.fetch(port));
     }
 
     public void listPermissions(Context ctx) {

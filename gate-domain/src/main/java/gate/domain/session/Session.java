@@ -106,6 +106,13 @@ public record Session(
                 overrideProvider, overrideModel, overrideVariant, permissionAutoAccept);
     }
 
+    /** 懒复活时把重建的 opencode serve 端口写回会话行。 */
+    public Session withAllocatedPort(int newAllocatedPort) {
+        return new Session(id, ticketNo, agentConfigId, cli, status, cliSessionId, clonePath,
+                newAllocatedPort, startedAt, finishedAt, cumulativeUsage, title, archived,
+                overrideProvider, overrideModel, overrideVariant, permissionAutoAccept);
+    }
+
     public Session withCumulativeUsage(SessionUsage newUsage) {
         return new Session(id, ticketNo, agentConfigId, cli, status, cliSessionId, clonePath,
                 allocatedPort, startedAt, finishedAt, newUsage, title, archived,
