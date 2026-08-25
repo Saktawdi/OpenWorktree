@@ -32,7 +32,9 @@ function formatDefault(v: unknown): string {
 }
 
 function keyFullName(section: string, key: string): string {
-  return section ? `${section}.${key}` : key;
+  // 兼容旧后端：键已带分区前缀（如 engine.provider_id）时直接使用，避免拼出 engine.engine.*
+  if (!section || key.startsWith(`${section}.`) || key.includes(".")) return key;
+  return `${section}.${key}`;
 }
 
 function isPathLike(key: string): boolean {
@@ -95,8 +97,41 @@ function BoolSwitch({ value, onChange, disabled }: { value: boolean; onChange: (
   );
 }
 
+/** 通用键值选择框：空值 = 未设置；当前文件值不在候选里时自动补一项，避免展示错位。 */
+function KeySelect({
+  value,
+  options,
+  emptyLabel,
+  disabled,
+  onChange,
+}: {
+  value: string;
+  options: Array<{ value: string; label: string }>;
+  emptyLabel: string;
+  disabled?: boolean;
+  onChange: (v: string) => void;
+}) {
+  const merged = value && !options.some((o) => o.value === value)
+    ? [{ value, label: `${value}（当前文件值）` }, ...options]
+    : options;
+  return (
+    <select
+      className="text-input font-mono text-[12px] cursor-pointer disabled:opacity-50"
+      value={value}
+      disabled={disabled}
+      onChange={(e) => onChange(e.target.value)}
+    >
+      <option value="">{emptyLabel}</option>
+      {merged.map((o) => (
+        <option key={o.value} value={o.value}>{o.label}</option>
+      ))}
+    </select>
+  );
+}
+
 function GateTomlBlock() {
   const [data, setData] = useState<GateTomlResponse | null>(null);
+  const [providers, setProviders] = useState<LlmProvider[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   // edits: keyFullName -> edited value; absent = untouched
@@ -108,8 +143,13 @@ function GateTomlBlock() {
   const load = useCallback(async () => {
     setLoading(true); setError(null);
     try {
-      const r = await fetchGateToml();
-      setData(r);
+      const [toml, provs] = await Promise.all([
+        fetchGateToml(),
+        // Provider 列表加载失败不阻塞 toml 视图：引擎下拉退化为文本输入
+        fetchProviders().catch(() => []),
+      ]);
+      setData(toml);
+      setProviders(provs);
       setEdits(Object.create(null));
       setCleared(Object.create(null));
     } catch (e) { setError((e as Error).message); }
@@ -144,6 +184,53 @@ function GateTomlBlock() {
     }
     return out;
   }, [data, edits, cleared, getCurrent, getOriginal]);
+
+  // —— 审查引擎 provider/model 下拉：复用「LLM 设置」中的 Provider 与模型数据 ——
+
+  const findKey = useCallback((full: string): { section: string; k: GateTomlKey } | null => {
+    if (!data) return null;
+    for (const sec of data.sections) {
+      for (const k of sec.keys) {
+        if (keyFullName(sec.section, k.key) === full) return { section: sec.section, k };
+      }
+    }
+    return null;
+  }, [data]);
+
+  const engineProviderId = useMemo(() => {
+    const hit = findKey("engine.provider_id");
+    if (!hit) return "";
+    const cur = getCurrent("engine.provider_id", hit.section, hit.k);
+    return typeof cur === "string" ? cur : "";
+  }, [findKey, getCurrent]);
+
+  const engineProviderOptions = useMemo(
+    () => providers.map((p) => ({ value: p.id, label: `${p.id} · ${p.name}` })),
+    [providers],
+  );
+
+  const engineModelOptions = useMemo(() => {
+    const p = providers.find((x) => x.id === engineProviderId);
+    return (p?.models ?? []).map((m) => ({ value: m, label: m }));
+  }, [providers, engineProviderId]);
+
+  const setKeyValue = useCallback((full: string, v: string) => {
+    setCleared((c) => {
+      const n = { ...c };
+      delete n[full];
+      return n;
+    });
+    setEdits((m) => ({ ...m, [full]: v }));
+  }, []);
+
+  const clearKey = useCallback((full: string) => {
+    setCleared((c) => ({ ...c, [full]: true }));
+    setEdits((m) => {
+      const n = { ...m };
+      delete n[full];
+      return n;
+    });
+  }, []);
 
   const hasDirty = Object.keys(updates).length > 0;
 
@@ -202,6 +289,8 @@ function GateTomlBlock() {
               const pathLike = isPathLike(k.key);
               const disabled = !k.editable || pathLike;
               const showGray = disabled;
+              const useProviderSelect = k.type === "string" && full === "engine.provider_id" && providers.length > 0;
+              const useModelSelect = k.type === "string" && full === "engine.model" && engineModelOptions.length > 0;
               return (
                 <div key={k.key} className={`px-4 py-3 flex gap-4 items-start transition-colors ${showGray ? "bg-sunken/40" : "hover:bg-raised/25"}`}>
                   <div className="min-w-0 flex-1">
@@ -237,7 +326,37 @@ function GateTomlBlock() {
                         {isUnset && <span className="text-[11px] text-faint ml-1">默认 {formatDefault(k.default)}</span>}
                       </div>
                     )}
-                    {k.type === "string" && (
+                    {useProviderSelect && (
+                      <>
+                        <KeySelect
+                          value={typeof cur === "string" ? cur : ""}
+                          options={engineProviderOptions}
+                          emptyLabel={isUnset ? `未设置（默认 ${formatDefault(k.default)}）` : "未设置（清除该键）"}
+                          disabled={disabled}
+                          onChange={(v) => (v === "" ? clearKey(full) : setKeyValue(full, v))}
+                        />
+                        {!disabled && (
+                          <div className="text-[11px] text-faint">选项来自「LLM 设置」中配置的 Provider；切换后请同步检查 model</div>
+                        )}
+                      </>
+                    )}
+                    {useModelSelect && (
+                      <>
+                        <KeySelect
+                          value={typeof cur === "string" ? cur : ""}
+                          options={engineModelOptions}
+                          emptyLabel={isUnset ? `未设置（默认 ${formatDefault(k.default)}）` : "未设置（清除该键）"}
+                          disabled={disabled}
+                          onChange={(v) => (v === "" ? clearKey(full) : setKeyValue(full, v))}
+                        />
+                        {!disabled && (
+                          <div className="text-[11px] text-faint">
+                            模型列表来自所选 Provider{engineProviderId ? <>（<span className="font-mono">{engineProviderId}</span>）</> : null}；未选 Provider 时可手动输入
+                          </div>
+                        )}
+                      </>
+                    )}
+                    {k.type === "string" && !useProviderSelect && !useModelSelect && (
                       <input
                         disabled={disabled}
                         className="text-input font-mono text-[12px] disabled:opacity-50"

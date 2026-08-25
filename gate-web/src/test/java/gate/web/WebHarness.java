@@ -25,11 +25,21 @@ final class WebHarness implements AutoCloseable {
         this("git", "127.0.0.1", null);
     }
 
+    /** 带真实 gate.toml 路径的变体：设置中心 gate-toml 视图/写回测试用。 */
+    WebHarness(Path gateToml) {
+        this("git", "127.0.0.1", null, java.util.Objects.requireNonNull(gateToml));
+    }
+
     WebHarness(String gitExecutable, String bind) {
         this(gitExecutable, bind, null);
     }
 
     WebHarness(String gitExecutable, String bind, gate.ports.session.AgentSessionPort sessionPortOverride) {
+        this(gitExecutable, bind, sessionPortOverride, null);
+    }
+
+    private WebHarness(String gitExecutable, String bind, gate.ports.session.AgentSessionPort sessionPortOverride,
+                       Path gateTomlOverride) {
         try {
             this.root = Files.createTempDirectory("gate-web-test-");
             Path gateHome = root.resolve("gate-home");
@@ -55,7 +65,7 @@ final class WebHarness implements AutoCloseable {
                     new GateConfig.SessionConfig(49152, 65535, "claude", null, 60),
                     new GateConfig.AgentConfigDefaults(null, null, null));
 
-            this.components = new WebComponents(config, gitExecutable, root.resolve(".env"), null, sessionPortOverride);
+            this.components = new WebComponents(config, gitExecutable, root.resolve(".env"), gateTomlOverride, sessionPortOverride);
             // Seed manual provider (same bootstrap as fromConfig).
             if (components.providerRepository().find("manual").isEmpty()) {
                 components.providerRepository().upsert(new gate.ports.store.ProviderRepository.ProviderRow(

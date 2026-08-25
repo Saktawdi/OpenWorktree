@@ -82,7 +82,7 @@ public final class SettingsController implements WebController {
                     continue;
                 }
                 Map<String, Object> k = new LinkedHashMap<>();
-                k.put("key", key);
+                k.put("key", shortKeyOf(key));
                 k.put("value", raw.get(key));
                 k.put("type", TomlGateConfigWriter.typeName(key));
                 k.put("editable", TomlGateConfigWriter.isEditable(key));
@@ -163,5 +163,11 @@ public final class SettingsController implements WebController {
     private static String sectionOf(String fullKey) {
         int dot = fullKey.indexOf('.');
         return dot < 0 ? "" : fullKey.substring(0, dot);
+    }
+
+    /** 目录键是全名（如 engine.provider_id）；视图按 section + 分区内短键下发，避免前端二次拼接前缀。 */
+    private static String shortKeyOf(String fullKey) {
+        int dot = fullKey.indexOf('.');
+        return dot < 0 ? fullKey : fullKey.substring(dot + 1);
     }
 }

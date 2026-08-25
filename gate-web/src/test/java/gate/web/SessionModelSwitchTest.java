@@ -214,6 +214,40 @@ class SessionModelSwitchTest {
         assertEquals(false, byId(models, "m-none").get("image_input"));
     }
 
+    /**
+     * T-112 回归：opencode serve 实际返回的是归一化的 capabilities 块
+     * （input 为逐模态布尔表，attachment 在 capabilities 内），不是 models.dev 原始
+     * modalities/顶层 attachment —— 旧实现两个键都取不到，导致所有模型被判为不支持图片。
+     */
+    @Test
+    void image_input_reads_the_serve_capabilities_block() {
+        Map<String, Object> out = SessionModelCatalog.reduce("{\"providers\":[{\"id\":\"goddamn\","
+                + "\"models\":{"
+                // 实测 serve payload（gemini-3.7-flash）：input.image=true → 支持图片
+                + "\"gemini-3.7-flash\":{\"id\":\"gemini-3.7-flash\",\"capabilities\":{"
+                + "\"temperature\":true,\"reasoning\":true,\"attachment\":true,\"toolcall\":true,"
+                + "\"input\":{\"text\":true,\"audio\":true,\"image\":true,\"video\":true,\"pdf\":true}}},"
+                // 实测 serve payload（deepseek-v4-flash-0731）：attachment=true 但 input.image=false
+                // → input 表在场时以其为准，纯文本模型不得放行
+                + "\"deepseek-v4-flash-0731\":{\"id\":\"deepseek-v4-flash-0731\",\"capabilities\":{"
+                + "\"temperature\":true,\"reasoning\":true,\"attachment\":true,\"toolcall\":true,"
+                + "\"input\":{\"text\":true,\"audio\":false,\"image\":false,\"video\":false,\"pdf\":false}}},"
+                // 无 input 表时回退 capabilities.attachment
+                + "\"m-caps-att\":{\"id\":\"m-caps-att\",\"capabilities\":{\"attachment\":true}},"
+                + "\"m-caps-none\":{\"id\":\"m-caps-none\",\"capabilities\":{\"toolcall\":true}}"
+                + "}}]}");
+        @SuppressWarnings("unchecked")
+        java.util.List<Map<String, Object>> models =
+                ((java.util.List<Map<String, Object>>) out.get("providers")).get(0)
+                        .get("models") instanceof java.util.List<?> l
+                        ? (java.util.List<Map<String, Object>>) l : java.util.List.of();
+        assertEquals(true, byId(models, "gemini-3.7-flash").get("image_input"));
+        assertEquals(false, byId(models, "deepseek-v4-flash-0731").get("image_input"),
+                "input map wins over attachment=true");
+        assertEquals(true, byId(models, "m-caps-att").get("image_input"));
+        assertEquals(false, byId(models, "m-caps-none").get("image_input"));
+    }
+
     private static Map<String, Object> byId(java.util.List<Map<String, Object>> models, String id) {
         return models.stream().filter(m -> id.equals(m.get("id"))).findFirst().orElseThrow();
     }

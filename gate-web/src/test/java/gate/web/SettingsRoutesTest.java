@@ -62,6 +62,11 @@ class SettingsRoutesTest {
                 port_range_max = 61000
                 default_cli = "claude"
                 start_timeout_seconds = 60
+
+                [engine]
+                cmd = "gate-review"
+                args = ["--stdin"]
+                timeout_seconds = 120
                 """, StandardCharsets.UTF_8);
         client = HttpClient.newHttpClient();
     }
@@ -76,11 +81,9 @@ class SettingsRoutesTest {
         }
     }
 
-    /** 启动一个带真实 gate.toml 路径的服务实例（写回路径测试用）。 */
+    /** 启动一个带真实 gate.toml 路径的服务实例（视图/写回路径测试用）。 */
     private void startServerWithToml() {
-        harnessWithToml = new WebHarness();
-        // 把临时 toml 注入 components：直接改 WebHarness 不可行，改用系统属性由 GateRuntime
-        // 解析的路径不可控；此处退而求其次——把 toml 拷贝进 harness 根目录并以其路径启动。
+        harnessWithToml = new WebHarness(toml);
         serverWithToml = new WebServer(harnessWithToml.components());
         serverWithToml.start();
         base = "http://127.0.0.1:" + serverWithToml.port();
@@ -176,6 +179,107 @@ class SettingsRoutesTest {
             }
             List<Map<String, String>> cli = castList(body.get("cli_integration"));
             assertEquals(2, cli.size(), "claude + opencode integration notes");
+        }
+    }
+
+    @Nested
+    class WithTomlFile {
+
+        @BeforeEach
+        void setUpServer() {
+            startServerWithToml();
+        }
+
+        @AfterEach
+        void tearDownServer() {
+            if (serverWithToml != null) {
+                serverWithToml.close();
+                serverWithToml = null;
+            }
+            if (harnessWithToml != null) {
+                harnessWithToml.close();
+                harnessWithToml = null;
+            }
+        }
+
+        @Test
+        void viewEmitsSectionRelativeShortKeys() throws Exception {
+            HttpResponse<String> res = httpGet("/api/settings/gate-toml");
+            assertEquals(200, res.statusCode(), res.body());
+            Map<String, Object> body = JSON.readValue(res.body(), Map.class);
+            List<Map<String, Object>> sections = castList(body.get("sections"));
+            for (Map<String, Object> section : sections) {
+                String secName = String.valueOf(section.get("section"));
+                List<Map<String, Object>> keys = castList(section.get("keys"));
+                for (Map<String, Object> key : keys) {
+                    String keyName = String.valueOf(key.get("key"));
+                    assertFalse(keyName.contains("."),
+                            "view must emit section-relative short keys, got: " + secName + " -> " + keyName);
+                }
+            }
+            // 引擎区包含 provider_id / model 两个键（前端下拉框依赖该视图）
+            Map<String, Object> providerKey = keyOf(body, "provider_id");
+            assertNotNull(providerKey);
+            assertTrue(Boolean.TRUE.equals(providerKey.get("editable")), providerKey.toString());
+        }
+
+        @Test
+        @SuppressWarnings("unchecked")
+        void engineKeysLandUnderEngineSection() throws Exception {
+            HttpResponse<String> res = httpGet("/api/settings/gate-toml");
+            assertEquals(200, res.statusCode(), res.body());
+            Map<String, Object> body = JSON.readValue(res.body(), Map.class);
+            List<Map<String, Object>> sections = castList(body.get("sections"));
+            for (Map<String, Object> section : sections) {
+                if (!"engine".equals(section.get("section"))) {
+                    continue;
+                }
+                List<Map<String, Object>> keys = castList(section.get("keys"));
+                List<String> names = new java.util.ArrayList<>();
+                for (Map<String, Object> key : keys) {
+                    names.add(String.valueOf(key.get("key")));
+                }
+                assertTrue(names.containsAll(List.of("cmd", "args", "timeout_seconds", "provider_id", "model")),
+                        "engine section keys: " + names);
+                return;
+            }
+            throw new AssertionError("engine section missing in view");
+        }
+
+        /** 回归：前端拼接出的全键（如 engine.provider_id）必须能直接写回，且不再出现二次前缀。 */
+        @Test
+        void writeBackAcceptsFullKeysAndPersistsEngineProviderModel() throws Exception {
+            HttpResponse<String> put = httpPut("/api/settings/gate-toml",
+                    "{\"updates\":{\"engine.provider_id\":\"manual\",\"engine.model\":\"gpt-test\",\"policy.strictness\":\"BLOCKER_AND_WARNING\"}}");
+            assertEquals(200, put.statusCode(), put.body());
+
+            String raw = Files.readString(toml);
+            assertTrue(raw.contains("strictness = \"BLOCKER_AND_WARNING\""), raw);
+            // provider_id/model 应落在 [engine] 分区内，strictness 落在新增的 [policy] 分区内（行级写回保持分区）
+            int engineIdx = raw.indexOf("[engine]");
+            int policyIdx = raw.indexOf("[policy]");
+            assertTrue(policyIdx > engineIdx, raw);
+            String engineBlock = raw.substring(engineIdx, policyIdx);
+            assertTrue(engineBlock.contains("provider_id = \"manual\""), raw);
+            assertTrue(engineBlock.contains("model = \"gpt-test\""), raw);
+            assertTrue(raw.indexOf("strictness") > policyIdx, raw);
+
+            assertTrue(Files.exists(toml.resolveSibling(toml.getFileName() + ".bak")), ".bak backup expected");
+        }
+
+        /** 回归：历史上前端曾把双前缀键发给后端；即便如此也应显式拒绝而非静默写入。 */
+        @Test
+        void writeBackRejectsDoublePrefixedKey() throws Exception {
+            HttpResponse<String> put = httpPut("/api/settings/gate-toml",
+                    "{\"updates\":{\"engine.engine.provider_id\":\"manual\"}}");
+            assertEquals(400, put.statusCode(), put.body());
+            assertTrue(put.body().contains("unknown key: engine.engine.provider_id"), put.body());
+            assertFalse(Files.readString(toml).contains("engine.engine"), "file must stay untouched");
+        }
+
+        private static String shortKey(String fullKey) {
+            int dot = fullKey.indexOf('.');
+            return dot < 0 ? fullKey : fullKey.substring(dot + 1);
         }
     }
 

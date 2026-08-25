@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { motion } from "motion/react";
 import { Check, Funnel, MagnifyingGlass, Plus } from "@phosphor-icons/react";
 import { actions } from "../lib/actions";
@@ -177,6 +177,9 @@ function NewTicketButton() {
 /** 状态筛选：勾选要显示的状态（持久化），带各状态工单数与重置。 */
 function StageFilterButton() {
   const [open, setOpen] = useState(false);
+  // 面板用 fixed 定位并夹紧到视口内：侧栏仅 268px 宽，absolute right-0 会把面板左缘推出窗口被裁剪
+  const [panelPos, setPanelPos] = useState<{ top: number; left: number }>({ top: 0, left: 8 });
+  const btnRef = useRef<HTMLButtonElement>(null);
   const visible = useApp((s) => s.visibleStages);
   const ticketsAll = useApp((s) => s.tickets);
   const activeProjectId = useApp((s) => s.activeProjectId);
@@ -199,13 +202,28 @@ function StageFilterButton() {
     );
   };
 
+  const PANEL_WIDTH = 224;
+  const placePanel = () => {
+    const r = btnRef.current?.getBoundingClientRect();
+    if (!r) return;
+    const left = Math.max(
+      8,
+      Math.min(r.right - PANEL_WIDTH, window.innerWidth - PANEL_WIDTH - 8),
+    );
+    setPanelPos({ top: r.bottom + 6, left });
+  };
+
   return (
-    <div className="relative">
+    <>
       <button
+        ref={btnRef}
         className={`btn h-7 px-2 text-[12px] ${filtered ? "!border-accent/50 !text-accent" : ""}`}
         title="按状态筛选"
         aria-label="按状态筛选"
-        onClick={() => setOpen(!open)}
+        onClick={() => {
+          if (!open) placePanel();
+          setOpen(!open);
+        }}
       >
         <Funnel size={13} weight={filtered ? "fill" : "regular"} />
         筛选
@@ -213,7 +231,10 @@ function StageFilterButton() {
       {open && (
         <>
           <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 top-8 z-40 w-[224px] card p-1.5 shadow-2xl shadow-black/50 animate-rise">
+          <div
+            className="fixed z-40 card p-1.5 shadow-2xl shadow-black/50 animate-rise"
+            style={{ top: panelPos.top, left: panelPos.left, width: PANEL_WIDTH }}
+          >
             <div className="flex items-center gap-2 px-2 h-8">
               <span className="text-[11px] font-medium text-dim flex-1">显示的状态</span>
               <button
@@ -252,7 +273,7 @@ function StageFilterButton() {
           </div>
         </>
       )}
-    </div>
+    </>
   );
 }
 

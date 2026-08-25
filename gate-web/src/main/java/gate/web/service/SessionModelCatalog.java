@@ -113,8 +113,9 @@ public final class SessionModelCatalog {
                         model.put("id", mid);
                         model.put("name", str(mm.get("name")) == null ? mid : str(mm.get("name")));
                         model.put("variants", variantKeys(mm.get("variants")));
-                        // 图片输入能力（粘贴图片是否可发）：优先 modalities.input 列表，
-                        // 回退 models.dev 的 attachment 布尔位 —— 与 OpenChamber 的判断顺序一致。
+                        // 图片输入能力（粘贴图片是否可发）：优先 serve 归一化的
+                        // capabilities.input 布尔表，回退 attachment 布尔位与
+                        // models.dev 原始 modalities —— 与 OpenChamber 的判断顺序一致。
                         model.put("image_input", imageInput(mm));
                         modelsOut.add(model);
                     }
@@ -145,10 +146,27 @@ public final class SessionModelCatalog {
     }
 
     /**
-     * Whether the model accepts image input: {@code modalities.input} containing {@code image}
-     * when the modality list is present, else the legacy {@code attachment} flag, else false.
+     * Whether the model accepts image input.
+     *
+     * <p>Live serve contract ({@code GET /config/providers}): each model carries a
+     * {@code capabilities} block whose {@code input} is a per-modality boolean map
+     * ({@code {"text":true,"image":true,...}}). When that map exists its verdict wins —
+     * {@code attachment:true} with {@code input.image:false} is a text-only model.
+     * Otherwise the {@code capabilities.attachment} flag is the fallback. The raw
+     * models.dev shapes ({@code modalities.input} list / top-level {@code attachment})
+     * are kept last for non-serve payloads.
      */
     static boolean imageInput(Map<?, ?> rawModel) {
+        Object capabilities = rawModel.get("capabilities");
+        if (capabilities instanceof Map<?, ?> caps) {
+            Object input = caps.get("input");
+            if (input instanceof Map<?, ?> inputMap && !inputMap.isEmpty()) {
+                return Boolean.TRUE.equals(inputMap.get("image"));
+            }
+            if (Boolean.TRUE.equals(caps.get("attachment"))) {
+                return true;
+            }
+        }
         Object modalities = rawModel.get("modalities");
         if (modalities instanceof Map<?, ?> m && m.get("input") instanceof List<?> list) {
             for (Object entry : list) {
