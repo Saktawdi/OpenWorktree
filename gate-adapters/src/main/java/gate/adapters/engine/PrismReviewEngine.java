@@ -86,7 +86,7 @@ public final class PrismReviewEngine implements ReviewEngine {
     private final String providerId;
     private final String modelName;
     private final String baseUrl;        // provider.base_url, e.g. https://newapi.sakta.top/v1
-    private final String apiKey;         // from .env, never logged, never in argv
+    private final String apiKey;         // from the provider row (KMS-encrypted at rest), never logged, never in argv
     private final String engineVersion;  // resolved by the factory via `prism version` (see §2 deviation 2)
     private final boolean acceptDegraded; // H1 data-collection escape hatch — false means fail-closed rejection
 

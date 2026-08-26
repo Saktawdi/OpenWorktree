@@ -6,6 +6,7 @@ import type {
   ChatItem,
   ChatSession,
   DiffFile,
+  EngineInfo,
   Finding,
   GitRepoView,
   GitTreeEntry,
@@ -67,6 +68,10 @@ export interface AppState {
   verdicts: Record<string, VerdictInfo>;
   tasks: Record<string, TaskProgress>;
   outcomes: Record<string, PublishOutcome>;
+  /** 审查任务的失败原因（key = 工单号）：审查发现页的错误卡片与重试入口都读它。 */
+  reviewErrors: Record<string, string>;
+  /** 审查引擎配置（live 来自 /api/config；demo 视为已配置）。null = 尚未加载。 */
+  engine: EngineInfo | null;
   busy: Record<string, boolean>;
   /** Live 模式按会话粒度的生成中标记（key = gate session id）；按钮状态跟随当前会话。 */
   sessionBusy: Record<string, boolean>;
@@ -133,6 +138,8 @@ export const appStore = create<AppState>(() => ({
   verdicts: {},
   tasks: {},
   outcomes: {},
+  reviewErrors: {},
+  engine: null,
   busy: {},
   sessionBusy: {},
   gateBusy: {},
@@ -220,6 +227,9 @@ export function seedDemo(force = false) {
     verdicts: {},
     tasks: {},
     outcomes: {},
+    reviewErrors: {},
+    // demo 模式没有真实引擎配置，AI 审查入口始终可用（走本地演示脚本）。
+    engine: { configured: true, providerId: "demo", model: "demo-engine" },
     busy: {},
     gateBusy: {},
     usage: {},
@@ -267,6 +277,10 @@ function tryRestore(): boolean {
       liveTurns: {},
       runningAgents: { count: 0, sessions: [] },
     };
+    // 旧版本快照没有 engine 字段：demo 模式视为已配置，live 交给 loadEngineConfig 回填。
+    if (!clean.engine) {
+      clean.engine = clean.mode === "demo" ? { configured: true, providerId: "demo", model: "demo-engine" } : null;
+    }
     // 旧版本会把已应答的权限/提问卡片留在 chats 里（永久挂在底部）；恢复时只保留待决的，
     // 并把残留的 streaming 占位定格（否则光标会永久闪烁）。
     for (const [no, items] of Object.entries(clean.chats)) {
@@ -661,6 +675,16 @@ export function setVerdict(no: string, verdict: VerdictInfo | null) {
 
 export function setOutcome(no: string, outcome: PublishOutcome) {
   set((st) => ({ outcomes: { ...st.outcomes, [no]: outcome } }));
+}
+
+/** 记录/清除一次审查任务的失败原因（null = 清除）。 */
+export function setReviewError(no: string, message: string | null) {
+  set((st) => {
+    const next = { ...st.reviewErrors };
+    if (message === null) delete next[no];
+    else next[no] = message;
+    return { reviewErrors: next };
+  });
 }
 
 export function addUsage(no: string, promptTokens: number, completionTokens: number) {

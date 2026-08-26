@@ -1,16 +1,16 @@
 package gate.web.service;
 
-import gate.adapters.engine.EnvFile;
+import gate.adapters.engine.ApiKeyResolver;
 import gate.application.util.MiniJson;
 import gate.domain.error.GateErrorCode;
 import gate.domain.error.GateException;
+import gate.ports.infra.KmsService;
 import gate.ports.store.ProviderRepository;
 import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -22,25 +22,24 @@ import java.util.Set;
  * Pulls the model list from a provider's upstream {@code GET {base_url}/models} endpoint (V5 web
  * console — the settings page previously had to type model ids by hand).
  *
- * <p>Credential handling mirrors the review engine (ADR-9, §6.1, §10.1.1): the provider row stores
- * only an {@code api_key_ref}. A reference of the form {@code env:NAME} resolves against the
- * project-root {@code .env} (via {@link EnvFile}) and then the process environment; anything else
- * ({@code none} / {@code unconfigured} / blank) means no credential and the call is attempted
+ * <p>Credential handling mirrors the review engine: the provider row's {@code api_key_ref} is
+ * resolved through {@link ApiKeyResolver} — the {@code kms:} ciphertext written by the settings
+ * center. {@code none} / {@code unconfigured} / blank means no credential and the call is attempted
  * unauthenticated. The plaintext key never reaches the DB, the response body, or a log line.
  *
  * <p>Response shapes accepted (OpenAI-compatible first, because ADR-9 routes through newapi):
- * {@code {"data":[{"id":"..."}]}}, Anthropic's {@code {"models":[{"id":"..."}]}}, a bare array of
+ * {@code {"data":[{"id":"..."}]}}, Anthropic's {@code {"models":[{"id":"...""}]}}, a bare array of
  * objects with {@code id}, or a bare array of plain strings.
  */
 public final class ProviderModelFetcher {
 
     private static final Duration TIMEOUT = Duration.ofSeconds(10);
 
-    private final Path envFile;
+    private final KmsService kms;
     private final HttpClient http;
 
-    public ProviderModelFetcher(Path envFile) {
-        this.envFile = envFile;
+    public ProviderModelFetcher(KmsService kms) {
+        this.kms = kms;
         // 上游可能是自签/代理证书链（PKIX 拒绝），本地工具放宽 TLS（见 TrustAllTls 的边界说明）。
         this.http = gate.adapters.http.TrustAllTls.apply(HttpClient.newBuilder())
                 .connectTimeout(TIMEOUT).build();
@@ -83,25 +82,9 @@ public final class ProviderModelFetcher {
         return models;
     }
 
-    /** Resolves {@code env:NAME} refs against {@code .env} then the process env; null = no key. */
+    /** Resolves the provider's credential through the shared ApiKeyResolver; null = no key. */
     private String resolveApiKey(String apiKeyRef) {
-        if (apiKeyRef == null || apiKeyRef.isBlank()
-                || "none".equalsIgnoreCase(apiKeyRef) || "unconfigured".equalsIgnoreCase(apiKeyRef)) {
-            return null;
-        }
-        if (apiKeyRef.regionMatches(true, 0, "env:", 0, 4)) {
-            String name = apiKeyRef.substring(4).trim();
-            if (name.isEmpty()) {
-                return null;
-            }
-            String fromFile = EnvFile.load(envFile).get(name);
-            if (fromFile != null && !fromFile.isBlank()) {
-                return fromFile;
-            }
-            String fromEnv = System.getenv(name);
-            return fromEnv == null || fromEnv.isBlank() ? null : fromEnv;
-        }
-        return null;
+        return ApiKeyResolver.resolve(apiKeyRef, kms);
     }
 
     /** Best-effort parse of the known upstream model-list shapes; empty list on no match. */

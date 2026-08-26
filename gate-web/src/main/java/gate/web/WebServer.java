@@ -4,17 +4,20 @@ import gate.domain.config.GateConfig;
 import gate.domain.error.GateErrorCode;
 import gate.domain.error.GateException;
 import gate.web.security.AuthFilter;
-import gate.web.util.Http;
 import gate.web.util.HttpStatus;
 import gate.web.util.Json;
 import io.javalin.Javalin;
 import java.io.InputStream;
 import java.util.Map;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Javalin-based WebServer implementation for gate-web.
  */
 public final class WebServer implements AutoCloseable {
+
+    private static final Logger LOG = LoggerFactory.getLogger(WebServer.class);
 
     private static final String ROOT = "/static";
     private static final Map<String, String> CONTENT_TYPES = Map.of(
@@ -42,9 +45,13 @@ public final class WebServer implements AutoCloseable {
             cfg.showJavalinBanner = false;
         });
 
-        // Global access log & token masking
+        // HTTP 层只记录错误响应（>=400）：常规访问/轮询日志是纯连通性噪声，控制台留给
+        // 功能出入口事件（见 TaskRunner）。
         app.after(ctx -> {
-            System.err.println("gate-web: " + Http.accessLine(ctx, ctx.status().getCode()));
+            int status = ctx.status().getCode();
+            if (status >= 400) {
+                LOG.warn("http {} {} -> {}", ctx.method(), ctx.path(), status);
+            }
         });
 
         // Global Exception Handling -> standard JSON error envelope
@@ -61,6 +68,8 @@ public final class WebServer implements AutoCloseable {
         });
 
         app.exception(Exception.class, (e, ctx) -> {
+            // 未捕获异常必须留痕（此前静默吞掉，500 无从排查）。
+            LOG.error("internal error {} {}", ctx.method(), ctx.path(), e);
             ctx.status(500);
             ctx.contentType("application/json; charset=utf-8");
             ctx.result(Json.error(GateErrorCode.INTERNAL.code(), "INTERNAL", "internal error", null));

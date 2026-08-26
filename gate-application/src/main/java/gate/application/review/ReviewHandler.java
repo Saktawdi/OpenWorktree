@@ -118,14 +118,19 @@ public final class ReviewHandler {
         // nobody has decided yet: the adapter emits "undecided" evidence (empty coverage) that the
         // policy's coverage invariant routes to REQUIRES_HUMAN — Fail-Closed (架构规范 I7), never a
         // guessed pass/reject and never a 4xx at the driver layer.
-        boolean manualUndecided = !config.engineConfigured() && command.humanPass() == null;
-        ReviewEngine engine = config.engineConfigured()
+        //
+        // An explicit humanPass is a human decision and always wins: the manual adapter speaks for
+        // the round even when a prism engine is configured. This is what makes 人工审查 (and the
+        // NEEDS_HUMAN override) deterministic instead of silently re-running the AI engine.
+        boolean humanDecided = command.humanPass() != null;
+        boolean manualUndecided = !humanDecided && !config.engineConfigured();
+        ReviewEngine engine = config.engineConfigured() && !humanDecided
                 ? reviewEngineFactory.forPrism()
                 : reviewEngineFactory.forManualVerdict(command.humanPass(), command.note());
         if (engine == null) {
             // engineConfigured() was true but the factory returned no engine — fail-closed.
             throw new GateException(GateErrorCode.GATE_ERROR_CONFIG,
-                    "engine is configured but no prism engine could be built (check provider/.env)");
+                    "engine is configured but no prism engine could be built (check engine.provider_id / provider credential)");
         }
         // Contract: review() never throws. Any failure is already an EngineFailure value.
         ReviewEvidence evidence = engine.review(new ReviewEngine.ReviewRequest(
@@ -176,9 +181,23 @@ public final class ReviewHandler {
 
         var descriptor = engine.describe();
         long presubmitId = row.id();
+        // 引擎基础设施故障（超时/崩溃/上游不可用）不是对代码的判决：判决仍按 REJECT 记录
+        // （fail-closed，发布被阻断），但工单停留 PRESUBMITTED——用户可原地重试同一轮，
+        // 而不是被迫重新预提审、无端消耗轮次。真正的代码驳回（含人工驳回）才进入 REJECTED。
+        boolean engineFailed = evidence.accept(new EvidenceVisitor<Boolean>() {
+            @Override
+            public Boolean visit(EngineReport report) {
+                return false;
+            }
+
+            @Override
+            public Boolean visit(EngineFailure failure) {
+                return true;
+            }
+        });
         TicketStage nextStage = switch (decision.verdict()) {
             case PASS -> TicketStage.READY_TO_PUBLISH;
-            case REJECT -> TicketStage.REJECTED;
+            case REJECT -> engineFailed ? TicketStage.PRESUBMITTED : TicketStage.REJECTED;
             case REQUIRES_HUMAN -> TicketStage.NEEDS_HUMAN;
         };
 

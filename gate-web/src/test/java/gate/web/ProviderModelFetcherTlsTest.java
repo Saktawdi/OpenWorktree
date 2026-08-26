@@ -37,7 +37,7 @@ class ProviderModelFetcherTlsTest {
         HttpsServer server = selfSignedModelsServer(keystore);
         server.start();
         try {
-            ProviderModelFetcher fetcher = new ProviderModelFetcher(dir.resolve(".env"));
+            ProviderModelFetcher fetcher = new ProviderModelFetcher(null);
             List<String> models = fetcher.fetch(new ProviderRepository.ProviderRow(
                     "selfsigned", "Self-signed upstream",
                     "https://127.0.0.1:" + server.getAddress().getPort() + "/v1",

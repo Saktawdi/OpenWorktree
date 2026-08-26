@@ -15,7 +15,7 @@ import {
   Robot,
   X,
 } from "@phosphor-icons/react";
-import { fetchGateToml, fetchMcpStatus, fetchProviders, updateGateToml, createProvider, updateProvider, deleteProvider, updateProviderModels, fetchUpstreamModels } from "../lib/api";
+import { fetchGateToml, fetchMcpStatus, fetchProviders, updateGateToml, createProvider, updateProvider, deleteProvider, updateProviderModels, fetchUpstreamModels, setProviderCredential } from "../lib/api";
 import { openConnect, showToast, useApp } from "../lib/store";
 import type { GateTomlResponse, GateTomlKey, McpStatus, LlmProvider } from "../lib/types";
 import { CopyButton, Spinner } from "./ui";
@@ -527,7 +527,7 @@ function ProviderDialog({ initial, onClose, onSaved }: { initial: LlmProvider | 
   const [name, setName] = useState(initial?.name ?? "");
   const [baseUrl, setBaseUrl] = useState(initial?.base_url ?? "");
   const [type, setType] = useState(initial?.type ?? "openai");
-  const [apiKeyRef, setApiKeyRef] = useState("");
+  const [apiKey, setApiKey] = useState("");
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -537,15 +537,20 @@ function ProviderDialog({ initial, onClose, onSaved }: { initial: LlmProvider | 
     if (!valid || saving) return;
     setSaving(true); setErr(null);
     try {
-      const body: { id?: string; name: string; base_url: string; type: string; api_key_ref?: string } = {
+      const body: { id?: string; name: string; base_url: string; type: string } = {
         name: name.trim(), base_url: baseUrl.trim(), type: type.trim(),
       };
-      if (apiKeyRef.trim()) body.api_key_ref = apiKeyRef.trim();
+      let providerId = initial?.id;
       if (isNew) {
         body.id = id.trim();
-        await createProvider(body as { id: string; name: string; base_url: string; type: string; api_key_ref?: string });
+        const created = await createProvider(body as { id: string; name: string; base_url: string; type: string });
+        providerId = created?.id ?? id.trim();
       } else {
-        await updateProvider(initial!.id, body as { name: string; base_url: string; type: string; api_key_ref?: string });
+        await updateProvider(initial!.id, body as { name: string; base_url: string; type: string });
+      }
+      // 直填的 API Key 走凭据接口：KMS 加密落库，明文不进 provider 行的 api_key_ref。
+      if (apiKey.trim() && providerId) {
+        await setProviderCredential(providerId, apiKey.trim());
       }
       showToast(isNew ? "Provider 已创建" : "Provider 已更新");
       onSaved();
@@ -584,9 +589,19 @@ function ProviderDialog({ initial, onClose, onSaved }: { initial: LlmProvider | 
             <input className="text-input font-mono text-[12px]" placeholder="openai / anthropic / custom" value={type} onChange={(e) => setType(e.target.value)} />
           </div>
           <div>
-            <label className="field-label">api_key_ref（可选）</label>
-            <input className="text-input font-mono text-[12px]" placeholder="env:OPENAI_API_KEY" value={apiKeyRef} onChange={(e) => setApiKeyRef(e.target.value)} />
-            <div className="mt-1.5 text-[11px] text-faint leading-relaxed">填 env:VAR_NAME 引用 .env 中的密钥，明文不入库</div>
+            <label className="field-label">API Key{initial?.credential_configured ? "（已配置）" : ""}</label>
+            <input
+              className="text-input font-mono text-[12px]"
+              type="password"
+              placeholder={initial?.credential_configured ? "已配置 · 留空保持不变" : "sk-…"}
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              autoComplete="off"
+            />
+            <div className="mt-1.5 text-[11px] text-faint leading-relaxed">
+              加密存入本地库，审查引擎与模型拉取共用。
+              {initial?.credential_configured ? " 再次输入将覆盖旧密钥。" : ""}
+            </div>
           </div>
           {err && <div className="text-[12.5px] text-danger">{err}</div>}
         </div>

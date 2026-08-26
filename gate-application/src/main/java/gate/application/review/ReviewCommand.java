@@ -6,9 +6,11 @@ package gate.application.review;
  * <p>Two review modes coexist behind the same {@link gate.ports.engine.ReviewEngine} contract:
  * <ul>
  *   <li><b>manual</b> (P1, and still used by A6 to exercise the GatePolicy blocker branch): a human
- *       verdict flows in as a BLOCKER finding, not an {@code EngineFailure};</li>
- *   <li><b>prism</b> (P2): when an engine is configured, {@code GateServiceImpl} selects the live
- *       engine and {@code humanPass}/{@code note} are unused — the engine produces the evidence.</li>
+ *       verdict flows in as a BLOCKER finding, not an {@code EngineFailure}. An explicit
+ *       {@code humanPass} always routes here — even when an engine is configured, a human decision
+ *       is never second-guessed by the AI engine;</li>
+ *   <li><b>prism</b> (P2): when an engine is configured and {@code humanPass} is {@code null},
+ *       {@code GateServiceImpl} selects the live engine — the engine produces the evidence.</li>
  * </ul>
  * The verdict itself is always derived by {@code GatePolicy}.
  *

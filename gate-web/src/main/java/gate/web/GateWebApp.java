@@ -4,6 +4,8 @@ import gate.domain.config.GateConfig;
 import gate.domain.error.GateException;
 import gate.web.security.WebToken;
 import java.nio.file.Path;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * gate-web entry point (执行文档-后端-web §2.2): a lightweight {@code main}, NOT Spring Boot web
@@ -21,6 +23,8 @@ import java.nio.file.Path;
  */
 public final class GateWebApp {
 
+    private static final Logger LOG = LoggerFactory.getLogger(GateWebApp.class);
+
     private GateWebApp() {
     }
 
@@ -32,13 +36,13 @@ public final class GateWebApp {
                 case "--config", "-c" -> configPath = args[++i];
                 case "--git" -> gitExecutable = args[++i];
                 default -> {
-                    System.err.println("gate-web: unknown argument: " + args[i]);
+                    LOG.error("unknown argument: {}", args[i]);
                     System.exit(GateErrorExit.USAGE);
                 }
             }
         }
         if (configPath == null) {
-            System.err.println("gate-web: --config <gate.toml> is required");
+            LOG.error("--config <gate.toml> is required");
             System.exit(GateErrorExit.USAGE);
         }
 
@@ -53,14 +57,15 @@ public final class GateWebApp {
             Runtime.getRuntime().addShutdownHook(new Thread(server::close));
             server.start();
 
-            System.err.println("GATE_WEB_TOKEN=" + token + "  (also written to " + web.humanTokenFile() + ")");
-            System.err.println("gate-web: listening on http://" + web.bind() + ":" + server.port() + "/");
+            // 凭据交接：token 同时落盘 web-token 文件；这里仅日志告知（start-local 指引用户查看）。
+            LOG.info("GATE_WEB_TOKEN={} (also written to {})", token, web.humanTokenFile());
+            LOG.info("listening on http://{}:{}/", web.bind(), server.port());
             Thread.currentThread().join();
         } catch (GateException e) {
-            System.err.println("gate-web: " + e.code().name() + ": " + e.getMessage());
+            LOG.error("{}: {}", e.code().name(), e.getMessage());
             System.exit(e.code().code());
         } catch (Exception e) {
-            System.err.println("gate-web: INTERNAL: " + e);
+            LOG.error("INTERNAL", e);
             System.exit(GateErrorExit.INTERNAL);
         }
     }

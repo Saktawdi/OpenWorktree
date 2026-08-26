@@ -18,7 +18,7 @@ import javax.net.ssl.X509ExtendedTrustManager;
  * {@code gate provider pull}）放宽 TLS：证书链与主机名都不再校验。
  *
  * <p>放宽的代价是中间人可窥探/篡改模型列表响应；API key 仍只经 Authorization 头传输，
- * 凭据管理（ADR-9 的 {@code .env}/{@code env:} 引用）不受影响。核心的审查/发布链路不经过
+ * 凭据管理（设置中心 KMS 加密落库）不受影响。核心的审查/发布链路不经过
  * 本类——prism 引擎的上游调用由子进程自己的 TLS 策略负责。
  *
  * <p>主机名校验一并通过"自定义 TrustManager"取消：JSSE 的 endpoint identification 检查

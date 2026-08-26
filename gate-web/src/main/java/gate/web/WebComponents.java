@@ -65,34 +65,33 @@ public final class WebComponents {
     private final OpenCodeServeAdapter opencodeAdapter;
     private final TicketLockManager ticketLockManager;
     private final Clock clock;
-    private final Path envFile;
     private final ProcessRunner processRunner;
     private final GitCli git;
     private final Instant startedAt;
     private final Path gateToml;
     private final gate.ports.store.ProjectRepository projectRepository;
     private final gate.ports.git.WorkspaceSyncer workspaceSyncer;
+    private final gate.ports.infra.KmsService kmsService;
     private final ProviderModelFetcher modelFetcher;
     private final RuntimeInfoService runtimeInfo;
 
-    public WebComponents(GateConfig config, String gitExecutable, Path envFile) {
-        this(config, gitExecutable, envFile, null, null);
+    public WebComponents(GateConfig config, String gitExecutable) {
+        this(config, gitExecutable, null, null);
     }
 
-    WebComponents(GateConfig config, String gitExecutable, Path envFile, Path gateToml) {
-        this(config, gitExecutable, envFile, gateToml, null);
+    WebComponents(GateConfig config, String gitExecutable, Path gateToml) {
+        this(config, gitExecutable, gateToml, null);
     }
 
-    WebComponents(GateConfig config, String gitExecutable, Path envFile, Path gateToml,
+    WebComponents(GateConfig config, String gitExecutable, Path gateToml,
                   AgentSessionPort sessionPortOverride) {
         if (!config.webConfigured()) {
             throw new GateException(GateErrorCode.GATE_ERROR_CONFIG,
                     "gate-web requires a [web] section in gate.toml; none was found");
         }
-        GateRuntime runtime = new GateRuntime(config, gitExecutable, envFile);
+        GateRuntime runtime = new GateRuntime(config, gitExecutable);
         this.config = runtime.config();
         this.clock = runtime.clock();
-        this.envFile = runtime.envFile();
         this.startedAt = this.clock.now();
         this.gateToml = gateToml == null ? null : gateToml.toAbsolutePath().normalize();
         this.processRunner = runtime.processRunner();
@@ -118,7 +117,8 @@ public final class WebComponents {
         this.agentConfigRepository = runtime.agentConfigRepository();
         this.projectRepository = runtime.projectRepository();
         this.workspaceSyncer = runtime.workspaceSyncer();
-        this.modelFetcher = new ProviderModelFetcher(envFile);
+        this.kmsService = runtime.kmsService();
+        this.modelFetcher = new ProviderModelFetcher(this.kmsService);
         gate.ports.store.SessionRepository sessionRepo = runtime.sessionRepository();
         // 旧版启动例程会把所有 ACTIVE 会话清扫成 ABORTED（前提是"会话活不过重启"）。
         // 懒复活机制下该前提不再成立：ACTIVE 会话在重启后仍可按行重建 serve 续接，
@@ -157,8 +157,7 @@ public final class WebComponents {
 
     public static WebComponents fromConfig(Path tomlPath, String gitExecutable) {
         GateConfig config = new TomlGateConfigLoader().load(tomlPath);
-        Path envFile = tomlPath.toAbsolutePath().getParent().resolve(".env");
-        WebComponents components = new WebComponents(config, gitExecutable, envFile,
+        WebComponents components = new WebComponents(config, gitExecutable,
                 tomlPath.toAbsolutePath().normalize());
         components.seedManualProvider();
         return components;
@@ -193,7 +192,6 @@ public final class WebComponents {
     public BlobStore blobStore() { return blobStore; }
     public CredentialRepository credentials() { return credentials; }
     public Clock clock() { return clock; }
-    public Path envFile() { return envFile; }
     public TaskRegistry taskRegistry() { return taskRegistry; }
     public TaskRunner taskRunner() { return taskRunner; }
     public AgentConfigRepository agentConfigRepository() { return agentConfigRepository; }
@@ -202,6 +200,7 @@ public final class WebComponents {
     public TicketLockManager ticketLockManager() { return ticketLockManager; }
     public gate.ports.store.ProjectRepository projectRepository() { return projectRepository; }
     public gate.ports.git.WorkspaceSyncer workspaceSyncer() { return workspaceSyncer; }
+    public gate.ports.infra.KmsService kmsService() { return kmsService; }
     public ProviderModelFetcher modelFetcher() { return modelFetcher; }
     public RuntimeInfoService runtimeInfo() { return runtimeInfo; }
     public GitCli git() { return git; }

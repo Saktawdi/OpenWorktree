@@ -15,11 +15,6 @@ doc/归档/
 # Playwright MCP QA artifacts
 .playwright-mcp/
 
-# Secrets — never commit
-.env
-.env.*
-!.env.example
-
 # IDE
 .idea/
 *.iml

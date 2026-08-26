@@ -4,7 +4,7 @@ import gate.cli.GateComponents;
 import gate.cli.util.JsonOut;
 
 
-import gate.adapters.engine.EnvFile;
+import gate.adapters.engine.ApiKeyResolver;
 import gate.application.util.MiniJson;
 import gate.domain.error.GateErrorCode;
 import gate.domain.error.GateException;
@@ -14,9 +14,6 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -27,9 +24,10 @@ import picocli.CommandLine;
  * {@code gate provider add|pull|list}: LLM provider management (架构落地执行文档 §10.1.1).
  *
  * <p>The interaction model mirrors opencode's: configure a provider first, then pull its model list,
- * expose {@code (provider_id, model_name)} outward. {@code base_url} lives in the {@code provider}
- * table; the API key lives in {@code .env} (git-ignored) and is injected into the prism child process
- * via environment — never argv, never the DB, never the audit log (ADR-9, §6.1).
+ * expose {@code (provider_id, model_name)} outward. {@code base_url} and the credential live in the
+ * {@code provider} table — the API key is stored KMS-encrypted via the web console (设置中心) and is
+ * injected into child processes via environment — never argv, never plaintext in the DB, never the
+ * audit log (ADR-9, §6.1).
  */
 @CommandLine.Command(name = "provider",
         description = "Manage LLM providers (add / pull models / list)",
@@ -68,20 +66,17 @@ public final class ProviderCommand implements Runnable {
             GateComponents c = components();
             ProviderRepository providers = c.providerRepository();
             providers.upsert(new ProviderRepository.ProviderRow(
-                    id, name, baseUrl, "NEWAPI_API_KEY", type, c.clock().now()), c.clock().now());
-
-            // Ensure .env has a placeholder for the key if absent — the key itself is never read here.
-            ensureEnvKeyPlaceholder(c.envFile(), "NEWAPI_API_KEY");
+                    id, name, baseUrl, "unconfigured", type, c.clock().now()), c.clock().now());
 
             JsonOut.emit(System.out, "provider.add", Map.of(
                     "provider_id", id,
                     "base_url", baseUrl,
-                    "api_key_ref", "NEWAPI_API_KEY",
-                    "note", "set NEWAPI_API_KEY in .env (git-ignored); never passed as argv"));
+                    "api_key_ref", "unconfigured",
+                    "note", "set the API key in the web console (设置中心 → LLM Providers); it is stored KMS-encrypted"));
         }
     }
 
-    /** {@code gate provider pull <id>}: GET {base_url}/models using the key from .env, cache into model table. */
+    /** {@code gate provider pull <id>}: GET {base_url}/models using the stored credential, cache into model table. */
     @CommandLine.Command(name = "pull", description = "Pull the model list from a provider")
     static final class Pull extends BaseCommand {
 
@@ -95,12 +90,12 @@ public final class ProviderCommand implements Runnable {
             ProviderRepository.ProviderRow provider = providers.find(id).orElseThrow(
                     () -> new GateException(GateErrorCode.USAGE, "no provider row for id=" + id));
 
-            Map<String, String> env = EnvFile.load(c.envFile());
-            String key = env.get(provider.apiKeyRef());
+            String key = ApiKeyResolver.resolve(provider.apiKeyRef(), c.kmsService());
             if (key == null || key.isBlank()) {
                 throw new GateException(GateErrorCode.GATE_ERROR_CONFIG,
-                        provider.apiKeyRef() + " is missing or blank in " + c.envFile()
-                                + "; fill .env first (the key is never logged)");
+                        "provider \"" + id + "\" has no usable API credential (credential="
+                                + ApiKeyResolver.describe(provider.apiKeyRef()) + ")"
+                                + " — set the API key in the web console (设置中心 → LLM Providers)");
             }
 
             List<String> models = fetchModels(provider.baseUrl(), key);
@@ -172,26 +167,6 @@ public final class ProviderCommand implements Runnable {
                         "models", models));
             }
             JsonOut.emit(System.out, "provider.list", Map.of("providers", rows));
-        }
-    }
-
-    /** Writes a {@code KEY=} placeholder into .env if the key is absent (never overwrites a value). */
-    private static void ensureEnvKeyPlaceholder(Path envFile, String key) {
-        try {
-            if (!Files.isRegularFile(envFile)) {
-                Files.createDirectories(envFile.getParent() == null ? Path.of(".") : envFile.getParent());
-                Files.writeString(envFile, "# secrets for LLM providers — git-ignored, never committed\n"
-                        + key + "=\n", StandardCharsets.UTF_8);
-                return;
-            }
-            String content = Files.readString(envFile, StandardCharsets.UTF_8);
-            if (!content.lines().anyMatch(l -> l.trim().startsWith(key + "="))) {
-                Files.writeString(envFile, key + "=\n", StandardCharsets.UTF_8,
-                        StandardOpenOption.APPEND);
-            }
-        } catch (Exception e) {
-            throw new GateException(GateErrorCode.GATE_ERROR_IO,
-                    "cannot touch " + envFile + ": " + e.getMessage(), e);
         }
     }
 

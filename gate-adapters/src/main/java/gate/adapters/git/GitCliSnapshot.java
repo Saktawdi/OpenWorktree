@@ -265,13 +265,23 @@ public final class GitCliSnapshot implements SnapshotCapture {
         if (!run.ok()) {
             return "";
         }
+        return fingerprint(run.stdout(), at == null);
+    }
+
+    /**
+     * Fingerprint body for one {@code ls-files -s} ({@code worktreeListing=true},
+     * {@code "<mode> <sha> <stage>\t<path>"}) or {@code ls-tree -r} listing. Package-visible so the
+     * two formats can be regression-tested for column alignment: picking the wrong column made
+     * identical .gitignore content produce different fingerprints and a spurious R4 on every
+     * presubmit.
+     */
+    static String fingerprint(String listing, boolean worktreeListing) {
         Set<String> parts = new LinkedHashSet<>();
-        for (String line : run.stdout().split("\n")) {
+        for (String line : listing.split("\n")) {
             String trimmed = line.trim();
             if (trimmed.isEmpty()) {
                 continue;
             }
-            // "<mode> <sha> <stage>\t<path>" (ls-files -s) or "<mode> blob <sha>\t<path>" (ls-tree)
             int tab = trimmed.indexOf('\t');
             if (tab < 0) {
                 continue;
@@ -281,10 +291,7 @@ public final class GitCliSnapshot implements SnapshotCapture {
                 continue;
             }
             String[] head = trimmed.substring(0, tab).split("\\s+");
-            String sha = head.length >= 3 ? head[head.length - 2] : "";
-            if (at == null && head.length >= 3) {
-                sha = head[1];
-            }
+            String sha = head.length >= 3 ? head[worktreeListing ? 1 : head.length - 1] : "";
             parts.add(path + "=" + sha);
         }
         return String.join(";", parts);

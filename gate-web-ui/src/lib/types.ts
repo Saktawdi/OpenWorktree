@@ -295,6 +295,17 @@ export interface VerdictInfo {
   engineId: string;
   round: number;
   authorizationId?: string;
+  /** true = 引擎未产出有效审查（超时/崩溃等基础设施故障）：可原地重试，不消耗轮次。 */
+  degraded?: boolean;
+}
+
+/** 审查引擎配置（GET /api/config 的 engine 节）；null = 未配置，AI 审查不可用。 */
+export interface EngineInfo {
+  configured: boolean;
+  providerId?: string | null;
+  model?: string | null;
+  /** 引擎单次审查的超时上限（秒）：进度页用于告知最长等待。 */
+  timeoutSeconds?: number | null;
 }
 
 export interface TaskProgress {

@@ -36,7 +36,7 @@ public final class ApiRoutes implements WebController {
                 new PresubmitController(c.gateService(), c.ticketRepository(), c.presubmitRepository(),
                         c.reviewResultRepository(), c.blobStore(), c.ticketLockManager(), c.git(), c.config()),
                 new TaskController(c.taskRegistry(), c.taskRunner()),
-                new ProviderController(c.providerRepository(), c.modelFetcher(), c.clock()),
+                new ProviderController(c.providerRepository(), c.modelFetcher(), c.kmsService(), c.clock()),
                 new MetricsController(c.metricsService(), c.gateService()),
                 new SessionController(c.agentConfigRepository(), c.sessionRepository(), c.agentSessionPort(),
                         c.ticketRepository(), c.clock(), new SessionModelCatalog(), c.credentials()),

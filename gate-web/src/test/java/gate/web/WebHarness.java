@@ -65,7 +65,7 @@ final class WebHarness implements AutoCloseable {
                     new GateConfig.SessionConfig(49152, 65535, "claude", null, 60),
                     new GateConfig.AgentConfigDefaults(null, null, null));
 
-            this.components = new WebComponents(config, gitExecutable, root.resolve(".env"), gateTomlOverride, sessionPortOverride);
+            this.components = new WebComponents(config, gitExecutable, gateTomlOverride, sessionPortOverride);
             // Seed manual provider (same bootstrap as fromConfig).
             if (components.providerRepository().find("manual").isEmpty()) {
                 components.providerRepository().upsert(new gate.ports.store.ProviderRepository.ProviderRow(

@@ -126,6 +126,29 @@ class CaptureTest {
         }
     }
 
+    /**
+     * R4 regression: the base fingerprint reads {@code ls-tree} ("<mode> blob <sha>"); parsing the
+     * type column as the sha made every presubmit with a tracked .gitignore warn spuriously.
+     */
+    @Test
+    void r4WarnsOnlyWhenTrackedGitignoreActuallyChanged() throws Exception {
+        try (GateHarness h = new GateHarness()) {
+            RepoRef clone = h.createTicket("TICKET-1");
+            h.writeFile(clone, "real.txt", "x\n");
+
+            PresubmitResult unchanged = h.service().presubmit(new PresubmitCommand("TICKET-1"));
+            assertTrue(unchanged.integrity().warnings().stream().noneMatch(v -> v.rule().equals("R4")),
+                    "unchanged tracked .gitignore must not raise R4: " + unchanged.integrity().warnings());
+
+            h.writeFile(clone, ".gitignore", "secret.key\n");
+            h.git(clone, "add", ".gitignore");
+
+            PresubmitResult changed = h.service().presubmit(new PresubmitCommand("TICKET-1"));
+            assertTrue(changed.integrity().warnings().stream().anyMatch(v -> v.rule().equals("R4")),
+                    "a changed tracked .gitignore must raise R4");
+        }
+    }
+
     private String writeTreeWith(GateHarness h, RepoRef clone, String autocrlf) {
         Path tempIndex = clone.path().resolve(".git").resolve("test-index-" + UUID.randomUUID());
         Map<String, String> env = Map.of("GIT_INDEX_FILE", tempIndex.toString());

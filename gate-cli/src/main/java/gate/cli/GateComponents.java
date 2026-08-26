@@ -26,26 +26,16 @@ public final class GateComponents {
     private final GateRuntime runtime;
 
     public GateComponents(GateConfig config, String gitExecutable) {
-        this(config, gitExecutable, defaultEnvFile());
-    }
-
-    public GateComponents(GateConfig config, String gitExecutable, Path envFile) {
-        this.runtime = new GateRuntime(config, gitExecutable, envFile);
+        this.runtime = new GateRuntime(config, gitExecutable);
     }
 
     public static GateComponents fromConfig(Path tomlPath, String gitExecutable) {
         GateConfig config = new TomlGateConfigLoader().load(tomlPath);
-        Path envFile = tomlPath.toAbsolutePath().getParent().resolve(".env");
-        GateComponents components = new GateComponents(config, gitExecutable, envFile);
+        GateComponents components = new GateComponents(config, gitExecutable);
         components.runtime.seedManualProvider();
         return components;
     }
 
-    static Path defaultEnvFile() {
-        return Path.of(".env").toAbsolutePath();
-    }
-
-    public Path envFile() { return runtime.envFile(); }
     public GateConfig config() { return runtime.config(); }
     public GateService gateService() { return runtime.gateService(); }
     public TopologyInitializer topologyInitializer() { return runtime.topologyInitializer(); }
@@ -57,4 +47,5 @@ public final class GateComponents {
     public BlobStore blobStore() { return runtime.blobStore(); }
     public CredentialRepository credentials() { return runtime.credentials(); }
     public Clock clock() { return runtime.clock(); }
+    public gate.ports.infra.KmsService kmsService() { return runtime.kmsService(); }
 }

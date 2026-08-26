@@ -14,6 +14,7 @@ import {
   restoreSession as restoreSessionLocal,
   seedDemo,
   selectTicket,
+  setCenterTab,
   setCreatingSession,
   setStage,
   setVerdict,
@@ -45,8 +46,29 @@ export const actions = {
   presubmit(no: string) {
     return appStore.getState().mode === "live" ? live.livePresubmit(no) : demo.demoPresubmit(no);
   },
-  review(no: string) {
+  /** AI 审查：live 模式要求已配置审查引擎（gate.toml [engine]）。 */
+  reviewAi(no: string) {
     return appStore.getState().mode === "live" ? live.liveReview(no) : demo.demoReview(no);
+  },
+  /** 人工审查：弹窗确认"已审阅"后以人工判决落盘（human_pass=true）。 */
+  reviewHuman(no: string) {
+    if (appStore.getState().mode === "live") {
+      return live.liveReview(no, { humanPass: true, note: "人工审查通过（确认已审阅）" });
+    }
+    setVerdict(no, {
+      verdict: "PASS",
+      reason: "人工审查通过（确认已审阅）",
+      engineId: "human/override",
+      round: appStore.getState().snapshots[no]?.length ?? 1,
+      authorizationId: "manual-" + Date.now().toString(36),
+    });
+    setStage(no, "READY_TO_PUBLISH");
+    pushSystemMessage(no, "人工审查通过 · 发布授权已签发", "success");
+    setCenterTab("findings");
+    return Promise.resolve();
+  },
+  review(no: string) {
+    return actions.reviewAi(no);
   },
   publish(no: string) {
     return appStore.getState().mode === "live" ? live.livePublish(no) : demo.demoPublish(no);
@@ -221,7 +243,13 @@ export const actions = {
     appStore.setState({ mode: "live", token, conn: "ok" });
     live.startAgentBusyPolling();
     try {
-      await Promise.all([live.loadTickets(), live.loadProjects(), live.loadAgentConfigs(), live.loadRuntimes()]);
+      await Promise.all([
+        live.loadTickets(),
+        live.loadProjects(),
+        live.loadAgentConfigs(),
+        live.loadRuntimes(),
+        live.loadEngineConfig(),
+      ]);
       // Demo leaves a demo project/agent id behind; live data is filtered by the project
       // field and sessions need a real agent config, so reset both to backend values.
       const st = appStore.getState();
@@ -352,8 +380,12 @@ export async function boot() {
   appStore.setState({ conn });
   // 已在 live 模式且后端连通时启动运行中智能体轮询
   const st = appStore.getState();
-  if (st.mode === "live" && conn === "ok") live.startAgentBusyPolling();
-  else if (conn !== "ok") {
+  if (st.mode === "live" && conn === "ok") {
+    live.startAgentBusyPolling();
+    // 刷新后走 sessionStorage 恢复，不会经过 connectLive：引擎配置（AI 审查入口的
+    // 可用性判断）必须在这里补拉，否则 engine 恒为 null，按钮永远停在"配置读取中"。
+    void live.loadEngineConfig();
+  } else if (conn !== "ok") {
     appStore.setState({ runningAgents: { count: 0, sessions: [] } });
     live.stopAgentBusyPolling();
   }

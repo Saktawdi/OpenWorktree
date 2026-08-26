@@ -16,7 +16,9 @@ import {
   RocketLaunch,
   SealCheck,
   ShieldCheck,
+  Sparkle,
   Trash,
+  UserFocus,
   Warning,
   X,
 } from "@phosphor-icons/react";
@@ -191,7 +193,7 @@ function VerdictBanner({
   findingsCount,
 }: {
   ticketNo: string;
-  verdict: { verdict: string; reason: string; engineId: string; authorizationId?: string };
+  verdict: { verdict: string; reason: string; engineId: string; authorizationId?: string; degraded?: boolean };
   findingsCount: number;
 }) {
   if (verdict.verdict === "PASS") {
@@ -222,6 +224,22 @@ function VerdictBanner({
           <span className="text-[13px] font-semibold text-warn">需人工核准</span>
         </div>
         <div className="mt-1 text-[12.5px] text-dim">{verdict.reason}</div>
+      </div>
+    );
+  }
+  // 引擎故障型驳回（degraded）：不是对代码的判决，不展示"带意见返回会话"——
+  // 原地重试入口在下方（stage 停留在 PRESUBMITTED，轮次不消耗）。
+  if (verdict.degraded) {
+    return (
+      <div className="rounded-xl border border-warn/30 bg-warn/[0.06] p-3.5 animate-slide-in">
+        <div className="flex items-center gap-2">
+          <Warning size={16} className="text-warn" weight="fill" />
+          <span className="text-[13px] font-semibold text-warn">审查引擎未完成判决</span>
+          <span className="chip border border-warn/30 text-warn bg-warn/10">可重试 · 不消耗轮次</span>
+        </div>
+        <div className="mt-1 text-[12.5px] text-dim">
+          引擎侧故障（超时/上游不可用等），非代码问题；在「审查发现」查看详情并重试。
+        </div>
       </div>
     );
   }
@@ -391,7 +409,7 @@ function GatePipeline({
   round: number;
   snap?: Snapshot;
   task?: { kind: string; percent: number; label: string };
-  verdict?: { verdict: string; reason: string; engineId: string; authorizationId?: string };
+  verdict?: { verdict: string; reason: string; engineId: string; authorizationId?: string; degraded?: boolean };
   findingsCount: number;
   gateBusy: boolean;
   outcome?: { commitSha: string; refBefore: string; refAfter: string; targetRef: string; publishedAt: number };
@@ -668,6 +686,131 @@ function SessionItem({
   );
 }
 
+/* ─── Manual Review Confirm Dialog ─── */
+
+export function ManualReviewDialog({
+  ticketNo,
+  round,
+  busy,
+  onClose,
+}: {
+  ticketNo: string;
+  round: number;
+  busy: boolean;
+  onClose: () => void;
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-50 grid place-items-center bg-black/55 backdrop-blur-[2px]"
+      onClick={busy ? undefined : onClose}
+    >
+      <div
+        className="w-[420px] card shadow-2xl shadow-black/60 animate-rise"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center gap-2.5 px-5 h-12 border-b border-edge">
+          <ShieldCheck size={15} className="text-warn" weight="fill" />
+          <span className="text-[13.5px] font-semibold">人工审查确认</span>
+          <span className="flex-1" />
+          <button className="icon-btn" onClick={onClose} disabled={busy} aria-label="关闭">
+            ✕
+          </button>
+        </div>
+        <div className="p-5 space-y-3">
+          <div className="text-[13px] leading-relaxed text-dim">
+            确认已人工审阅第 {round} 轮快照的全部变更？
+          </div>
+          <div className="rounded-lg bg-sunken border border-edge px-3 py-2.5 text-[12px] leading-relaxed text-faint">
+            确认后本轮判决以人工核准为准，审查引擎不再参与；工单将进入「待发布」，
+            可直接一键安全发布。此操作会记入审计日志。
+          </div>
+        </div>
+        <div className="flex justify-end gap-2 px-5 pb-4">
+          <button className="btn h-8 text-[12.5px]" onClick={onClose} disabled={busy}>
+            取消
+          </button>
+          <button
+            className="btn btn-primary h-8 text-[12.5px]"
+            disabled={busy}
+            onClick={() => {
+              actions.reviewHuman(ticketNo);
+              onClose();
+            }}
+          >
+            <SealCheck size={13} weight="fill" />
+            确认已审阅并放行
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ─── Review Entry: AI 审查 / 人工审查 ─── */
+
+function ReviewActions({ ticketNo, gateBusy, round }: { ticketNo: string; gateBusy: boolean; round: number }) {
+  const engine = useApp((s) => s.engine);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  // live 模式配置未加载完成（engine === null）时先禁用，避免把"未加载"误判成"未配置"。
+  const aiReady = engine?.configured === true;
+  const engineLabel = engine?.providerId
+    ? `${engine.providerId}${engine.model ? ` · ${engine.model}` : ""}`
+    : "";
+
+  return (
+    <div className="shrink-0 border-t border-edge bg-surface p-3.5">
+      <div className="grid grid-cols-2 gap-2">
+        <button
+          className="btn btn-primary h-10 flex-col gap-0.5 leading-tight"
+          disabled={gateBusy || !aiReady}
+          title={
+            aiReady
+              ? `审查引擎 ${engineLabel} 将基于快照 R${round} 判决，与工作区后续改动无关`
+              : engine === null
+                ? "正在读取引擎配置…"
+                : "未配置审查引擎：在 设置 → gate.toml [engine] 完成配置，或改用人工审查"
+          }          onClick={() => actions.reviewAi(ticketNo)}
+        >
+          <span className="flex items-center gap-1.5 text-[13px] font-medium">
+            <Sparkle size={14} weight="fill" />
+            AI 审查
+          </span>
+          <span className="text-[10px] font-normal opacity-75 truncate max-w-full px-1">
+            {aiReady ? engineLabel || "已配置" : engine === null ? "配置读取中" : "未配置引擎"}
+          </span>
+        </button>
+        <button
+          className="btn h-10 flex-col gap-0.5 leading-tight"
+          disabled={gateBusy}
+          title="人工审阅变更对比后，确认已审阅并出具判决"
+          onClick={() => setConfirmOpen(true)}
+        >
+          <span className="flex items-center gap-1.5 text-[13px] font-medium">
+            <UserFocus size={14} weight="fill" />
+            人工审查
+          </span>
+          <span className="text-[10px] font-normal opacity-75">弹窗确认已审阅</span>
+        </button>
+      </div>
+      <div className="mt-2 text-center text-[11.5px] text-faint">
+        {aiReady
+          ? `AI 判决基于快照 R${round}，与工作区后续改动无关`
+          : engine === null
+            ? "正在读取引擎配置…"
+            : "AI 审查需先在设置中配置 gate.toml [engine]；人工审查随时可用"}
+      </div>
+      {confirmOpen && (
+        <ManualReviewDialog
+          ticketNo={ticketNo}
+          round={round}
+          busy={gateBusy}
+          onClose={() => setConfirmOpen(false)}
+        />
+      )}
+    </div>
+  );
+}
+
 /* ─── Main Panel ─── */
 
 export function GatePanel({ ticketNo }: { ticketNo: string }) {
@@ -703,14 +846,8 @@ export function GatePanel({ ticketNo }: { ticketNo: string }) {
       primary: true,
     };
   } else if (stage === "PRESUBMITTED") {
-    action = {
-      label: "触发门禁审查",
-      icon: <ShieldCheck size={15} weight="fill" />,
-      onClick: () => actions.review(ticketNo),
-      disabled: gateBusy,
-      hint: "审查引擎将基于快照 R" + round + " 判决，与工作区后续改动无关",
-      primary: true,
-    };
+    // 快照已锁定：渲染专用的 AI 审查 / 人工审查 双入口（见下方 ReviewActions）。
+    action = null;
   } else if (stage === "IN_REVIEW") {
     action = {
       label: "审查执行中…",
@@ -771,6 +908,9 @@ export function GatePanel({ ticketNo }: { ticketNo: string }) {
           </button>
           {action.hint && <div className="mt-2 text-center text-[11.5px] text-faint">{action.hint}</div>}
         </div>
+      )}
+      {stage === "PRESUBMITTED" && (
+        <ReviewActions ticketNo={ticketNo} gateBusy={gateBusy} round={round} />
       )}
       {stage === "DONE" && (
         <div className="shrink-0 border-t border-edge bg-surface p-3.5">

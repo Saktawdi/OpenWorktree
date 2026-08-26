@@ -112,14 +112,28 @@ public record GateConfig(
         return engine != null;
     }
 
-    /** Present only once an external review engine is configured (P2). */
-    public record EngineConfig(String cmd, List<String> args, long timeoutSeconds, String providerId, String model) {
+    /**
+     * Present only once an external review engine is configured (P2).
+     *
+     * @param kind {@code "prism"}（外部二进制，缺省）or {@code "openai-stream"}（gate 内建流式
+     *             引擎，直连 OpenAI 兼容 /chat/completions，无需 cmd/args）。未知值在工厂
+     *             层 fail-closed 拒绝启动语义的审查（按 prism 处理不了的错误兜底）。
+     */
+    public record EngineConfig(String cmd, List<String> args, long timeoutSeconds, String providerId,
+                               String model, String kind) {
 
         public EngineConfig {
-            if (cmd == null || cmd.isBlank()) {
+            if (kind == null || kind.isBlank()) {
+                kind = "prism";
+            }
+            kind = kind.toLowerCase(java.util.Locale.ROOT);
+            if ("openai-stream".equals(kind)) {
+                // 内建引擎进程内直连上游：cmd 无意义，归一为占位。
+                cmd = cmd == null || cmd.isBlank() ? "(builtin)" : cmd;
+            } else if (cmd == null || cmd.isBlank()) {
                 throw new IllegalArgumentException("engine.cmd must not be blank");
             }
-            args = List.copyOf(args);
+            args = args == null ? List.of() : List.copyOf(args);
             if (timeoutSeconds <= 0) {
                 throw new IllegalArgumentException("engine.timeout must be positive");
             }

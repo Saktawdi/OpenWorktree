@@ -16,6 +16,8 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * The only {@link CommitPublisher} implementation (架构落地执行文档 §3.5/§6/§7, ADR-1).
@@ -27,6 +29,8 @@ import java.util.UUID;
  * second, divergent commit (§7.4 I1/I5, measured in P0).
  */
 public final class GitCliPublisher implements CommitPublisher {
+
+    private static final Logger LOG = LoggerFactory.getLogger(GitCliPublisher.class);
 
     private final GitCli git;
     private final Path indexDir;
@@ -92,7 +96,8 @@ public final class GitCliPublisher implements CommitPublisher {
             // Fallback: try push with --no-verify (still may be rejected, but does not disable hook)
             ProcessRunner.ProcRun push = git.run(cloneRepo.path(), Map.of(), "push", "--no-verify", authRepo.pathString(), commit.hex() + ":" + tmpRef);
             if (!push.ok()) {
-                System.err.println("[ensureObject] fetch and push both failed: fetch=" + fetch.stderrFirstLine() + " push=" + push.stderrFirstLine());
+                LOG.warn("ensureObject: fetch and push both failed for {} fetch=[{}] push=[{}]",
+                        commit.hex(), fetch.stderrFirstLine(), push.stderrFirstLine());
             }
         }
     }

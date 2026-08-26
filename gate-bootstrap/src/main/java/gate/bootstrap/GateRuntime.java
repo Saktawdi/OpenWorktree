@@ -81,7 +81,6 @@ import org.springframework.transaction.support.TransactionTemplate;
 public final class GateRuntime {
 
     private final GateConfig config;
-    private final Path envFile;
     private final Clock clock;
     private final ProcessRunner processRunner;
     private final GitCli git;
@@ -109,9 +108,8 @@ public final class GateRuntime {
     private final gate.ports.store.ProjectRepository projectRepository;
     private final WorkspaceSyncer workspaceSyncer;
 
-    public GateRuntime(GateConfig config, String gitExecutable, Path envFile) {
+    public GateRuntime(GateConfig config, String gitExecutable) {
         this.config = config;
-        this.envFile = envFile.toAbsolutePath().normalize();
         this.clock = new SystemClock();
 
         this.processRunner = new ProcessRunnerImpl(config.gateHome().resolve("proc"));
@@ -151,13 +149,15 @@ public final class GateRuntime {
         this.ephemeralWorkspaceManager = new FsEphemeralWorkspaceManager(config.clonesRoot(), config.authRepo(), git);
         this.s3Store = new FsS3Store(config.blobRoot().resolve("s3"));
         this.kmsService = new LocalKmsService("local-key-1", "local-secret-for-phase3-hmac");
+        migrateProviderCredentials();
         this.agentConfigRepository = new JdbcAgentConfigRepository(jdbc);
         this.sessionRepository = new JdbcSessionRepository(jdbc, blobStore);
         this.projectRepository = new JdbcProjectRepository(jdbc);
         this.workspaceSyncer = new GitCliWorkspaceSyncer(git);
 
         ReviewEngineFactory reviewEngineFactory = config.engineConfigured()
-                ? new GateReviewEngineFactory(blobStore, config, processRunner, providerRepository, this.envFile)
+                ? new GateReviewEngineFactory(blobStore, config, processRunner, providerRepository,
+                        this.kmsService)
                 : new ManualReviewEngineFactory(blobStore);
         this.gateService = new GateServiceImpl(config, snapshotCapture, commitPublisher, refObserver,
                 approvalStore, reviewEngineFactory, new GatePolicy(), ticketRepository, presubmitRepository,
@@ -168,7 +168,6 @@ public final class GateRuntime {
     }
 
     public GateConfig config() { return config; }
-    public Path envFile() { return envFile; }
     public Clock clock() { return clock; }
     public ProcessRunner processRunner() { return processRunner; }
     public GitCli git() { return git; }
@@ -205,6 +204,23 @@ public final class GateRuntime {
         if (providerRepository.find(id).isEmpty()) {
             providerRepository.upsert(new ProviderRepository.ProviderRow(
                     id, name, baseUrl, apiKeyRef, type, clock.now()), clock.now());
+        }
+    }
+
+    /**
+     * One-time legacy migration: bare values in {@code api_key_ref}（KMS 凭据流之前由旧设置页/CLI
+     * 直接存入的明文 key）are encrypted in place as {@code kms:<ciphertext>}. Idempotent — kms:
+     * and none/unconfigured rows are left untouched. Never logs the value.
+     */
+    private void migrateProviderCredentials() {
+        for (ProviderRepository.ProviderRow p : providerRepository.findAll()) {
+            String ref = p.apiKeyRef();
+            if (!gate.adapters.engine.ApiKeyResolver.isLegacyPlaintext(ref)) {
+                continue;
+            }
+            providerRepository.upsert(new ProviderRepository.ProviderRow(
+                    p.id(), p.name(), p.baseUrl(),
+                    "kms:" + kmsService.encrypt(ref.trim()), p.type(), p.createdAt()), clock.now());
         }
     }
 

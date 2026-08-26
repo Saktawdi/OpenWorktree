@@ -8,8 +8,10 @@ import java.util.Optional;
 public interface ProviderRepository {
 
     /**
-     * @param apiKeyRef reference or ciphertext only. The plaintext key must never reach any other
-     *                  table, the audit log, a commit trailer, or argv (ADR-9, §6.1).
+     * @param apiKeyRef reference or ciphertext only — either {@code kms:<ciphertext>} (written by
+     *                  the settings center when the user pastes a key) or {@code none}/
+     *                  {@code unconfigured}. The plaintext key must never reach any other table,
+     *                  the audit log, a commit trailer, or argv (ADR-9, §6.1).
      */
     record ProviderRow(String id, String name, String baseUrl, String apiKeyRef, String type, Instant createdAt) {
     }

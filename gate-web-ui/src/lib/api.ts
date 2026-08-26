@@ -18,6 +18,7 @@ import {
   setGateBusy,
   setAgentId,
   setOutcome,
+  setReviewError,
   setSessionBusy,
   setStage,
   setTask,
@@ -136,6 +137,29 @@ export async function loadTickets() {
   appStore.setState({ tickets: data.tickets.map(mapTicket) });
 }
 
+/**
+ * 拉取引擎配置（/api/config 的 engine_configured + engine 节）：
+ * AI 审查入口的可用性与按钮文案都依赖它；失败不阻断连接，仅视为未加载。
+ */
+export async function loadEngineConfig() {
+  try {
+    const data = await api<{
+      engine_configured?: boolean;
+      engine?: { provider_id?: string | null; model?: string | null; timeout_seconds?: number | null };
+    }>("/api/config");
+    appStore.setState({
+      engine: {
+        configured: data.engine_configured === true,
+        providerId: data.engine?.provider_id ?? null,
+        model: data.engine?.model ?? null,
+        timeoutSeconds: data.engine?.timeout_seconds ?? null,
+      },
+    });
+  } catch {
+    /* 配置读取失败不阻断：engine 保持 null，AI 入口按未加载处理 */
+  }
+}
+
 export async function refreshTicket(no: string) {
   const t = await api<RawTicket>(`/api/tickets/${no}`);
   appStore.setState((st) => ({
@@ -237,33 +261,73 @@ interface RawReviewResult {
   verdict: string;
   engine_id: string;
   review_round: number;
+  degraded?: boolean;
   findings: string;
 }
 
+/**
+ * 解析审查证据 blob（EvidenceCodec 的两种对象形态）：
+ * - `{"kind":"report","findings":[…snake_case…]}` —— 正常引擎报告；
+ * - `{"kind":"failure","failure_kind":…,"detail":…}` —— 引擎未产出判决（超时/崩溃），
+ *   合成一条 BLOCKER 发现，让驳回有具体原因可看，而不是"共 0 项发现"。
+ * 兼容旧的顶层数组形态（demo 数据）。
+ */
 function parseFindings(raw: string): Finding[] {
-  let findings: Finding[] = [];
   try {
-    const parsed = JSON.parse(raw);
+    const parsed: unknown = JSON.parse(raw);
     if (Array.isArray(parsed)) {
-      findings = parsed.map((f: Record<string, unknown>) => ({
-        severity: (f.severity as Severity) ?? "INFO",
-        path: String(f.path ?? ""),
-        lineStart: typeof f.lineStart === "number" ? f.lineStart : undefined,
-        ruleId: f.ruleId ? String(f.ruleId) : undefined,
-        message: String(f.message ?? ""),
-        suggestion: f.suggestion ? String(f.suggestion) : undefined,
-      }));
+      return parsed.map(mapFinding).filter((f): f is Finding => f !== null);
+    }
+    if (parsed && typeof parsed === "object") {
+      const obj = parsed as Record<string, unknown>;
+      if (obj.kind === "failure") {
+        const kind = String(obj.failure_kind ?? "CRASH");
+        return [
+          {
+            severity: "BLOCKER",
+            path: "",
+            ruleId: `engine/${kind}`,
+            message: String(obj.detail ?? "审查引擎未能完成本轮判决"),
+            suggestion:
+              "引擎未产出有效审查（超时/崩溃/上游或凭据问题）。可重试 AI 审查、检查引擎上游可用性，或改用人工审查。",
+          },
+        ];
+      }
+      if (Array.isArray(obj.findings)) {
+        return (obj.findings as unknown[])
+          .map(mapFinding)
+          .filter((f): f is Finding => f !== null);
+      }
     }
   } catch {
-    /* findings 非结构化时忽略 */
+    /* 非结构化时按空处理 */
   }
-  return findings;
+  return [];
+}
+
+/** 兼容 snake_case（EvidenceCodec 落盘）与 camelCase（demo 数据）两种字段名。 */
+function mapFinding(f: unknown): Finding | null {
+  if (!f || typeof f !== "object") return null;
+  const o = f as Record<string, unknown>;
+  const num = (v: unknown) => (typeof v === "number" ? v : undefined);
+  const lineStart = num(o.lineStart) ?? num(o.line_start);
+  const lineEnd = num(o.lineEnd) ?? num(o.line_end);
+  const ruleId = o.ruleId ?? o.rule_id;
+  return {
+    severity: (o.severity as Severity) ?? "INFO",
+    path: String(o.path ?? ""),
+    lineStart,
+    lineEnd,
+    ruleId: ruleId ? String(ruleId) : undefined,
+    message: String(o.message ?? ""),
+    suggestion: o.suggestion ? String(o.suggestion) : undefined,
+  };
 }
 
 function verdictReason(verdict: string): string {
   if (verdict === "PASS") return "全部策略通过，发布授权已签发";
   if (verdict === "REQUIRES_HUMAN") return "需人工核准后放行";
-  return "存在待处理项，详见审查发现";
+  return "存在阻断项或引擎未能完成本轮判决，详见下方发现";
 }
 
 async function applyReviewResult(no: string) {
@@ -274,6 +338,7 @@ async function applyReviewResult(no: string) {
     reason: verdictReason(rr.verdict),
     engineId: rr.engine_id,
     round: rr.review_round,
+    degraded: rr.degraded === true,
   });
 }
 
@@ -1007,6 +1072,7 @@ export async function livePresubmit(no: string) {
 export async function liveReview(no: string, opts?: { humanPass?: boolean; note?: string }) {
   setGateBusy(no, true);
   setStage(no, "IN_REVIEW");
+  setReviewError(no, null);
   try {
     setTask(no, {
       kind: "review",
@@ -1023,17 +1089,33 @@ export async function liveReview(no: string, opts?: { humanPass?: boolean; note?
       method: "POST",
       body: JSON.stringify(body),
     });
-    const ok = await pollTask(task_id);
+    // 轮询期间同步进度到审查发现页：用户被自动切到该页后能看到推进而不是"无事发生"。
+    const outcome = await pollTask(task_id, (percent, label) => {
+      setTask(no, { kind: "review", percent, label, done: false });
+    });
+    if (!outcome.ok) {
+      // 失败原因必须可见：审查发现页挂错误卡片 + 会话流追加同文，替代笼统的"异常结束"。
+      const detail = outcome.error?.message || "未知错误";
+      setReviewError(no, detail);
+      setTask(no, { kind: "review", percent: 100, label: "审查失败", done: true, failed: true });
+      pushSystemMessage(no, `审查任务失败：${detail}`, "warn");
+      showToast(`审查失败：${detail}`);
+      await refreshTicket(no).catch(() => {});
+      setCenterTab("findings");
+      return;
+    }
     setTask(no, { kind: "review", percent: 100, label: "判决完成", done: true });
     await sleep(300);
     await loadReviewState(no);
     await refreshTicket(no);
-    if (!ok) pushSystemMessage(no, "审查任务异常结束，请重试或人工核准", "warn");
     if (opts?.humanPass === true) pushSystemMessage(no, "人工核准通过 · 发布授权已签发", "success");
     if (opts?.humanPass === false) pushSystemMessage(no, "人工驳回 · 请根据审查意见修复后重新提审", "warn");
     setCenterTab("findings");
   } catch (e) {
-    showToast(`审查失败：${(e as Error).message}`);
+    const detail = (e as Error).message;
+    setReviewError(no, detail);
+    showToast(`审查失败：${detail}`);
+    pushSystemMessage(no, `审查任务失败：${detail}`, "warn");
     await refreshTicket(no).catch(() => {
       /* 状态回刷失败忽略 */
     });
@@ -1051,7 +1133,15 @@ export async function livePublish(no: string) {
       method: "POST",
       body: "{}",
     });
-    const ok = await pollTask(task_id);
+    const outcome = await pollTask(task_id, (percent, label) => {
+      setTask(no, { kind: "publish", percent, label, done: false });
+    });
+    if (!outcome.ok) {
+      const detail = outcome.error?.message || "未知错误";
+      showToast(`发布失败：${detail}`);
+      await refreshTicket(no).catch(() => {});
+      return;
+    }
     setTask(no, { kind: "publish", percent: 100, label: "发布完成", done: true });
     await sleep(250);
     try {
@@ -1072,7 +1162,7 @@ export async function livePublish(no: string) {
       /* 忽略结果解析失败 */
     }
     await refreshTicket(no);
-    if (ok) showToast("发布成功，主分支已更新");
+    if (outcome.ok) showToast("发布成功，主分支已更新");
   } catch (e) {
     showToast(`发布失败：${(e as Error).message}`);
   } finally {
@@ -1081,18 +1171,67 @@ export async function livePublish(no: string) {
   }
 }
 
-async function pollTask(taskId: string): Promise<boolean> {
+/** 任务失败时后端写入 error_json 的结构（TaskRunner.fail）。 */
+interface TaskError {
+  error_code: number;
+  error: string;
+  message: string;
+}
+
+interface TaskOutcome {
+  ok: boolean;
+  error?: TaskError;
+}
+
+async function pollTask(taskId: string, onProgress?: (percent: number, label: string) => void): Promise<TaskOutcome> {
+  // 轮询查询本身是脆弱链路：任一单次 GET 抖动（代理重启、超时）若直接判死，
+  // 会出现"未知错误"卡片而任务其实在后端正常跑完。连续失败 N 次才算查询不可用；
+  // 期间任务照常 RUNNING，终态才按 FAILED/CANCELLED 处理。
+  const MAX_CONSECUTIVE_ERRORS = 6;
+  let consecutiveErrors = 0;
   for (let i = 0; i < 240; i++) {
     await sleep(500);
+    let t: { status: string; result_json?: string | null; error_json?: string | null };
     try {
-      const t = await api<{ status: string }>(`/api/tasks/${taskId}`);
-      if (t.status === "SUCCEEDED") return true;
-      if (t.status === "FAILED" || t.status === "CANCELLED") return false;
+      t = await api<{ status: string; result_json?: string | null; error_json?: string | null }>(
+        `/api/tasks/${taskId}`,
+      );
     } catch {
-      return false;
+      consecutiveErrors++;
+      if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+        return {
+          ok: false,
+          error: { error_code: 0, error: "POLL", message: "任务状态查询连续失败（网络或后端抖动），任务可能仍在后台执行——稍后重新打开工单查看结果" },
+        };
+      }
+      continue;
+    }
+    consecutiveErrors = 0;
+    if (t.status === "SUCCEEDED") return { ok: true };
+    if (t.status === "RUNNING" || t.status === "QUEUED" || t.status === "RETRY_WAIT") {
+      // 后端只在 10%/30%/90% 几个锚点写进度（引擎期心跳为 30% + 耗时），原样透传。
+      try {
+        const p = t.result_json ? (JSON.parse(t.result_json) as { percent?: number; label?: string }) : null;
+        if (p && typeof p.percent === "number") onProgress?.(p.percent, p.label ?? "");
+      } catch {
+        /* 进度体解析失败忽略 */
+      }
+      continue;
+    }
+    if (t.status === "FAILED" || t.status === "CANCELLED") {
+      let error: TaskError | undefined;
+      try {
+        if (t.error_json) error = JSON.parse(t.error_json) as TaskError;
+      } catch {
+        /* error_json 非结构化时按未知错误处理 */
+      }
+      return { ok: false, error };
     }
   }
-  return false;
+  return {
+    ok: false,
+    error: { error_code: 0, error: "TIMEOUT", message: "任务超过 120s 仍未完成，请稍后重新打开工单查看结果" },
+  };
 }
 
 export function liveDiffBytes(no: string): number {
@@ -1505,16 +1644,29 @@ export async function fetchProviders(): Promise<LlmProvider[]> {
   return data.providers ?? [];
 }
 
-export async function createProvider(body: { id: string; name: string; base_url: string; type: string; api_key_ref?: string }): Promise<LlmProvider> {
+export async function createProvider(body: { id: string; name: string; base_url: string; type: string }): Promise<LlmProvider> {
   return api<LlmProvider>("/api/providers", { method: "POST", body: JSON.stringify(body) });
 }
 
-export async function updateProvider(id: string, body: { name: string; base_url: string; type: string; api_key_ref?: string }): Promise<LlmProvider> {
+export async function updateProvider(id: string, body: { name: string; base_url: string; type: string }): Promise<LlmProvider> {
   return api<LlmProvider>(`/api/providers/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(body) });
 }
 
 export async function deleteProvider(id: string): Promise<void> {
   await api<void>(`/api/providers/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+/** 保存 Provider 的 API Key（设置中心直填）：明文仅在请求体出现一次，后端 KMS 加密落库。 */
+export async function setProviderCredential(id: string, apiKey: string): Promise<LlmProvider> {
+  return api<LlmProvider>(`/api/providers/${encodeURIComponent(id)}/credential`, {
+    method: "PUT",
+    body: JSON.stringify({ api_key: apiKey }),
+  });
+}
+
+/** 清除 Provider 的已存密钥（api_key_ref 置为 unconfigured）。 */
+export async function clearProviderCredential(id: string): Promise<LlmProvider> {
+  return api<LlmProvider>(`/api/providers/${encodeURIComponent(id)}/credential`, { method: "DELETE" });
 }
 
 export async function updateProviderModels(id: string, models: string[]): Promise<LlmProvider> {

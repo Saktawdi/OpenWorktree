@@ -87,6 +87,15 @@ public final class StatusController implements WebController {
         body.put("target_ref_whitelist", config.targetRefWhitelist());
         body.put("gate_home", config.gateHome().toString());
         body.put("engine_configured", config.engineConfigured());
+        // Engine details for the review UI: AI 审查 entry needs provider/model to label the
+        // button and to explain "未配置引擎" when engine_configured is false.
+        if (config.engineConfigured()) {
+            Map<String, Object> engine = new LinkedHashMap<>();
+            engine.put("provider_id", config.engine().providerId());
+            engine.put("model", config.engine().model());
+            engine.put("timeout_seconds", config.engine().timeoutSeconds());
+            body.put("engine", engine);
+        }
         if (config.webConfigured()) {
             Map<String, Object> web = new LinkedHashMap<>();
             web.put("bind", config.web().bind());

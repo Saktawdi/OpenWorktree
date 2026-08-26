@@ -1,8 +1,10 @@
 package gate.web.controller;
 
+import gate.adapters.engine.ApiKeyResolver;
 import gate.domain.error.GateErrorCode;
 import gate.domain.error.GateException;
 import gate.ports.infra.Clock;
+import gate.ports.infra.KmsService;
 import gate.ports.store.ProviderRepository;
 import gate.web.service.ProviderModelFetcher;
 import gate.web.util.Json;
@@ -18,16 +20,28 @@ import java.util.Map;
 /**
  * Provider management controller.
  * Owns /api/providers/* routes.
+ *
+ * <p>Credentials (设置中心 LLM 密钥): the plaintext key arrives only on
+ * {@code PUT /api/providers/{id}/credential}, is encrypted through the KMS port, and is persisted
+ * as {@code kms:<ciphertext>} in {@code api_key_ref}. It never appears in list/detail responses,
+ * logs, or argv.
  */
 public final class ProviderController implements WebController {
 
     private final ProviderRepository providers;
     private final ProviderModelFetcher modelFetcher;
+    private final KmsService kms;
     private final Clock clock;
 
     public ProviderController(ProviderRepository providers, ProviderModelFetcher modelFetcher, Clock clock) {
+        this(providers, modelFetcher, null, clock);
+    }
+
+    public ProviderController(ProviderRepository providers, ProviderModelFetcher modelFetcher,
+                              KmsService kms, Clock clock) {
         this.providers = providers;
         this.modelFetcher = modelFetcher;
+        this.kms = kms;
         this.clock = clock;
     }
 
@@ -40,6 +54,8 @@ public final class ProviderController implements WebController {
         app.delete("/api/providers/{id}", this::delete);
         app.put("/api/providers/{id}/models", this::updateModels);
         app.post("/api/providers/{id}/models/fetch", this::fetchModels);
+        app.put("/api/providers/{id}/credential", this::setCredential);
+        app.delete("/api/providers/{id}/credential", this::clearCredential);
     }
 
     public void list(Context ctx) {
@@ -54,7 +70,7 @@ public final class ProviderController implements WebController {
             m.put("name", p.name());
             m.put("base_url", p.baseUrl());
             m.put("type", p.type());
-            m.put("credential_configured", p.apiKeyRef() != null && !p.apiKeyRef().isBlank());
+            m.put("credential_configured", ApiKeyResolver.isConfigured(p.apiKeyRef()));
             m.put("model_count", models.size());
             m.put("models", models);
             rows.add(m);
@@ -143,6 +159,41 @@ public final class ProviderController implements WebController {
         ctx.json(renderProviderDetail(id));
     }
 
+    /**
+     * Stores a plaintext API key from the settings center: encrypted via KMS, persisted as
+     * {@code kms:<ciphertext>} in {@code api_key_ref}. The plaintext is never echoed back.
+     */
+    public void setCredential(Context ctx) {
+        String id = ctx.pathParam("id");
+        ProviderRepository.ProviderRow existing = providers.find(id).orElseThrow(() ->
+                new GateException(GateErrorCode.USAGE, "no such provider: " + id));
+        Map<String, Object> req = Json.parseObject(ctx.body());
+        String apiKey = str(req, "api_key");
+        if (apiKey == null || apiKey.isBlank()) {
+            throw new GateException(GateErrorCode.USAGE, "api_key is required");
+        }
+        if (kms == null) {
+            throw new GateException(GateErrorCode.GATE_ERROR_CONFIG,
+                    "KMS service is not wired; cannot store credentials");
+        }
+        String ciphertext = "kms:" + kms.encrypt(apiKey.trim());
+        providers.upsert(new ProviderRepository.ProviderRow(existing.id(), existing.name(),
+                existing.baseUrl(), ciphertext, existing.type(), existing.createdAt()), clock.now());
+        ctx.status(HttpStatus.OK);
+        ctx.json(renderProviderDetail(id));
+    }
+
+    /** Clears the stored credential ({@code api_key_ref = "unconfigured"}). */
+    public void clearCredential(Context ctx) {
+        String id = ctx.pathParam("id");
+        ProviderRepository.ProviderRow existing = providers.find(id).orElseThrow(() ->
+                new GateException(GateErrorCode.USAGE, "no such provider: " + id));
+        providers.upsert(new ProviderRepository.ProviderRow(existing.id(), existing.name(),
+                existing.baseUrl(), "unconfigured", existing.type(), existing.createdAt()), clock.now());
+        ctx.status(HttpStatus.OK);
+        ctx.json(renderProviderDetail(id));
+    }
+
     private Map<String, Object> renderProviderDetail(String id) {
         ProviderRepository.ProviderRow p = providers.find(id).orElseThrow(() ->
                 new GateException(GateErrorCode.USAGE, "no such provider: " + id));
@@ -151,7 +202,7 @@ public final class ProviderController implements WebController {
         body.put("name", p.name());
         body.put("base_url", p.baseUrl());
         body.put("type", p.type());
-        body.put("credential_configured", p.apiKeyRef() != null && !p.apiKeyRef().isBlank());
+        body.put("credential_configured", ApiKeyResolver.isConfigured(p.apiKeyRef()));
         List<String> models = providers.models(id);
         body.put("model_count", models.size());
         body.put("models", models);
@@ -163,10 +214,9 @@ public final class ProviderController implements WebController {
         String name = required(req, "name");
         String baseUrl = required(req, "base_url");
         String type = required(req, "type");
-        String apiKeyRef = str(req, "api_key_ref");
-        if (apiKeyRef == null || apiKeyRef.isBlank()) {
-            apiKeyRef = existing == null ? "unconfigured" : existing.apiKeyRef();
-        }
+        // api_key_ref is NOT client-writable here: credentials flow exclusively through the
+        // KMS-encrypting /credential endpoint. New rows start unconfigured; edits preserve the ref.
+        String apiKeyRef = existing == null ? "unconfigured" : existing.apiKeyRef();
         Instant createdAt = existing == null ? Instant.now() : existing.createdAt();
         return new ProviderRepository.ProviderRow(id, name, baseUrl, apiKeyRef, type, createdAt);
     }
