@@ -26,7 +26,7 @@ export function ConnectionDialog() {
       setMsg({ ok: true, text: "连接成功，已加载后端数据" });
       setTimeout(() => closeConnect(), 700);
     } else {
-      setMsg({ ok: false, text: "令牌无效或后端未启动（4097 端口）" });
+      setMsg({ ok: false, text: "令牌无效或后端未启动（9097 端口）" });
     }
   };
 
@@ -86,7 +86,7 @@ export function ConnectionDialog() {
             <>
               <div>
                 <label className="field-label">后端地址</label>
-                <input className="text-input font-mono" value="http://127.0.0.1:4097（经开发代理转发）" readOnly />
+                <input className="text-input font-mono" value="http://127.0.0.1:9097（经开发代理转发）" readOnly />
               </div>
               <div>
                 <label className="field-label">访问令牌</label>
