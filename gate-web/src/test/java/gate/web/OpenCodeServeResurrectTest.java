@@ -60,6 +60,8 @@ class OpenCodeServeResurrectTest {
     private final CopyOnWriteArrayList<String> postPaths = new CopyOnWriteArrayList<>();
     private final CountDownLatch promptAccepted = new CountDownLatch(1);
     private volatile boolean failPrompt;
+    // 复活回填 fake serve 返回的 [{info,parts}] JSON；null 时 GET message 直接 404。
+    private volatile String backfillJson;
 
     @BeforeEach
     void setUp() throws Exception {
@@ -173,6 +175,72 @@ class OpenCodeServeResurrectTest {
         assertEquals(port, sessions.find(stale.id()).orElseThrow().allocatedPort());
     }
 
+    /**
+     * T-113 丢失病灶的回归：后端重启只清内存映射，回合缓冲随进程消失而 opencode 侧历史完好。
+     * 复活时按 [{info,parts}] 快照回填，user/assistant 按落库时间截点去重，在途消息跳过。
+     */
+    @Test
+    void resurrect_backfills_missing_history_from_serve_snapshot() {
+        Session stale = startSessionOnFirstRun();
+        // 真实 epoch 毫秒：user 回填的宽限窗从最后一条 gate 行起算 10s，假数据必须远在窗外。
+        long userMs = Instant.now().minusSeconds(120).toEpochMilli();
+        long assistantMs = Instant.now().minusSeconds(100).toEpochMilli();
+        long inFlightMs = Instant.now().minusSeconds(50).toEpochMilli();
+        backfillJson = """
+                [
+                  {"info":{"id":"m1","sessionID":"sess-1","role":"user","time":{"created":%d}},
+                   "parts":[{"type":"text","text":"manual-first"}]},
+                  {"info":{"id":"m2","sessionID":"sess-1","role":"assistant",
+                           "time":{"created":%d,"completed":%d},
+                           "tokens":{"input":10,"output":20,"reasoning":5,"cache":{"read":1,"write":2}}},
+                   "parts":[{"type":"text","text":"answer"},
+                            {"type":"tool","tool":"read",
+                             "state":{"status":"completed","input":{"path":"/a"},"output":"ok"}}]},
+                  {"info":{"id":"m3","sessionID":"sess-1","role":"assistant","time":{"created":%d}},
+                   "parts":[{"type":"text","text":"in-flight-never-persisted"}]}
+                ]
+                """.formatted(userMs, assistantMs, assistantMs + 500, inFlightMs);
+        int live = restartedRun.ensureEndpoint(stale.id());
+        assertEquals(port, live);
+
+        List<SessionMessage> history = restartedRun.getHistory(stale.id());
+        SessionMessage user = history.stream().filter(m -> m.role() == Role.USER).findFirst().orElseThrow();
+        assertEquals("manual-first", user.content());
+        SessionMessage assistant = history.stream().filter(m -> m.role() == Role.ASSISTANT)
+                .findFirst().orElseThrow();
+        assertTrue(assistant.content().contains("answer"), assistant.content());
+        assertEquals(1, assistant.toolCalls().size());
+        assertEquals(38L, assistant.usage().totalTokens()); // 10+20+5+1+2
+        assertTrue(assistant.degraded(), "backfilled 行必须打 degraded 标记（recover-only）");
+        assertTrue(history.stream().noneMatch(m -> m.content().contains("in-flight-never-persisted")),
+                "在途(未完成)消息禁止入快照历史");
+    }
+
+    @Test
+    void resurrect_backfill_is_idempotent_with_existing_history() {
+        Session stale = startSessionOnFirstRun();
+        // 先复活一次建立落库状态（当前无历史，无任何截点）。
+        restartedRun.ensureEndpoint(stale.id());
+        // 手工落一条 USER 生效为截点：created 远早于当前 wall clock 的 fake 消息不得回归。
+        restartedRun.getHistory(stale.id()); // no-op, 保持熟悉状态
+        backfillJson = """
+                [
+                  {"info":{"id":"old-u","sessionID":"sess-1","role":"user","time":{"created":10}},
+                   "parts":[{"type":"text","text":"OLD-USER"}]},
+                  {"info":{"id":"old-a","sessionID":"sess-1","role":"assistant",
+                           "time":{"created":20,"completed":30},
+                           "tokens":{"input":1,"output":1,"reasoning":0,"cache":{"read":0,"write":0}}},
+                   "parts":[{"type":"text","text":"OLD-ASSISTANT"}]}
+                ]
+                """;
+        int live = restartedRun.ensureEndpoint(stale.id());
+        assertEquals(port, live);
+        List<SessionMessage> history = restartedRun.getHistory(stale.id());
+        assertTrue(history.stream().noneMatch(m -> m.content().contains("OLD-USER")
+                || m.content().contains("OLD-ASSISTANT")),
+                "早于落库截点的历史不得重复回填: " + history);
+    }
+
     @Test
     void failed_send_error_reaches_late_sse_subscriber() throws Exception {
         Session stale = startSessionOnFirstRun();
@@ -213,6 +281,20 @@ class OpenCodeServeResurrectTest {
 
     private void session(HttpExchange exchange) throws java.io.IOException {
         String path = exchange.getRequestURI().getPath();
+        if ("GET".equalsIgnoreCase(exchange.getRequestMethod()) && path.endsWith("/message")) {
+            postPaths.add("GET " + path);
+            if (backfillJson != null) {
+                byte[] body = backfillJson.getBytes(StandardCharsets.UTF_8);
+                exchange.getResponseHeaders().set("Content-Type", "application/json");
+                exchange.sendResponseHeaders(200, body.length);
+                exchange.getResponseBody().write(body);
+                exchange.close();
+                return;
+            }
+            exchange.sendResponseHeaders(404, -1);
+            exchange.close();
+            return;
+        }
         if ("POST".equalsIgnoreCase(exchange.getRequestMethod())) {
             // 消费请求体（忽略内容），再按路径分流：create / prompt_async / abort。
             exchange.getRequestBody().readAllBytes();

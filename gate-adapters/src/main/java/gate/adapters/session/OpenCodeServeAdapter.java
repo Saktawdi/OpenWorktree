@@ -347,6 +347,12 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                     ? s.withAllocatedPort(port)
                     : s.withStatus(SessionStatus.ACTIVE).withFinishedAt(null).withAllocatedPort(port);
             sessions.update(resumed);
+            // 复活先对账再接流：后端重启/硬中止后 sessionPorts 清空才走到这里，此时上游
+            // （opencode 自有会话存储）里可能留着 gate 从未落库的回合；按会话时间截点补齐，
+            // 再让 reader 以 lastEventId=null 接续新事件。失败只降级告警，绝不阻断复活。
+            if (!upstreams.containsKey(sessionId)) {
+                backfillFromServe(sessionId, port, s.cliSessionId());
+            }
             ensureUpstream(sessionId, port, s.cliSessionId());
             log.info("opencode", "session.resurrected", "sessionId", sessionId,
                     "port", port, "cliSessionId", s.cliSessionId());
@@ -833,7 +839,10 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
     }
 
     public void close() {
+        // 停机前先把仍在内存的回合缓冲落库（T-113 记录丢失的根因：后端重启时 close() 只
+        // stop 了 reader 线程，整个未 idle 回合的文本/工具随进程丢弃，而 opencode 侧完好）。
         for (Upstream up : upstreams.values()) {
+            up.flushTurn("shutdown", true);
             up.stop();
         }
         upstreams.clear();
@@ -897,15 +906,18 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                 up.flushTurn("superseded");
                 // Reset BEFORE firing the request: once prompt_async lands, events for this turn
                 // can arrive within milliseconds and must not be wiped by post-send cleanup.
-                up.assistantPersistedSinceSend = false;
-                up.pendingErrorName = null;
-                up.pendingErrorMessage = null;
-                up.turnText.setLength(0);
-                synchronized (up.turnTools) {
-                    up.turnTools.clear();
+                // 与 reader 线程的 step 合并并发，统一经 turnLock 串行化。
+                synchronized (up.turnLock) {
+                    up.assistantPersistedSinceSend = false;
+                    up.pendingErrorName = null;
+                    up.pendingErrorMessage = null;
+                    up.turnText.setLength(0);
+                    synchronized (up.turnTools) {
+                        up.turnTools.clear();
+                    }
+                    up.turnUsage = null;
+                    up.turnHasNewContent = false;
                 }
-                up.turnUsage = null;
-                up.turnHasNewContent = false;
             }
             HttpResponse<String> resp = post("http://127.0.0.1:" + port + "/session/"
                     + session.cliSessionId() + "/prompt_async", body);
@@ -1098,6 +1110,10 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
         volatile boolean assistantPersistedSinceSend;
         volatile String pendingErrorName;
         volatile String pendingErrorMessage;
+        // 序列化回合缓冲的全部读写者：reader 线程（step 合并）、send 线程（superseded 重置）、
+        // 停机/错误路径（flush 落库）。turnText 是普通 StringBuilder，跨线程读写必须加锁。
+        // flush 的 DB I/O 在锁外执行，锁只覆盖缓冲快照与清空。
+        final Object turnLock = new Object();
 
         Upstream(String sessionId, int port, String cliSessionId) {
             this.sessionId = sessionId;
@@ -1361,33 +1377,35 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
          * cut before their completion event (their parts live in the per-message buffers only).
          */
         private void mergeStepIntoTurn(String messageId, SessionUsage stepUsage) {
-            String content = joinedContent(messageId);
-            List<ToolCall> stepTools = drainToolCalls(messageId);
-            if (!content.isEmpty()) {
-                if (turnText.length() > 0) {
-                    turnText.append("\n\n");
+            synchronized (turnLock) {
+                String content = joinedContent(messageId);
+                List<ToolCall> stepTools = drainToolCalls(messageId);
+                if (!content.isEmpty()) {
+                    if (turnText.length() > 0) {
+                        turnText.append("\n\n");
+                    }
+                    turnText.append(content);
                 }
-                turnText.append(content);
-            }
-            if (!stepTools.isEmpty()) {
-                synchronized (turnTools) {
-                    for (int i = 0; i < stepTools.size(); i++) {
-                        ToolCall tc = stepTools.get(i);
-                        turnTools.add(new TurnTool("m:" + messageId + ":" + i,
-                                tc.name(), tc.argumentsJson(), tc.resultJson(), "SUCCESS"));
+                if (!stepTools.isEmpty()) {
+                    synchronized (turnTools) {
+                        for (int i = 0; i < stepTools.size(); i++) {
+                            ToolCall tc = stepTools.get(i);
+                            turnTools.add(new TurnTool("m:" + messageId + ":" + i,
+                                    tc.name(), tc.argumentsJson(), tc.resultJson(), "SUCCESS"));
+                        }
                     }
                 }
+                if (stepUsage != null) {
+                    turnUsage = (turnUsage == null ? SessionUsage.EMPTY : turnUsage).add(stepUsage);
+                }
+                if (!content.isEmpty() || !stepTools.isEmpty() || stepUsage != null) {
+                    turnHasNewContent = true;
+                    assistantPersistedSinceSend = true;
+                }
+                log.info("opencode", "assistant.step-merged", "sessionId", sessionId,
+                        "messageId", messageId, "chars", content.length(),
+                        "toolCalls", stepTools.size());
             }
-            if (stepUsage != null) {
-                turnUsage = (turnUsage == null ? SessionUsage.EMPTY : turnUsage).add(stepUsage);
-            }
-            if (!content.isEmpty() || !stepTools.isEmpty() || stepUsage != null) {
-                turnHasNewContent = true;
-                assistantPersistedSinceSend = true;
-            }
-            log.info("opencode", "assistant.step-merged", "sessionId", sessionId,
-                    "messageId", messageId, "chars", content.length(),
-                    "toolCalls", stepTools.size());
         }
 
         /** Degraded recovery flush: a turn that never reached {@code session.status=idle}
@@ -1404,32 +1422,41 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
          * buffer holds nothing. Recovery callers pass {@code degraded=true}.
          */
         void flushTurn(String reason, boolean degraded) {
-            // Drain steps that never reached their message.updated(completed) merge: an aborted
-            // or dropped turn can be cut mid-step, leaving that step's text/tools only in the
-            // per-message buffers. Without this the flush would silently skip them.
-            for (String messageId : List.copyOf(messageParts.keySet())) {
-                if (!userMessages.contains(messageId)) {
-                    mergeStepIntoTurn(messageId, null);
+            // 快照与清空必须在锁内完成：flush 可能被停机线程/错误路径调用，与 reader 线程的
+            // step 合并并发。DB I/O（insertMessage / usage 回写）放到锁外，避免持锁阻塞。
+            final String content;
+            final List<ToolCall> tools = new ArrayList<>();
+            final SessionUsage usage;
+            synchronized (turnLock) {
+                // Drain steps that never reached their message.updated(completed) merge: an aborted
+                // or dropped turn can be cut mid-step, leaving that step's text/tools only in the
+                // per-message buffers. Without this the flush would silently skip them.
+                for (String messageId : List.copyOf(messageParts.keySet())) {
+                    if (!userMessages.contains(messageId)) {
+                        mergeStepIntoTurn(messageId, null);
+                    }
                 }
-            }
-            for (String messageId : List.copyOf(toolsByMessage.keySet())) {
-                if (!userMessages.contains(messageId)) {
-                    mergeStepIntoTurn(messageId, null);
+                for (String messageId : List.copyOf(toolsByMessage.keySet())) {
+                    if (!userMessages.contains(messageId)) {
+                        mergeStepIntoTurn(messageId, null);
+                    }
                 }
-            }
-            if (!turnHasNewContent) {
-                return;
-            }
-            String content;
-            List<ToolCall> tools = new ArrayList<>();
-            synchronized (turnTools) {
+                if (!turnHasNewContent) {
+                    return;
+                }
                 content = turnText.toString();
-                for (TurnTool tt : turnTools) {
-                    tools.add(new ToolCall(tt.name(), tt.inputJson(), tt.output()));
+                synchronized (turnTools) {
+                    for (TurnTool tt : turnTools) {
+                        tools.add(new ToolCall(tt.name(), tt.inputJson(), tt.output()));
+                    }
+                    turnTools.clear();
                 }
-                turnTools.clear();
+                usage = turnUsage;
+                turnText.setLength(0);
+                turnUsage = null;
+                turnHasNewContent = false;
+                assistantPersistedSinceSend = true;
             }
-            SessionUsage usage = turnUsage;
             sessions.insertMessage(new SessionMessage(UUID.randomUUID().toString(),
                     sessionId, Role.ASSISTANT, content, tools, usage, degraded, clock.now()));
             log.info("opencode", degraded ? "turn.persisted-degraded" : "turn.persisted",
@@ -1443,10 +1470,6 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                     writeback(updated);
                 }
             }
-            turnText.setLength(0);
-            turnUsage = null;
-            turnHasNewContent = false;
-            assistantPersistedSinceSend = true;
         }
 
         private void handleSessionStatus(Map<String, Object> props) {
@@ -1498,6 +1521,10 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                     "errorName", pendingErrorName, "errorMessage", message);
             emitChunk(sessionId, new SessionStreamChunk.ErrorChunk(sessionId,
                     pendingErrorName, message, clock.now()));
+            // 回合以 error 收场时可能永远等不到后续 idle（provider 中断、上游静默挂死）：
+            // 立即把已缓冲的回合内容降级落库。缓冲为空则 no-op，随后的 idle 仍能把
+            // pendingError 落成 ERROR 行；缓冲非空则该行与内容并存，不再整体丢失。
+            flushTurn("session-error", true);
             // session.error 同样是回合终止信号：无 idle 跟随（reader 恰在此后掉线）也必须释放，
             // 否则 busy 泄漏为常驻 1；陈旧 error 帧因无受理记录被上面的守卫忽略。
             releaseBusyOnTurnEnd(sessionId);
@@ -1721,6 +1748,198 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                         "silentMs", System.currentTimeMillis() - up.lastEventAt);
                 up.closeBody();
             }
+        }
+    }
+
+    // -------------------------------------------------------------------------------------------
+    // History backfill: reconcile gate's persisted history against opencode's own store
+    // -------------------------------------------------------------------------------------------
+
+    /**
+     * 复活后从 opencode 自有存储回填 gate 缺失的历史（T-113 教训：回合缓冲只在内存里、依赖
+     * session.status=idle 落库；后端重启或回合挂死会让整个缓冲丢失，而 opencode 侧全量消息
+     * 完好）。通过 {@code GET /session/{id}/message} 拉取全量 [{info, parts}]，按时间截点
+     * 跳过 gate 已落库的内容，再把余下部分按回合形态落库：
+     *
+     * <ul>
+     *   <li>assistant：只收 {@code time.completed} 不为空的已完结消息；相邻消息累积为一个
+     *       回合行（text 聚合 + 工具聚合 + usage 求和，与 idle 落库形态一致，degraded=true）。
+     *       截点 = gate 已有 ASSISTANT 行的最新时间——失败的 send（ERROR 行）不会挡住
+     *       截点之前的丢失回合被找回。</li>
+     *   <li>user：截点 = gate 所有行的最新时间 + 发送宽限（gate 自己落 USER 行早于
+     *       opencode 落用户消息零点几秒，跳过即可；用户直接 opencode -s 发的消息会被收录）。</li>
+     * </ul>
+     *
+     * <p>任何异常只降级告警、不阻断复活。
+     */
+    @SuppressWarnings("unchecked")
+    private void backfillFromServe(String sessionId, int port, String cliSessionId) {
+        try {
+            HttpRequest req = HttpRequest.newBuilder(
+                            URI.create("http://127.0.0.1:" + port + "/session/" + cliSessionId + "/message"))
+                    .timeout(Duration.ofSeconds(15)).GET().build();
+            HttpResponse<String> resp = http.send(req, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+            if (resp.statusCode() / 100 != 2) {
+                log.warn("opencode", "backfill.unavailable", "sessionId", sessionId,
+                        "status", resp.statusCode());
+                return;
+            }
+            Object parsed = MiniJson.parse(resp.body().trim());
+            if (!(parsed instanceof List<?> list)) {
+                return;
+            }
+            long assistantCutoffMs = 0L;
+            long anyCutoffMs = 0L;
+            for (SessionMessage m : sessions.findMessages(sessionId)) {
+                long at = m.timestamp().toEpochMilli();
+                anyCutoffMs = Math.max(anyCutoffMs, at);
+                if (m.role() == Role.ASSISTANT) {
+                    assistantCutoffMs = Math.max(assistantCutoffMs, at);
+                }
+            }
+            // gate 落 USER 行发生在 prompt 送达前，上游 user 消息时间戳必然晚几百毫秒——
+            // 用宽限吃掉这段延迟，已落库的 user 消息不会被重复收录。
+            long userCutoffMs = anyCutoffMs + USER_BACKFILL_GRACE_MS;
+
+            BackfillTurn turn = new BackfillTurn();
+            SessionUsage totalUsage = null;
+            int rows = 0;
+            for (Object item : list) {
+                if (!(item instanceof Map<?, ?> rawEntry)) {
+                    continue;
+                }
+                Map<String, Object> entry = castMap(rawEntry);
+                if (!(entry.get("info") instanceof Map<?, ?> rawInfo)) {
+                    continue;
+                }
+                Map<String, Object> info = castMap(rawInfo);
+                if (!cliSessionId.equals(str(info.get("sessionID")))) {
+                    continue;
+                }
+                Map<String, Object> time = info.get("time") instanceof Map<?, ?> t
+                        ? castMap(t) : Map.of();
+                Long created = longOrNull(time.get("created"));
+                if (created == null) {
+                    continue;
+                }
+                List<Object> parts = entry.get("parts") instanceof List<?> p
+                        ? (List<Object>) p : List.of();
+                String role = str(info.get("role"));
+                if ("user".equals(role)) {
+                    if (created <= userCutoffMs) {
+                        continue;
+                    }
+                    rows += persistBackfillTurn(sessionId, turn);
+                    String content = backfillUserText(parts);
+                    if (!content.isBlank()) {
+                        sessions.insertMessage(new SessionMessage(UUID.randomUUID().toString(),
+                                sessionId, Role.USER, content, List.of(), null, false, clock.now()));
+                        rows++;
+                    }
+                } else if ("assistant".equals(role)
+                        && time.get("completed") != null
+                        && created > assistantCutoffMs) {
+                    accumulateBackfillParts(turn, parts);
+                    SessionUsage u = usageFromTokens(info.get("tokens"));
+                    if (u != null) {
+                        turn.usage = (turn.usage == null ? SessionUsage.EMPTY : turn.usage).add(u);
+                        totalUsage = (totalUsage == null ? SessionUsage.EMPTY : totalUsage).add(u);
+                    }
+                }
+            }
+            rows += persistBackfillTurn(sessionId, turn);
+            if (totalUsage != null) {
+                Session latest = sessions.find(sessionId).orElse(null);
+                if (latest != null) {
+                    Session updated = latest.withCumulativeUsage(latest.cumulativeUsage().add(totalUsage));
+                    sessions.update(updated);
+                    writeback(updated);
+                }
+            }
+            log.info("opencode", "backfill.done", "sessionId", sessionId, "rows", rows,
+                    "assistantCutoffMs", assistantCutoffMs, "userCutoffMs", userCutoffMs);
+        } catch (Exception e) {
+            log.warn("opencode", "backfill.failed", "sessionId", sessionId,
+                    "error", e.getClass().getSimpleName());
+        }
+    }
+
+    /** gate 落 USER 行早于 opencode 落用户消息的最大预期延迟；宽限内的上游 user 消息视为已收录。 */
+    private static final long USER_BACKFILL_GRACE_MS = 10_000L;
+
+    /** 把一个累积好的回填回合落成 ASSISTANT 行（有内容才落），返回落库行数。 */
+    private int persistBackfillTurn(String sessionId, BackfillTurn turn) {
+        if (!turn.hasContent()) {
+            return 0;
+        }
+        sessions.insertMessage(new SessionMessage(UUID.randomUUID().toString(),
+                sessionId, Role.ASSISTANT, turn.text.toString(),
+                List.copyOf(turn.tools), turn.usage, true, clock.now()));
+        turn.text.setLength(0);
+        turn.tools.clear();
+        turn.usage = null;
+        turn.lastText = null;
+        return 1;
+    }
+
+    /** 把一条 upstream assistant 消息的 final parts 并入回填回合：text 聚合，tool 记账。 */
+    private static void accumulateBackfillParts(BackfillTurn turn, List<Object> parts) {
+        for (Object p : parts) {
+            if (!(p instanceof Map<?, ?> rawPart)) {
+                continue;
+            }
+            Map<String, Object> part = castMap(rawPart);
+            String type = str(part.get("type"));
+            if ("text".equals(type)) {
+                String text = str(part.get("text"));
+                if (text != null && !text.isEmpty() && !text.equals(turn.lastText)) {
+                    if (turn.text.length() > 0) {
+                        turn.text.append("\n\n");
+                    }
+                    turn.text.append(text);
+                    turn.lastText = text;
+                }
+            } else if ("tool".equals(type)) {
+                Map<String, Object> state = part.get("state") instanceof Map<?, ?> st
+                        ? castMap(st) : Map.of();
+                String name = str(part.get("tool"));
+                turn.tools.add(new ToolCall(name == null ? "unknown" : name,
+                        jsonValue(state.get("input")), str(state.get("output"))));
+            }
+        }
+    }
+
+    /** user 消息回填正文：拼接 text parts（file parts 忽略，与实时链路的落库一致）。 */
+    private static String backfillUserText(List<Object> parts) {
+        StringBuilder sb = new StringBuilder();
+        for (Object p : parts) {
+            if (!(p instanceof Map<?, ?> rawPart)) {
+                continue;
+            }
+            Map<String, Object> part = castMap(rawPart);
+            if (!"text".equals(str(part.get("type")))) {
+                continue;
+            }
+            String text = str(part.get("text"));
+            if (text != null && !text.isBlank()) {
+                if (sb.length() > 0) {
+                    sb.append("\n\n");
+                }
+                sb.append(text);
+            }
+        }
+        return sb.toString();
+    }
+
+    /** 回填回合累积器（单线程使用：ensureServe 的复活锁内）。 */
+    private static final class BackfillTurn {
+        final StringBuilder text = new StringBuilder();
+        final List<ToolCall> tools = new ArrayList<>();
+        SessionUsage usage;
+        String lastText;
+
+        boolean hasContent() {
+            return text.length() > 0 || !tools.isEmpty();
         }
     }
 
