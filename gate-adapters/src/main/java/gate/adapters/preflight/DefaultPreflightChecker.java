@@ -76,7 +76,7 @@ public final class DefaultPreflightChecker implements PreflightChecker {
         checks.add(hookSelfCheck());
 
         if (config.engineConfigured()) {
-            checks.add(checkEngineBinary());
+            checks.add(checkEngineConfig());
         } else {
             checks.add(Check.pass("engine.skipped",
                     "no review engine configured (P1): engine checks deferred to P2", Tier.ENGINE));
@@ -330,51 +330,25 @@ public final class DefaultPreflightChecker implements PreflightChecker {
     }
 
     /**
-     * F5 + N4: the engine binary must be runnable and its flag surface must still expose what the
-     * adapter needs. prism 0.5.0 has no {@code --version} flag; {@code prism version} is the probe
-     * (docs/archive/prism-schema-validation.md). The {@code review commit --help} output is checked for
-     * the exact flags the adapter builds its argv with, so a flag drift across versions becomes a
-     * startup failure (exit 22) rather than a runtime exit 2 that looks like a transient reject.
+     * gate-engine 是进程内引擎，没有可探测的外部二进制（F5/N4 的 flag-drift 探测只属于已移除的
+     * prism 时代）。这里改为校验引擎配置本身的完整性：provider/model 必须显式给出——kind 白名单
+     * 已由配置层在加载期 fail-closed 保证，凭据缺失会在首轮审查给出 GATE_ERROR_CONFIG。
      */
-    private Check checkEngineBinary() {
+    private Check checkEngineConfig() {
         GateConfig.EngineConfig engine = config.engine();
-        if (processRunner == null) {
-            return Check.fail("engine.binary",
-                    "no ProcessRunner wired into preflight — engine checks cannot run", Tier.ENGINE);
-        }
-        java.time.Duration probeTimeout = java.time.Duration.ofSeconds(15);
-        String binary = engine.cmd();
-
-        ProcessRunner.ProcRun version = processRunner.run(
-                java.util.List.of(binary, "version"), null, java.util.Map.of(), probeTimeout);
-        if (version.timedOut() || version.exitCode() != 0) {
-            return Check.fail("engine.binary",
-                    "cannot execute `" + binary + " version` (exit=" + version.exitCode()
-                            + ", timedOut=" + version.timedOut() + "): " + version.stderrFirstLine()
-                            + " (F5: engine binary missing or not runnable)",
+        if (engine.providerId() == null || engine.providerId().isBlank()
+                || engine.model() == null || engine.model().isBlank()) {
+            return Check.fail("engine.config",
+                    "engine.provider_id / engine.model 未配置"
+                            + " — 在 设置中心 → LLM Providers 与 [engine] 中补全",
                     Tier.ENGINE);
         }
-
-        ProcessRunner.ProcRun help = processRunner.run(
-                java.util.List.of(binary, "review", "commit", "--help"),
-                null, java.util.Map.of(), probeTimeout);
-        String helpText = help.stdout() + "\n" + help.stderr();
-        java.util.List<String> requiredFlags = java.util.List.of(
-                "--parent", "--provider", "--model", "--format", "--fail-on");
-        java.util.List<String> missing = new ArrayList<>();
-        for (String flag : requiredFlags) {
-            if (!helpText.contains(flag)) {
-                missing.add(flag);
-            }
-        }
-        if (!missing.isEmpty()) {
-            return Check.fail("engine.binary",
-                    "prism `review commit --help` is missing flags " + missing
-                            + " (N4: argv drift would cause runtime exit 2); upgrade or realign the adapter",
-                    Tier.ENGINE);
-        }
-        return Check.pass("engine.binary",
-                "prism version=" + version.stdout().trim() + "; required flags present", Tier.ENGINE);
+        return Check.pass("engine.config",
+                "engine.kind=gate-engine (builtin); provider=" + engine.providerId()
+                        + " model=" + engine.model()
+                        + " timeout=" + engine.timeoutSeconds() + "s idle="
+                        + engine.idleTimeoutSeconds() + "s",
+                Tier.ENGINE);
     }
 
     private static Map<String, String> identityEnv() {

@@ -113,15 +113,11 @@ final public class RuntimeInfoService {
         body.put("git", probeJson(pc.git(), gitExecutable));
         Map<String, Object> engine = new LinkedHashMap<>();
         engine.put("configured", config.engineConfigured());
-        if (config.engineConfigured()) {
-            engine.put("cmd", config.engine().cmd());
-            engine.put("available", pc.engine().available());
-            engine.put("version", pc.engine().version());
-        } else {
-            engine.put("cmd", null);
-            engine.put("available", false);
-            engine.put("version", null);
-        }
+        // gate-engine 是进程内引擎，没有外部二进制可探测：available 直接等于已配置；
+        // 凭据缺失在首轮审查时以 GATE_ERROR_CONFIG 显式暴露（原 prism 二进制探测语义随双轨移除）。
+        engine.put("kind", config.engineConfigured() ? config.engine().kind() : null);
+        engine.put("available", config.engineConfigured());
+        engine.put("version", null);
         body.put("engine", engine);
 
         List<Map<String, Object>> agentClis = new ArrayList<>();

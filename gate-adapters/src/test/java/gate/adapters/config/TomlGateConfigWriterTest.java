@@ -2,6 +2,7 @@ package gate.adapters.config;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -145,10 +146,47 @@ class TomlGateConfigWriterTest {
     }
 
     @Test
-    void engineKeyWithoutCmdRejected() {
+    void engineKeysEditableWithoutLegacyCmd() throws IOException {
+        // 单引擎化后：engine.* 不再要求携带 engine.cmd；缺省 kind 归一为 gate-engine、idle 缺省 90s。
+        writer.write(toml, Map.of("engine.provider_id", "temp", "engine.model", "deepseek-v4-flash-0731"));
+
+        GateConfig reloaded = new TomlGateConfigLoader().load(toml);
+        assertTrue(reloaded.engineConfigured());
+        assertEquals("gate-engine", reloaded.engine().kind());
+        assertEquals("temp", reloaded.engine().providerId());
+        assertEquals("deepseek-v4-flash-0731", reloaded.engine().model());
+        assertEquals(90L, reloaded.engine().idleTimeoutSeconds(), "idle 未配置时归一为默认 90s");
+        assertNull(reloaded.engine().maxTokens());
+    }
+
+    @Test
+    void fullEngineRoundTripKeepsAllKeys() throws IOException {
+        writer.write(toml, Map.of(
+                "engine.kind", "gate-engine",
+                "engine.provider_id", "temp",
+                "engine.model", "test-model",
+                "engine.timeout_seconds", 600,
+                "engine.idle_timeout_seconds", 120,
+                "engine.max_tokens", 8192));
+
+        GateConfig reloaded = new TomlGateConfigLoader().load(toml);
+        assertEquals("gate-engine", reloaded.engine().kind());
+        assertEquals("temp", reloaded.engine().providerId());
+        assertEquals("test-model", reloaded.engine().model());
+        assertEquals(600, reloaded.engine().timeoutSeconds());
+        assertEquals(120L, reloaded.engine().idleTimeoutSeconds());
+        assertEquals(8192L, reloaded.engine().maxTokens());
+    }
+
+    @Test
+    void legacyUnknownKindRejectedAtCandidateValidation() throws IOException {
+        // kind 白名单 fail-closed：候选校验阶段（loader 重读临时文件）即拒绝未知值，原文件不动。
+        byte[] before = Files.readAllBytes(toml);
         GateException e = assertThrows(GateException.class,
-                () -> writer.write(toml, Map.of("engine.model", "some-model")));
-        assertTrue(e.getMessage().contains("engine"), e.getMessage());
+                () -> writer.write(toml, Map.of("engine.kind", "prism")));
+        assertTrue(e.getMessage().contains("validation failed")
+                || e.getMessage().contains("engine.kind"), e.getMessage());
+        assertArrayEquals(before, Files.readAllBytes(toml));
     }
 
     @Test

@@ -156,8 +156,7 @@ public final class GateRuntime {
         this.workspaceSyncer = new GitCliWorkspaceSyncer(git);
 
         ReviewEngineFactory reviewEngineFactory = config.engineConfigured()
-                ? new GateReviewEngineFactory(blobStore, config, processRunner, providerRepository,
-                        this.kmsService)
+                ? new GateReviewEngineFactory(blobStore, config, providerRepository, this.kmsService)
                 : new ManualReviewEngineFactory(blobStore);
         this.gateService = new GateServiceImpl(config, snapshotCapture, commitPublisher, refObserver,
                 approvalStore, reviewEngineFactory, new GatePolicy(), ticketRepository, presubmitRepository,

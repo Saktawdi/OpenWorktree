@@ -1188,8 +1188,13 @@ async function pollTask(taskId: string, onProgress?: (percent: number, label: st
   // 会出现"未知错误"卡片而任务其实在后端正常跑完。连续失败 N 次才算查询不可用；
   // 期间任务照常 RUNNING，终态才按 FAILED/CANCELLED 处理。
   const MAX_CONSECUTIVE_ERRORS = 6;
+  // 轮询上限跟随引擎配置：gate-engine 慢模型一次要几分钟，没人能把写死的 240×500ms 等完。
+  const engine = appStore.getState().engine;
+  const engineTimeoutSec = engine?.timeoutSeconds ?? 120;
+  // 轮询上限 = 引擎超时 + 心跳缓冲（30s），再加 6 个连续错误的兜底防线
+  const maxIterations = Math.ceil((engineTimeoutSec + 30) / 0.5);
   let consecutiveErrors = 0;
-  for (let i = 0; i < 240; i++) {
+  for (let i = 0; i < maxIterations; i++) {
     await sleep(500);
     let t: { status: string; result_json?: string | null; error_json?: string | null };
     try {
@@ -1230,7 +1235,8 @@ async function pollTask(taskId: string, onProgress?: (percent: number, label: st
   }
   return {
     ok: false,
-    error: { error_code: 0, error: "TIMEOUT", message: "任务超过 120s 仍未完成，请稍后重新打开工单查看结果" },
+    error: { error_code: 0, error: "TIMEOUT",
+      message: `任务超过 ${engineTimeoutSec}s 仍未完成（引擎超时上限），请稍后重新打开工单查看结果` },
   };
 }
 

@@ -1,18 +1,13 @@
 package gate.metrics;
 
-import gate.adapters.engine.PrismReviewEngine;
-import gate.domain.blob.BlobRef;
+import gate.adapters.engine.BuiltinReviewEngine;
 import gate.domain.review.EngineDescriptor;
 import gate.domain.review.EngineReport;
 import gate.domain.review.ReviewEvidence;
-import gate.ports.store.BlobStore;
 import gate.ports.session.CostHint;
-import gate.ports.infra.ProcessRunner;
 import gate.ports.engine.ReviewEngine;
 import gate.testkit.GateHarness;
-import java.nio.charset.StandardCharsets;
 import java.util.List;
-import java.util.Map;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -20,14 +15,13 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * P4 cost extraction tests: verifies token source annotation and the three possible source values
- * (engine_json / gateway_usage / unavailable), plus the honest degradation path
- * (执行文档 §4 P4, §15).
+ * P4 cost extraction tests: verifies token source annotation and the possible source values
+ * (stream_usage / unavailable), plus the honest degradation path（执行文档 §4 P4, §15）。
  *
- * <p>prism's JSON output (confirmed in docs/archive/prism-schema-validation.md) has a {@code timing} object with
- * {@code totalMs} and {@code llmMs} but <b>no usage/token field</b>. So the token source is always
- * {@code "unavailable"} for prism, but timing data is extracted as the degraded basis. The manual
- * review engine returns {@link CostHint#EMPTY} (no telemetry at all).
+ * <p>prism 双轨已移除：原「prism JSON 只有 timing、token 恒 unavailable」的用例随
+ * {@code PrismReviewEngine} 删除。gate-engine 的 usage 随 {@link EngineReport} 闭环传递，
+ * {@code extractCost} 只读报告字段（引擎实例零状态）——本测试直接构造证据验证该契约，
+ * 不需要起 HTTP stub。
  */
 class CostExtractionTest {
 
@@ -52,120 +46,73 @@ class CostExtractionTest {
     @Test
     void manual_engine_returns_empty_cost() {
         ReviewEngine manualEngine = new gate.adapters.engine.ManualReviewEngine(harness.blobStore(), true, "test");
-        // Build a minimal evidence to pass to extractCost — the manual engine ignores it.
         EngineDescriptor desc = new EngineDescriptor("manual", "0", "", "manual", "human");
         ReviewEvidence evidence = new EngineReport(desc, "tree", List.of(), java.util.Set.of(),
-                false, new BlobRef("raw/empty.json", 0, "0".repeat(64)), 0, java.time.Duration.ZERO);
-        java.util.Optional<CostHint> cost = manualEngine.extractCost(evidence);
-        assertTrue(cost.isEmpty(), "manual engine should return empty cost (no extractCost override)");
+                false, ref(), 0, java.time.Duration.ZERO);
+        assertTrue(manualEngine.extractCost(evidence).isEmpty(),
+                "manual engine should return empty cost (no extractCost override)");
     }
 
     // ------------------------------------------------------------------
-    // Prism engine: extracts timing, no token data
+    // gate-engine: usage 随报告传递；extractCost 只读证据字段
     // ------------------------------------------------------------------
 
     @Test
-    void prism_engine_extracts_timing_but_marks_tokens_unavailable() {
-        // Simulate a prism JSON output with timing but no usage.
-        String prismJson = "{\"tool\":\"prism\",\"version\":\"1.0\",\"timing\":{\"gitMs\":10,\"llmMs\":32936,\"totalMs\":32981},\"findings\":[]}";
-        BlobStore blobStore = harness.blobStore();
-        BlobRef rawRef = blobStore.put(prismJson.getBytes(StandardCharsets.UTF_8),
-                "raw/test/prism-timing.json");
+    void gate_engine_with_usage_reports_stream_usage_source() {
+        ReviewEvidence evidence = report(2400L, 5792L, 8192L);
 
-        EngineDescriptor desc = new EngineDescriptor("prism", "0.5.0", "fingerprint",
-                "newapi", "DeepSeek-V4");
-        ReviewEvidence evidence = new EngineReport(desc, "tree", List.of(), java.util.Set.of(),
-                false, rawRef, 0, java.time.Duration.ZERO);
+        CostHint cost = builtin().extractCost(evidence).orElseThrow();
 
-        // Use the real PrismReviewEngine just for extractCost — its review() is irrelevant here.
-        // acceptDegraded irrelevant to extractCost; pass true to keep the call site forward-compatible
-        // (this engine instance never runs `review()`, so the flag has no observable effect).
-        PrismReviewEngine engine = new PrismReviewEngine(
-                new FakeRunner(), blobStore, "prism", java.time.Duration.ofSeconds(60),
-                "newapi", "DeepSeek-V4", "https://newapi.sakta.top/v1", "fake-key", "0.5.0", true);
-
-        java.util.Optional<CostHint> costOpt = engine.extractCost(evidence);
-        assertTrue(costOpt.isPresent(), "prism engine should extract cost hint");
-        CostHint cost = costOpt.get();
-        assertEquals("unavailable", cost.tokenSource(),
-                "prism JSON has no usage → token source = unavailable");
-        assertNull(cost.totalTokens(), "no token data");
-        assertEquals(32981L, cost.reviewWallMs(), "totalMs from prism timing");
-        assertEquals(32936L, cost.llmWallMs(), "llmMs from prism timing");
-        assertFalse(cost.hasTokenData(), "hasTokenData must be false for prism");
+        assertEquals("stream_usage", cost.tokenSource(), "usage 在场 → tokenSource=stream_usage");
+        assertEquals(2400L, cost.promptTokens());
+        assertEquals(5792L, cost.completionTokens());
+        assertEquals(8192L, cost.totalTokens());
+        assertTrue(cost.hasTokenData());
+        assertEquals(32981L, cost.reviewWallMs(), "reviewWallMs 取自报告 duration");
+        assertNull(cost.llmWallMs(), "内建引擎无 LLM-only 计时，诚实置空");
     }
 
     @Test
-    void prism_engine_unparseable_json_returns_empty_cost() {
-        BlobStore blobStore = harness.blobStore();
-        BlobRef rawRef = blobStore.put("not valid json".getBytes(StandardCharsets.UTF_8),
-                "raw/test/bad.json");
+    void gate_engine_without_usage_degrades_to_unavailable() {
+        ReviewEvidence evidence = report(null, null, null);
 
-        EngineDescriptor desc = new EngineDescriptor("prism", "0.5.0", "fingerprint",
-                "newapi", "DeepSeek-V4");
-        ReviewEvidence evidence = new EngineReport(desc, "tree", List.of(), java.util.Set.of(),
-                false, rawRef, 0, java.time.Duration.ZERO);
+        CostHint cost = builtin().extractCost(evidence).orElseThrow();
 
-        // acceptDegraded irrelevant to extractCost; pass true to keep the call site forward-compatible
-        // (this engine instance never runs `review()`, so the flag has no observable effect).
-        PrismReviewEngine engine = new PrismReviewEngine(
-                new FakeRunner(), blobStore, "prism", java.time.Duration.ofSeconds(60),
-                "newapi", "DeepSeek-V4", "https://newapi.sakta.top/v1", "fake-key", "0.5.0", true);
-
-        java.util.Optional<CostHint> costOpt = engine.extractCost(evidence);
-        assertTrue(costOpt.isPresent(), "should return EMPTY rather than throwing");
-        assertEquals(CostHint.EMPTY.tokenSource(), costOpt.get().tokenSource(),
-                "unparseable JSON → unavailable cost");
-    }
-
-    @Test
-    void prism_engine_missing_timing_returns_empty_cost() {
-        String prismJson = "{\"tool\":\"prism\",\"version\":\"1.0\",\"findings\":[]}";
-        BlobStore blobStore = harness.blobStore();
-        BlobRef rawRef = blobStore.put(prismJson.getBytes(StandardCharsets.UTF_8),
-                "raw/test/no-timing.json");
-
-        EngineDescriptor desc = new EngineDescriptor("prism", "0.5.0", "fingerprint",
-                "newapi", "DeepSeek-V4");
-        ReviewEvidence evidence = new EngineReport(desc, "tree", List.of(), java.util.Set.of(),
-                false, rawRef, 0, java.time.Duration.ZERO);
-
-        // acceptDegraded irrelevant to extractCost; pass true to keep the call site forward-compatible
-        // (this engine instance never runs `review()`, so the flag has no observable effect).
-        PrismReviewEngine engine = new PrismReviewEngine(
-                new FakeRunner(), blobStore, "prism", java.time.Duration.ofSeconds(60),
-                "newapi", "DeepSeek-V4", "https://newapi.sakta.top/v1", "fake-key", "0.5.0", true);
-
-        java.util.Optional<CostHint> costOpt = engine.extractCost(evidence);
-        assertTrue(costOpt.isPresent());
-        assertNull(costOpt.get().reviewWallMs(), "no timing → null wall-ms");
-        assertNull(costOpt.get().llmWallMs(), "no timing → null llm-ms");
+        assertEquals("unavailable", cost.tokenSource(), "无 usage 帧 → 诚实降级 unavailable");
+        assertNull(cost.promptTokens());
+        assertNull(cost.totalTokens());
+        assertFalse(cost.hasTokenData());
+        assertEquals(32981L, cost.reviewWallMs(), "墙钟仍是可用降级基准");
     }
 
     @Test
     void engine_failure_evidence_returns_empty_cost() {
-        EngineDescriptor desc = new EngineDescriptor("prism", "0.5.0", "fingerprint",
-                "newapi", "DeepSeek-V4");
+        EngineDescriptor desc = new EngineDescriptor("gate-engine", "v1", "builtin:chat.completions",
+                "temp", "test-model");
         ReviewEvidence failure = new gate.domain.review.EngineFailure(desc,
-                gate.domain.review.EngineFailure.FailureKind.CRASH, "test crash", -1);
+                gate.domain.review.EngineFailure.FailureKind.TIMEOUT, "total timeout after 600s", -1);
 
-        // acceptDegraded irrelevant to extractCost; see prism_engine_extracts_timing for rationale.
-        PrismReviewEngine engine = new PrismReviewEngine(
-                new FakeRunner(), harness.blobStore(), "prism", java.time.Duration.ofSeconds(60),
-                "newapi", "DeepSeek-V4", "https://newapi.sakta.top/v1", "fake-key", "0.5.0", true);
+        CostHint cost = builtin().extractCost(failure).orElseThrow();
 
-        java.util.Optional<CostHint> costOpt = engine.extractCost(failure);
-        assertTrue(costOpt.isPresent());
-        assertEquals(CostHint.EMPTY.tokenSource(), costOpt.get().tokenSource(),
-                "engine failure → unavailable cost");
+        assertEquals(CostHint.EMPTY.tokenSource(), cost.tokenSource(),
+                "engine failure → empty cost (bypass 数据不阻塞发布)");
     }
 
-    // --- fake process runner (not actually used — extractCost reads from blobStore) ---
-    private static final class FakeRunner implements ProcessRunner {
-        @Override
-        public ProcRun run(List<String> argv, java.nio.file.Path cwd,
-                           Map<String, String> env, java.time.Duration timeout) {
-            return new ProcRun(List.of("fake"), 0, "", "", java.time.Duration.ZERO, false);
-        }
+    /** extractCost 从不动 blobStore：共享的 harness 实例即足够。 */
+    private BuiltinReviewEngine builtin() {
+        return new BuiltinReviewEngine(harness.blobStore(),
+                java.time.Duration.ofSeconds(60), java.time.Duration.ofSeconds(90),
+                "temp", "test-model", "http://127.0.0.1:1/v1", "fake-key", null);
+    }
+
+    private static EngineReport report(Long pt, Long ct, Long tt) {
+        EngineDescriptor desc = new EngineDescriptor("gate-engine", "v1",
+                "builtin:chat.completions", "temp", "test-model");
+        return new EngineReport(desc, "tree", List.of(), java.util.Set.of(),
+                false, ref(), 0, java.time.Duration.ofMillis(32981), pt, ct, tt);
+    }
+
+    private static gate.domain.blob.BlobRef ref() {
+        return new gate.domain.blob.BlobRef("raw/test/builtin.json", 0, "0".repeat(64));
     }
 }

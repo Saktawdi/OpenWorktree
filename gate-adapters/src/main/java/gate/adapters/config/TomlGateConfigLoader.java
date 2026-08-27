@@ -38,6 +38,8 @@ public final class TomlGateConfigLoader {
             "policy.strictness", "policy.require_coverage", "policy.max_diff_bytes", "policy.max_diff_lines",
             "policy.engine_accept_degraded",
             "engine.cmd", "engine.args", "engine.timeout_seconds", "engine.provider_id", "engine.model",
+            // 单引擎化：kind 唯一合法值 gate-engine；idle/max_tokens 为流式引擎参数；cmd/args 为 deprecated 兼容键（读取但忽略）。
+            "engine.kind", "engine.idle_timeout_seconds", "engine.max_tokens",
             // 执行文档-后端-web §8.1: web operations console + agent session orchestration.
             "web.bind", "web.port", "web.allowed_origins", "web.human_token_file",
             "session.port_range_min", "session.port_range_max", "session.default_cli",
@@ -231,13 +233,20 @@ public final class TomlGateConfigLoader {
         Policy policy = new Policy(strictness, requireCoverage, maxBytes, maxLines, engineAcceptDegraded);
 
         GateConfig.EngineConfig engine = null;
-        if (scalars.containsKey("engine.cmd")) {
+        if (hasAnyEngineKey(scalars, lists)) {
             engine = new GateConfig.EngineConfig(
-                    scalars.get("engine.cmd"),
+                    scalars.get("engine.cmd"),   // deprecated：兼容旧配置读取，运行期忽略
                     lists.getOrDefault("engine.args", List.of()),
                     longValueOr(scalars, "engine.timeout_seconds", 120L),
                     scalars.get("engine.provider_id"),
-                    scalars.get("engine.model"));
+                    scalars.get("engine.model"),
+                    scalars.get("engine.kind"),
+                    scalars.containsKey("engine.idle_timeout_seconds")
+                            ? (Long) longValueOr(scalars, "engine.idle_timeout_seconds", 0L)
+                            : null,
+                    scalars.containsKey("engine.max_tokens")
+                            ? (Long) longValueOr(scalars, "engine.max_tokens", 0L)
+                            : null);
         }
 
         // §8.1: [web] / [session] / [agent] blocks. Absent [web] means this config never starts the
@@ -280,6 +289,21 @@ public final class TomlGateConfigLoader {
         return new GateConfig(schemaVersion, project, authRepo, clonesRoot, whitelist, gateHome,
                 approvals, db, blobRoot, audit, locks, index, identity, policy, engine, web, session, agent,
                 publishIdentity);
+    }
+
+    /** 引擎段是否出现：旧配置以 engine.cmd 为锚，新配置以任意 engine.* 为锚（cmd 已不再是必需键）。 */
+    private static boolean hasAnyEngineKey(Map<String, String> scalars, Map<String, List<String>> lists) {
+        for (String k : scalars.keySet()) {
+            if (k.startsWith("engine.")) {
+                return true;
+            }
+        }
+        for (String k : lists.keySet()) {
+            if (k.startsWith("engine.")) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** Resolves a config path relative to {@code gateHome} when not absolute; empty/null uses fallback. */

@@ -113,29 +113,51 @@ public record GateConfig(
     }
 
     /**
-     * Present only once an external review engine is configured (P2).
+     * Present only once the review engine is configured.
      *
-     * @param kind {@code "prism"}（外部二进制，缺省）or {@code "openai-stream"}（gate 内建流式
-     *             引擎，直连 OpenAI 兼容 /chat/completions，无需 cmd/args）。未知值在工厂
-     *             层 fail-closed 拒绝启动语义的审查（按 prism 处理不了的错误兜底）。
+     * <p><b>Single-engine design</b>：唯一的引擎是 gate 内建引擎（进程内直连 OpenAI 兼容
+     * /chat/completions）。{@code kind} 缺省/空白一律归一为 {@link #KIND_GATE_ENGINE}，
+     * 其余任何值在构造期直接抛错（fail-closed）；双轨时代的 prism 分支已删除。
+     *
+     * @param cmd                deprecated：prism 外部二进制时代的遗留键，仅为兼容旧 gate.toml
+     *                           而保留字段，运行期不再使用
+     * @param args               deprecated：同上
+     * @param timeoutSeconds     本轮总墙钟上限（秒），由引擎看门狗强制生效
+     * @param idleTimeoutSeconds 流式读帧的空闲失效窗口（秒）；null 归一为
+     *                           {@link #DEFAULT_IDLE_TIMEOUT_SECONDS}
+     * @param maxTokens          可选：注入请求体的输出上限；null 表示不注入（交上游默认）
      */
     public record EngineConfig(String cmd, List<String> args, long timeoutSeconds, String providerId,
-                               String model, String kind) {
+                               String model, String kind, Long idleTimeoutSeconds, Long maxTokens) {
+
+        /** {@code kind} 的唯一合法值：gate 内建审查引擎。 */
+        public static final String KIND_GATE_ENGINE = "gate-engine";
+
+        /** 流式读帧的默认空闲失效窗口（秒）；窗口内无任何数据帧即判停流。 */
+        public static final long DEFAULT_IDLE_TIMEOUT_SECONDS = 90;
 
         public EngineConfig {
             if (kind == null || kind.isBlank()) {
-                kind = "prism";
+                kind = KIND_GATE_ENGINE;
             }
-            kind = kind.toLowerCase(java.util.Locale.ROOT);
-            if ("openai-stream".equals(kind)) {
-                // 内建引擎进程内直连上游：cmd 无意义，归一为占位。
-                cmd = cmd == null || cmd.isBlank() ? "(builtin)" : cmd;
-            } else if (cmd == null || cmd.isBlank()) {
-                throw new IllegalArgumentException("engine.cmd must not be blank");
+            kind = kind.trim().toLowerCase(java.util.Locale.ROOT);
+            if (!KIND_GATE_ENGINE.equals(kind)) {
+                throw new IllegalArgumentException(
+                        "unknown engine.kind \"" + kind + "\"（唯一合法值：" + KIND_GATE_ENGINE + "）");
             }
+            // deprecated 键：兼容旧配置保留字段，运行期不使用，也不做非空约束。
             args = args == null ? List.of() : List.copyOf(args);
             if (timeoutSeconds <= 0) {
                 throw new IllegalArgumentException("engine.timeout must be positive");
+            }
+            if (idleTimeoutSeconds == null) {
+                idleTimeoutSeconds = DEFAULT_IDLE_TIMEOUT_SECONDS;
+            }
+            if (idleTimeoutSeconds <= 0) {
+                throw new IllegalArgumentException("engine.idle_timeout_seconds must be positive");
+            }
+            if (maxTokens != null && maxTokens <= 0) {
+                throw new IllegalArgumentException("engine.max_tokens must be positive");
             }
         }
     }

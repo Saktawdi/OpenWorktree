@@ -6,13 +6,14 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Minimal JSON parser specialised for prism's output shape (docs/archive/prism-schema-validation.md).
+ * Minimal self-contained JSON parser for engine output: the review findings schema
+ * ({@link #parse}) and generic objects such as OpenAI-compatible SSE chunks ({@link #parseObjectMap}).
  *
  * <p>This is deliberately self-contained rather than reusing {@code gate.application.util.MiniJson}: that
  * class is package-private to the application layer, the adapter must not reach across, and the
  * fail-closed contract wants a boundary where any structural problem becomes an
  * {@link gate.domain.review.EngineFailure}({@code UNPARSEABLE}). Anything thrown here is caught by
- * {@link PrismReviewEngine#review} and turned into a value — it never propagates as an exception.
+ * the engine adapters' {@code review} and turned into a value — it never propagates as an exception.
  *
  * <p>Handles objects, arrays, strings (with standard escapes), integers, floating-point, booleans and
  * null. Floating-point is parsed as {@code double} (prism's {@code confidence} field) and then
@@ -264,6 +265,20 @@ final class PrismJson {
         Long totalMs = extractTimingMs(obj, "totalMs");
         Long llmMs = extractTimingMs(obj, "llmMs");
         return new PrismOutput(findings, version, totalMs, llmMs);
+    }
+
+    /**
+     * 解析任意合法的顶层 JSON 对象（OpenAI 兼容网关的 SSE chunk 就是一种），不绑定 findings schema。
+     * 结构不符时抛 IllegalArgumentException —— SSE 消费层对坏帧按噪声容错跳过。
+     */
+    @SuppressWarnings("unchecked")
+    static Map<String, Object> parseObjectMap(String json) {
+        Parser p = new Parser(json);
+        Object root = p.parseValue();
+        if (!(root instanceof Map)) {
+            throw new IllegalArgumentException("JSON root is not an object");
+        }
+        return (Map<String, Object>) root;
     }
 
     /**

@@ -239,8 +239,13 @@ class SettingsRoutesTest {
                 for (Map<String, Object> key : keys) {
                     names.add(String.valueOf(key.get("key")));
                 }
-                assertTrue(names.containsAll(List.of("cmd", "args", "timeout_seconds", "provider_id", "model")),
+                // 单引擎化后的目录键集：cmd/args 已废弃不再暴露，kind/idle_timeout_seconds/max_tokens 顶替加入。
+                assertTrue(names.containsAll(List.of("kind", "timeout_seconds", "provider_id", "model",
+                        "idle_timeout_seconds", "max_tokens")),
                         "engine section keys: " + names);
+                // deprecated 键（cmd/args）不得出现在目录中——设置中心再也不应展示它。
+                assertFalse(names.contains("cmd") || names.contains("args"),
+                        "deprecated cmd/args must not appear in catalog: " + names);
                 return;
             }
             throw new AssertionError("engine section missing in view");

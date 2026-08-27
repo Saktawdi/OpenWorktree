@@ -20,8 +20,9 @@ public interface ReviewEngineFactory {
     ReviewEngine forManualVerdict(Boolean pass, String note);
 
     /**
-     * @return the live prism engine, or {@code null} when no engine is configured (P1 / no prism wired).
-     *         Callers must check {@link gate.domain.config.GateConfig#engineConfigured()} first.
+     * @return the configured built-in engine ({@code engine.kind="gate-engine"}), or {@code null}
+     *         when no engine is configured. Callers must check
+     *         {@link gate.domain.config.GateConfig#engineConfigured()} first.
      */
-    ReviewEngine forPrism();
+    ReviewEngine builtin();
 }

@@ -120,17 +120,17 @@ public final class ReviewHandler {
         // guessed pass/reject and never a 4xx at the driver layer.
         //
         // An explicit humanPass is a human decision and always wins: the manual adapter speaks for
-        // the round even when a prism engine is configured. This is what makes 人工审查 (and the
-        // NEEDS_HUMAN override) deterministic instead of silently re-running the AI engine.
+        // the round even when a gate-engine is configured. This is what makes 人工审查 (and the
+        // NEEDS_HUMAN override) deterministic instead of silently re-running the engine.
         boolean humanDecided = command.humanPass() != null;
         boolean manualUndecided = !humanDecided && !config.engineConfigured();
         ReviewEngine engine = config.engineConfigured() && !humanDecided
-                ? reviewEngineFactory.forPrism()
+                ? reviewEngineFactory.builtin()
                 : reviewEngineFactory.forManualVerdict(command.humanPass(), command.note());
         if (engine == null) {
             // engineConfigured() was true but the factory returned no engine — fail-closed.
             throw new GateException(GateErrorCode.GATE_ERROR_CONFIG,
-                    "engine is configured but no prism engine could be built (check engine.provider_id / provider credential)");
+                    "engine is configured but no built-in engine could be built (check engine.provider_id / provider credential)");
         }
         // Contract: review() never throws. Any failure is already an EngineFailure value.
         ReviewEvidence evidence = engine.review(new ReviewEngine.ReviewRequest(

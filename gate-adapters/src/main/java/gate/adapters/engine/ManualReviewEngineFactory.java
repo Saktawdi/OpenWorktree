@@ -19,8 +19,8 @@ public final class ManualReviewEngineFactory implements ReviewEngineFactory {
     }
 
     @Override
-    public ReviewEngine forPrism() {
-        // P1 has no live engine wired in.
+    public ReviewEngine builtin() {
+        // 未配置引擎时没有内建引擎可给；调用方须先检查 engineConfigured()。
         return null;
     }
 }

@@ -48,7 +48,7 @@ public final class ManualReviewEngine implements ReviewEngine {
     public static final String PROVIDER_ID = "manual";
 
     /** Readable reason carried in the undecided round's findings (shown by the review console). */
-    public static final String UNDECIDED_MESSAGE = "审查引擎未配置，需人工核准（重新审查时携带 human_pass，或在 gate.toml 配置 engine.cmd）";
+    public static final String UNDECIDED_MESSAGE = "审查引擎未配置，需人工核准（重新审查时携带 human_pass，或在设置中心配置审查引擎）";
 
     private final BlobStore blobStore;
     private final Boolean pass;
@@ -89,7 +89,7 @@ public final class ManualReviewEngine implements ReviewEngine {
                         request.snapshot().treeHash().hex(),
                         List.of(new Finding(Severity.INFO, "undecided", ".", null, null,
                                 "manual-undecided", UNDECIDED_MESSAGE,
-                                "re-run review with human_pass=true/false, or configure engine.cmd in gate.toml")),
+                                "re-run review with human_pass=true/false, or configure the review engine in 设置中心")),
                         Set.of(),
                         false,
                         rawRef,

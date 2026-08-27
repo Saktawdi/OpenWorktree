@@ -50,6 +50,9 @@ public final class EvidenceCodec {
                         + ",\"tree_hash\":" + quote(report.treeHash())
                         + ",\"degraded\":" + report.degraded()
                         + ",\"exit_code\":" + report.exitCode()
+                        + ",\"prompt_tokens\":" + nullableLong(report.promptTokens())
+                        + ",\"completion_tokens\":" + nullableLong(report.completionTokens())
+                        + ",\"total_tokens\":" + nullableLong(report.totalTokens())
                         + ",\"covered_paths\":[" + covered + "]"
                         + ",\"findings\":[" + findings + "]}";
             }
@@ -188,5 +191,10 @@ public final class EvidenceCodec {
             }
         }
         return sb.append('"').toString();
+    }
+
+    /** 可为 null 的 Long 直接序列化（null 或数字）。 */
+    private static String nullableLong(Long v) {
+        return v == null ? "null" : v.toString();
     }
 }

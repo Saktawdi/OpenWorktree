@@ -91,9 +91,14 @@ public final class StatusController implements WebController {
         // button and to explain "未配置引擎" when engine_configured is false.
         if (config.engineConfigured()) {
             Map<String, Object> engine = new LinkedHashMap<>();
+            engine.put("kind", config.engine().kind());
             engine.put("provider_id", config.engine().providerId());
             engine.put("model", config.engine().model());
             engine.put("timeout_seconds", config.engine().timeoutSeconds());
+            engine.put("idle_timeout_seconds", config.engine().idleTimeoutSeconds());
+            if (config.engine().maxTokens() != null) {
+                engine.put("max_tokens", config.engine().maxTokens());
+            }
             body.put("engine", engine);
         }
         if (config.webConfigured()) {

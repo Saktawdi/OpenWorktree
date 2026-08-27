@@ -32,7 +32,7 @@ import org.junit.jupiter.api.Test;
  * <p>This test pins the <em>other</em> branch — the H1 data-collection escape hatch — where
  * {@code engineAcceptDegraded=true} lets a degraded-but-otherwise-clean report through to PASS.
  * It is the single test that exercises the new code path end-to-end through {@code decide()},
- * since {@code PrismReviewEngineTest} only checks the adapter sets {@code degraded=true} and the
+ * since {@code BuiltinReviewEngineTest} only checks the adapter sets {@code degraded=true} and the
  * acceptance tests ({@code AcceptanceTest} / {@code P2AcceptanceTest}) use the manual engine,
  * which never degrades.
  *

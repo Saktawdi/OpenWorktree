@@ -52,14 +52,14 @@ public final class ReviewCliCommand extends BaseCommand {
         boolean engineMode = c.config().engineConfigured();
         ReviewCommand cmd;
         if (engineMode) {
-            // prism produces the evidence; no human verdict is carried.
+            // gate-engine produces the evidence; no human verdict is carried.
             cmd = ReviewCommand.forEngine(ticketNo, round);
         } else {
             boolean pass = verdict != null && verdict.pass;
             boolean reject = verdict != null && verdict.reject;
             if (!pass && !reject) {
                 throw new GateException(GateErrorCode.USAGE,
-                        "no engine configured: provide --pass or --reject (or configure engine.cmd in gate.toml)");
+                        "no engine configured: provide --pass or --reject (or configure engine.kind=gate-engine in gate.toml)");
             }
             cmd = new ReviewCommand(ticketNo, round, pass, note);
         }

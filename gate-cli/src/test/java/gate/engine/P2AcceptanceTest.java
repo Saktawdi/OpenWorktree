@@ -27,8 +27,8 @@ import org.junit.jupiter.api.Test;
  * <p>A6: a blocker finding auto-rejects, and the authoritative target branch HEAD does not move.
  * This exercises the GatePolicy {@code finding → REJECT} branch via the manual engine (whose
  * coveredPaths == changedPaths and degraded == false), so the reject is provably from the finding
- * itself, not from a degraded/coverage path. prism walks the same {@code decide()} — that is the
- * "adding a second engine costs zero core changes" guarantee, verified by PrismReviewEngineTest.
+ * itself, not from a degraded/coverage path. gate-engine walks the same {@code decide()} — that is the
+ * "adding the built-in engine costs zero core changes" guarantee, verified by BuiltinReviewEngineTest.
  *
  * <p>A8: the rejected review's evidence is persisted as a structured findings blob carrying
  * file / line / severity / message, exportable for feeding back to the agent.

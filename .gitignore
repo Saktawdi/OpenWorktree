@@ -35,3 +35,8 @@ test.json
 
 # Reference projects cloned for study (not part of this repo)
 docx/reference/
+
+# Archify 运行时图表导出（本机可视化产物，不入库）
+/local-git-gate.runtime.*
+# Maven classpath 临时转储
+gate-cli/gate-cp.txt

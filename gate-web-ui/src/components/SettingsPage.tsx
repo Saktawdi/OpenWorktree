@@ -20,6 +20,12 @@ import { openConnect, showToast, useApp } from "../lib/store";
 import type { GateTomlResponse, GateTomlKey, McpStatus, LlmProvider } from "../lib/types";
 import { CopyButton, Spinner } from "./ui";
 
+/** 策略严格度下拉候选：与 gate.toml policy.strictness 的枚举一一对应。 */
+const ENGINE_STRICTNESS_OPTIONS = [
+  { value: "BLOCKER_ONLY", label: "BLOCKER_ONLY（只在 BLOCKER 时驳回）" },
+  { value: "BLOCKER_AND_WARNING", label: "BLOCKER_AND_WARNING（外加 WARNING 严拒）" },
+];
+
 // ──────────────────────────────────────────────────────────────────────────────
 // helpers
 // ──────────────────────────────────────────────────────────────────────────────
@@ -291,6 +297,8 @@ function GateTomlBlock() {
               const showGray = disabled;
               const useProviderSelect = k.type === "string" && full === "engine.provider_id" && providers.length > 0;
               const useModelSelect = k.type === "string" && full === "engine.model" && engineModelOptions.length > 0;
+              const useKindSelect = k.type === "string" && full === "engine.kind";
+              const useStrictnessSelect = k.type === "string" && full === "policy.strictness";
               return (
                 <div key={k.key} className={`px-4 py-3 flex gap-4 items-start transition-colors ${showGray ? "bg-sunken/40" : "hover:bg-raised/25"}`}>
                   <div className="min-w-0 flex-1">
@@ -356,7 +364,37 @@ function GateTomlBlock() {
                         )}
                       </>
                     )}
-                    {k.type === "string" && !useProviderSelect && !useModelSelect && (
+                    {useKindSelect && (
+                      <>
+                        <KeySelect
+                          value={typeof cur === "string" ? cur : ""}
+                          options={[{ value: "gate-engine", label: "gate-engine（gate 内建审查引擎）" }]}
+                          emptyLabel={isUnset ? `未设置（默认 gate-engine）` : "未设置（清除该键）"}
+                          disabled={disabled}
+                          onChange={(v) => (v === "" ? clearKey(full) : setKeyValue(full, v))}
+                        />
+                        {!disabled && (
+                          <div className="text-[11px] text-faint">
+                            目前只有 gate-engine 一个选项，后续添加其他引擎协议（如 Anthropic 原生）后再复选
+                          </div>
+                        )}
+                      </>
+                    )}
+                    {useStrictnessSelect && (
+                      <>
+                        <KeySelect
+                          value={typeof cur === "string" ? cur : ""}
+                          options={ENGINE_STRICTNESS_OPTIONS}
+                          emptyLabel="未设置（默认 BLOCKER_ONLY）"
+                          disabled={disabled}
+                          onChange={(v) => (v === "" ? clearKey(full) : setKeyValue(full, v))}
+                        />
+                        {!disabled && (
+                          <div className="text-[11px] text-faint">严格度：BLOCKER 只驳回；BLOCKER_AND_WARNING 把 WARNING 也驳回</div>
+                        )}
+                      </>
+                    )}
+                    {k.type === "string" && !useProviderSelect && !useModelSelect && !useKindSelect && !useStrictnessSelect && (
                       <input
                         disabled={disabled}
                         className="text-input font-mono text-[12px] disabled:opacity-50"

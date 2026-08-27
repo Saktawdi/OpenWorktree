@@ -17,6 +17,9 @@ import java.util.Set;
  *                     skips binary/oversized/failed chunks would let unreviewed content through
  *                     with no exception anywhere
  * @param degraded     the adapter could not fully normalise something; forces reject
+ * @param promptTokens LLM prompt tokens when the engine exposed usage; null otherwise
+ * @param completionTokens LLM completion tokens when exposed; null otherwise
+ * @param totalTokens  LLM total tokens when exposed; null otherwise
  */
 public record EngineReport(
         EngineDescriptor engine,
@@ -26,7 +29,21 @@ public record EngineReport(
         boolean degraded,
         BlobRef rawOutput,
         int exitCode,
-        Duration duration) implements ReviewEvidence {
+        Duration duration,
+        Long promptTokens,
+        Long completionTokens,
+        Long totalTokens) implements ReviewEvidence {
+
+    /**
+     * 不带 token 遥测的兼容构造器：供无 usage 来源的证据使用（人工判定等），
+     * token 字段落 null，成本遥测按 tokenSource=unavailable 记录。
+     */
+    public EngineReport(EngineDescriptor engine, String treeHash, List<Finding> findings,
+                        Set<String> coveredPaths, boolean degraded, BlobRef rawOutput,
+                        int exitCode, Duration duration) {
+        this(engine, treeHash, findings, coveredPaths, degraded, rawOutput, exitCode, duration,
+                null, null, null);
+    }
 
     public EngineReport {
         if (engine == null) {

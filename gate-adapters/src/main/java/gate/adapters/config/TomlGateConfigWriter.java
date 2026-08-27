@@ -56,11 +56,13 @@ public final class TomlGateConfigWriter {
         KEY_TYPES.put("policy.max_diff_bytes", Type.INT);
         KEY_TYPES.put("policy.max_diff_lines", Type.INT);
         KEY_TYPES.put("policy.engine_accept_degraded", Type.BOOL);
-        KEY_TYPES.put("engine.cmd", Type.STRING);
-        KEY_TYPES.put("engine.args", Type.STRING_LIST);
+        // 单引擎化：engine.kind 唯一合法值 gate-engine；cmd/args 已废弃（deprecated），不再进入设置中心目录。
+        KEY_TYPES.put("engine.kind", Type.STRING);
         KEY_TYPES.put("engine.timeout_seconds", Type.INT);
         KEY_TYPES.put("engine.provider_id", Type.STRING);
         KEY_TYPES.put("engine.model", Type.STRING);
+        KEY_TYPES.put("engine.idle_timeout_seconds", Type.INT);
+        KEY_TYPES.put("engine.max_tokens", Type.INT);
         KEY_TYPES.put("web.bind", Type.STRING);
         KEY_TYPES.put("web.port", Type.INT);
         KEY_TYPES.put("web.allowed_origins", Type.STRING_LIST);
@@ -196,26 +198,9 @@ public final class TomlGateConfigWriter {
 
         String candidate = String.join(lineSep, lines);
 
-        // engine.* 校验：候选缺少 engine.cmd 但 updates 包含 engine.* 且未包含 engine.cmd
-        boolean hasEngineOtherInUpdates = updates.keySet().stream()
-                .anyMatch(k -> k.startsWith("engine.") && !k.equals("engine.cmd") && updates.get(k) != null);
-        if (hasEngineOtherInUpdates && !updates.containsKey("engine.cmd")) {
-            // 解析候选是否含 engine.cmd
-            Map<String, String> candScalars = new LinkedHashMap<>();
-            Map<String, List<String>> candLists = new LinkedHashMap<>();
-            try {
-                parseForValidation(candidate, tomlPath, candScalars, candLists);
-            } catch (GateException ignore) {
-                // 解析失败交给后续 loader 校验
-                candScalars.put("__parse_failed__", "1");
-            }
-            boolean candHasCmd = candScalars.containsKey("engine.cmd")
-                    && candScalars.get("engine.cmd") != null
-                    && !candScalars.get("engine.cmd").isBlank();
-            if (!candHasCmd) {
-                throw new GateException(GateErrorCode.USAGE, "engine.* 需要 engine.cmd");
-            }
-        }
+        // （原「engine.* 必须携带 engine.cmd」联动校验已删除：单引擎化后 engine.cmd 不再是任何
+        //  engine 键的前置条件，设置中心可单独修改 kind/provider/model 等键。候选完整性由下方
+        //  TomlGateConfigLoader 对临时文件的完整校验兜底——含 kind 白名单 fail-closed。）
 
         // 临时文件校验
         Path tmp;
