@@ -10,17 +10,20 @@ import {
   pushUserMessage,
   setBusy,
   setCenterTab,
+  setContextLimit,
+  setContextTokens,
   setDiffs,
   setFindings,
   setGateBusy,
   setOutcome,
   setStage,
   setTask,
+  setTodos,
   setVerdict,
   showToast,
   appStore,
 } from "./store";
-import type { ChatItem, DiffFile, Finding, ToolCallView } from "./types";
+import type { ChatItem, DiffFile, Finding, ToolCallView, TodoItem } from "./types";
 import { approxDiffBytes } from "./diff";
 import { fakeSha } from "./format";
 import { DIFF_T104_R1, DIFF_T104_R2, FINDINGS_R1 } from "./scenario";
@@ -136,6 +139,31 @@ const FIX_REPLY = [
   "本地单测 49 项全部通过。请再次预提审，生成第 2 轮快照。",
 ].join("\n");
 
+/* ─── demo 任务清单与上下文占用模拟（T-113 侧栏环形图标的演示数据源） ─── */
+
+const DEMO_CONTEXT_LIMIT = 8192;
+
+const todo = (content: string, status: TodoItem["status"]): TodoItem => ({ content, status });
+
+async function runTodoWrite(
+  no: string,
+  id: string,
+  todos: TodoItem[],
+  summary: string,
+  ok: () => boolean,
+): Promise<boolean> {
+  const done = await runTool(
+    no,
+    id,
+    { name: "任务清单", icon: "todo", argsSummary: `${todos.length} 项任务` },
+    500,
+    { summary, detail: JSON.stringify(todos, null, 2) },
+    ok,
+  );
+  if (done) setTodos(no, todos.map((t) => ({ ...t })));
+  return done;
+}
+
 export async function demoSendPrompt(no: string, userText: string) {
   const st0 = appStore.getState();
   if (st0.busy[no]) return;
@@ -179,6 +207,26 @@ async function scriptImplement(no: string, _userText: string, seq: number) {
   const id = pushAssistantPlaceholder(no);
   if (!(await streamThinking(no, id, IMPLEMENT_THINKING, ok))) return aborted(no, id);
 
+  // demo：模拟模型上下文窗口占用（8K 上限，随回合推进增长）
+  setContextLimit(no, DEMO_CONTEXT_LIMIT);
+  setContextTokens(no, 1400);
+
+  if (
+    !(await runTodoWrite(
+      no,
+      id,
+      [
+        todo("调研结算路由与错误处理约定", "in_progress"),
+        todo("实现令牌桶限流中间件", "pending"),
+        todo("挂载至结算路由并接入 429", "pending"),
+        todo("本地单测验证限流行为", "pending"),
+      ],
+      "4 项任务 · 开始执行",
+      ok,
+    ))
+  )
+    return aborted(no, id);
+
   if (
     !(await runTool(
       no,
@@ -190,6 +238,7 @@ async function scriptImplement(no: string, _userText: string, seq: number) {
     ))
   )
     return aborted(no, id);
+  setContextTokens(no, 2600);
 
   if (
     !(await runTool(
@@ -198,6 +247,23 @@ async function scriptImplement(no: string, _userText: string, seq: number) {
       { name: "全局搜索", icon: "search", argsSummary: "rateLimit · throttle" },
       700,
       { summary: "0 处匹配 · 项目内尚无限流实现" },
+      ok,
+    ))
+  )
+    return aborted(no, id);
+  setContextTokens(no, 3400);
+
+  if (
+    !(await runTodoWrite(
+      no,
+      id,
+      [
+        todo("调研结算路由与错误处理约定", "completed"),
+        todo("实现令牌桶限流中间件", "in_progress"),
+        todo("挂载至结算路由并接入 429", "pending"),
+        todo("本地单测验证限流行为", "pending"),
+      ],
+      "1/4 已完成",
       ok,
     ))
   )
@@ -215,6 +281,23 @@ async function scriptImplement(no: string, _userText: string, seq: number) {
   )
     return aborted(no, id);
   applyDiffs(no, [DIFF_T104_R1[0]]);
+  setContextTokens(no, 4600);
+
+  if (
+    !(await runTodoWrite(
+      no,
+      id,
+      [
+        todo("调研结算路由与错误处理约定", "completed"),
+        todo("实现令牌桶限流中间件", "completed"),
+        todo("挂载至结算路由并接入 429", "in_progress"),
+        todo("本地单测验证限流行为", "pending"),
+      ],
+      "2/4 已完成",
+      ok,
+    ))
+  )
+    return aborted(no, id);
 
   if (
     !(await runTool(
@@ -228,6 +311,23 @@ async function scriptImplement(no: string, _userText: string, seq: number) {
   )
     return aborted(no, id);
   applyDiffs(no, DIFF_T104_R1);
+  setContextTokens(no, 5600);
+
+  if (
+    !(await runTodoWrite(
+      no,
+      id,
+      [
+        todo("调研结算路由与错误处理约定", "completed"),
+        todo("实现令牌桶限流中间件", "completed"),
+        todo("挂载至结算路由并接入 429", "completed"),
+        todo("本地单测验证限流行为", "in_progress"),
+      ],
+      "3/4 已完成",
+      ok,
+    ))
+  )
+    return aborted(no, id);
 
   if (
     !(await runTool(
@@ -236,6 +336,23 @@ async function scriptImplement(no: string, _userText: string, seq: number) {
       { name: "运行命令", icon: "terminal", argsSummary: "npm test" },
       2600,
       { summary: "47 passed · 2.31s", detail: "Test Files  12 passed (12)\n     Tests  47 passed (47)\n  Duration  2.31s" },
+      ok,
+    ))
+  )
+    return aborted(no, id);
+  setContextTokens(no, 7100);
+
+  if (
+    !(await runTodoWrite(
+      no,
+      id,
+      [
+        todo("调研结算路由与错误处理约定", "completed"),
+        todo("实现令牌桶限流中间件", "completed"),
+        todo("挂载至结算路由并接入 429", "completed"),
+        todo("本地单测验证限流行为", "completed"),
+      ],
+      "4/4 已完成",
       ok,
     ))
   )
@@ -252,6 +369,23 @@ async function scriptFix(no: string, seq: number) {
   const id = pushAssistantPlaceholder(no);
   if (!(await streamThinking(no, id, FIX_THINKING, ok))) return aborted(no, id);
 
+  setContextTokens(no, 7400);
+
+  if (
+    !(await runTodoWrite(
+      no,
+      id,
+      [
+        todo("为桶表增加容量上限", "in_progress"),
+        todo("补充 Retry-After 断言用例", "pending"),
+        todo("提取魔法数字为命名常量", "pending"),
+      ],
+      "3 项修复任务",
+      ok,
+    ))
+  )
+    return aborted(no, id);
+
   if (
     !(await runTool(
       no,
@@ -264,6 +398,22 @@ async function scriptFix(no: string, seq: number) {
   )
     return aborted(no, id);
   applyDiffs(no, [DIFF_T104_R2[0], DIFF_T104_R1[1]]);
+  setContextTokens(no, 7700);
+
+  if (
+    !(await runTodoWrite(
+      no,
+      id,
+      [
+        todo("为桶表增加容量上限", "completed"),
+        todo("补充 Retry-After 断言用例", "in_progress"),
+        todo("提取魔法数字为命名常量", "completed"),
+      ],
+      "2/3 已完成",
+      ok,
+    ))
+  )
+    return aborted(no, id);
 
   if (
     !(await runTool(
@@ -277,6 +427,7 @@ async function scriptFix(no: string, seq: number) {
   )
     return aborted(no, id);
   applyDiffs(no, DIFF_T104_R2);
+  setContextTokens(no, 7900);
 
   if (
     !(await runTool(
@@ -285,6 +436,22 @@ async function scriptFix(no: string, seq: number) {
       { name: "运行命令", icon: "terminal", argsSummary: "npm test" },
       2400,
       { summary: "49 passed · 2.44s", detail: "Test Files  13 passed (13)\n     Tests  49 passed (49)\n  Duration  2.44s" },
+      ok,
+    ))
+  )
+    return aborted(no, id);
+  setContextTokens(no, 8100);
+
+  if (
+    !(await runTodoWrite(
+      no,
+      id,
+      [
+        todo("为桶表增加容量上限", "completed"),
+        todo("补充 Retry-After 断言用例", "completed"),
+        todo("提取魔法数字为命名常量", "completed"),
+      ],
+      "3/3 已完成",
       ok,
     ))
   )

@@ -103,7 +103,7 @@ export interface GitTreeEntry {
 
 export type ToolStatus = "running" | "ok" | "error";
 
-export type ToolIconKind = "file" | "search" | "edit" | "terminal" | "test" | "code" | "question" | "web" | "custom";
+export type ToolIconKind = "file" | "search" | "edit" | "terminal" | "test" | "code" | "question" | "web" | "custom" | "todo";
 
 export interface ToolCallView {
   id: string;
@@ -115,6 +115,22 @@ export interface ToolCallView {
   resultSummary?: string;
   resultDetail?: string;
   status: ToolStatus;
+}
+
+/** One entry of the agent's task list (todowrite 工具的 todos 数组元素). */
+export interface TodoItem {
+  id?: string;
+  content: string;
+  status: "pending" | "in_progress" | "completed" | "cancelled";
+  priority?: "high" | "medium" | "low";
+}
+
+/** 会话上下文占用（最新一轮的窗口占用，而非逐轮累加）。 */
+export interface ContextUsageState {
+  /** 最新已知的上下文 token 占用；0 表示尚无数据。 */
+  tokens: number;
+  /** 模型上下文窗口上限；null 表示模型未暴露（前端回退默认值）。 */
+  limit: number | null;
 }
 
 export interface ThinkingView {
@@ -224,6 +240,10 @@ export interface CatalogModel {
   variants: string[];
   /** 该模型是否支持图片输入（serve 归一化 capabilities.input.image，attachment 兜底）。 */
   imageInput: boolean;
+  /** 模型上下文窗口上限（tokens）；null 表示模型未暴露。 */
+  contextLimit: number | null;
+  /** 输出上限（tokens）；null 表示模型未暴露。 */
+  outputLimit: number | null;
 }
 
 export interface CatalogProvider {

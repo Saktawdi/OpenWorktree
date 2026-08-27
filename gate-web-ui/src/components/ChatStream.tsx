@@ -10,6 +10,7 @@ import {
   FileText,
   Globe,
   Info,
+  ListChecks,
   MagnifyingGlass,
   PencilSimple,
   Question,
@@ -36,12 +37,17 @@ const TOOL_ICONS: Record<ToolIconKind, typeof TerminalWindow> = {
   question: Question,
   web: Globe,
   custom: FileCode,
+  todo: ListChecks,
 };
 
 function splitToolArgs(tool: ToolCallView): { toolName: string; argsPart: string } {
+  // todo 类工具行：api 层已把 argsSummary 写成紧凑摘要（避免整段 todos JSON 刷屏）。
+  if (tool.icon === "todo") {
+    return { toolName: tool.name || tool.toolName || "任务清单", argsPart: tool.argsSummary };
+  }
   if (tool.toolName) {
     const rawArgs = tool.args !== undefined ? tool.args : tool.argsSummary.slice(tool.toolName.length);
-    return { toolName: tool.toolName, argsPart: rawArgs };
+    return { toolName: tool.name || tool.toolName, argsPart: rawArgs };
   }
   // 兼容未单独拆出 toolName 的历史旧数据：如 "bash{\"command\":\"...\"}" 或 "read_file ..."
   const summary = tool.argsSummary || tool.name || "";

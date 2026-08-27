@@ -5,6 +5,7 @@ import type {
   CatalogProvider,
   ChatItem,
   ChatSession,
+  ContextUsageState,
   DiffFile,
   EngineInfo,
   Finding,
@@ -19,6 +20,7 @@ import type {
   TaskProgress,
   Ticket,
   Stage,
+  TodoItem,
   UsageView,
   VerdictInfo,
 } from "./types";
@@ -78,6 +80,10 @@ export interface AppState {
   gateBusy: Record<string, boolean>;
   creatingSession: Record<string, boolean>;
   usage: Record<string, UsageView>;
+  /** 工单最新任务清单（todowrite 工具写入；侧栏环形图标的数据源）。 */
+  todos: Record<string, TodoItem[]>;
+  /** 会话上下文占用（最新一轮窗口 tokens + 模型上限）。 */
+  context: Record<string, ContextUsageState>;
   centerTab: CenterTab;
   agents: AgentConfig[];
   runtimes: AgentRuntime[];
@@ -145,6 +151,8 @@ export const appStore = create<AppState>(() => ({
   gateBusy: {},
   creatingSession: {},
   usage: {},
+  todos: {},
+  context: {},
   centerTab: "chat",
   agents: DEMO_AGENTS,
   runtimes: DEMO_RUNTIMES,
@@ -712,6 +720,27 @@ export function addUsage(no: string, promptTokens: number, completionTokens: num
         },
       },
     };
+  });
+}
+
+/** 覆写工单任务清单（todowrite 每次调用都是全量数组）。 */
+export function setTodos(no: string, todos: TodoItem[]) {
+  set((st) => ({ todos: { ...st.todos, [no]: todos } }));
+}
+
+/** 回写最新一轮的上下文窗口占用（prompt+completion，非逐轮累加）。 */
+export function setContextTokens(no: string, tokens: number) {
+  set((st) => {
+    const cur = st.context[no] ?? { tokens: 0, limit: null };
+    return { context: { ...st.context, [no]: { ...cur, tokens: Math.max(0, tokens) } } };
+  });
+}
+
+/** 记录模型上下文窗口上限（来自模型目录；null 表示未知）。 */
+export function setContextLimit(no: string, limit: number | null) {
+  set((st) => {
+    const cur = st.context[no] ?? { tokens: 0, limit: null };
+    return { context: { ...st.context, [no]: { ...cur, limit } } };
   });
 }
 

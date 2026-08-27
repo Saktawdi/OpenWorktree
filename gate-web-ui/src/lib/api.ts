@@ -13,6 +13,8 @@ import {
   resolveQuestion,
   setBusy,
   setCenterTab,
+  setContextLimit,
+  setContextTokens,
   setDiffs,
   setFindings,
   setGateBusy,
@@ -22,6 +24,7 @@ import {
   setSessionBusy,
   setStage,
   setTask,
+  setTodos,
   setVerdict,
   showToast,
   startLiveTurn,
@@ -47,6 +50,7 @@ import type {
 import { parseUnifiedDiff } from "./diff";
 import { approxDiffBytes } from "./diff";
 import { sleep } from "./format";
+import { friendlyToolName, isTodoTool, parseTodos } from "./todoUtils";
 import { setSessionModelSel, setSessionModels } from "./store";
 
 function authHeaders(): Record<string, string> {
@@ -690,14 +694,16 @@ function mapHistoryMessage(m: RawMessage): ChatItem | null {
       tools: (m.tool_calls ?? []).map((tc, i) => {
         const toolName = tc.name || "";
         const args = tc.arguments_json ?? "";
+        const todo = isTodoTool(toolName);
         return {
           id: `${m.id}-${i}`,
-          name: toolName,
+          name: friendlyToolName(toolName),
           toolName,
           args,
-          icon: resolveToolIcon(toolName),
-          // Match the live-streamed row: tool name followed by its full arguments JSON.
-          argsSummary: `${toolName}${args}`,
+          icon: todo ? ("todo" as const) : resolveToolIcon(toolName),
+          // Match the live-streamed row: tool name followed by its full arguments JSON
+          // (todo rows use the compact summary instead of the full todos JSON).
+          argsSummary: todo ? todoArgsSummary(args) : `${toolName}${args}`,
           resultSummary: tc.result_json?.slice(0, 80),
           resultDetail: tc.result_json,
           status: "ok" as const,
@@ -707,6 +713,14 @@ function mapHistoryMessage(m: RawMessage): ChatItem | null {
     };
   }
   return null;
+}
+
+/** todo 类工具行参数列的简短摘要（避免整段 JSON 刷屏）。 */
+function todoArgsSummary(argsJson?: string): string {
+  const todos = parseTodos(argsJson);
+  if (!todos) return "任务清单";
+  const done = todos.filter((t) => t.status === "completed").length;
+  return `${todos.length} 项任务 · 已完成 ${done}`;
 }
 
 export async function loadSessionMessages(no: string, sessionId: string) {
@@ -722,6 +736,20 @@ export async function loadSessionMessages(no: string, sessionId: string) {
   const stash = appStore.getState().liveTurns[sessionId];
   if (stash) items.push(stash.item);
   appStore.setState((st) => ({ chats: { ...st.chats, [no]: items } }));
+  restoreTodosFromHistory(no, hist.messages);
+}
+
+/** 历史回放：以最后一条携带合法 todos 的 todowrite 参数为准恢复任务清单。 */
+function restoreTodosFromHistory(no: string, messages: RawMessage[]) {
+  let latest: string | null = null;
+  for (const m of messages) {
+    for (const tc of m.tool_calls ?? []) {
+      if (isTodoTool(tc.name) && tc.arguments_json) latest = tc.arguments_json;
+    }
+  }
+  if (!latest) return;
+  const todos = parseTodos(latest);
+  if (todos) setTodos(no, todos);
 }
 
 export async function liveSendPrompt(no: string, userText: string, attachments: PendingAttachment[] = []) {
@@ -783,12 +811,17 @@ interface RawCatalogModel {
   name?: string | null;
   variants?: string[] | null;
   image_input?: boolean | null;
+  limit?: { context?: unknown; output?: unknown } | null;
 }
 
 interface RawCatalogProvider {
   id: string;
   name?: string | null;
   models?: RawCatalogModel[] | null;
+}
+
+function numericLimit(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : null;
 }
 
 /**
@@ -808,6 +841,8 @@ export async function loadSessionCatalog(no: string, sessionId: string) {
         name: m.name ?? m.id,
         variants: m.variants ?? [],
         imageInput: m.image_input === true,
+        contextLimit: numericLimit(m.limit?.context),
+        outputLimit: numericLimit(m.limit?.output),
       })),
     }));
     setSessionModels(sessionId, providers);
@@ -820,9 +855,28 @@ export async function loadSessionCatalog(no: string, sessionId: string) {
         variant: sess.overrideVariant ?? null,
       });
     }
+    applySessionContextLimit(no, sessionId, providers);
   } catch {
     /* catalog is best-effort: the picker just stays empty */
   }
+}
+
+/**
+ * 从目录中解析当前会话生效模型的上下文窗口上限并写入 store；
+ * 找不到生效模型时保持 null（前端回退默认窗口）。
+ */
+function applySessionContextLimit(no: string, sessionId: string, providers: CatalogProvider[]) {
+  const st = appStore.getState();
+  const sel = st.sessionModelSel[sessionId];
+  const sess = (st.sessions[no] ?? []).find((s) => s.id === sessionId);
+  const agent = st.agents.find((a) => a.id === (sess?.agentConfigId ?? st.agentId));
+  const providerId = sel?.providerId ?? sess?.overrideProvider ?? agent?.providerId ?? null;
+  const modelId = sel?.modelId ?? sess?.overrideModel ?? agent?.model ?? null;
+  if (!providerId || !modelId) return;
+  const model = providers
+    .find((p) => p.id === providerId)
+    ?.models.find((m) => m.id === modelId);
+  if (model?.contextLimit) setContextLimit(no, model.contextLimit);
 }
 
 /** Live switch: persists the override server-side; takes effect on the NEXT turn. */
@@ -840,6 +894,15 @@ export async function switchSessionModelLive(
       }),
     });
     setSessionModelSel(sessionId, sel);
+    // 模型切换后上下文窗口随之变化：从目录解析新上限（找不到则回退 null）。
+    const no = ticketNoOfSession(sessionId);
+    if (no) {
+      const model = appStore
+        .getState()
+        .sessionModels[sessionId]?.find((p) => p.id === sel.providerId)
+        ?.models.find((m) => m.id === sel.modelId);
+      setContextLimit(no, model?.contextLimit ?? null);
+    }
     return true;
   } catch (e) {
     showToast(`切换失败：${(e as Error).message}`);
@@ -864,6 +927,9 @@ async function consumeSessionStream(no: string, sessionId: string) {
   const url = `/api/sessions/${sessionId}/events${token ? `?token=${encodeURIComponent(token)}` : ""}`;
   const es = new EventSource(url);
   startLiveTurn(no, sessionId);
+  // Per-call argument accumulation: argument_delta fragments concatenate into the
+  // full arguments JSON, which todo tools parse into the sidebar task list.
+  const argsBuf = new Map<string, { name: string; args: string }>();
 
   await new Promise<void>((resolve) => {
     // 看门狗只在 30 分钟无任何事件时判流悬挂（原固定 5 分钟截断会误杀长工具回合）。
@@ -913,37 +979,49 @@ async function consumeSessionStream(no: string, sessionId: string) {
       if (d.status === "SUCCESS" && FILE_EDIT_TOOLS.includes(String(d.tool_name ?? "").toLowerCase())) {
         scheduleDiffRefresh(no);
       }
+      const callId: string = d.call_id ?? "";
+      const toolName: string = d.tool_name ?? "";
+      const todo = isTodoTool(toolName);
+      const entry = argsBuf.get(callId) ?? { name: toolName, args: "" };
+      entry.name = toolName || entry.name;
+      if (d.argument_delta) entry.args += d.argument_delta;
+      argsBuf.set(callId, entry);
+      // todo 类工具在终态时把累积的完整参数解析进侧栏任务清单。
+      if (todo && (d.status === "SUCCESS" || d.status === "FAILED")) {
+        const todos = parseTodos(entry.args);
+        if (todos) setTodos(no, todos);
+      }
+      const argsSummary = todo ? todoArgsSummary(entry.args) : `${entry.name}${entry.args}`;
       updateLiveTurn(sessionId, (a) => {
         const existing = a.tools.find((t) => t.id === d.call_id);
         if (existing) {
-          const newArgs = (existing.args ?? "") + (d.argument_delta ?? "");
           return {
             ...a,
             tools: a.tools.map((t) =>
               t.id === d.call_id
                 ? {
                     ...t,
-                    args: newArgs,
-                    argsSummary: `${t.toolName ?? t.name}${newArgs}`,
+                    name: friendlyToolName(entry.name),
+                    icon: todo ? ("todo" as const) : t.icon,
+                    args: entry.args,
+                    argsSummary,
                     status: d.status === "SUCCESS" ? "ok" : d.status === "FAILED" ? "error" : "running",
                   }
                 : t,
             ),
           };
         }
-        const toolName = String(d.tool_name ?? "");
-        const argsDelta = String(d.argument_delta ?? "");
         return {
           ...a,
           tools: [
             ...a.tools,
             {
               id: d.call_id,
-              name: toolName,
+              name: friendlyToolName(toolName),
               toolName,
-              args: argsDelta,
-              icon: resolveToolIcon(toolName),
-              argsSummary: `${toolName}${argsDelta}`,
+              args: entry.args,
+              icon: todo ? ("todo" as const) : resolveToolIcon(toolName),
+              argsSummary,
               status: "running" as const,
             },
           ],
@@ -953,7 +1031,15 @@ async function consumeSessionStream(no: string, sessionId: string) {
     es.addEventListener("usage", (ev) => {
       arm();
       const d = JSON.parse((ev as MessageEvent).data);
-      if (d.usage) addUsage(no, d.usage.prompt_tokens ?? 0, d.usage.completion_tokens ?? 0);
+      if (d.usage) {
+        addUsage(no, d.usage.prompt_tokens ?? 0, d.usage.completion_tokens ?? 0);
+        // 最新一轮的窗口占用（prompt+completion），非逐轮累加 —— 上下文环数据源。
+        const total =
+          typeof d.usage.total_tokens === "number" && d.usage.total_tokens > 0
+            ? d.usage.total_tokens
+            : (d.usage.prompt_tokens ?? 0) + (d.usage.completion_tokens ?? 0);
+        if (total > 0) setContextTokens(no, total);
+      }
     });
     es.addEventListener("permission_asked", (ev) => {
       arm();

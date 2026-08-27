@@ -5,6 +5,7 @@ import { Composer } from "./Composer";
 import { DiffView } from "./DiffView";
 import { FindingsView } from "./FindingsView";
 import { GatePanel } from "./GatePanel";
+import { SessionRail } from "./SessionRail";
 import { TicketEditDialog } from "./TicketEditDialog";
 import { TicketList } from "./TicketList";
 import { StageBadge } from "./ui";
@@ -135,10 +136,15 @@ export function Workbench() {
       <main className="flex-1 min-w-0 flex flex-col">
         <ContextStrip ticketNo={selectedNo} />
         <CenterTabs ticketNo={selectedNo} />
-        {tab === "chat" && <ChatStream ticketNo={selectedNo} />}
+        {tab === "chat" && (
+          <div className="relative flex-1 min-h-0 flex flex-col">
+            <SessionRail ticketNo={selectedNo} />
+            <ChatStream ticketNo={selectedNo} />
+            <Composer ticketNo={selectedNo} />
+          </div>
+        )}
         {tab === "diff" && <DiffView ticketNo={selectedNo} />}
         {tab === "findings" && <FindingsView ticketNo={selectedNo} />}
-        {tab === "chat" && <Composer ticketNo={selectedNo} />}
       </main>
       <GatePanel ticketNo={selectedNo} />
       <TicketEditDialog />

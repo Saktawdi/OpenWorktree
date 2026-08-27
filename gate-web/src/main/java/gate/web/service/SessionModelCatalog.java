@@ -18,9 +18,12 @@ import java.util.Map;
  * ({@code GET /config/providers}) — the same source OpenChamber's composer model picker uses.
  *
  * <p>The response is reduced to the fields the picker renders:
- * {@code {"providers":[{"id","name","models":[{"id","name","variants":[key,...]}]}]}}.
+ * {@code {"providers":[{"id","name","models":[{"id","name","variants":[key,...],
+ * "limit":{"context":N,"output":M}?}]}]}}.
  * {@code variants} keys are OpenCode reasoning-effort selections ("high"/"medium"/"low"/…)
  * sent back verbatim as {@code variant} on {@code prompt_async}.
+ * {@code limit} carries the model's context/output token windows when exposed
+ * (consumed by the session context-usage ring); it is omitted when unknown.
  */
 public final class SessionModelCatalog {
 
@@ -117,6 +120,10 @@ public final class SessionModelCatalog {
                         // capabilities.input 布尔表，回退 attachment 布尔位与
                         // models.dev 原始 modalities —— 与 OpenChamber 的判断顺序一致。
                         model.put("image_input", imageInput(mm));
+                        Map<String, Object> limit = limitTokens(mm.get("limit"));
+                        if (limit != null) {
+                            model.put("limit", limit);
+                        }
                         modelsOut.add(model);
                     }
                 }
@@ -178,6 +185,38 @@ public final class SessionModelCatalog {
             return false;
         }
         return Boolean.TRUE.equals(rawModel.get("attachment"));
+    }
+
+    /**
+     * Extracts {@code {context, output}} token limits from one model's {@code limit} object
+     * (OpenCode 1.x shape). Returns null when the model exposes no usable limits; individual
+     * missing keys are omitted so the UI can fall back per-field.
+     */
+    private static Map<String, Object> limitTokens(Object limit) {
+        if (!(limit instanceof Map<?, ?> m)) {
+            return null;
+        }
+        Long context = positiveTokenCount(m.get("context"));
+        Long output = positiveTokenCount(m.get("output"));
+        if (context == null && output == null) {
+            return null;
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        if (context != null) {
+            out.put("context", context);
+        }
+        if (output != null) {
+            out.put("output", output);
+        }
+        return out;
+    }
+
+    private static Long positiveTokenCount(Object v) {
+        if (v instanceof Number n) {
+            long value = n.longValue();
+            return value > 0 ? value : null;
+        }
+        return null;
     }
 
     private static String str(Object v) {
