@@ -24,6 +24,7 @@ import { hhmmss } from "../lib/format";
 import { PermissionCard } from "./PermissionCard";
 import { QuestionCard } from "./QuestionCard";
 import { Markdown } from "./Markdown";
+import { CopyButton } from "./ui";
 
 const TOOL_ICONS: Record<ToolIconKind, typeof TerminalWindow> = {
   file: FileText,
@@ -130,9 +131,45 @@ function ToolRow({ tool }: { tool: ToolCallView }) {
   );
 }
 
+function AssistantFooter({ item }: { item: Extract<ChatItem, { kind: "assistant" }> }) {
+  // openchamber 式 footer：左 = 完成的 agent + 推理等级，右 = 复制按钮。
+  // 仅 hover 整条回复时显示（具名 group: group/msg + group-hover/msg）。
+  if (item.streaming) return null;
+
+  const rawVariant = (item.variant ?? "").trim();
+  const variant = rawVariant && !/^(default|none)$/i.test(rawVariant)
+    ? rawVariant[0].toLowerCase() + rawVariant.slice(1)
+    : null;
+  const agent = (item.agent ?? "").trim() || null;
+  if (!agent && !variant && !item.text) return null;
+
+  return (
+    <div className="mt-1.5 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[11px] text-faint opacity-0 pointer-events-none transition-opacity duration-150 group-hover/msg:opacity-100 group-hover/msg:pointer-events-auto">
+      {agent && (
+        <span className="flex items-center gap-1">
+          <Sparkle size={11} className="shrink-0" />
+          <span className="truncate">{agent}</span>
+        </span>
+      )}
+      {variant && (
+        <span className="flex items-center gap-1">
+          <Brain size={11} className="shrink-0" />
+          <span>{variant}</span>
+        </span>
+      )}
+      <span className="flex-1" />
+      {item.text && (
+        <span className="[&_.icon-btn]:w-6 [&_.icon-btn]:h-6 [&_.icon-btn]:rounded">
+          <CopyButton text={item.text} label="复制回复" />
+        </span>
+      )}
+    </div>
+  );
+}
+
 function AssistantMessage({ item }: { item: Extract<ChatItem, { kind: "assistant" }> }) {
   return (
-    <div className="animate-rise">
+    <div className="group/msg animate-rise">
       <div className="flex items-center gap-2 mb-1.5">
         <span className="w-6 h-6 rounded-md bg-accent-dim grid place-items-center text-accent">
           <Sparkle size={13} weight="fill" />
@@ -158,6 +195,7 @@ function AssistantMessage({ item }: { item: Extract<ChatItem, { kind: "assistant
             )}
           </div>
         )}
+        <AssistantFooter item={item} />
       </div>
     </div>
   );

@@ -521,11 +521,24 @@ export function finishAssistant(
   id: string,
   meta?: { agent?: string | null; variant?: string | null },
 ) {
+  // 未显式传 meta 时，从当前会话/worker 状态回填：
+  // - agent:    当前会话选中的 AgentConfig.name（openchamber 式底部标注）
+  // - variant:  session overrideVariant 或 sessionModelSel.variant（推理等级）
+  const st = s();
+  const sessionId = st.activeSessionId[no];
+  const sessList = st.sessions[no] ?? [];
+  const sess = sessList.find((x) => x.id === sessionId);
+  const cfgId = sess?.agentConfigId ?? st.agentId;
+  const cfg = st.agents.find((a) => a.id === cfgId) ?? st.agents.find((a) => a.id === st.agentId) ?? st.agents[0];
+  const fallbackAgent = cfg?.name ?? cfg?.model ?? null;
+  const fallbackVariant =
+    (sess?.overrideVariant ?? (sessionId ? st.sessionModelSel[sessionId]?.variant : null)) ?? null;
+
   patchAssistant(no, id, (a) => ({
     ...a,
     streaming: false,
-    agent: meta?.agent ?? a.agent,
-    variant: meta?.variant ?? a.variant,
+    agent: meta?.agent ?? a.agent ?? fallbackAgent,
+    variant: meta?.variant ?? a.variant ?? fallbackVariant,
     thinking: a.thinking ? { ...a.thinking, done: true } : a.thinking,
   }));
 }
