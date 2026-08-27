@@ -103,11 +103,27 @@ export type ToolStatus = "running" | "ok" | "error";
 export interface ToolCallView {
   id: string;
   name: string;
-  icon: "file" | "search" | "edit" | "terminal" | "test";
+  icon: "file" | "search" | "edit" | "terminal" | "test" | "todo";
   argsSummary: string;
   resultSummary?: string;
   resultDetail?: string;
   status: ToolStatus;
+}
+
+/** One entry of the agent's task list (todowrite 工具的 todos 数组元素). */
+export interface TodoItem {
+  id?: string;
+  content: string;
+  status: "pending" | "in_progress" | "completed" | "cancelled";
+  priority?: "high" | "medium" | "low";
+}
+
+/** 会话上下文占用（最新一轮的窗口占用，而非逐轮累加）。 */
+export interface ContextUsageState {
+  /** 最新已知的上下文 token 占用；0 表示尚无数据。 */
+  tokens: number;
+  /** 模型上下文窗口上限；null 表示模型未暴露（前端回退默认值）。 */
+  limit: number | null;
 }
 
 export interface ThinkingView {
@@ -181,6 +197,10 @@ export interface CatalogModel {
   name: string;
   /** OpenCode reasoning-effort keys ("high"/"medium"/"low"/…); empty when the model has none. */
   variants: string[];
+  /** 模型上下文窗口上限（tokens）；null 表示模型未暴露。 */
+  contextLimit: number | null;
+  /** 输出上限（tokens）；null 表示模型未暴露。 */
+  outputLimit: number | null;
 }
 
 export interface CatalogProvider {

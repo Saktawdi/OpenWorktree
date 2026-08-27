@@ -7,6 +7,7 @@ import {
   CircleNotch,
   FileCode,
   Info,
+  ListChecks,
   MagnifyingGlass,
   PencilSimple,
   Sparkle,
@@ -26,6 +27,7 @@ const TOOL_ICONS = {
   edit: PencilSimple,
   terminal: TerminalWindow,
   test: TerminalWindow,
+  todo: ListChecks,
 } as const;
 
 function ThinkingBlock({ thinking }: { thinking: NonNullable<Extract<ChatItem, { kind: "assistant" }>["thinking"]> }) {

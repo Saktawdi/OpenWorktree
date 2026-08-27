@@ -63,7 +63,8 @@ class SessionModelSwitchTest {
                     + "\"id\":\"prov-x\",\"name\":\"Provider X\","
                     + "\"models\":{"
                     + "\"model-x\":{\"id\":\"model-x\",\"name\":\"Model X\","
-                    + "\"variants\":{\"high\":{},\"low\":{}}},"
+                    + "\"variants\":{\"high\":{},\"low\":{}},"
+                    + "\"limit\":{\"context\":200000,\"output\":8192}},"
                     + "\"model-y\":{\"id\":\"model-y\",\"name\":\"Model Y\",\"variants\":{}}"
                     + "}}]}").getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().set("Content-Type", "application/json");
@@ -146,6 +147,8 @@ class SessionModelSwitchTest {
         assertTrue(res.body().contains("\"id\":\"prov-x\""), res.body());
         // Variants are reduced to their sorted keys.
         assertTrue(res.body().contains("\"variants\":[\"high\",\"low\"]"), res.body());
+        // Token windows ride along for the context-usage ring.
+        assertTrue(res.body().contains("\"limit\":{\"context\":200000,\"output\":8192}"), res.body());
         // Models without variants render an empty list.
         assertTrue(res.body().contains("\"id\":\"model-y\""), res.body());
     }
@@ -175,6 +178,25 @@ class SessionModelSwitchTest {
                 ((java.util.List<Map<String, Object>>) provider.get("models")).get(0);
         assertEquals("m1", model.get("id"));
         assertTrue(((java.util.List<?>) model.get("variants")).isEmpty());
+        assertNull(model.get("limit"), "no limit key on the model -> no limit in the reduction");
+    }
+
+    @Test
+    void catalog_reducer_keeps_positive_token_limits_only() {
+        Map<String, Object> out = SessionModelCatalog.reduce(
+                "{\"providers\":[{\"id\":\"p1\",\"models\":{"
+                        + "\"m1\":{\"id\":\"m1\",\"limit\":{\"context\":128000}},"
+                        + "\"m2\":{\"id\":\"m2\",\"limit\":{\"context\":0,\"output\":-5}},"
+                        + "\"m3\":{\"id\":\"m3\",\"limit\":\"bogus\"}}}]}");
+        @SuppressWarnings("unchecked")
+        java.util.List<Map<String, Object>> models =
+                (java.util.List<Map<String, Object>>) ((java.util.List<Map<String, Object>>) out.get("providers")).get(0).get("models");
+        assertNull(models.get(1).get("limit"), "non-positive limits are dropped");
+        assertNull(models.get(2).get("limit"), "odd limit shapes are dropped");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> m1Limit = (Map<String, Object>) models.get(0).get("limit");
+        assertEquals(128000L, m1Limit.get("context"));
+        assertNull(m1Limit.get("output"), "missing output key stays omitted");
     }
 
     /** Inserts an opencode session row directly so no real CLI is needed (creates FK parents). */
