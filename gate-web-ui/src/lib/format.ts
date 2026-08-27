@@ -73,6 +73,19 @@ export const SEVERITY_LABEL: Record<string, string> = {
   INFO: "提示",
 };
 
+export const VARIANT_LABELS: Record<string, string> = {
+  high: "高",
+  medium: "中",
+  low: "低",
+  max: "最高",
+  minimal: "极简",
+  none: "关闭",
+};
+
+export function variantLabel(v: string): string {
+  return VARIANT_LABELS[v.toLowerCase()] ?? v;
+}
+
 export const PRIORITY_COLOR: Record<Priority, string> = {
   P0: "text-danger border-danger/40 bg-danger/10",
   P1: "text-warn border-warn/40 bg-warn/10",
