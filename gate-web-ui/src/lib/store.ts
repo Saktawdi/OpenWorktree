@@ -15,6 +15,7 @@ import type {
   PublishOutcome,
   PermissionRequestView,
   QuestionRequestView,
+  RestartRecord,
   SessionModelSel,
   Snapshot,
   TaskProgress,
@@ -108,6 +109,12 @@ export interface AppState {
   runningAgents: { count: number; sessions: Array<{ session_id: string; title: string | null; ticket_no: string | null; cli: string | null }> };
   /** 工单列表按状态筛选：勾选可见的状态集合。 */
   visibleStages: Stage[];
+  /** 重启历史（T-117）：每工单的重启记录列表 */
+  restarts: Record<string, RestartRecord[]>;
+  /** 重启理由弹窗目标工单（null = 关闭） */
+  restartDialogFor: string | null;
+  /** 重启历史弹窗目标工单（null = 关闭） */
+  restartsViewFor: string | null;
 }
 
 /** 读取本地持久化的状态筛选；非法值回退为全部可见。 */
@@ -172,6 +179,9 @@ export const appStore = create<AppState>(() => ({
   liveTurns: {},
   runningAgents: { count: 0, sessions: [] },
   visibleStages: loadVisibleStages(),
+  restarts: {},
+  restartDialogFor: null,
+  restartsViewFor: null,
 }));
 
 const s = () => appStore.getState();
@@ -249,6 +259,9 @@ export function seedDemo(force = false) {
     gitViews: { "acme-checkout": GIT_ACME, "nexus-docs": GIT_NEXUS },
     treeViews: { "acme-checkout": TREE_ACME, "nexus-docs": TREE_NEXUS },
     editingTicketNo: null,
+    restarts: {},
+    restartDialogFor: null,
+    restartsViewFor: null,
   agentId:
     (typeof window !== "undefined" && localStorage.getItem("gate-agent-id")) ||
     DEMO_AGENTS[0].id,
@@ -284,6 +297,8 @@ function tryRestore(): boolean {
       // 恢复时没有 EventSource，生成中的回合无法续流：丢弃 stash 并定格视图里的流式标记。
       liveTurns: {},
       runningAgents: { count: 0, sessions: [] },
+      restartDialogFor: null,
+      restartsViewFor: null,
     };
     // 旧版本快照没有 engine 字段：demo 模式视为已配置，live 交给 loadEngineConfig 回填。
     if (!clean.engine) {
@@ -872,6 +887,16 @@ export function removeAgentConfig(id: string) {
 
 export function openTicketEditor(no: string | null) {
   patch({ editingTicketNo: no });
+}
+
+/** 重启理由弹窗（T-117）：no 为 null 时关闭。 */
+export function openRestartDialog(no: string | null) {
+  patch({ restartDialogFor: no });
+}
+
+/** 重启历史弹窗（T-117）：no 为 null 时关闭。 */
+export function openRestartsView(no: string | null) {
+  patch({ restartsViewFor: no });
 }
 
 /** Opens the new-ticket form from anywhere (empty workbench, kanban toolbar). */

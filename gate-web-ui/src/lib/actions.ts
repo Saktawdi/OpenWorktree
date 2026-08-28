@@ -301,6 +301,15 @@ export const actions = {
     pushSystemMessage(no, "工单已开始 · Agent 可以在沙箱内编码", "info");
     return Promise.resolve(true);
   },
+  /** 重启终态工单（T-117）：理由必填，轮次自动加一，进入 IN_PROGRESS。 */
+  restartTicket(no: string, reason: string) {
+    if (appStore.getState().mode === "live") {
+      return live.restartTicketLive(no, reason);
+    }
+    setStage(no, "IN_PROGRESS");
+    pushSystemMessage(no, `工单已重启 · 本轮理由：${reason}`, "info");
+    return Promise.resolve(true);
+  },
   createSession(no: string) {
     if (appStore.getState().creatingSession[no]) return;
     setCreatingSession(no, true);

@@ -7,10 +7,14 @@ import gate.domain.git.RepoRef;
 import gate.domain.project.Project;
 import gate.domain.ticket.Ticket;
 import gate.domain.ticket.TicketStage;
+import gate.domain.audit.AuditEvent;
 import gate.ports.store.AgentConfigRepository;
 import gate.ports.infra.Clock;
+import gate.ports.store.AuditLog;
+import gate.ports.store.PresubmitRepository;
 import gate.ports.store.ProjectRepository;
 import gate.ports.store.TicketRepository;
+import gate.ports.store.TicketRestartRepository;
 import gate.ports.git.TopologyInitializer;
 import gate.web.util.Json;
 import io.javalin.Javalin;
@@ -30,6 +34,9 @@ import java.util.Set;
  * Owns /api/tickets and /api/projects/{projectId}/tickets routes.
  */
 public final class TicketController implements WebController {
+    /** Upper bound for one restart reason (T-117) — long enough for prose, short enough for prompts. */
+    public static final int MAX_RESTART_REASON_LENGTH = 2000;
+
 
     private final TicketRepository tickets;
     private final ProjectRepository projects;
@@ -37,16 +44,24 @@ public final class TicketController implements WebController {
     private final TopologyInitializer topologyInitializer;
     private final GateConfig config;
     private final Clock clock;
+    private final PresubmitRepository presubmits;
+    private final TicketRestartRepository restarts;
+    private final AuditLog auditLog;
 
     public TicketController(TicketRepository tickets, ProjectRepository projects,
                             AgentConfigRepository agentConfigs, TopologyInitializer topologyInitializer,
-                            GateConfig config, Clock clock) {
+                            GateConfig config, Clock clock,
+                            PresubmitRepository presubmits, TicketRestartRepository restarts,
+                            AuditLog auditLog) {
         this.tickets = tickets;
         this.projects = projects;
         this.agentConfigs = agentConfigs;
         this.topologyInitializer = topologyInitializer;
         this.config = config;
         this.clock = clock;
+        this.presubmits = presubmits;
+        this.restarts = restarts;
+        this.auditLog = auditLog;
     }
 
     @Override
@@ -57,6 +72,7 @@ public final class TicketController implements WebController {
         app.get("/api/tickets/{ticketNo}", this::getGlobalTicket);
         app.patch("/api/tickets/{ticketNo}", this::updateGlobalTicket);
         app.put("/api/tickets/{ticketNo}", this::updateGlobalTicket);
+        app.get("/api/tickets/{ticketNo}/restarts", this::getGlobalTicketRestarts);
 
         // Project-scoped tickets
         app.get("/api/projects/{projectId}/tickets", this::listProjectTickets);
@@ -81,7 +97,7 @@ public final class TicketController implements WebController {
         Ticket t = tickets.find(ticketNo).orElseThrow(() -> new GateException(
                 GateErrorCode.USAGE, "no such ticket: " + ticketNo));
         ctx.status(HttpStatus.OK);
-        ctx.json(ticketJson(t, projectNameIndex()));
+        ctx.json(ticketJson(t, projectNameIndex(), restartCount(ticketNo)));
     }
 
     public void updateGlobalTicket(Context ctx) {
@@ -109,7 +125,7 @@ public final class TicketController implements WebController {
         String ticketNo = ctx.pathParam("ticketNo");
         Ticket t = ticketInProject(projectId, ticketNo);
         ctx.status(HttpStatus.OK);
-        ctx.json(ticketJson(t, projectNameIndex()));
+        ctx.json(ticketJson(t, projectNameIndex(), restartCount(ticketNo)));
     }
 
     public void updateProjectTicket(Context ctx) {
@@ -130,7 +146,7 @@ public final class TicketController implements WebController {
         List<Map<String, Object>> out = new ArrayList<>();
         List<Ticket> rows = projectId == null ? tickets.findAll() : tickets.findAllByProject(projectId);
         for (Ticket t : rows) {
-            out.add(ticketJson(t, projectNames));
+            out.add(ticketJson(t, projectNames, restartCount(t.ticketNo())));
         }
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("tickets", out);
@@ -262,7 +278,25 @@ public final class TicketController implements WebController {
         if (hasStage) {
             TicketStage next = parseStage(str(req, "stage"));
             ensureQueueTransition(t.stage(), next);
+            // T-117: restarting a terminal (DONE/CANCELLED) ticket is a first-class transition
+            // that must carry an operator-supplied reason — no silent revives.
+            boolean restart = next == TicketStage.IN_PROGRESS && t.stage().isTerminal();
+            String restartReason = null;
+            if (restart) {
+                restartReason = optionalText(req, "restart_reason");
+                if (restartReason == null) {
+                    throw new GateException(GateErrorCode.USAGE,
+                            "restarting a " + t.stage() + " ticket requires a non-blank restart_reason");
+                }
+                if (restartReason.length() > MAX_RESTART_REASON_LENGTH) {
+                    throw new GateException(GateErrorCode.USAGE,
+                            "restart_reason longer than " + MAX_RESTART_REASON_LENGTH + " chars");
+                }
+            }
             tickets.updateStage(ticketNo, next, clock.now());
+            if (restart) {
+                recordRestart(t, restartReason);
+            }
         }
         if (hasEditable) {
             tickets.updateEditable(ticketNo, title, priority, description, note, labels, clock.now());
@@ -273,7 +307,7 @@ public final class TicketController implements WebController {
         return ticketJson(
                 tickets.find(ticketNo).orElseThrow(() -> new GateException(
                         GateErrorCode.USAGE, "no such ticket: " + ticketNo)),
-                projectNameIndex());
+                projectNameIndex(), restartCount(ticketNo));
     }
 
     private Ticket ticketInProject(String projectId, String ticketNo) {
@@ -317,6 +351,54 @@ public final class TicketController implements WebController {
                     "target_branch must match [A-Za-z0-9._-]+ (single segment, no slash): " + raw);
         }
         return "refs/heads/" + name;
+    }
+
+    /** Restart history size for the ticket JSON badge (0 when restart storage is absent). */
+    private long restartCount(String ticketNo) {
+        return restarts == null ? 0 : restarts.count(ticketNo);
+    }
+
+    /**
+     * Records one restart of a terminal ticket (T-117): history row + audit event. The {@code
+     * round} stored on the row is the presubmit round this restart opens (nextRound at restart
+     * time); presubmit keeps allocating MAX(review_round)+1, so the numbering lines up.
+     */
+    private void recordRestart(Ticket before, String reason) {
+        if (restarts == null) {
+            throw new GateException(GateErrorCode.USAGE,
+                    "restart is not supported by this repository configuration");
+        }
+        int round = presubmits == null ? restarts.findByTicket(before.ticketNo()).size() + 1
+                : presubmits.nextRound(before.ticketNo());
+        restarts.insert(new TicketRestartRepository.RestartRow(
+                before.ticketNo(), round, before.stage(), reason, clock.now()));
+        if (auditLog != null) {
+            auditLog.append(AuditEvent.of(clock.now(), "ticket.restart", before.ticketNo(), round, Map.of(
+                    "from_stage", before.stage().name(),
+                    "reason", reason)));
+        }
+    }
+
+    /** GET /api/tickets/{ticketNo}/restarts — the restart history, oldest first (T-117). */
+    public void getGlobalTicketRestarts(Context ctx) {
+        String ticketNo = ctx.pathParam("ticketNo");
+        tickets.find(ticketNo).orElseThrow(() -> new GateException(
+                GateErrorCode.USAGE, "no such ticket: " + ticketNo));
+        List<Map<String, Object>> out = new ArrayList<>();
+        if (restarts != null) {
+            for (TicketRestartRepository.RestartRow r : restarts.findByTicket(ticketNo)) {
+                Map<String, Object> m = new LinkedHashMap<>();
+                m.put("round", r.round());
+                m.put("from_stage", r.fromStage().name());
+                m.put("reason", r.reason());
+                m.put("created_at", r.createdAt() == null ? null : r.createdAt().toString());
+                out.add(m);
+            }
+        }
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("restarts", out);
+        ctx.status(HttpStatus.OK);
+        ctx.json(body);
     }
 
     public static String parsePriority(Map<String, Object> req) {
@@ -420,6 +502,11 @@ public final class TicketController implements WebController {
     }
 
     private Map<String, Object> ticketJson(Ticket t, Map<String, String> projectNames) {
+        return ticketJson(t, projectNames, 0);
+    }
+
+    private Map<String, Object> ticketJson(Ticket t, Map<String, String> projectNames,
+                                                 long restartCount) {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("ticket_no", t.ticketNo());
         m.put("title", t.title());
@@ -437,6 +524,7 @@ public final class TicketController implements WebController {
         m.put("description", t.description());
         m.put("note", t.note());
         m.put("labels", t.labels());
+        m.put("restart_count", restartCount);
         m.put("created_at", t.createdAt() == null ? null : t.createdAt().toString());
         m.put("updated_at", t.updatedAt() == null ? null : t.updatedAt().toString());
         return m;

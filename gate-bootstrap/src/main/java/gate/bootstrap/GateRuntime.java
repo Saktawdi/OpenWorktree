@@ -30,6 +30,7 @@ import gate.adapters.store.JdbcPublishIntentRepository;
 import gate.adapters.store.JdbcReviewResultRepository;
 import gate.adapters.store.JdbcSessionRepository;
 import gate.adapters.store.JdbcTicketRepository;
+import gate.adapters.store.JdbcTicketRestartRepository;
 import gate.adapters.store.SpringDbTransactionRunner;
 import gate.adapters.store.SqliteDataSourceFactory;
 import gate.adapters.workspace.FsEphemeralWorkspaceManager;
@@ -107,6 +108,8 @@ public final class GateRuntime {
     private final gate.ports.store.SessionRepository sessionRepository;
     private final gate.ports.store.ProjectRepository projectRepository;
     private final WorkspaceSyncer workspaceSyncer;
+    private final AuditLog auditLog;
+    private final gate.ports.store.TicketRestartRepository ticketRestartRepository;
 
     public GateRuntime(GateConfig config, String gitExecutable) {
         this.config = config;
@@ -125,7 +128,7 @@ public final class GateRuntime {
         this.preflightChecker = new DefaultPreflightChecker(config, git, hookInstaller, processRunner);
 
         this.blobStore = new FsBlobStore(config.blobRoot());
-        AuditLog auditLog = new HashChainAuditLog(config.auditPath());
+        this.auditLog = new HashChainAuditLog(config.auditPath());
         LockManager lockManager = new FileChannelLockManager(config.locksDir());
 
         this.dataSource = SqliteDataSourceFactory.create(config.dbPath());
@@ -136,6 +139,7 @@ public final class GateRuntime {
 
         this.ticketRepository = new JdbcTicketRepository(jdbc);
         this.presubmitRepository = new JdbcPresubmitRepository(jdbc);
+        this.ticketRestartRepository = new JdbcTicketRestartRepository(jdbc);
         this.reviewResultRepository = new JdbcReviewResultRepository(jdbc);
         this.publishIntentRepository = new JdbcPublishIntentRepository(jdbc, config.authRepo());
         this.providerRepository = new JdbcProviderRepository(jdbc);
@@ -180,6 +184,8 @@ public final class GateRuntime {
     public ProviderRepository providerRepository() { return providerRepository; }
     public TicketRepository ticketRepository() { return ticketRepository; }
     public PresubmitRepository presubmitRepository() { return presubmitRepository; }
+    public AuditLog auditLog() { return auditLog; }
+    public gate.ports.store.TicketRestartRepository ticketRestartRepository() { return ticketRestartRepository; }
     public ReviewResultRepository reviewResultRepository() { return reviewResultRepository; }
     public PublishIntentRepository publishIntentRepository() { return publishIntentRepository; }
     public BlobStore blobStore() { return blobStore; }

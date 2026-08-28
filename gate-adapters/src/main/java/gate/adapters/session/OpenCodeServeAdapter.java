@@ -27,6 +27,7 @@ import gate.ports.infra.Clock;
 import gate.ports.infra.ProcessRunner;
 import gate.ports.store.ProjectRepository;
 import gate.ports.store.SessionRepository;
+import gate.ports.store.TicketRestartRepository;
 import gate.ports.task.TaskRegistry;
 import gate.ports.infra.TicketLockManager;
 import gate.ports.store.TicketRepository;
@@ -96,6 +97,7 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
     private final SessionRepository sessions;
     private final TicketRepository tickets;
     private final ProjectRepository projects;
+    private final TicketRestartRepository restarts;
     private final TaskRegistry tasks;
     private final TicketLockManager ticketLocks;
     private final Clock clock;
@@ -179,11 +181,10 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                                  int startTimeoutSeconds,
                                  AdapterLog log,
                                  ServePidRegistry pidRegistry) {
-        this(processRunner, agentConfigs, sessions, tickets, null, tasks, ticketLocks, clock,
-                ports, opencodeExecutable, startTimeoutSeconds, log, pidRegistry, null);
+        this(processRunner, agentConfigs, sessions, tickets, null, null, tasks, ticketLocks, clock,
+                ports, opencodeExecutable, startTimeoutSeconds, log, pidRegistry, null, null);
     }
 
-    /** Full constructor: {@code projects} is optional (null skips the 项目 section of the injected context). */
     public OpenCodeServeAdapter(ProcessRunner processRunner,
                                  AgentConfigRepository agentConfigs,
                                  SessionRepository sessions,
@@ -198,7 +199,7 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                                  AdapterLog log,
                                  ServePidRegistry pidRegistry,
                                  Path gateToml) {
-        this(processRunner, agentConfigs, sessions, tickets, projects, tasks, ticketLocks, clock,
+        this(processRunner, agentConfigs, sessions, tickets, projects, null, tasks, ticketLocks, clock,
                 ports, opencodeExecutable, startTimeoutSeconds, log, pidRegistry, gateToml, null);
     }
 
@@ -211,6 +212,7 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                                  SessionRepository sessions,
                                  TicketRepository tickets,
                                  ProjectRepository projects,
+                                 TicketRestartRepository restarts,
                                  TaskRegistry tasks,
                                  TicketLockManager ticketLocks,
                                  Clock clock,
@@ -226,6 +228,7 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
         this.sessions = sessions;
         this.tickets = tickets;
         this.projects = projects;
+        this.restarts = restarts;
         this.tasks = tasks;
         this.ticketLocks = ticketLocks;
         this.clock = clock;
@@ -889,8 +892,10 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                 if (projects != null && ctxTicket != null && ctxTicket.projectId() != null) {
                     project = projects.find(ctxTicket.projectId()).orElse(null);
                 }
+                TicketRestartRepository.RestartRow latestRestart =
+                        restarts == null ? null : restarts.latest(latest.ticketNo()).orElse(null);
                 String context = AgentContextPrompt.compose(config, latest.ticketNo(),
-                        ctxTicket == null ? null : ctxTicket.targetRef(), ctxTicket, project);
+                        ctxTicket == null ? null : ctxTicket.targetRef(), ctxTicket, project, latestRestart);
                 if (!context.isBlank()) {
                     outgoing = context + "\n\n---\n\n" + message;
                 }
