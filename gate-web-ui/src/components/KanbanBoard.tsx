@@ -20,9 +20,10 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import { CaretDown, Funnel, MagnifyingGlass, X } from "@phosphor-icons/react";
 import { motion } from "motion/react";
 import { actions } from "../lib/actions";
-import { relativeTime } from "../lib/format";
+import { relativeTime, STAGE_LABEL } from "../lib/format";
 import { appStore, openTicketCreator, setTicketOrder, setView, showToast, useApp } from "../lib/store";
 import type { Stage, Ticket } from "../lib/types";
 import { PriorityChip, StageDot } from "./ui";
@@ -35,6 +36,21 @@ const LANES: Array<{ key: Stage; title: string }> = [
   { key: "READY_TO_PUBLISH", title: "可发布" },
   { key: "DONE", title: "已完成" },
 ];
+
+const OTHER_STAGES: Stage[] = ["NEEDS_HUMAN", "CANCELLED"];
+const ALL_STAGES: Stage[] = [...LANES.map((lane) => lane.key), "REJECTED", ...OTHER_STAGES];
+type StatusFilter = "ALL" | "OTHER" | Stage;
+type PriorityFilter = "ALL" | Ticket["priority"];
+
+function groupByStage(tickets: Ticket[], orderMap: Record<string, number>): Map<Stage, Ticket[]> {
+  const map = new Map<Stage, Ticket[]>();
+  for (const stage of ALL_STAGES) map.set(stage, []);
+  for (const ticket of tickets) map.get(ticket.stage)?.push(ticket);
+  const cmp = (a: Ticket, b: Ticket) =>
+    (orderMap[a.ticketNo] ?? 0) - (orderMap[b.ticketNo] ?? 0);
+  for (const stage of ALL_STAGES) map.get(stage)!.sort(cmp);
+  return map;
+}
 
 function CardFace({
   ticket,
@@ -204,9 +220,114 @@ function Lane({
   );
 }
 
+function OtherStatusGroup({
+  stage,
+  tickets,
+  shakenId,
+  agentNameOf,
+}: {
+  stage: Stage;
+  tickets: Ticket[];
+  shakenId: string | null;
+  agentNameOf: (t: Ticket) => string | undefined;
+}) {
+  const { setNodeRef, isOver } = useDroppable({ id: `lane:${stage}` });
+
+  return (
+    <div
+      ref={setNodeRef}
+      className={`rounded-xl border border-edge/70 bg-panel/60 p-2 transition-colors ${
+        isOver ? "border-accent/40 bg-accent/[0.05]" : ""
+      }`}
+    >
+      <div className="flex items-center gap-2 px-1 pb-2 text-[11.5px]">
+        <StageDot stage={stage} />
+        <span className="text-dim">{STAGE_LABEL[stage]}</span>
+        <span className="font-mono text-[10.5px] text-faint">{tickets.length}</span>
+      </div>
+      <SortableContext items={tickets.map((t) => t.ticketNo)} strategy={verticalListSortingStrategy}>
+        <div className="space-y-2">
+          {tickets.map((ticket) => (
+            <SortableCard
+              key={ticket.ticketNo}
+              ticket={ticket}
+              shaken={shakenId === ticket.ticketNo}
+              agentName={agentNameOf(ticket)}
+            />
+          ))}
+        </div>
+      </SortableContext>
+      {tickets.length === 0 && (
+        <div
+          className={`rounded-lg border border-dashed h-14 grid place-items-center text-[11px] ${
+            isOver ? "border-accent/40 text-accent" : "border-edge text-faint"
+          }`}
+        >
+          {isOver ? "松手流转到此处" : "暂无工单"}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function OtherStatusesLane({
+  ticketsByStage,
+  expanded,
+  onToggle,
+  shakenId,
+  agentNameOf,
+}: {
+  ticketsByStage: Map<Stage, Ticket[]>;
+  expanded: boolean;
+  onToggle: () => void;
+  shakenId: string | null;
+  agentNameOf: (t: Ticket) => string | undefined;
+}) {
+  const count = OTHER_STAGES.reduce((sum, stage) => sum + (ticketsByStage.get(stage)?.length ?? 0), 0);
+
+  return (
+    <section
+      className={`w-[276px] shrink-0 flex flex-col rounded-2xl border border-edge/70 bg-sunken/70 overflow-hidden ${
+        expanded ? "h-full" : "self-start"
+      }`}
+    >
+      <button
+        type="button"
+        className="flex items-center gap-2 px-3 pt-3 pb-2 text-left cursor-pointer hover:bg-raised/60 transition-colors"
+        aria-expanded={expanded}
+        onClick={onToggle}
+      >
+        <StageDot stage="NEEDS_HUMAN" />
+        <span className="text-[12.5px] font-medium">其他状态</span>
+        <span className="font-mono text-[11px] text-faint">{count}</span>
+        <span className="flex-1" />
+        <CaretDown size={13} className={`text-faint transition-transform ${expanded ? "rotate-180" : ""}`} />
+      </button>
+      {expanded && (
+        <div className="flex-1 min-h-[120px] space-y-2 overflow-y-auto px-2 pb-2">
+          {OTHER_STAGES.map((stage) => (
+            <OtherStatusGroup
+              key={stage}
+              stage={stage}
+              tickets={ticketsByStage.get(stage) ?? []}
+              shakenId={shakenId}
+              agentNameOf={agentNameOf}
+            />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function resolveTargetStage(overId: string, tickets: Ticket[]): Stage | null {
   if (overId.startsWith("lane:")) return overId.slice(5) as Stage;
-  return tickets.find((t) => t.ticketNo === overId)?.stage ?? null;
+  const ticket = tickets.find((t) => t.ticketNo === overId);
+  return ticket ? displayedStage(ticket) : null;
+}
+
+function displayedStage(ticket: Ticket): Stage {
+  return ticket.stage === "REJECTED" ? "IN_PROGRESS" : ticket.stage;
 }
 
 export function KanbanBoard() {
@@ -216,6 +337,10 @@ export function KanbanBoard() {
   const orderMap = useApp((s) => s.order);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [shakenId, setShakenId] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
+  const [priorityFilter, setPriorityFilter] = useState<PriorityFilter>("ALL");
+  const [otherExpanded, setOtherExpanded] = useState(false);
 
   const agentNameOf = (t: Ticket) =>
     agents.find((a) => a.id === t.agentConfigId)?.name;
@@ -225,22 +350,32 @@ export function KanbanBoard() {
     [ticketsAll, activeProjectId],
   );
 
+  const filteredTickets = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return tickets.filter((ticket) => {
+      const matchesQuery =
+        !q ||
+        [ticket.ticketNo, ticket.title, ticket.description ?? "", ...ticket.labels].some((value) =>
+          value.toLowerCase().includes(q),
+        );
+      const matchesStatus =
+        statusFilter === "ALL"
+          ? true
+          : statusFilter === "OTHER"
+            ? OTHER_STAGES.includes(ticket.stage)
+            : ticket.stage === statusFilter;
+      const matchesPriority = priorityFilter === "ALL" || ticket.priority === priorityFilter;
+      return matchesQuery && matchesStatus && matchesPriority;
+    });
+  }, [tickets, query, statusFilter, priorityFilter]);
+
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
-  const byLane = useMemo(() => {
-    const cmp = (a: Ticket, b: Ticket) =>
-      (orderMap[a.ticketNo] ?? 0) - (orderMap[b.ticketNo] ?? 0);
-    const map = new Map<Stage, Ticket[]>();
-    for (const lane of LANES) map.set(lane.key, []);
-    for (const t of tickets) {
-      map.get(t.stage)?.push(t);
-    }
-    for (const lane of LANES) map.get(lane.key)!.sort(cmp);
-    return map;
-  }, [tickets, orderMap]);
+  const allByStage = useMemo(() => groupByStage(tickets, orderMap), [tickets, orderMap]);
+  const byLane = useMemo(() => groupByStage(filteredTickets, orderMap), [filteredTickets, orderMap]);
 
   const bounce = (no: string, reason: string) => {
     showToast(reason);
@@ -249,12 +384,19 @@ export function KanbanBoard() {
   };
 
   const reorderInLane = (stage: Stage, activeNo: string, overNo: string) => {
-    const st = appStore.getState();
-    const lane = (byLane.get(stage) ?? []).map((t) => t.ticketNo);
-    const oldIdx = lane.indexOf(activeNo);
-    const newIdx = lane.indexOf(overNo);
+    const laneTickets = (source: Map<Stage, Ticket[]>) =>
+      stage === "IN_PROGRESS"
+        ? [...(source.get("REJECTED") ?? []), ...(source.get("IN_PROGRESS") ?? [])]
+        : source.get(stage) ?? [];
+    const lane = laneTickets(allByStage).map((t) => t.ticketNo);
+    const visibleLane = laneTickets(byLane).map((t) => t.ticketNo);
+    const oldIdx = visibleLane.indexOf(activeNo);
+    const newIdx = visibleLane.indexOf(overNo);
     if (oldIdx < 0 || newIdx < 0 || oldIdx === newIdx) return;
-    const next = arrayMove(lane, oldIdx, newIdx);
+    const nextVisible = arrayMove(visibleLane, oldIdx, newIdx);
+    const visible = new Set(visibleLane);
+    let visibleIndex = 0;
+    const next = lane.map((no) => (visible.has(no) ? nextVisible[visibleIndex++] : no));
     next.forEach((no, i) => setTicketOrder(no, i));
   };
 
@@ -322,11 +464,12 @@ export function KanbanBoard() {
     const activeTicket = tickets.find((t) => t.ticketNo === activeNo);
     if (!activeTicket) return;
     const from = activeTicket.stage;
+    const displayedFrom = displayedStage(activeTicket);
     const to = resolveTargetStage(String(over.id), tickets);
     if (!to) return;
 
-    if (to === from) {
-      reorderInLane(from, activeNo, String(over.id));
+    if (to === displayedFrom) {
+      reorderInLane(displayedFrom, activeNo, String(over.id));
       return;
     }
     const maxOrder = Math.max(-1, ...Object.values(appStore.getState().order));
@@ -335,23 +478,116 @@ export function KanbanBoard() {
   };
 
   const activeTicket = activeId ? tickets.find((t) => t.ticketNo === activeId) : null;
+  const hasFilters = Boolean(query.trim()) || statusFilter !== "ALL" || priorityFilter !== "ALL";
+  const otherLaneVisible =
+    otherExpanded ||
+    statusFilter === "OTHER" ||
+    statusFilter === "NEEDS_HUMAN" ||
+    statusFilter === "CANCELLED" ||
+    (hasFilters && filteredTickets.some((ticket) => OTHER_STAGES.includes(ticket.stage)));
+  const clearFilters = () => {
+    setQuery("");
+    setStatusFilter("ALL");
+    setPriorityFilter("ALL");
+  };
 
   return (
     <div className="flex-1 min-h-0 flex flex-col">
-      <div className="flex items-center gap-3 px-4 pt-3 pb-2 shrink-0">
-        <span className="kicker">看板</span>
-        <span className="font-mono text-[11px] text-faint">{tickets.length} 个工单</span>
-        <span className="flex-1" />
-        <span className="text-[11.5px] text-faint">拖拽卡片即可流转 · 门禁泳道会执行对应操作</span>
-        <button
-          className="btn btn-sm btn-primary"
-          onClick={() => {
-            setView("workbench");
-            openTicketCreator();
-          }}
-        >
-          新建工单
-        </button>
+      <div className="shrink-0">
+        <div className="flex items-center gap-3 px-4 pt-3 pb-2">
+          <span className="kicker">看板</span>
+          <span className="font-mono text-[11px] text-faint">
+            {hasFilters ? `${filteredTickets.length} / ${tickets.length}` : tickets.length} 个工单
+          </span>
+          <span className="flex-1" />
+          <span className="hidden lg:inline text-[11.5px] text-faint">
+            拖拽卡片即可流转 · 门禁泳道会执行对应操作
+          </span>
+          <button
+            className="btn btn-sm btn-primary"
+            onClick={() => {
+              setView("workbench");
+              openTicketCreator();
+            }}
+          >
+            新建工单
+          </button>
+        </div>
+        <div className="flex flex-wrap items-center gap-2 px-4 pb-3">
+          <div className="relative w-[min(260px,100%)]">
+            <MagnifyingGlass
+              size={14}
+              className="absolute left-2.5 top-1/2 -translate-y-1/2 text-faint"
+            />
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="搜索工单、标题或标签"
+              aria-label="搜索工单、标题或标签"
+              className="w-full h-8 rounded-lg border border-edge bg-sunken pl-8 pr-8 text-[12.5px] placeholder:text-faint focus:border-accent/50 focus:outline-none transition-colors"
+            />
+            {query && (
+              <button
+                type="button"
+                className="icon-btn absolute right-0.5 top-0.5"
+                onClick={() => setQuery("")}
+                title="清除搜索"
+                aria-label="清除搜索"
+              >
+                <X size={13} />
+              </button>
+            )}
+          </div>
+          <label className="inline-flex items-center gap-1.5 h-8 rounded-lg border border-edge bg-sunken px-2 text-[12px] text-dim">
+            <Funnel size={13} className="text-faint" />
+            <span className="sr-only">状态筛选</span>
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
+              className="bg-transparent text-ink outline-none cursor-pointer"
+              aria-label="按状态筛选"
+            >
+              <option value="ALL">全部状态</option>
+              <optgroup label="默认甬道">
+                {LANES.map((lane) => (
+                  <option key={lane.key} value={lane.key}>
+                    {lane.title}
+                  </option>
+                ))}
+              </optgroup>
+              <optgroup label="其他状态">
+                <option value="OTHER">其他状态</option>
+                {OTHER_STAGES.map((stage) => (
+                  <option key={stage} value={stage}>
+                    {STAGE_LABEL[stage]}
+                  </option>
+                ))}
+              </optgroup>
+              <option value="REJECTED">已驳回</option>
+            </select>
+          </label>
+          <label className="inline-flex items-center h-8 rounded-lg border border-edge bg-sunken px-2 text-[12px] text-dim">
+            <span className="sr-only">优先级筛选</span>
+            <select
+              value={priorityFilter}
+              onChange={(e) => setPriorityFilter(e.target.value as PriorityFilter)}
+              className="bg-transparent text-ink outline-none cursor-pointer"
+              aria-label="按优先级筛选"
+            >
+              <option value="ALL">全部优先级</option>
+              <option value="P0">P0 · 最高</option>
+              <option value="P1">P1 · 高</option>
+              <option value="P2">P2 · 中</option>
+              <option value="P3">P3 · 低</option>
+            </select>
+          </label>
+          {hasFilters && (
+            <button type="button" className="btn btn-sm btn-ghost text-faint" onClick={clearFilters}>
+              <X size={12} />
+              清除筛选
+            </button>
+          )}
+        </div>
       </div>
       <DndContext
         sensors={sensors}
@@ -365,18 +601,25 @@ export function KanbanBoard() {
         }}
       >
         <div className="flex-1 min-h-0 overflow-x-auto overflow-y-hidden px-4 pb-4">
-          <div className="h-full flex gap-3 w-full">
+          <div className="h-full flex gap-3 min-w-max w-full">
             {LANES.map(({ key, title }) => (
               <Lane
                 key={key}
                 stage={key}
                 title={title}
                 tickets={byLane.get(key) ?? []}
-                rejectedTickets={key === "IN_PROGRESS" ? tickets.filter((t) => t.stage === "REJECTED") : []}
+                rejectedTickets={key === "IN_PROGRESS" ? byLane.get("REJECTED") ?? [] : []}
                 shakenId={shakenId}
                 agentNameOf={agentNameOf}
               />
             ))}
+            <OtherStatusesLane
+              ticketsByStage={byLane}
+              expanded={otherLaneVisible}
+              onToggle={() => setOtherExpanded((expanded) => !expanded)}
+              shakenId={shakenId}
+              agentNameOf={agentNameOf}
+            />
           </div>
         </div>
         <DragOverlay dropAnimation={{ duration: 180, easing: "cubic-bezier(0.18, 0.67, 0.6, 1.22)" }}>
