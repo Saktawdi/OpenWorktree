@@ -1,5 +1,5 @@
-import { GitBranch, NotePencil, Sparkle } from "@phosphor-icons/react";
-import { NO_CHAT, openTicketCreator, openTicketEditor, useApp } from "../lib/store";
+import { CaretDoubleLeft, CaretDoubleRight, GitBranch, NotePencil, Sparkle } from "@phosphor-icons/react";
+import { NO_CHAT, openTicketCreator, openTicketEditor, setGatePanelCollapsed, useApp } from "../lib/store";
 import { ChatStream } from "./ChatStream";
 import { Composer } from "./Composer";
 import { DiffView } from "./DiffView";
@@ -14,6 +14,7 @@ import { setCenterTab } from "../lib/store";
 function ContextStrip({ ticketNo }: { ticketNo: string }) {
   const ticket = useApp((s) => s.tickets.find((t) => t.ticketNo === ticketNo));
   const agent = useApp((s) => s.agents.find((a) => a.id === s.agentId));
+  const panelCollapsed = useApp((s) => s.gatePanelCollapsed);
   if (!ticket) return null;
   return (
     <div className="h-12 shrink-0 flex items-center gap-3 px-5 border-b border-edge">
@@ -60,6 +61,15 @@ function ContextStrip({ ticketNo }: { ticketNo: string }) {
         onClick={() => openTicketEditor(ticketNo)}
       >
         <NotePencil size={14} />
+      </button>
+      {/* 右侧工单面板整栏开关（最右入口）：收起后中部区域占满整行 */}
+      <button
+        className="icon-btn shrink-0"
+        title={panelCollapsed ? "展开工单面板" : "收起工单面板"}
+        aria-label={panelCollapsed ? "展开工单面板" : "收起工单面板"}
+        onClick={() => setGatePanelCollapsed(!panelCollapsed)}
+      >
+        {panelCollapsed ? <CaretDoubleLeft size={14} /> : <CaretDoubleRight size={14} />}
       </button>
     </div>
   );
@@ -108,6 +118,7 @@ export function Workbench() {
   const selectedNo = useApp((s) => s.selectedNo);
   const chat = useApp((s) => (s.selectedNo ? s.chats[s.selectedNo] : undefined) ?? NO_CHAT);
   const tab = useApp((s) => s.centerTab);
+  const panelCollapsed = useApp((s) => s.gatePanelCollapsed);
 
   if (!selectedNo) {
     // Even with no ticket selected (fresh project, nothing in progress yet) the
@@ -146,7 +157,7 @@ export function Workbench() {
         {tab === "diff" && <DiffView ticketNo={selectedNo} />}
         {tab === "findings" && <FindingsView ticketNo={selectedNo} />}
       </main>
-      <GatePanel ticketNo={selectedNo} />
+      {!panelCollapsed && <GatePanel ticketNo={selectedNo} />}
       <TicketEditDialog />
     </div>
   );

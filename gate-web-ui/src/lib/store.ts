@@ -115,6 +115,10 @@ export interface AppState {
   restartDialogFor: string | null;
   /** 重启历史弹窗目标工单（null = 关闭） */
   restartsViewFor: string | null;
+  /** 右侧工单面板整栏折叠（会话工具条最右侧按钮切换；localStorage 持久化）。 */
+  gatePanelCollapsed: boolean;
+  /** 右侧面板三段的展开状态（localStorage 持久化）。 */
+  gateSections: GateSections;
 }
 
 /** 读取本地持久化的状态筛选；非法值回退为全部可见。 */
@@ -127,6 +131,41 @@ function loadVisibleStages(): Stage[] {
     return valid.length > 0 ? valid : [...ALL_STAGES];
   } catch {
     return [...ALL_STAGES];
+  }
+}
+
+/** 右侧工单面板三个分段（工单信息 / 门禁流水线 / 会话列表）各自的展开状态。 */
+export interface GateSections {
+  info: boolean;
+  pipeline: boolean;
+  sessions: boolean;
+}
+
+const GATE_PANEL_KEY = "gate-panel-collapsed";
+const GATE_SECTIONS_KEY = "gate-sections";
+const DEFAULT_GATE_SECTIONS: GateSections = { info: true, pipeline: true, sessions: true };
+
+/** 读取本地持久化的面板整栏折叠偏好；缺省为展开。 */
+function loadGatePanelCollapsed(): boolean {
+  try {
+    return typeof window !== "undefined" && localStorage.getItem(GATE_PANEL_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function loadGateSections(): GateSections {
+  try {
+    const raw = typeof window !== "undefined" ? localStorage.getItem(GATE_SECTIONS_KEY) : null;
+    if (!raw) return { ...DEFAULT_GATE_SECTIONS };
+    const parsed = JSON.parse(raw) as Partial<GateSections>;
+    return {
+      info: parsed.info ?? true,
+      pipeline: parsed.pipeline ?? true,
+      sessions: parsed.sessions ?? true,
+    };
+  } catch {
+    return { ...DEFAULT_GATE_SECTIONS };
   }
 }
 
@@ -182,6 +221,8 @@ export const appStore = create<AppState>(() => ({
   restarts: {},
   restartDialogFor: null,
   restartsViewFor: null,
+  gatePanelCollapsed: loadGatePanelCollapsed(),
+  gateSections: loadGateSections(),
 }));
 
 const s = () => appStore.getState();
@@ -897,6 +938,44 @@ export function openRestartDialog(no: string | null) {
 /** 重启历史弹窗（T-117）：no 为 null 时关闭。 */
 export function openRestartsView(no: string | null) {
   patch({ restartsViewFor: no });
+}
+
+/** 右侧面板整栏收起/展开（持久化，跨会话保留）。 */
+export function setGatePanelCollapsed(collapsed: boolean) {
+  patch({ gatePanelCollapsed: collapsed });
+  try {
+    localStorage.setItem(GATE_PANEL_KEY, collapsed ? "1" : "0");
+  } catch {
+    /* ignore */
+  }
+}
+
+function persistGateSections(next: GateSections) {
+  try {
+    localStorage.setItem(GATE_SECTIONS_KEY, JSON.stringify(next));
+  } catch {
+    /* ignore */
+  }
+}
+
+/** 展开/收起右侧面板的某一段（持久化，跨会话保留）。 */
+export function setGateSection(key: keyof GateSections, expanded: boolean) {
+  const gateSections = { ...s().gateSections, [key]: expanded };
+  patch({ gateSections });
+  persistGateSections(gateSections);
+}
+
+/**
+ * 进入预提审（快照已锁定、等待审查）时自动收叠「工单信息」与「会话列表」，
+ * 把纵向空间让给门禁流水线的快照/判决卡片；用户手动展开后不会被再次压下
+ * （该动作只在 stage 变为 PRESUBMITTED 时触发一次）。
+ */
+export function collapseGateSectionsForPresubmit() {
+  const cur = s().gateSections;
+  if (!cur.info && !cur.sessions) return;
+  const gateSections = { ...cur, info: false, sessions: false };
+  patch({ gateSections });
+  persistGateSections(gateSections);
 }
 
 /** Opens the new-ticket form from anywhere (empty workbench, kanban toolbar). */

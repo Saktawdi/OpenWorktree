@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
   ArrowClockwise,
@@ -7,6 +7,7 @@ import {
   ArrowUUpLeft,
   Archive,
   Check,
+  Chats,
   CircleNotch,
   ClockCounterClockwise,
   FileText,
@@ -27,7 +28,7 @@ import {
 } from "@phosphor-icons/react";
 import { actions } from "../lib/actions";
 import { formatBytes, hhmmss, shortHash, STAGE_LABEL } from "../lib/format";
-import { NO_SESSIONS, openRestartDialog, openRestartsView, useApp } from "../lib/store";
+import { NO_SESSIONS, collapseGateSectionsForPresubmit, openRestartDialog, openRestartsView, setGateSection, useApp } from "../lib/store";
 import { loadRestarts } from "../lib/api";
 import type { ChatSession, Snapshot } from "../lib/types";
 import { CopyButton, HashReveal, Spinner } from "./ui";
@@ -335,15 +336,15 @@ function OutcomeCard({
 
 function TicketInfo({ ticketNo }: { ticketNo: string }) {
   const ticket = useApp((s) => s.tickets.find((t) => t.ticketNo === ticketNo));
-  const [expanded, setExpanded] = useState(true);
+  const expanded = useApp((s) => s.gateSections.info);
 
   if (!ticket) return null;
 
   return (
     <div className="border-b border-edge">
       <button
-        className="w-full flex items-center gap-2 px-4 py-2.5 text-left hover:bg-raised/50 transition-colors cursor-pointer"
-        onClick={() => setExpanded(!expanded)}
+        className="w-full sticky top-0 z-10 bg-canvas flex items-center gap-2 px-4 py-2.5 text-left hover:bg-raised transition-colors cursor-pointer"
+        onClick={() => setGateSection("info", !expanded)}
       >
         <FileText size={14} className="text-faint shrink-0" />
         <span className="text-[12px] font-medium text-dim">工单信息</span>
@@ -444,13 +445,13 @@ function GatePipeline({
   gateBusy: boolean;
   outcome?: { commitSha: string; refBefore: string; refAfter: string; targetRef: string; publishedAt: number };
 }) {
-  const [expanded, setExpanded] = useState(true);
+  const expanded = useApp((s) => s.gateSections.pipeline);
 
   return (
     <div className="border-b border-edge">
       <button
-        className="w-full flex items-center gap-2 px-4 py-2.5 text-left hover:bg-raised/50 transition-colors cursor-pointer"
-        onClick={() => setExpanded(!expanded)}
+        className="w-full sticky top-0 z-10 bg-canvas flex items-center gap-2 px-4 py-2.5 text-left hover:bg-raised transition-colors cursor-pointer"
+        onClick={() => setGateSection("pipeline", !expanded)}
       >
         <ListChecks size={14} className="text-faint shrink-0" />
         <span className="text-[12px] font-medium text-dim">门禁流水线</span>
@@ -507,7 +508,40 @@ function GatePipeline({
   );
 }
 
-/* ─── Session List Section ─── */
+/* ─── Session List Section (collapsible) ─── */
+
+function SessionSection({ ticketNo, locked = false }: { ticketNo: string; locked?: boolean }) {
+  const expanded = useApp((s) => s.gateSections.sessions);
+  const activeCount = useApp(
+    (s) => (s.sessions[ticketNo] ?? NO_SESSIONS).filter((x) => x.status === "active").length,
+  );
+
+  return (
+    <div className="flex-1 min-h-0 flex flex-col">
+      <button
+        className="w-full shrink-0 flex items-center gap-2 px-4 py-2.5 text-left hover:bg-raised/50 transition-colors cursor-pointer"
+        onClick={() => setGateSection("sessions", !expanded)}
+      >
+        <Chats size={14} className="text-faint shrink-0" />
+        <span className="text-[12px] font-medium text-dim">会话列表</span>
+        {activeCount > 0 && (
+          <span className="chip border border-edge-strong bg-raised text-dim font-mono">{activeCount} 活跃</span>
+        )}
+        <span className="flex-1" />
+        <span
+          className={`text-[11px] text-faint transition-transform duration-150 ${expanded ? "rotate-0" : "-rotate-90"}`}
+        >
+          ▾
+        </span>
+      </button>
+      {expanded && (
+        <div className="flex-1 min-h-0 flex flex-col animate-slide-in">
+          <SessionList ticketNo={ticketNo} locked={locked} />
+        </div>
+      )}
+    </div>
+  );
+}
 
 function SessionList({ ticketNo, locked = false }: { ticketNo: string; locked?: boolean }) {
   const sessions = useApp((s) => s.sessions[ticketNo] ?? NO_SESSIONS);
@@ -525,7 +559,7 @@ function SessionList({ ticketNo, locked = false }: { ticketNo: string; locked?: 
   };
 
   return (
-    <div className="relative flex flex-col min-h-0">
+    <div className="relative flex flex-col flex-1 min-h-0">
       {/* Tab bar */}
       <div className="flex items-center gap-1 px-4 pt-2.5 pb-1">
         <button
@@ -858,6 +892,11 @@ export function GatePanel({ ticketNo }: { ticketNo: string }) {
   const snap = snaps?.[snaps.length - 1];
   const round = snaps?.length ?? 0;
 
+  // 进入预提审（快照已锁定）时自动收叠工单信息与会话列表，把纵向空间让给快照/判决卡片。
+  useEffect(() => {
+    if (stage === "PRESUBMITTED") collapseGateSectionsForPresubmit();
+  }, [stage, ticketNo]);
+
   // Ensure there's always at least one active session
   const hasActiveSession = sessions.some((s) => s.status === "active");
 
@@ -914,26 +953,28 @@ export function GatePanel({ ticketNo }: { ticketNo: string }) {
     <aside className="w-[400px] shrink-0 border-l border-edge flex flex-col bg-canvas">
       {/* ─── Scrollable Content ─── */}
       <div className="flex-1 min-h-0 flex flex-col">
-        {/* Ticket Info */}
-        <TicketInfo ticketNo={ticketNo} />
+        {/* 工单信息 + 门禁流水线：内容超高时在 65% 高度内自行滚动，
+            不再无限撑开面板挤压会话列表、叠压底部操作区（右侧面板样式 BUG 的根源） */}
+        <div className="min-h-0 max-h-[65%] overflow-y-auto">
+          {/* Ticket Info */}
+          <TicketInfo ticketNo={ticketNo} />
 
-        {/* Gate Pipeline (collapsible) */}
-        <GatePipeline
-          ticketNo={ticketNo}
-          stage={stage ?? "PENDING"}
-          round={round}
-          snap={snap}
-          task={task}
-          verdict={verdict}
-          findingsCount={findingsCount}
-          gateBusy={gateBusy}
-          outcome={outcome}
-        />
-
-        {/* Session List */}
-        <div className="flex-1 min-h-0 flex flex-col">
-          <SessionList ticketNo={ticketNo} locked={stage === "CANCELLED"} />
+          {/* Gate Pipeline (collapsible) */}
+          <GatePipeline
+            ticketNo={ticketNo}
+            stage={stage ?? "PENDING"}
+            round={round}
+            snap={snap}
+            task={task}
+            verdict={verdict}
+            findingsCount={findingsCount}
+            gateBusy={gateBusy}
+            outcome={outcome}
+          />
         </div>
+
+        {/* Session List (collapsible, fills the rest) */}
+        <SessionSection ticketNo={ticketNo} locked={stage === "CANCELLED"} />
       </div>
 
       {/* ─── Action Button (sticky bottom) ─── */}
