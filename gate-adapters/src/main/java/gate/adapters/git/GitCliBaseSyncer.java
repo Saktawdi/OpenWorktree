@@ -13,17 +13,25 @@ import java.util.Map;
  * The only {@link CloneBaseSyncer} implementation: real git binary, real refs (架构落地执行文档
  * ADR-1/ADR-5, T-118 基座同步).
  *
+ * <p>The clone's landing commit is picked once, then reached in one hop: the authoritative branch
+ * is fast-forwarded (server-side CAS) onto the base tip when possible and the clone follows — one
+ * {@code reset} covers both "clone behind base" (ticket sat in the queue) and "clone behind its
+ * own branch" (a publish advanced the branch, T-113 round-2 incident). When the branch cannot
+ * fast-forward onto base, the branch tip itself is the target; the clone still catches up, the
+ * base-freshness goal simply waits.
+ *
  * <p>Mutation order is chosen so every crash point converges on the next run:
  * <ol>
  *   <li>fetch base + target refs into {@code refs/gate-sync/*} (objects land locally, no worktree
  *       or ref of consequence is touched);</li>
- *   <li>stash the worktree (only when dirty and allowed);</li>
- *   <li>CAS-fast-forward the authoritative targetRef to the base tip (fails harmlessly if a
+ *   <li>CAS-fast-forward the authoritative targetRef when base allows it (fails harmlessly if a
  *       concurrent writer moved it);</li>
- *   <li>{@code reset --hard} the clone onto the new tip;</li>
+ *   <li>stash the worktree (only when dirty and allowed);</li>
+ *   <li>{@code reset --hard} the clone onto the final tip — or {@code reset --soft} for the
+ *       content-identical divergence heal, which moves no worktree byte;</li>
  *   <li>pop the stash back; conflicts stay in the worktree and the stash entry survives.</li>
  * </ol>
- * A crash between 3 and 4 leaves the clone behind, which is exactly the state this sync repairs —
+ * A crash between 2 and 4 leaves the clone behind, which is exactly the state this sync repairs —
  * idempotent by construction.
  */
 public final class GitCliBaseSyncer implements CloneBaseSyncer {
@@ -62,112 +70,101 @@ public final class GitCliBaseSyncer implements CloneBaseSyncer {
             return skipped("clone has no HEAD commit");
         }
 
-        int behind = behindCount(cloneRepo, cloneHead, SYNC_BASE_REF);
-        boolean contentEqualsBase = treesEqual(cloneRepo, cloneHead, SYNC_BASE_REF);
-        String targetTipInClone = resolve(cloneRepo, SYNC_TARGET_REF);
+        int behindBase = behindCount(cloneRepo, cloneHead, SYNC_BASE_REF);
 
-        if (behind == 0 && cloneHead.equals(targetTipInClone)) {
-            return upToDate(cloneHead);
-        }
-        if (behind == 0 && !contentEqualsBase) {
-            // Clone already contains every base commit and its content differs from base —
-            // normal in-flight state (worktree/commits ahead of an unmoved base).
-            return upToDate(cloneHead);
-        }
-        if (contentEqualsBase) {
-            // Content-identical divergence (e.g. a squash recovery commit vs the published one):
-            // re-point the clone branch without touching index or worktree — zero content moves.
-            // behind may be 0 or > 0 here; either way the committed content equals the base tip,
-            // so nothing of value can be lost by the soft re-point.
-            return healSquashDivergence(cloneRepo, authRepo, targetRef, mainTip, behind, cloneHead);
+        // The final tip the clone must land on. The presubmit invariant is "clone HEAD == auth
+        // targetRef tip"; base freshness is the secondary goal, so when the authoritative branch
+        // can fast-forward onto the base tip we take the base tip (one hop covers both the
+        // queue-stale and the just-published state), otherwise the branch tip itself (a publish
+        // advanced it while main did not yet contain it — the normal in-flight shape).
+        boolean branchCanFollowBase = isAncestor(authRepo, authTip, mainTip);
+        boolean branchMoved = branchCanFollowBase && !authTip.equals(mainTip);
+        String finalTip = branchCanFollowBase ? mainTip : authTip;
+        String finalTipInClone = branchCanFollowBase ? SYNC_BASE_REF : SYNC_TARGET_REF;
+
+        if (cloneHead.equals(finalTip)) {
+            if (branchMoved) {
+                ProcessRunner.ProcRun move = git.run(authRepo, "update-ref", targetRef, mainTip, authTip);
+                if (!move.ok()) {
+                    return skipped(behindBase, cloneHead,
+                            "authoritative branch move failed (moved concurrently?): " + move.stderrFirstLine());
+                }
+                return new Report("synced", behindBase, cloneHead, cloneHead, true, List.of(), false, null);
+            }
+            return new Report("up_to_date", behindBase, cloneHead, cloneHead, false, List.of(), false, null);
         }
 
-        // behind > 0: clone is behind base. Both the ticket branch and the clone must sit on the
-        // base tip afterwards, and both moves must be fast-forwards.
-        if (!isAncestor(cloneRepo, cloneHead, SYNC_BASE_REF)) {
-            return skipped(behind, cloneHead, "clone 与基分支历史分叉（存在基分支不含的提交），需要人工处理");
-        }
-        String authTargetNow = resolve(authRepo, targetRef);
-        if (!isAncestor(authRepo, authTargetNow, mainTip)) {
-            return skipped(behind, cloneHead, "authoritative branch " + targetRef
-                    + " carries commits not merged into " + baseRef + "; refusing to move it");
+        // Classify the clone's relation to the final tip before anything is mutated, so every
+        // skipped outcome below leaves repo state untouched.
+        boolean fastForwardable = isAncestor(cloneRepo, cloneHead, finalTipInClone);
+        boolean contentIdentical = !fastForwardable && treesEqual(cloneRepo, cloneHead, finalTipInClone);
+        if (!fastForwardable && !contentIdentical) {
+            return skipped(behindBase, cloneHead,
+                    "clone 与工单分支/基分支历史分叉（存在对方都不包含的本地提交），需要人工处理");
         }
 
         boolean dirty = isDirty(cloneRepo);
-        if (dirty && !allowDirty) {
-            return skipped(behind, cloneHead, "clone 工作区有未提交改动；为避免干扰已跳过同步（可手动同步重放改动）");
+        if (fastForwardable && dirty && !allowDirty) {
+            return skipped(behindBase, cloneHead,
+                    "clone 工作区有未提交改动；为避免干扰已跳过同步（可手动同步重放改动）");
         }
         boolean stashed = false;
-        if (dirty) {
+        if (fastForwardable && dirty) {
             ProcessRunner.ProcRun stash = git.run(cloneRepo,
                     "-c", "user.name=gate", "-c", "user.email=gate@localhost",
                     "stash", "push", "-u", "-m", "gate-sync-base");
             stashed = stash.ok();
             if (!stashed) {
-                return skipped(behind, cloneHead, "stash 失败，未做任何改动: " + stash.stderrFirstLine());
+                return skipped(behindBase, cloneHead,
+                        "stash 失败，未做任何改动: " + stash.stderrFirstLine());
             }
         }
 
-        ProcessRunner.ProcRun move = git.run(authRepo, "update-ref", targetRef, mainTip, authTip);
-        if (!move.ok()) {
-            undoStash(cloneRepo, stashed);
-            return skipped(behind, cloneHead,
-                    "authoritative branch move failed (moved concurrently?): " + move.stderrFirstLine());
-        }
-
-        ProcessRunner.ProcRun reset = git.run(cloneRepo, "reset", "--hard", SYNC_BASE_REF);
-        if (!reset.ok()) {
-            undoStash(cloneRepo, stashed);
-            throw new GateException(GateErrorCode.GATE_ERROR_IO,
-                    "cannot reset clone onto base tip: " + reset.stderrFirstLine());
-        }
-
-        List<String> conflicts = new ArrayList<>();
-        boolean stashKept = false;
-        if (stashed) {
-            ProcessRunner.ProcRun pop = git.run(cloneRepo, "stash", "pop");
-            if (!pop.ok()) {
-                conflicts = conflictedPaths(cloneRepo);
-                stashKept = true;
+        if (branchMoved) {
+            ProcessRunner.ProcRun move = git.run(authRepo, "update-ref", targetRef, mainTip, authTip);
+            if (!move.ok()) {
+                undoStash(cloneRepo, stashed);
+                return skipped(behindBase, cloneHead,
+                        "authoritative branch move failed (moved concurrently?): " + move.stderrFirstLine());
             }
         }
-        String toTip = resolve(cloneRepo, "HEAD");
-        return new Report("synced", behind, cloneHead, toTip, true, List.copyOf(conflicts), stashKept, null);
-    }
 
-    /**
-     * Content-identical divergence: re-point the clone branch onto the base tip ({@code reset
-     * --soft} — index and worktree are untouched, so this is safe even for a dirty clone) and
-     * fast-forward the authoritative branch alongside. Refuses when the authoritative branch
-     * cannot fast-forward — a half-healed clone would still fail presubmit.
-     */
-    private Report healSquashDivergence(RepoRef cloneRepo, RepoRef authRepo, String targetRef,
-                                        String mainTip, int behind, String cloneHead) {
-        String authTip = resolve(authRepo, targetRef);
-        if (!isAncestor(authRepo, authTip, mainTip)) {
-            return skipped(behind, cloneHead, "authoritative branch " + targetRef
-                    + " carries commits not merged into the base branch; refusing to move it");
+        if (fastForwardable) {
+            // Fast-forward the clone: covers the clone lagging its own branch (publish advanced
+            // it) as well as the clone lagging base (ticket sat in the queue).
+            ProcessRunner.ProcRun reset = git.run(cloneRepo, "reset", "--hard", finalTipInClone);
+            if (!reset.ok()) {
+                undoStash(cloneRepo, stashed);
+                throw new GateException(GateErrorCode.GATE_ERROR_IO,
+                        "cannot reset clone onto the sync target: " + reset.stderrFirstLine());
+            }
+            List<String> conflicts = new ArrayList<>();
+            boolean stashKept = false;
+            if (stashed) {
+                ProcessRunner.ProcRun pop = git.run(cloneRepo, "stash", "pop");
+                if (!pop.ok()) {
+                    conflicts = conflictedPaths(cloneRepo);
+                    stashKept = true;
+                }
+            }
+            String toTip = resolve(cloneRepo, "HEAD");
+            return new Report("synced", behindBase, cloneHead, toTip, branchMoved,
+                    List.copyOf(conflicts), stashKept, null);
         }
-        ProcessRunner.ProcRun move = git.run(authRepo, "update-ref", targetRef, mainTip, authTip);
-        if (!move.ok()) {
-            return skipped(behind, cloneHead,
-                    "authoritative branch move failed (moved concurrently?): " + move.stderrFirstLine());
-        }
-        ProcessRunner.ProcRun reset = git.run(cloneRepo, "reset", "--soft", SYNC_BASE_REF);
+
+        // Content-identical divergence (e.g. a squash recovery commit vs the published one):
+        // re-point the clone branch without touching index or worktree — zero content moves.
+        ProcessRunner.ProcRun reset = git.run(cloneRepo, "reset", "--soft", finalTipInClone);
         if (!reset.ok()) {
-            return skipped(behind, cloneHead, "soft re-point failed: " + reset.stderrFirstLine());
+            return skipped(behindBase, cloneHead, "soft re-point failed: " + reset.stderrFirstLine());
         }
-        return new Report("healed", behind, cloneHead, mainTip, true, List.of(), false, null);
+        return new Report("healed", behindBase, cloneHead, finalTip, branchMoved, List.of(), false, null);
     }
 
     private void undoStash(RepoRef cloneRepo, boolean stashed) {
         if (stashed) {
             git.run(cloneRepo, "stash", "pop");
         }
-    }
-
-    private Report upToDate(String cloneHead) {
-        return new Report("up_to_date", 0, cloneHead, cloneHead, false, List.of(), false, null);
     }
 
     private Report skipped(String reason) {

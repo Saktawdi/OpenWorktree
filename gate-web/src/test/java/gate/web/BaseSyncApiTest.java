@@ -129,6 +129,44 @@ class BaseSyncApiTest {
     }
 
     @Test
+    void clone_lagging_its_own_published_branch_fast_forwards() throws Exception {
+        // The T-113 round-2 incident shape: a publish advanced the authoritative ticket branch
+        // while the clone stayed behind, and base does not contain the published commit either
+        // (the human merges in the workspace later). The sync must fast-forward the clone onto
+        // the branch tip and leave the branch alone.
+        post("/api/tickets", "{\"ticket_no\":\"SYNC-6\",\"title\":\"t\"}");
+        Path clone = harness.components().config().clonesRoot().resolve("SYNC-6");
+        var cfg = harness.components().config();
+        var git = harness.components().git();
+
+        // Simulate the publish: a new commit lands on the authoritative ticket branch only.
+        Path work = harness.root().resolve("publish-sim-" + System.nanoTime());
+        git.must(gate.domain.git.RepoRef.of(harness.root()), "clone", "--quiet", "--single-branch",
+                "--branch", "SYNC-6", cfg.authRepo().toString(), work.toString());
+        Map<String, String> env = Map.of(
+                "GIT_AUTHOR_NAME", "gate", "GIT_AUTHOR_EMAIL", "gate@localhost",
+                "GIT_COMMITTER_NAME", "gate", "GIT_COMMITTER_EMAIL", "gate@localhost");
+        Files.writeString(work.resolve("published.txt"), "round 2 content\n");
+        git.must(work, env, "add", "-A");
+        git.must(work, env, "commit", "-m", "T-113 会话：新增todowrite相关显示 (round 2)");
+        git.must(gate.domain.git.RepoRef.of(cfg.authRepo()), "fetch", work.toAbsolutePath().toString(),
+                "+refs/heads/SYNC-6:refs/heads/SYNC-6");
+
+        Files.writeString(clone.resolve("wip.txt"), "post-publish scratch\n");
+        HttpResponse<String> res = post("/api/tickets/SYNC-6/sync-base", "{\"allow_dirty\":true}");
+        assertEquals(200, res.statusCode(), res.body());
+        assertTrue(res.body().contains("\"status\":\"synced\""), res.body());
+        assertTrue(res.body().contains("\"branch_moved\":false"), res.body());
+
+        String branchTip = tip(cfg.authRepo(), "refs/heads/SYNC-6");
+        assertEquals(branchTip, tip(clone, "HEAD"), "clone must sit on its own branch tip");
+        assertEquals("round 2 content\n", Files.readString(clone.resolve("published.txt")),
+                "the published content must be present after the fast-forward");
+        assertEquals("post-publish scratch\n", Files.readString(clone.resolve("wip.txt")),
+                "uncommitted work must survive the fast-forward");
+    }
+
+    @Test
     void up_to_date_clone_is_a_reported_noop() throws Exception {
         post("/api/tickets", "{\"ticket_no\":\"SYNC-5\",\"title\":\"t\"}");
         HttpResponse<String> res = post("/api/tickets/SYNC-5/sync-base", "{}");
