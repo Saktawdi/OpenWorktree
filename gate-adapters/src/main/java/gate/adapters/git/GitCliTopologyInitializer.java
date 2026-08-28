@@ -58,10 +58,6 @@ public final class GitCliTopologyInitializer implements TopologyInitializer {
 
     @Override
     public InitResult initAuthRepo(RepoRef authRepo, String targetRef, Path approvalsDir) {
-        if (!targetRefWhitelist.contains(targetRef)) {
-            throw new GateException(GateErrorCode.GATE_ERROR_CONFIG,
-                    "target ref " + targetRef + " is not in the configured whitelist " + targetRefWhitelist);
-        }
         try {
             Files.createDirectories(authRepo.path());
         } catch (IOException e) {
@@ -83,8 +79,21 @@ public final class GitCliTopologyInitializer implements TopologyInitializer {
         git.run(authRepo, "config", "--unset-all", "core.hooksPath");
 
         ObjectId base = ensureSeeded(authRepo, targetRef);
-        String hookSha = hookInstaller.install(authRepo, targetRefWhitelist, approvalsDir);
+        // The hook is per-repo, so it may know this repo's own base ref even when the gate-level
+        // whitelist only names the default: a master-based project must not be forced onto main.
+        // The hook still demands an exact (ref,old,new,tree) approval binding for every push, so
+        // this widens nothing an agent could reach without the gate minting an approval first.
+        List<String> hookWhitelist = targetRefWhitelist.contains(targetRef)
+                ? targetRefWhitelist
+                : whitelistWith(targetRef);
+        String hookSha = hookInstaller.install(authRepo, hookWhitelist, approvalsDir);
         return new InitResult(base, hookSha);
+    }
+
+    private List<String> whitelistWith(String targetRef) {
+        List<String> extended = new java.util.ArrayList<>(targetRefWhitelist);
+        extended.add(targetRef);
+        return List.copyOf(extended);
     }
 
     @Override
@@ -175,7 +184,11 @@ public final class GitCliTopologyInitializer implements TopologyInitializer {
             env.put("GIT_COMMITTER_DATE", SEED_IDENTITY.date());
             git.must(seedDir, env, "commit", "-m", "gate: seed base commit");
 
-            git.must(seedDir, Map.of(), "push", authRepo.pathString(), "HEAD:" + targetRef);
+            // Land the seed via a server-side fetch into the bare repo, never via `git push`:
+            // on a re-init the previously installed pre-receive hook is still live and would
+            // reject an approval-less push of the new base ref (fetch writes the ref directly,
+            // exactly the escape hatch the publisher's ensureObject uses).
+            git.must(authRepo, "fetch", seedDir.toAbsolutePath().toString(), "+HEAD:" + targetRef);
 
             return ObjectId.of(git.line(authRepo, "rev-parse", "--verify", targetRef));
         } catch (IOException e) {

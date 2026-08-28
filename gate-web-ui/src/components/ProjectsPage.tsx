@@ -31,6 +31,9 @@ function ProjectDialog({
 }) {
   const [name, setName] = useState(initial?.name ?? "");
   const [workspacePath, setWorkspacePath] = useState(initial?.workspacePath ?? "");
+  const [targetBranch, setTargetBranch] = useState(
+    initial?.targetRef ? initial.targetRef.replace("refs/heads/", "") : "",
+  );
   const [initGit, setInitGit] = useState(!initial);
   const [priority, setPriority] = useState<string | null>(initial?.priority ?? null);
   const [size, setSize] = useState<string | null>(initial?.size ?? null);
@@ -48,6 +51,7 @@ function ProjectDialog({
     if (initial) {
       await actions.editProject(initial.id, {
         name: name.trim(),
+        targetBranch: targetBranch.trim(),
         priority: priority as Project["priority"] | null,
         size: size as Project["size"] | null,
         tags: tagList,
@@ -56,6 +60,7 @@ function ProjectDialog({
       await actions.createProject({
         name: name.trim(),
         workspacePath: workspacePath.trim(),
+        targetBranch: targetBranch.trim(),
         initGit,
         priority,
         size,
@@ -102,10 +107,22 @@ function ProjectDialog({
                   onChange={(e) => setInitGit(e.target.checked)}
                   className="accent-[#35d99e]"
                 />
-                目录为空时自动执行 git init（主分支 main）
+                目录为空时自动执行 git init（使用下方主分支，默认 main）
               </label>
             </>
           )}
+          <div>
+            <label className="field-label">主分支</label>
+            <input
+              className="text-input font-mono text-[12px]"
+              placeholder={initial ? initial.targetRef?.replace("refs/heads/", "") || "main" : "留空自动检测（空目录则 main）"}
+              value={targetBranch}
+              onChange={(e) => setTargetBranch(e.target.value)}
+            />
+            <div className="mt-1 text-[11px] text-faint">
+              master / main 等单段分支名，基座同步与建单基线都用它；修改后对新开工单生效
+            </div>
+          </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="field-label">优先级</label>

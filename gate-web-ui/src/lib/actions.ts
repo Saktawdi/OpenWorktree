@@ -151,6 +151,7 @@ export const actions = {
   createProject(body: {
     name: string;
     workspacePath: string;
+    targetBranch?: string;
     initGit: boolean;
     priority: string | null;
     size: string | null;
@@ -160,6 +161,7 @@ export const actions = {
       return live.createProjectLive({
         name: body.name,
         workspace_path: body.workspacePath,
+        target_branch: body.targetBranch,
         init_git: body.initGit,
         priority: body.priority,
         size: body.size,
@@ -191,15 +193,35 @@ export const actions = {
   },
   editProject(
     id: string,
-    patch: { name?: string; priority?: Project["priority"] | null; size?: Project["size"] | null; tags?: string[] },
+    patch: {
+      name?: string;
+      targetBranch?: string;
+      priority?: Project["priority"] | null;
+      size?: Project["size"] | null;
+      tags?: string[];
+    },
   ) {
     if (appStore.getState().mode === "live") {
-      return live.updateProjectLive(id, patch);
+      return live.updateProjectLive(id, {
+        name: patch.name,
+        priority: patch.priority,
+        size: patch.size,
+        tags: patch.tags,
+        target_branch: patch.targetBranch,
+      });
     }
     const st = appStore.getState();
     const p = st.projects.find((x) => x.id === id);
     if (!p) return Promise.resolve(false);
-    upsertProject({ ...p, ...patch, updatedAt: new Date().toISOString() });
+    const { targetBranch: branch, ...rest } = patch;
+    upsertProject({
+      ...p,
+      ...rest,
+      ...(branch !== undefined && branch.trim()
+        ? { targetRef: `refs/heads/${branch.trim()}` }
+        : {}),
+      updatedAt: new Date().toISOString(),
+    });
     return Promise.resolve(true);
   },
   deleteProject(id: string) {

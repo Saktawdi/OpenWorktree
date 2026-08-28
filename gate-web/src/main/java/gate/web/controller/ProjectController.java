@@ -108,8 +108,13 @@ public final class ProjectController implements WebController {
                     "cannot create workspace " + workspace + ": " + e.getMessage(), e);
         }
         boolean initGit = Boolean.parseBoolean(String.valueOf(req.getOrDefault("init_git", "false")));
+        String requestedRef = normalizeTargetRef(req);
+        String initBranch = "main";
+        if (requestedRef != null && requestedRef.startsWith("refs/heads/")) {
+            initBranch = requestedRef.substring("refs/heads/".length());
+        }
         if (initGit && !Files.exists(workspace.resolve(".git"))) {
-            gate.ports.infra.ProcessRunner.ProcRun r = git.run(workspace, Map.of(), "init", "-b", "main");
+            gate.ports.infra.ProcessRunner.ProcRun r = git.run(workspace, Map.of(), "init", "-b", initBranch);
             if (!r.ok()) {
                 r = git.run(workspace, Map.of(), "init");
             }
@@ -117,8 +122,11 @@ public final class ProjectController implements WebController {
                 throw new GateException(GateErrorCode.GATE_ERROR_IO,
                         "git init failed in " + workspace + ": " + r.stderrFirstLine());
             }
+            // Old git without `init -b`: point the unborn HEAD at the requested branch explicitly.
+            if (!initBranch.equals("main")) {
+                git.run(workspace, Map.of(), "symbolic-ref", "HEAD", "refs/heads/" + initBranch);
+            }
         }
-        String targetRef = str(req, "target_ref");
         String priority = TicketController.parsePriority(req);
         String size = parseProjectSize(req);
         List<String> tags = parseProjectTags(req);
@@ -126,7 +134,12 @@ public final class ProjectController implements WebController {
         String id = uniqueProjectId(name);
         Path projectAuthRepo = new gate.application.project.ProjectAuthResolver(projects, config)
                 .defaultProjectAuthRepo(id);
-        String effectiveTargetRef = effectiveTargetRef(targetRef);
+        // Resolution order: explicit request > the workspace's current branch (most repos are
+        // master in the wild) > the gate-level primary ref. Never a silent hardcode.
+        String effectiveTargetRef = requestedRef != null
+                ? requestedRef
+                : java.util.Optional.ofNullable(detectWorkspaceBranch(workspace))
+                        .orElse(config.primaryTargetRef());
         topologyInitializer.initAuthRepo(RepoRef.of(projectAuthRepo), effectiveTargetRef,
                 config.approvalsDir());
         Project p = new Project(id, name, workspace.toString(),
@@ -157,11 +170,22 @@ public final class ProjectController implements WebController {
                         "workspace already registered as a project: " + workspace);
             }
         }
-        String targetRef = req.containsKey("target_ref")
-                ? effectiveTargetRef(str(req, "target_ref")) : effectiveTargetRef(existing.targetRef());
+        String targetRef = req.containsKey("target_branch") || req.containsKey("target_ref")
+                ? java.util.Optional.ofNullable(normalizeTargetRef(req))
+                        .orElseGet(() -> config.primaryTargetRef())
+                : effectiveTargetRef(existing.targetRef());
+        // Base switched: make the project's auth repo coherent with it — seed the branch if
+        // missing, point HEAD at it, reinstall the per-repo hook with the updated whitelist
+        // (initAuthRepo is idempotent; existing ticket branches are untouched).
+        if (!targetRef.equals(existing.targetRef())
+                && existing.authRepo() != null && !existing.authRepo().isBlank()
+                && Files.exists(Path.of(existing.authRepo()))) {
+            topologyInitializer.initAuthRepo(RepoRef.of(Path.of(existing.authRepo())), targetRef,
+                    config.approvalsDir());
+        }
         String priority = req.containsKey("priority") ? TicketController.parsePriority(req) : existing.priority();
         String size = req.containsKey("size") ? parseProjectSize(req) : existing.size();
-        List<String> tags = parseProjectTags(req);
+        List<String> tags = req.containsKey("tags") ? parseProjectTags(req) : existing.tags();
         Project updated = new Project(id, name, workspace, targetRef, existing.authRepo(),
                 priority, size, tags, existing.createdAt(), clock.now());
         projects.update(updated);
@@ -291,6 +315,45 @@ public final class ProjectController implements WebController {
 
     private String effectiveTargetRef(String targetRef) {
         return targetRef == null || targetRef.isBlank() ? config.primaryTargetRef() : targetRef;
+    }
+
+    /**
+     * Normalizes the request's {@code target_branch} (preferred) or {@code target_ref} into a
+     * full {@code refs/heads/<segment>} ref — "master" and "refs/heads/master" are both accepted
+     * — or returns {@code null} when the request carries neither. Mirrors the ticket-side
+     * {@code resolveTicketTargetRef} validation: a single path segment, no trailing ".lock".
+     */
+    private String normalizeTargetRef(Map<String, Object> req) {
+        String raw = req.containsKey("target_branch") ? str(req, "target_branch") : str(req, "target_ref");
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        String name = raw.trim();
+        if (name.startsWith("refs/heads/")) {
+            name = name.substring("refs/heads/".length());
+        }
+        if (name.isEmpty() || name.equals(".") || name.equals("..") || name.endsWith(".lock")
+                || !name.matches("[A-Za-z0-9._-]+") || name.length() > 80) {
+            throw new GateException(GateErrorCode.USAGE,
+                    "target_branch must match [A-Za-z0-9._-]+ (single segment, no slash): " + raw);
+        }
+        return "refs/heads/" + name;
+    }
+
+    /** The workspace repo's current branch, or {@code null} when it is not a git repo / detached. */
+    private String detectWorkspaceBranch(Path workspace) {
+        if (!Files.exists(workspace.resolve(".git"))) {
+            return null;
+        }
+        ProcessRunner.ProcRun r = git.run(RepoRef.of(workspace), "rev-parse", "--abbrev-ref", "HEAD");
+        if (!r.ok()) {
+            return null;
+        }
+        String branch = r.stdout().trim();
+        if (branch.isEmpty() || "HEAD".equals(branch)) {
+            return null;
+        }
+        return "refs/heads/" + branch;
     }
 
     private static String parseProjectSize(Map<String, Object> req) {

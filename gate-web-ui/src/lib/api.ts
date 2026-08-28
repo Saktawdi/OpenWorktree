@@ -1496,6 +1496,7 @@ export async function loadProjectTree(projectId: string, dir = ""): Promise<GitT
 export async function createProjectLive(body: {
   name: string;
   workspace_path: string;
+  target_branch?: string;
   init_git?: boolean;
   priority?: string | null;
   size?: string | null;
