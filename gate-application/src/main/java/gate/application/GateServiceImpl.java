@@ -156,7 +156,7 @@ public final class GateServiceImpl implements GateService {
                 config, snapshotCapture, commitPublisher, refObserver, approvalStore,
                 gatePolicy, tickets, presubmits, reviewResults, intents, blobStore,
                 auditLog, lockManager, tx, clock, publishProbe, authoritativeGitService, this.authResolver,
-                workspaceSyncer, commitIdentityProvider);
+                workspaceSyncer, commitIdentityProvider, cloneBaseSyncer);
         this.baseSyncHandler = cloneBaseSyncer == null ? null
                 : new gate.application.basesync.BaseSyncHandler(
                         tickets, projects, config, cloneBaseSyncer, auditLog, clock);

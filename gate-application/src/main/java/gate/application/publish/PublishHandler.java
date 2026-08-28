@@ -72,6 +72,8 @@ public final class PublishHandler {
     private final PublishProbe publishProbe;
     private final AuthoritativeGitService authoritativeGitService;
     private final WorkspaceSyncer workspaceSyncer;
+    /** Null = publish does not fast-forward the ticket clone (legacy wirings); set, it does (T-118). */
+    private final gate.ports.git.CloneBaseSyncer cloneBaseSyncer;
     private final gate.ports.git.CommitIdentityProvider commitIdentityProvider;
 
     public PublishHandler(GateConfig config, SnapshotCapture snapshotCapture, CommitPublisher commitPublisher,
@@ -133,6 +135,23 @@ public final class PublishHandler {
                           gate.application.project.ProjectAuthResolver authResolver,
                           WorkspaceSyncer workspaceSyncer,
                           gate.ports.git.CommitIdentityProvider commitIdentityProvider) {
+        this(config, snapshotCapture, commitPublisher, refObserver, approvalStore, gatePolicy, tickets, presubmits,
+                reviewResults, intents, blobStore, auditLog, lockManager, tx, clock, publishProbe,
+                authoritativeGitService, authResolver, workspaceSyncer, commitIdentityProvider, null);
+    }
+
+    /** Fullest constructor: {@code cloneBaseSyncer} fast-forwards the clone after a successful publish (T-118). */
+    public PublishHandler(GateConfig config, SnapshotCapture snapshotCapture, CommitPublisher commitPublisher,
+                          RefObserver refObserver, ApprovalStore approvalStore, GatePolicy gatePolicy,
+                          TicketRepository tickets, PresubmitRepository presubmits,
+                          ReviewResultRepository reviewResults, PublishIntentRepository intents,
+                          BlobStore blobStore, AuditLog auditLog, LockManager lockManager,
+                          DbTransactionRunner tx, Clock clock, PublishProbe publishProbe,
+                          AuthoritativeGitService authoritativeGitService,
+                          gate.application.project.ProjectAuthResolver authResolver,
+                          WorkspaceSyncer workspaceSyncer,
+                          gate.ports.git.CommitIdentityProvider commitIdentityProvider,
+                          gate.ports.git.CloneBaseSyncer cloneBaseSyncer) {
         this.config = config;
         this.authResolver = authResolver;
         this.snapshotCapture = snapshotCapture;
@@ -153,6 +172,7 @@ public final class PublishHandler {
         this.authoritativeGitService = authoritativeGitService;
         this.workspaceSyncer = workspaceSyncer;
         this.commitIdentityProvider = commitIdentityProvider;
+        this.cloneBaseSyncer = cloneBaseSyncer;
     }
 
     public PublishResult handle(PublishCommand command) {
@@ -388,6 +408,31 @@ public final class PublishHandler {
                 fields.put("note", workspaceOutcome.note() == null ? "" : workspaceOutcome.note());
                 fields.put("workspace", workspace.get().toString());
                 audit("publish.workspace_sync", ticket.ticketNo(), row.reviewRound(), fields);
+            }
+        }
+
+        // T-118: fast-forward the ticket clone onto the freshly published commit, so the sandbox
+        // reflects what landed instead of lingering a diff of already-reviewed work (the T-113
+        // round-2 incident). Best-effort by definition — the push above is already durable; a
+        // failed or skipped clone sync is audited and the manual/auto sync-base can catch up.
+        if (published && cloneBaseSyncer != null) {
+            try {
+                gate.ports.git.CloneBaseSyncer.Report cloneReport = cloneBaseSyncer.sync(clone, auth,
+                        targetRef, authResolver.baseRefFor(ticket), true);
+                Map<String, String> cloneFields = new LinkedHashMap<>();
+                cloneFields.put("status", cloneReport.status());
+                cloneFields.put("behind", String.valueOf(cloneReport.behind()));
+                cloneFields.put("from", cloneReport.fromTip() == null ? "" : cloneReport.fromTip());
+                cloneFields.put("to", cloneReport.toTip() == null ? "" : cloneReport.toTip());
+                cloneFields.put("conflicts", String.join(",", cloneReport.conflicts()));
+                if (cloneReport.skippedReason() != null) {
+                    cloneFields.put("reason", cloneReport.skippedReason());
+                }
+                audit("publish.clone_sync", ticket.ticketNo(), row.reviewRound(), cloneFields);
+            } catch (Exception e) {
+                String note = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
+                audit("publish.clone_sync", ticket.ticketNo(), row.reviewRound(), Map.of(
+                        "status", "ERROR", "reason", note));
             }
         }
 

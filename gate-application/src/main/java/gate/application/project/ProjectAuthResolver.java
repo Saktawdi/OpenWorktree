@@ -56,6 +56,21 @@ public final class ProjectAuthResolver {
         return new AuthTarget(RepoRef.of(config.authRepo()), ticket.targetRef());
     }
 
+    /**
+     * The branch this ticket's clone/branch should track for freshness (T-118 基座同步): the
+     * project's own target ref when set, else the gate-level primary — the same ref
+     * {@code ensureBranch} cuts new ticket branches from at creation time.
+     */
+    public String baseRefFor(Ticket ticket) {
+        if (projects != null && ticket.projectId() != null) {
+            Project project = projects.find(ticket.projectId()).orElse(null);
+            if (project != null && project.targetRef() != null && !project.targetRef().isBlank()) {
+                return project.targetRef();
+            }
+        }
+        return config.primaryTargetRef();
+    }
+
     /** Resolves the registered workspace for a project-bound ticket, if legacy wiring has projects. */
     public Optional<Path> workspaceFor(Ticket ticket) {
         if (projects == null || ticket.projectId() == null) {

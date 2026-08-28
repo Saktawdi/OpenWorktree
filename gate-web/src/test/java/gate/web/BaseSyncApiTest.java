@@ -3,6 +3,7 @@ package gate.web;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -167,6 +168,31 @@ class BaseSyncApiTest {
     }
 
     @Test
+    void publish_fast_forwards_the_clone_to_the_published_commit() throws Exception {
+        // T-113 round-2 incident, end to end: after a successful publish the clone must sit on
+        // the published commit (diff tab clears), not linger one commit behind with the already
+        // reviewed work showing as a phantom working diff.
+        post("/api/tickets", "{\"ticket_no\":\"SYNC-7\",\"title\":\"t\"}");
+        Path clone = harness.components().config().clonesRoot().resolve("SYNC-7");
+        Files.writeString(clone.resolve("published.txt"), "round content\n");
+        assertEquals(200, post("/api/tickets/SYNC-7/presubmit", "").statusCode());
+
+        String reviewTask = startTask("POST", "/api/tickets/SYNC-7/review", "{\"human_pass\":true}");
+        waitForStatus(reviewTask, "SUCCEEDED");
+        String publishTask = startTask("POST", "/api/tickets/SYNC-7/publish", "{}");
+        waitForStatus(publishTask, "SUCCEEDED");
+        String commitSha = extract(taskResultJson(publishTask), "commit_sha");
+
+        assertEquals(commitSha, tip(clone, "HEAD"),
+                "clone must be fast-forwarded onto the published commit");
+        var status = harness.components().git().run(
+                gate.domain.git.RepoRef.of(clone), "status", "--porcelain");
+        assertEquals("", status.stdout(),
+                "the agent's captured work is inside the published commit; worktree must be clean");
+        assertEquals("round content\n", Files.readString(clone.resolve("published.txt")));
+    }
+
+    @Test
     void up_to_date_clone_is_a_reported_noop() throws Exception {
         post("/api/tickets", "{\"ticket_no\":\"SYNC-5\",\"title\":\"t\"}");
         HttpResponse<String> res = post("/api/tickets/SYNC-5/sync-base", "{}");
@@ -228,6 +254,57 @@ class BaseSyncApiTest {
                 .header("Authorization", "Bearer " + token)
                 .GET().build();
         return client.send(req, HttpResponse.BodyHandlers.ofString());
+    }
+
+    private static String extract(String json, String field) {
+        int i = json.indexOf("\"" + field + "\":\"");
+        if (i < 0) {
+            throw new AssertionError("field " + field + " missing in " + json);
+        }
+        int start = i + field.length() + 4;
+        return json.substring(start, json.indexOf('"', start));
+    }
+
+    private String startTask(String method, String path, String body) throws Exception {
+        HttpResponse<String> res = post(path, body);
+        assertEquals(202, res.statusCode(), res.body());
+        return taskId(res.body());
+    }
+
+    private void waitForStatus(String taskId, String expected) throws Exception {
+        long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(15);
+        while (System.nanoTime() < deadline) {
+            HttpResponse<String> res = get("/api/tasks/" + taskId);
+            assertEquals(200, res.statusCode(), res.body());
+            String status = stringField(res.body(), "status");
+            if (expected.equals(status)) {
+                return;
+            }
+            if ("FAILED".equals(status) && !"FAILED".equals(expected)) {
+                fail("task " + taskId + " failed unexpectedly: " + res.body());
+            }
+            Thread.sleep(50);
+        }
+        fail("timed out waiting for task " + taskId + " to reach " + expected);
+    }
+
+    @SuppressWarnings("unchecked")
+    private String taskResultJson(String taskId) throws Exception {
+        Map<String, Object> m = (Map<String, Object>) gate.application.util.MiniJson.parse(
+                get("/api/tasks/" + taskId).body().trim());
+        return String.valueOf(m.get("result_json"));
+    }
+
+    @SuppressWarnings("unchecked")
+    private static String taskId(String responseBody) {
+        Map<String, Object> m = (Map<String, Object>) gate.application.util.MiniJson.parse(responseBody.trim());
+        return String.valueOf(m.get("task_id"));
+    }
+
+    @SuppressWarnings("unchecked")
+    private static String stringField(String body, String field) {
+        Map<String, Object> m = (Map<String, Object>) gate.application.util.MiniJson.parse(body.trim());
+        return String.valueOf(m.get(field));
     }
 
     private HttpResponse<String> post(String path, String body) throws Exception {

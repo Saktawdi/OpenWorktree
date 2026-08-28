@@ -67,11 +67,11 @@ public final class BaseSyncHandler implements BaseSynchronizer {
         }
 
         var topology = authResolver.forTicket(ticket);
-        String baseRef = baseRefFor(ticket);
 
         CloneBaseSyncer.Report report = syncer.sync(
                 RepoRef.of(java.nio.file.Path.of(ticket.clonePath())),
-                topology.authRepo(), ticket.targetRef(), baseRef, command.allowDirty());
+                topology.authRepo(), ticket.targetRef(), authResolver.baseRefFor(ticket),
+                command.allowDirty());
 
         String event = "skipped".equals(report.status()) ? "basesync.skipped" : "basesync.ok";
         auditLog.append(gate.domain.audit.AuditEvent.of(clock.now(), event, ticket.ticketNo(), null,
@@ -84,16 +84,5 @@ public final class BaseSyncHandler implements BaseSynchronizer {
                         "conflicts", String.join(",", report.conflicts()),
                         "reason", report.skippedReason() == null ? "" : report.skippedReason())));
         return report;
-    }
-
-    /** The branch new tickets are cut from (same resolution as ticket creation). */
-    private String baseRefFor(Ticket ticket) {
-        if (projects != null && ticket.projectId() != null) {
-            var project = projects.find(ticket.projectId()).orElse(null);
-            if (project != null && project.targetRef() != null && !project.targetRef().isBlank()) {
-                return project.targetRef();
-            }
-        }
-        return config.primaryTargetRef();
     }
 }
