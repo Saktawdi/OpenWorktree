@@ -505,10 +505,13 @@ export async function loadSessionMessages(no: string, sessionId: string) {
   const hist = await api<{ messages: RawMessage[] }>(`/api/sessions/${sessionId}/messages`);
   const items: ChatItem[] = hist.messages.map(mapHistoryMessage).filter(Boolean) as ChatItem[];
   appStore.setState((st) => ({ chats: { ...st.chats, [no]: items } }));
+  // 会话隔离：任务清单与上下文占用都以"当前会话"为准重建——
+  // 本会话没有 todowrite 就清空，不允许上一会话的侧栏状态泄漏过来。
   restoreTodosFromHistory(no, hist.messages);
+  setContextTokens(no, 0);
 }
 
-/** 历史回放：以最后一条携带合法 todos 的 todowrite 参数为准恢复任务清单。 */
+/** 以该会话历史中最后一条合法 todowrite 参数重建任务清单；没有则清空。 */
 function restoreTodosFromHistory(no: string, messages: RawMessage[]) {
   let latest: string | null = null;
   for (const m of messages) {
@@ -516,9 +519,8 @@ function restoreTodosFromHistory(no: string, messages: RawMessage[]) {
       if (isTodoTool(tc.name) && tc.arguments_json) latest = tc.arguments_json;
     }
   }
-  if (!latest) return;
-  const todos = parseTodos(latest);
-  if (todos) setTodos(no, todos);
+  const todos = latest ? parseTodos(latest) : null;
+  setTodos(no, todos ?? []);
 }
 
 export async function liveSendPrompt(no: string, userText: string) {
