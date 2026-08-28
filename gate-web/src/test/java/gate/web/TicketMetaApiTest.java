@@ -113,8 +113,22 @@ class TicketMetaApiTest {
         assertEquals(200, cancel.statusCode(), cancel.body());
         assertTrue(cancel.body().contains("\"stage\":\"CANCELLED\""), cancel.body());
 
-        HttpResponse<String> reopen = patch("/api/tickets/META-5", "{\"stage\":\"IN_PROGRESS\"}");
+        // T-117: reviving a terminal ticket without a reason is refused — no silent revives.
+        HttpResponse<String> silent = patch("/api/tickets/META-5", "{\"stage\":\"IN_PROGRESS\"}");
+        assertEquals(400, silent.statusCode(), silent.body());
+        assertTrue(silent.body().contains("restart_reason"), silent.body());
+
+        HttpResponse<String> reopen = patch("/api/tickets/META-5",
+                "{\"stage\":\"IN_PROGRESS\",\"restart_reason\":\"需求变更，重新开启\"}");
         assertEquals(200, reopen.statusCode(), reopen.body());
+        assertTrue(reopen.body().contains("\"stage\":\"IN_PROGRESS\""), reopen.body());
+        assertTrue(reopen.body().contains("\"restart_count\":1"), reopen.body());
+
+        // The restart history endpoint records the row the reopen created.
+        HttpResponse<String> restarts = get("/api/tickets/META-5/restarts");
+        assertEquals(200, restarts.statusCode(), restarts.body());
+        assertTrue(restarts.body().contains("\"reason\":\"需求变更，重新开启\""), restarts.body());
+        assertTrue(restarts.body().contains("\"from_stage\":\"CANCELLED\""), restarts.body());
 
         // Review-gated stages must go through presubmit/review/publish — never a direct PATCH.
         HttpResponse<String> gated = patch("/api/tickets/META-5", "{\"stage\":\"IN_REVIEW\"}");

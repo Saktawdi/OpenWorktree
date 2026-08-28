@@ -43,8 +43,18 @@ export interface Ticket {
   clonePath: string;
   agentConfigId?: string | null;
   execTokenTotal: number;
+  /** 重启次数（T-117）——demo 工单无此字段 */
+  restartCount?: number;
   createdAt: string;
   updatedAt: string;
+}
+
+/** 一次重启记录（T-117）：终态工单带回 IN_PROGRESS 的历史 */
+export interface RestartRecord {
+  round: number;
+  fromStage: Stage;
+  reason: string;
+  createdAt: string | null;
 }
 
 export interface AgentConfig {

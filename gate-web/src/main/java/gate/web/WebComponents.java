@@ -85,6 +85,8 @@ public final class WebComponents {
     private final gate.ports.ProjectRepository projectRepository;
     private final ProviderModelFetcher modelFetcher;
     private final RuntimeInfoService runtimeInfo;
+    private final gate.ports.TicketRestartRepository ticketRestartRepository;
+    private final gate.ports.AuditLog auditLog;
 
     public WebComponents(GateConfig config, String gitExecutable, Path envFile) {
         this(config, gitExecutable, envFile, null);
@@ -108,6 +110,8 @@ public final class WebComponents {
         this.providerRepository = runtime.providerRepository();
         this.ticketRepository = runtime.ticketRepository();
         this.presubmitRepository = runtime.presubmitRepository();
+        this.ticketRestartRepository = runtime.ticketRestartRepository();
+        this.auditLog = runtime.auditLog();
         this.reviewResultRepository = runtime.reviewResultRepository();
         this.publishIntentRepository = runtime.publishIntentRepository();
         this.blobStore = runtime.blobStore();
@@ -150,7 +154,8 @@ public final class WebComponents {
             String claudeCmd = cliLocator.locate("claude").map(Path::toString).orElse("claude");
             String opencodeCmd = cliLocator.locate("opencode").map(Path::toString).orElse("opencode");
             this.claudeAdapter = new ClaudeHeadlessAdapter(processRunner, this.agentConfigRepository, sessionRepo,
-                    tickets, this.projectRepository, taskRegistry, ticketLockManager, clock, claudeCmd, List.of());
+                    tickets, this.projectRepository, this.ticketRestartRepository, taskRegistry, ticketLockManager,
+                    clock, claudeCmd, List.of());
             int startTimeout = config.session() == null ? 60 : config.session().startTimeoutSeconds();
             // First-party adapter trail for incident diagnosis (spawn/stream/send/cleanup).
             AdapterLog adapterLog = AdapterLog.at(config.gateHome().resolve("adapters.log"));
@@ -159,8 +164,8 @@ public final class WebComponents {
             gate.adapters.io.ServePidRegistry pidRegistry =
                     new gate.adapters.io.ServePidRegistry(config.gateHome().resolve("opencode-serve.pids"));
             this.opencodeAdapter = new OpenCodeServeAdapter(processRunner, this.agentConfigRepository, sessionRepo,
-                    tickets, this.projectRepository, taskRegistry, ticketLockManager, clock, portAllocator, opencodeCmd,
-                    startTimeout, adapterLog, pidRegistry);
+                    tickets, this.projectRepository, this.ticketRestartRepository, taskRegistry, ticketLockManager,
+                    clock, portAllocator, opencodeCmd, startTimeout, adapterLog, pidRegistry);
             this.agentSessionPort = new DispatchAgentSessionPort(this.agentConfigRepository, sessionRepo,
                     claudeAdapter, opencodeAdapter);
         }
@@ -225,6 +230,14 @@ public final class WebComponents {
 
     public PresubmitRepository presubmitRepository() {
         return presubmitRepository;
+    }
+
+    public gate.ports.TicketRestartRepository ticketRestartRepository() {
+        return ticketRestartRepository;
+    }
+
+    public gate.ports.AuditLog auditLog() {
+        return auditLog;
     }
 
     public ReviewResultRepository reviewResultRepository() {

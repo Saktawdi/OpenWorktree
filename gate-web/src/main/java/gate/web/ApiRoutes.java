@@ -87,7 +87,8 @@ public final class ApiRoutes {
         this.statusRoutes = new StatusRoutes(gateService, config, c.runtimeInfo());
         this.projectRoutes = new gate.web.project.ProjectRoutes(projects, tickets, topologyInitializer, config);
         this.ticketRoutes = new gate.web.ticket.TicketRoutes(tickets, projects, c.agentConfigRepository(),
-                topologyInitializer, config, clock);
+                topologyInitializer, config, clock, c.presubmitRepository(),
+                c.ticketRestartRepository(), c.auditLog());
         this.sessionRoutes = new gate.web.session.SessionRoutes(c.agentConfigRepository(),
                 c.sessionRepository(), c.agentSessionPort(), tickets, clock);
     }
@@ -225,6 +226,11 @@ public final class ApiRoutes {
         if (seg.length == 4 && seg[1].equals("tickets") && seg[3].equals("presubmits")
                 && method.equals("GET")) {
             return presubmitList(seg[2]);
+        }
+        // T-117: restart history of a terminal ticket that was brought back to work.
+        if (seg.length == 4 && seg[1].equals("tickets") && seg[3].equals("restarts")
+                && method.equals("GET")) {
+            return ticketRoutes.ticketRestarts(seg[2]);
         }
         // /api/tickets/{no}/presubmit/{round}/diff
         if (seg.length == 6 && seg[1].equals("tickets") && seg[3].equals("presubmit")

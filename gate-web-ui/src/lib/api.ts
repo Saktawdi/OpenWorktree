@@ -86,6 +86,7 @@ interface RawTicket {
   clone_path?: string | null;
   agent_config_id?: string | null;
   exec_token_total?: number | null;
+  restart_count?: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -104,6 +105,7 @@ function mapTicket(t: RawTicket) {
     clonePath: t.clone_path ?? "",
     agentConfigId: t.agent_config_id ?? null,
     execTokenTotal: t.exec_token_total ?? 0,
+    restartCount: t.restart_count ?? 0,
     createdAt: t.created_at,
     updatedAt: t.updated_at,
   };
@@ -941,6 +943,41 @@ export async function updateTicketLive(
     showToast(`更新工单失败：${(e as Error).message}`);
     return false;
   }
+}
+
+/** 拉取工单重启历史（T-117），落盘到 store；失败静默（旧后端无此接口）。 */
+export async function loadRestarts(no: string) {
+  try {
+    const data = await api<{
+      restarts: Array<{
+        round: number;
+        from_stage: string;
+        reason: string;
+        created_at: string | null;
+      }>;
+    }>(`/api/tickets/${no}/restarts`);
+    const list: import("./types").RestartRecord[] = (data.restarts ?? []).map((r) => ({
+      round: r.round,
+      fromStage: r.from_stage as import("./types").Stage,
+      reason: r.reason,
+      createdAt: r.created_at,
+    }));
+    appStore.setState((st) => ({ restarts: { ...st.restarts, [no]: list } }));
+  } catch {
+    /* 后端不支持或尚无记录时静默 */
+  }
+}
+
+/** 重启终态工单（T-117）：填理由 → PATCH 转回 IN_PROGRESS，后端记录历史并开新轮次。 */
+export async function restartTicketLive(no: string, reason: string): Promise<boolean> {
+  const ok = await updateTicketLive(no, {
+    stage: "IN_PROGRESS",
+    restart_reason: reason,
+  });
+  if (ok) {
+    await loadRestarts(no).catch(() => {});
+  }
+  return ok;
 }
 
 interface RawAgentConfig {

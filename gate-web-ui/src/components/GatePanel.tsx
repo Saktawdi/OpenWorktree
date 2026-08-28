@@ -1,11 +1,13 @@
 import { useMemo, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
+  ArrowCounterClockwise,
   ArrowRight,
   ArrowUUpLeft,
   Archive,
   Check,
   CircleNotch,
+  ClockCounterClockwise,
   FileText,
   GitBranch,
   Hash,
@@ -21,8 +23,9 @@ import {
   X,
 } from "@phosphor-icons/react";
 import { actions } from "../lib/actions";
-import { formatBytes, hhmmss, shortHash } from "../lib/format";
-import { NO_SESSIONS, useApp } from "../lib/store";
+import { formatBytes, hhmmss, shortHash, STAGE_LABEL } from "../lib/format";
+import { NO_SESSIONS, openRestartDialog, openRestartsView, useApp } from "../lib/store";
+import { loadRestarts } from "../lib/api";
 import type { ChatSession, Snapshot } from "../lib/types";
 import { CopyButton, HashReveal, Spinner } from "./ui";
 
@@ -292,6 +295,32 @@ function TicketInfo({ ticketNo }: { ticketNo: string }) {
       >
         <FileText size={14} className="text-faint shrink-0" />
         <span className="text-[12px] font-medium text-dim">工单信息</span>
+        {/* 重启历史入口（T-117）：只在确有重启记录时出现，弹窗展示、不占原信息位 */}
+        {(ticket.restartCount ?? 0) > 0 && (
+          <span
+            role="button"
+            tabIndex={0}
+            className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-dim hover:text-accent hover:bg-raised transition-colors cursor-pointer shrink-0"
+            title="查看重启历史"
+            aria-label="查看重启历史"
+            onClick={(e) => {
+              e.stopPropagation();
+              void loadRestarts(ticketNo);
+              openRestartsView(ticketNo);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.stopPropagation();
+                void loadRestarts(ticketNo);
+                openRestartsView(ticketNo);
+              }
+            }}
+          >
+            <ClockCounterClockwise size={12} />
+            重启历史
+            <span className="font-mono text-[10px] text-faint">{ticket.restartCount}</span>
+          </span>
+        )}
         <span className="flex-1" />
         <span
           className={`text-[11px] text-faint transition-transform duration-150 ${expanded ? "rotate-0" : "-rotate-90"}`}
@@ -569,6 +598,18 @@ export function GatePanel({ ticketNo }: { ticketNo: string }) {
       hint: "原子推送至主分支；发布内容与快照指纹强一致",
       primary: true,
     };
+  } else if (stage === "DONE" || stage === "CANCELLED") {
+    // T-117: 终态工单可重启 —— 底部主按钮位变为「重启工单」，弹窗填写理由。
+    action = {
+      label: "重启工单",
+      icon: <ArrowCounterClockwise size={15} weight="fill" />,
+      onClick: () => openRestartDialog(ticketNo),
+      hint:
+        stage === "DONE"
+          ? "重新开启该工单的编码协作，轮次自动加一"
+          : "已取消的工单可重新开启，轮次自动加一",
+      primary: true,
+    };
   } else if (stage === "NEEDS_HUMAN") {
     action = null;
   }
@@ -636,14 +677,184 @@ export function GatePanel({ ticketNo }: { ticketNo: string }) {
           {action.hint && <div className="mt-2 text-center text-[11.5px] text-faint">{action.hint}</div>}
         </div>
       )}
-      {stage === "DONE" && (
-        <div className="shrink-0 border-t border-edge bg-surface p-3.5">
-          <button className="btn btn-lg w-full" disabled>
-            <Check size={15} weight="bold" />
-            工单已完成归档
+      {/* ─── T-117: 重启理由弹窗 / 重启历史弹窗 ─── */}
+      <RestartDialog ticketNo={ticketNo} />
+      <RestartsHistoryDialog ticketNo={ticketNo} />
+    </aside>
+  );
+}
+
+/* ─── Restart Dialog (T-117) ─── */
+
+const RESTART_REASON_MAX = 2000;
+
+function RestartDialog({ ticketNo }: { ticketNo: string }) {
+  const open = useApp((s) => s.restartDialogFor === ticketNo);
+  const ticket = useApp((s) => s.tickets.find((t) => t.ticketNo === ticketNo));
+  const round = useApp((s) => s.snapshots[ticketNo]?.length ?? 0);
+  const [reason, setReason] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  if (!open) return null;
+
+  const valid = reason.trim().length > 0 && reason.length <= RESTART_REASON_MAX;
+
+  const close = () => {
+    openRestartDialog(null);
+    setReason("");
+  };
+
+  const submit = async () => {
+    if (!valid || submitting) return;
+    setSubmitting(true);
+    const ok = await actions.restartTicket(ticketNo, reason.trim());
+    setSubmitting(false);
+    if (ok) {
+      close();
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 grid place-items-center bg-black/55 backdrop-blur-[2px]"
+      onClick={close}
+    >
+      <div
+        className="w-[480px] card shadow-2xl shadow-black/60 animate-rise"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center gap-2.5 px-5 h-12 border-b border-edge">
+          <ArrowCounterClockwise size={15} className="text-accent" weight="fill" />
+          <span className="font-mono text-[12.5px] text-accent">{ticketNo}</span>
+          <span className="text-[13.5px] font-semibold">重启工单</span>
+          <span className="flex-1" />
+          <button className="icon-btn" onClick={close} aria-label="关闭">
+            ✕
           </button>
         </div>
-      )}
-    </aside>
+
+        <div className="p-5 space-y-4">
+          <div className="rounded-lg border border-edge bg-sunken/60 px-3.5 py-2.5 text-[12px] text-dim leading-relaxed">
+            该工单当前处于
+            <span className="mx-1 font-medium text-ink">
+              {ticket && <>{STAGE_LABEL[ticket.stage]}</>}
+            </span>
+            状态。重启后将进入
+            <span className="mx-1 font-medium text-accent">进行中</span>
+            ，预提审轮次自动进入第
+            <span className="mx-0.5 font-mono text-ink">{round + 1}</span>轮。
+          </div>
+
+          <div>
+            <label className="field-label">
+              重启理由<span className="text-danger">*</span>
+            </label>
+            <textarea
+              className="text-input h-28 py-2 resize-none"
+              placeholder="为什么要重启该工单？本轮要达成什么目标…（必填）"
+              value={reason}
+              maxLength={RESTART_REASON_MAX}
+              onChange={(e) => setReason(e.target.value)}
+              autoFocus
+            />
+            <div className="mt-1 text-right font-mono text-[10.5px] text-faint">
+              {reason.length}/{RESTART_REASON_MAX}
+            </div>
+          </div>
+
+          <div className="text-[11.5px] text-faint leading-relaxed">
+            重启理由将记入工单的重启历史，并注入后续会话的系统上下文。
+          </div>
+        </div>
+
+        <div className="flex justify-end gap-2 px-5 py-4 border-t border-edge">
+          <button className="btn" onClick={close}>
+            取消
+          </button>
+          <button className="btn btn-primary" disabled={!valid || submitting} onClick={submit}>
+            {submitting ? (
+              <>
+                <Spinner />
+                重启中…
+              </>
+            ) : (
+              <>
+                <ArrowCounterClockwise size={14} weight="fill" />
+                确认重启
+              </>
+            )}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ─── Restart History Dialog (T-117) ─── */
+
+function RestartsHistoryDialog({ ticketNo }: { ticketNo: string }) {
+  const open = useApp((s) => s.restartsViewFor === ticketNo);
+  const rows = useApp((s) => s.restarts[ticketNo]);
+
+  if (!open) return null;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 grid place-items-center bg-black/55 backdrop-blur-[2px]"
+      onClick={() => openRestartsView(null)}
+    >
+      <div
+        className="w-[520px] card shadow-2xl shadow-black/60 animate-rise"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center gap-2.5 px-5 h-12 border-b border-edge">
+          <ClockCounterClockwise size={15} className="text-dim" />
+          <span className="font-mono text-[12.5px] text-accent">{ticketNo}</span>
+          <span className="text-[13.5px] font-semibold">重启历史</span>
+          <span className="flex-1" />
+          <button className="icon-btn" onClick={() => openRestartsView(null)} aria-label="关闭">
+            ✕
+          </button>
+        </div>
+
+        <div className="p-5 max-h-[60vh] overflow-y-auto">
+          {!rows || rows.length === 0 ? (
+            <div className="py-8 text-center text-[12.5px] text-faint">
+              该工单还没有重启记录
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {[...rows].reverse().map((r, i) => (
+                <div key={i} className="rounded-lg border border-edge bg-sunken/40 p-3.5">
+                  <div className="flex items-center gap-2 text-[12px]">
+                    <span className="chip border border-accent/30 bg-accent/10 text-accent font-mono">
+                      第 {r.round} 轮
+                    </span>
+                    <span className="text-dim">
+                      {STAGE_LABEL[r.fromStage] ?? r.fromStage}
+                    </span>
+                    <ArrowRight size={11} className="text-faint" />
+                    <span className="text-ink font-medium">进行中</span>
+                    <span className="flex-1" />
+                    <span className="font-mono text-[10.5px] text-faint">
+                      {r.createdAt ? new Date(r.createdAt).toLocaleString("zh-CN") : "—"}
+                    </span>
+                  </div>
+                  <div className="mt-2 text-[12.5px] text-dim leading-relaxed whitespace-pre-wrap">
+                    {r.reason}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="flex justify-end gap-2 px-5 py-4 border-t border-edge">
+          <button className="btn" onClick={() => openRestartsView(null)}>
+            关闭
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }

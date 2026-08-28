@@ -12,6 +12,7 @@ import type {
   Project,
   PublishOutcome,
   PermissionRequestView,
+  RestartRecord,
   SessionModelSel,
   Snapshot,
   TaskProgress,
@@ -79,6 +80,12 @@ export interface AppState {
   sessionModels: Record<string, CatalogProvider[]>;
   /** Per-session live model / reasoning-effort selection (会话内实时切换). */
   sessionModelSel: Record<string, SessionModelSel>;
+  /** 重启历史（T-117）：每工单的重启记录列表 */
+  restarts: Record<string, RestartRecord[]>;
+  /** 重启理由弹窗目标工单（null = 关闭） */
+  restartDialogFor: string | null;
+  /** 重启历史弹窗目标工单（null = 关闭） */
+  restartsViewFor: string | null;
 }
 
 export const appStore = create<AppState>(() => ({
@@ -121,6 +128,9 @@ export const appStore = create<AppState>(() => ({
   activeSessionId: {},
   sessionModels: {},
   sessionModelSel: {},
+  restarts: {},
+  restartDialogFor: null,
+  restartsViewFor: null,
 }));
 
 const s = () => appStore.getState();
@@ -193,6 +203,9 @@ export function seedDemo(force = false) {
     gitViews: { "acme-checkout": GIT_ACME, "nexus-docs": GIT_NEXUS },
     treeViews: { "acme-checkout": TREE_ACME, "nexus-docs": TREE_NEXUS },
     editingTicketNo: null,
+    restarts: {},
+    restartDialogFor: null,
+    restartsViewFor: null,
   agentId:
     (typeof window !== "undefined" && localStorage.getItem("gate-agent-id")) ||
     DEMO_AGENTS[0].id,
@@ -224,6 +237,8 @@ function tryRestore(): boolean {
       treeViews: saved.treeViews ?? cur.treeViews,
       editingTicketNo: null,
       ticketCreatorOpen: false,
+      restartDialogFor: null,
+      restartsViewFor: null,
     };
     // 旧版本会把已应答的权限卡片留在 chats 里（永久挂在底部）；恢复时只保留待决的。
     for (const [no, items] of Object.entries(clean.chats)) {
@@ -608,6 +623,16 @@ export function removeAgentConfig(id: string) {
 
 export function openTicketEditor(no: string | null) {
   patch({ editingTicketNo: no });
+}
+
+/** 重启理由弹窗（T-117）：no 为 null 时关闭。 */
+export function openRestartDialog(no: string | null) {
+  patch({ restartDialogFor: no });
+}
+
+/** 重启历史弹窗（T-117）：no 为 null 时关闭。 */
+export function openRestartsView(no: string | null) {
+  patch({ restartsViewFor: no });
 }
 
 /** Opens the new-ticket form from anywhere (empty workbench, kanban toolbar). */

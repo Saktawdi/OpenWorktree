@@ -3,6 +3,7 @@ package gate.adapters.session;
 import gate.domain.project.Project;
 import gate.domain.session.AgentConfig;
 import gate.domain.ticket.Ticket;
+import gate.ports.TicketRestartRepository;
 
 /**
  * Composes the effective system prompt for an agent session (注入项目/工单上下文开关).
@@ -26,6 +27,15 @@ public final class AgentContextPrompt {
      */
     public static String compose(AgentConfig config, String ticketNo, String targetRef,
                                  Ticket ticket, Project project) {
+        return compose(config, ticketNo, targetRef, ticket, project, null);
+    }
+
+    /**
+     * @param latestRestart 最新一次重启记录（T-117），可为 null —— 从未重启过则不渲染重启理由字段
+     */
+    public static String compose(AgentConfig config, String ticketNo, String targetRef,
+                                 Ticket ticket, Project project,
+                                 TicketRestartRepository.RestartRow latestRestart) {
         StringBuilder sb = new StringBuilder();
         String sp = config.systemPrompt();
         if (sp != null && !sp.isBlank()) {
@@ -60,6 +70,12 @@ public final class AgentContextPrompt {
             }
             if (ticket.labels() != null && !ticket.labels().isEmpty()) {
                 sb.append("- 标签: ").append(String.join(", ", ticket.labels())).append('\n');
+            }
+            // T-117: only when the ticket actually carries a restart — 如无则去掉注入字段.
+            if (latestRestart != null && latestRestart.reason() != null
+                    && !latestRestart.reason().isBlank()) {
+                sb.append("- 重启理由(第 ").append(latestRestart.round()).append(" 轮): ")
+                  .append(latestRestart.reason().trim()).append('\n');
             }
         }
         sb.append("- 目标分支: ")

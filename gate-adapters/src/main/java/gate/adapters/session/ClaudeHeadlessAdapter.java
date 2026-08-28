@@ -25,6 +25,7 @@ import gate.ports.SessionRepository;
 import gate.ports.TaskRegistry;
 import gate.ports.TicketLockManager;
 import gate.ports.TicketRepository;
+import gate.ports.TicketRestartRepository;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -58,6 +59,7 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
     private final SessionRepository sessions;
     private final TicketRepository tickets;
     private final ProjectRepository projects;
+    private final TicketRestartRepository restarts;
     private final TaskRegistry tasks;
     private final TicketLockManager ticketLocks;
     private final Clock clock;
@@ -90,7 +92,7 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
                                  Clock clock,
                                  String claudeExecutable,
                                  List<String> claudePrefix) {
-        this(processRunner, agentConfigs, sessions, tickets, null, tasks, ticketLocks, clock,
+        this(processRunner, agentConfigs, sessions, tickets, null, null, tasks, ticketLocks, clock,
                 claudeExecutable, claudePrefix);
     }
 
@@ -100,6 +102,7 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
                                  SessionRepository sessions,
                                  TicketRepository tickets,
                                  ProjectRepository projects,
+                                 TicketRestartRepository restarts,
                                  TaskRegistry tasks,
                                  TicketLockManager ticketLocks,
                                  Clock clock,
@@ -110,6 +113,7 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
         this.sessions = sessions;
         this.tickets = tickets;
         this.projects = projects;
+        this.restarts = restarts;
         this.tasks = tasks;
         this.ticketLocks = ticketLocks;
         this.clock = clock;
@@ -434,7 +438,9 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
             if (projects != null && ticket != null && ticket.projectId() != null) {
                 project = projects.find(ticket.projectId()).orElse(null);
             }
-            String content = AgentContextPrompt.compose(config, ticketNo, targetRef, ticket, project);
+            TicketRestartRepository.RestartRow latestRestart =
+                    restarts == null ? null : restarts.latest(ticketNo).orElse(null);
+            String content = AgentContextPrompt.compose(config, ticketNo, targetRef, ticket, project, latestRestart);
             Files.createDirectories(file.getParent());
             if (content.isBlank()) {
                 Files.deleteIfExists(file);

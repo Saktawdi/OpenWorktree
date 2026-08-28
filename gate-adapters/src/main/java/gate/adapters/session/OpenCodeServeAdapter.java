@@ -28,6 +28,7 @@ import gate.ports.SessionRepository;
 import gate.ports.TaskRegistry;
 import gate.ports.TicketLockManager;
 import gate.ports.TicketRepository;
+import gate.ports.TicketRestartRepository;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -89,6 +90,7 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
     private final SessionRepository sessions;
     private final TicketRepository tickets;
     private final ProjectRepository projects;
+    private final TicketRestartRepository restarts;
     private final TaskRegistry tasks;
     private final TicketLockManager ticketLocks;
     private final Clock clock;
@@ -155,11 +157,10 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                                  int startTimeoutSeconds,
                                  AdapterLog log,
                                  ServePidRegistry pidRegistry) {
-        this(processRunner, agentConfigs, sessions, tickets, null, tasks, ticketLocks, clock,
+        this(processRunner, agentConfigs, sessions, tickets, null, null, tasks, ticketLocks, clock,
                 ports, opencodeExecutable, startTimeoutSeconds, log, pidRegistry);
     }
 
-    /** Full constructor: {@code projects} is optional (null skips the 项目 section of the injected context). */
     public OpenCodeServeAdapter(ProcessRunner processRunner,
                                  AgentConfigRepository agentConfigs,
                                  SessionRepository sessions,
@@ -173,11 +174,31 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                                  int startTimeoutSeconds,
                                  AdapterLog log,
                                  ServePidRegistry pidRegistry) {
+        this(processRunner, agentConfigs, sessions, tickets, projects, null, tasks, ticketLocks, clock,
+                ports, opencodeExecutable, startTimeoutSeconds, log, pidRegistry);
+    }
+
+    /** Full constructor: {@code projects} is optional (null skips the 项目 section of the injected context). */
+    public OpenCodeServeAdapter(ProcessRunner processRunner,
+                                 AgentConfigRepository agentConfigs,
+                                 SessionRepository sessions,
+                                 TicketRepository tickets,
+                                 ProjectRepository projects,
+                                 TicketRestartRepository restarts,
+                                 TaskRegistry tasks,
+                                 TicketLockManager ticketLocks,
+                                 Clock clock,
+                                 PortAllocator ports,
+                                 String opencodeExecutable,
+                                 int startTimeoutSeconds,
+                                 AdapterLog log,
+                                 ServePidRegistry pidRegistry) {
         this.processRunner = processRunner;
         this.agentConfigs = agentConfigs;
         this.sessions = sessions;
         this.tickets = tickets;
         this.projects = projects;
+        this.restarts = restarts;
         this.tasks = tasks;
         this.ticketLocks = ticketLocks;
         this.clock = clock;
@@ -498,8 +519,10 @@ sessions.find(sessionId).ifPresent(s -> {
                 if (projects != null && ctxTicket != null && ctxTicket.projectId() != null) {
                     project = projects.find(ctxTicket.projectId()).orElse(null);
                 }
+                TicketRestartRepository.RestartRow latestRestart =
+                        restarts == null ? null : restarts.latest(latest.ticketNo()).orElse(null);
                 String context = AgentContextPrompt.compose(config, latest.ticketNo(),
-                        ctxTicket == null ? null : ctxTicket.targetRef(), ctxTicket, project);
+                        ctxTicket == null ? null : ctxTicket.targetRef(), ctxTicket, project, latestRestart);
                 if (!context.isBlank()) {
                     outgoing = context + "\n\n---\n\n" + message;
                 }
