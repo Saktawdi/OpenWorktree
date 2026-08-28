@@ -16,7 +16,7 @@ import {
 } from "@phosphor-icons/react";
 import { NO_CHAT, useApp } from "../lib/store";
 import type { ChatItem, ToolCallView } from "../lib/types";
-import { hhmmss } from "../lib/format";
+import { hhmmss, variantLabel } from "../lib/format";
 import { PermissionCard } from "./PermissionCard";
 import { Markdown } from "./Markdown";
 import { CopyButton } from "./ui";
@@ -105,34 +105,34 @@ function ToolRow({ tool }: { tool: ToolCallView }) {
 }
 
 function AssistantFooter({ item }: { item: Extract<ChatItem, { kind: "assistant" }> }) {
-  // openchamber 式 footer：左 = 完成的 agent + 推理等级，右 = 复制按钮。
-  // 仅 hover 整条回复时显示（具名 group: group/msg + group-hover/msg）。
+  // openchamber 式 footer：元信息（完成的 agent + 推理等级）常驻左对齐，
+  // 复制按钮紧随其后、仅 hover 整条回复时出现——绝不推到行尾，避免被误读成用户消息的操作。
   if (item.streaming) return null;
 
   const rawVariant = (item.variant ?? "").trim();
-  const variant = rawVariant && !/^(default|none)$/i.test(rawVariant)
-    ? rawVariant[0].toLowerCase() + rawVariant.slice(1)
-    : null;
+  const variant = rawVariant && !/^(default|none)$/i.test(rawVariant) ? rawVariant : null;
   const agent = (item.agent ?? "").trim() || null;
   if (!agent && !variant && !item.text) return null;
 
   return (
-    <div className="mt-1.5 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[11px] text-faint opacity-0 pointer-events-none transition-opacity duration-150 group-hover/msg:opacity-100 group-hover/msg:pointer-events-auto">
+    <div className="mt-1.5 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[11px] text-faint">
       {agent && (
-        <span className="flex items-center gap-1">
-          <Sparkle size={11} className="shrink-0" />
-          <span className="truncate">{agent}</span>
+        <span
+          className="flex min-w-0 items-center gap-1"
+          title={`本条回复由 ${agent} 完成`}
+        >
+          <Sparkle size={11} weight="fill" className="shrink-0 text-accent/70" />
+          <span className="max-w-[180px] truncate">{agent}</span>
         </span>
       )}
       {variant && (
-        <span className="flex items-center gap-1">
-          <Brain size={11} className="shrink-0" />
-          <span>{variant}</span>
+        <span className="flex items-center gap-1" title={`推理强度：${variantLabel(variant)}`}>
+          <Brain size={11} className="shrink-0 text-info/70" />
+          <span>{variantLabel(variant)}</span>
         </span>
       )}
-      <span className="flex-1" />
       {item.text && (
-        <span className="[&_.icon-btn]:w-6 [&_.icon-btn]:h-6 [&_.icon-btn]:rounded">
+        <span className="flex items-center opacity-0 pointer-events-none transition-opacity duration-150 focus-within:opacity-100 focus-within:pointer-events-auto group-hover/msg:opacity-100 group-hover/msg:pointer-events-auto [&_.icon-btn]:h-6 [&_.icon-btn]:w-6 [&_.icon-btn]:rounded">
           <CopyButton text={item.text} label="复制回复" />
         </span>
       )}

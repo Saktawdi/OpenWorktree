@@ -231,6 +231,8 @@ function tryRestore(): boolean {
       if (filtered.length !== items.length) clean.chats[no] = filtered;
     }
     appStore.setState(clean);
+    // 旧快照的 assistant 气泡可能没有 agent/variant 标注，恢复后统一补齐。
+    for (const no of Object.keys(clean.chats)) applyReplyMetaDefaults(no);
     return true;
   } catch {
     return false;
@@ -411,29 +413,53 @@ export function patchAssistant(no: string, id: string, fn: (a: Extract<ChatItem,
   }));
 }
 
+/**
+ * 当前会话「本条回复归属」的近似标注来源（openchamber 式底部标注）：
+ * - agent:   会话绑定的 AgentConfig.name（缺省回退全局 agentId、再回退首个配置）
+ * - variant: session overrideVariant 或 sessionModelSel.variant（推理等级）
+ */
+function sessionReplyMeta(no: string): { agent: string | null; variant: string | null } {
+  const st = s();
+  const sessionId = st.activeSessionId[no];
+  const sess = (st.sessions[no] ?? []).find((x) => x.id === sessionId);
+  const cfgId = sess?.agentConfigId ?? st.agentId;
+  const cfg =
+    st.agents.find((a) => a.id === cfgId) ?? st.agents.find((a) => a.id === st.agentId) ?? st.agents[0];
+  return {
+    agent: cfg?.name ?? cfg?.model ?? null,
+    variant: (sess?.overrideVariant ?? (sessionId ? st.sessionModelSel[sessionId]?.variant : null)) ?? null,
+  };
+}
+
+/** 给历史加载/刷新恢复的 assistant 气泡补齐 agent/variant，避免 footer 只剩复制按钮。 */
+export function applyReplyMetaDefaults(no: string) {
+  const { agent, variant } = sessionReplyMeta(no);
+  if (!agent && !variant) return;
+  const list = s().chats[no] ?? [];
+  if (!list.some((m) => m.kind === "assistant" && (!m.agent || !m.variant))) return;
+  set((st) => ({
+    chats: {
+      ...st.chats,
+      [no]: st.chats[no].map((m) =>
+        m.kind === "assistant"
+          ? { ...m, agent: m.agent ?? agent, variant: m.variant ?? variant }
+          : m,
+      ),
+    },
+  }));
+}
+
 export function finishAssistant(
   no: string,
   id: string,
   meta?: { agent?: string | null; variant?: string | null },
 ) {
-  // 未显式传 meta 时，从当前会话/worker 状态回填：
-  // - agent:    当前会话选中的 AgentConfig.name（openchamber 式底部标注）
-  // - variant:  session overrideVariant 或 sessionModelSel.variant（推理等级）
-  const st = s();
-  const sessionId = st.activeSessionId[no];
-  const sessList = st.sessions[no] ?? [];
-  const sess = sessList.find((x) => x.id === sessionId);
-  const cfgId = sess?.agentConfigId ?? st.agentId;
-  const cfg = st.agents.find((a) => a.id === cfgId) ?? st.agents.find((a) => a.id === st.agentId) ?? st.agents[0];
-  const fallbackAgent = cfg?.name ?? cfg?.model ?? null;
-  const fallbackVariant =
-    (sess?.overrideVariant ?? (sessionId ? st.sessionModelSel[sessionId]?.variant : null)) ?? null;
-
+  const fallback = sessionReplyMeta(no);
   patchAssistant(no, id, (a) => ({
     ...a,
     streaming: false,
-    agent: meta?.agent ?? a.agent ?? fallbackAgent,
-    variant: meta?.variant ?? a.variant ?? fallbackVariant,
+    agent: meta?.agent ?? a.agent ?? fallback.agent,
+    variant: meta?.variant ?? a.variant ?? fallback.variant,
     thinking: a.thinking ? { ...a.thinking, done: true } : a.thinking,
   }));
 }
