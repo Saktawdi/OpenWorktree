@@ -300,7 +300,7 @@ export function SessionRail({ ticketNo }: { ticketNo: string }) {
   const [openPanel, setOpenPanel] = useState<"todo" | "context" | null>(null);
   const railRef = useDismiss(openPanel !== null, () => setOpenPanel(null));
 
-  const progress = todos ? todoProgress(todos) : null;
+  const progress = todos && todos.length > 0 ? todoProgress(todos) : null;
   const usage = computeContextPercent(ctx, chat);
   // 仅有系统提示词的空会话（无实测 tokens、无真实对话）不显示上下文环。
   const hasConversation =
