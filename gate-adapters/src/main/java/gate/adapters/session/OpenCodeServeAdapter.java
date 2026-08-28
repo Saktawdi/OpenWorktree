@@ -104,6 +104,8 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
     private final PortAllocator ports;
     private final Duration startTimeout;
     private final String opencodeExecutable;
+    /** Null = auto base sync disabled (legacy wirings/tests); set, every session start re-syncs the clone base (T-118). */
+    private final gate.ports.git.BaseSynchronizer baseSynchronizer;
     // PINNED TO HTTP/1.1 — the default client is HTTP/2, and its h2c cleartext upgrade stalls against
     // opencode's (Bun) HTTP server: the listener is up ("server listening") but a /health GET never
     // resolves, so every session start failed with "did not become healthy" and leaked a serve process.
@@ -223,6 +225,32 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                                  ServePidRegistry pidRegistry,
                                  Path gateToml,
                                  CredentialRepository credentials) {
+        this(processRunner, agentConfigs, sessions, tickets, projects, restarts, tasks, ticketLocks,
+                clock, ports, opencodeExecutable, startTimeoutSeconds, log, pidRegistry, gateToml,
+                credentials, null);
+    }
+
+    /**
+     * Fullest constructor: {@code baseSynchronizer} re-syncs the clone base on every session start
+     * (T-118 基座同步); null disables it (legacy wirings/tests).
+     */
+    public OpenCodeServeAdapter(ProcessRunner processRunner,
+                                 AgentConfigRepository agentConfigs,
+                                 SessionRepository sessions,
+                                 TicketRepository tickets,
+                                 ProjectRepository projects,
+                                 TicketRestartRepository restarts,
+                                 TaskRegistry tasks,
+                                 TicketLockManager ticketLocks,
+                                 Clock clock,
+                                 PortAllocator ports,
+                                 String opencodeExecutable,
+                                 int startTimeoutSeconds,
+                                 AdapterLog log,
+                                 ServePidRegistry pidRegistry,
+                                 Path gateToml,
+                                 CredentialRepository credentials,
+                                 gate.ports.git.BaseSynchronizer baseSynchronizer) {
         this.processRunner = processRunner;
         this.agentConfigs = agentConfigs;
         this.sessions = sessions;
@@ -239,6 +267,7 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
         this.pidRegistry = pidRegistry == null ? new ServePidRegistry(null) : pidRegistry;
         this.gateToml = gateToml;
         this.credentials = credentials;
+        this.baseSynchronizer = baseSynchronizer;
         this.pidRegistry.sweepOrphans();
         this.executor = Executors.newSingleThreadExecutor(r -> {
             Thread t = new Thread(r, "opencode-session");
@@ -666,9 +695,28 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
         return out;
     }
 
+    /**
+     * T-118: re-sync the clone base before the agent touches the clone. Best-effort by design: a
+     * failed or skipped sync must not block the session — a stale base surfaces loudly enough at
+     * presubmit (BASE_STALE); the manual sync endpoint can replay a dirty worktree, which the
+     * auto path (allowDirty=false) deliberately refuses to touch.
+     */
+    private void syncBaseQuietly(String ticketNo) {
+        if (baseSynchronizer == null) {
+            return;
+        }
+        try {
+            baseSynchronizer.syncBase(ticketNo, false);
+        } catch (Exception e) {
+            log.info("opencode", "basesync.skipped-exception", "ticketNo", ticketNo,
+                    "error", String.valueOf(e.getMessage()));
+        }
+    }
+
     @Override
     public Session start(StartRequest request) {
         try (AutoCloseable ignored = ticketLocks.acquire(request.ticketNo())) {
+            syncBaseQuietly(request.ticketNo());
             AgentConfig config = agentConfigs.find(request.agentConfigId())
                     .orElseThrow(() -> new GateException(GateErrorCode.USAGE,
                             "no such agent config: " + request.agentConfigId()));

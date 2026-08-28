@@ -310,6 +310,14 @@ export const actions = {
     pushSystemMessage(no, `工单已重启 · 本轮理由：${reason}`, "info");
     return Promise.resolve(true);
   },
+  /** 基座同步（T-118）：工单分支快进到主分支最新 tip，未提交改动原样保留。仅 live 模式可用。 */
+  syncBase(no: string) {
+    if (appStore.getState().mode === "live") {
+      return live.liveSyncBase(no);
+    }
+    pushSystemMessage(no, "演示模式无主分支可同步", "info");
+    return Promise.resolve();
+  },
   createSession(no: string) {
     if (appStore.getState().creatingSession[no]) return;
     setCreatingSession(no, true);

@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
+  ArrowClockwise,
   ArrowCounterClockwise,
   ArrowRight,
   ArrowUUpLeft,
@@ -938,6 +939,17 @@ export function GatePanel({ ticketNo }: { ticketNo: string }) {
       {/* ─── Action Button (sticky bottom) ─── */}
       {action && (
         <div className="shrink-0 border-t border-edge bg-surface p-3.5">
+          {(stage === "IN_PROGRESS" || stage === "REJECTED" || stage === "PENDING") && (
+            <button
+              className="btn w-full mb-2"
+              disabled={gateBusy}
+              onClick={() => actions.syncBase(ticketNo)}
+              title="把工单分支快进到主分支最新 tip；沙箱内未提交的改动会原样保留（T-118 基座同步）"
+            >
+              <ArrowClockwise size={15} weight="fill" />
+              同步基座 · 追平主分支
+            </button>
+          )}
           <button
             className={`btn btn-lg w-full ${action.primary ? "btn-primary" : ""}`}
             disabled={action.disabled}

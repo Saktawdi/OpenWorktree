@@ -28,5 +28,7 @@ public interface GateService {
 
     ReconcileResult reconcile(ReconcileCommand command);
 
+    gate.ports.git.CloneBaseSyncer.Report syncBase(gate.application.basesync.SyncBaseCommand command);
+
     StatusResult status(StatusQuery query);
 }

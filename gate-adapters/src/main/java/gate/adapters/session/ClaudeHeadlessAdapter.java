@@ -72,6 +72,8 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
      * mcp-config.json is then not written at all, as before this capability existed.
      */
     private final Path gateToml;
+    /** Null = auto base sync disabled (legacy wirings/tests); set, every session start re-syncs the clone base. */
+    private final gate.ports.git.BaseSynchronizer baseSynchronizer;
     private final ExecutorService executor;
     private final Map<String, Set<Consumer<SessionStreamChunk>>> listeners = new ConcurrentHashMap<>();
     // 有进行中回合的 session id 快照（入队即算运行，排队等待也算），用于顶栏 busy 统计
@@ -119,6 +121,24 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
                                  String claudeExecutable,
                                  List<String> claudePrefix,
                                  Path gateToml) {
+        this(processRunner, agentConfigs, sessions, tickets, projects, restarts, tasks, ticketLocks,
+                clock, claudeExecutable, claudePrefix, gateToml, null);
+    }
+
+    /** Fullest constructor: {@code baseSynchronizer} re-syncs the clone base on every session start (T-118). */
+    public ClaudeHeadlessAdapter(ProcessRunner processRunner,
+                                 AgentConfigRepository agentConfigs,
+                                 SessionRepository sessions,
+                                 TicketRepository tickets,
+                                 ProjectRepository projects,
+                                 TicketRestartRepository restarts,
+                                 TaskRegistry tasks,
+                                 TicketLockManager ticketLocks,
+                                 Clock clock,
+                                 String claudeExecutable,
+                                 List<String> claudePrefix,
+                                 Path gateToml,
+                                 gate.ports.git.BaseSynchronizer baseSynchronizer) {
         this.processRunner = processRunner;
         this.agentConfigs = agentConfigs;
         this.sessions = sessions;
@@ -131,6 +151,7 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
         this.claudeExecutable = claudeExecutable;
         this.claudePrefix = claudePrefix == null ? List.of() : List.copyOf(claudePrefix);
         this.gateToml = gateToml;
+        this.baseSynchronizer = baseSynchronizer;
         this.executor = Executors.newSingleThreadExecutor(r -> {
             Thread t = new Thread(r, "claude-session");
             t.setDaemon(true);
@@ -164,12 +185,31 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
     @Override
     public Session start(StartRequest request) {
         try (AutoCloseable ignored = ticketLocks.acquire(request.ticketNo())) {
+            syncBaseQuietly(request.ticketNo());
             return startLocked(request);
         } catch (Exception e) {
             if (e instanceof RuntimeException re) {
                 throw re;
             }
             throw new GateException(GateErrorCode.GATE_ERROR_IO, "session start failed", e);
+        }
+    }
+
+    /**
+     * T-118: re-sync the clone base before the agent touches the clone, so a ticket that sat in
+     * the queue while main moved does not accumulate integration debt. Best-effort by design: a
+     * failed or skipped sync must not block the session — a stale base surfaces loudly enough at
+     * presubmit (BASE_STALE), and the manual sync endpoint can replay a dirty worktree, which the
+     * auto path (allowDirty=false) deliberately refuses to touch.
+     */
+    private void syncBaseQuietly(String ticketNo) {
+        if (baseSynchronizer == null) {
+            return;
+        }
+        try {
+            baseSynchronizer.syncBase(ticketNo, false);
+        } catch (Exception ignored) {
+            // see above — session start proceeds; presubmit will refuse a stale base
         }
     }
 

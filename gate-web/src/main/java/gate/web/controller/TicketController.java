@@ -47,12 +47,24 @@ public final class TicketController implements WebController {
     private final PresubmitRepository presubmits;
     private final TicketRestartRepository restarts;
     private final AuditLog auditLog;
+    private final gate.application.GateService gateService;
+    private final gate.ports.infra.TicketLockManager ticketLockManager;
 
     public TicketController(TicketRepository tickets, ProjectRepository projects,
                             AgentConfigRepository agentConfigs, TopologyInitializer topologyInitializer,
                             GateConfig config, Clock clock,
                             PresubmitRepository presubmits, TicketRestartRepository restarts,
                             AuditLog auditLog) {
+        this(tickets, projects, agentConfigs, topologyInitializer, config, clock,
+                presubmits, restarts, auditLog, null, null);
+    }
+
+    public TicketController(TicketRepository tickets, ProjectRepository projects,
+                            AgentConfigRepository agentConfigs, TopologyInitializer topologyInitializer,
+                            GateConfig config, Clock clock,
+                            PresubmitRepository presubmits, TicketRestartRepository restarts,
+                            AuditLog auditLog, gate.application.GateService gateService,
+                            gate.ports.infra.TicketLockManager ticketLockManager) {
         this.tickets = tickets;
         this.projects = projects;
         this.agentConfigs = agentConfigs;
@@ -62,6 +74,8 @@ public final class TicketController implements WebController {
         this.presubmits = presubmits;
         this.restarts = restarts;
         this.auditLog = auditLog;
+        this.gateService = gateService;
+        this.ticketLockManager = ticketLockManager;
     }
 
     @Override
@@ -73,6 +87,7 @@ public final class TicketController implements WebController {
         app.patch("/api/tickets/{ticketNo}", this::updateGlobalTicket);
         app.put("/api/tickets/{ticketNo}", this::updateGlobalTicket);
         app.get("/api/tickets/{ticketNo}/restarts", this::getGlobalTicketRestarts);
+        app.post("/api/tickets/{ticketNo}/sync-base", this::syncBaseTicket);
 
         // Project-scoped tickets
         app.get("/api/projects/{projectId}/tickets", this::listProjectTickets);
@@ -399,6 +414,47 @@ public final class TicketController implements WebController {
         body.put("restarts", out);
         ctx.status(HttpStatus.OK);
         ctx.json(body);
+    }
+
+    /**
+     * POST /api/tickets/{ticketNo}/sync-base — fast-forwards the ticket's clone and authoritative
+     * branch onto the current base-branch tip (T-118 基座同步). Uncommitted worktree changes are
+     * stashed and replayed (body {@code {"allow_dirty":false}} skips a dirty clone instead).
+     * Refused while a session is touching the clone (ticket lock).
+     */
+    public void syncBaseTicket(Context ctx) {
+        String ticketNo = ctx.pathParam("ticketNo");
+        if (gateService == null || ticketLockManager == null) {
+            throw new GateException(GateErrorCode.GATE_ERROR_CONFIG,
+                    "base sync is not wired into this web instance");
+        }
+        String body = ctx.body() == null || ctx.body().isBlank() ? "{}" : ctx.body();
+        Map<String, Object> req = Json.parseObject(body);
+        boolean allowDirty = !Boolean.FALSE.equals(req.get("allow_dirty"));
+        try (AutoCloseable ignored = ticketLockManager.tryAcquire(ticketNo).orElseThrow(() ->
+                new GateException(GateErrorCode.REJECT_PRECONDITION,
+                        "session in progress on this clone; base sync refused while a session is active"))) {
+            var r = gateService.syncBase(
+                    new gate.application.basesync.SyncBaseCommand(ticketNo, allowDirty, "manual"));
+            Map<String, Object> out = new LinkedHashMap<>();
+            out.put("ticket_no", ticketNo);
+            out.put("status", r.status());
+            out.put("behind", r.behind());
+            out.put("from_tip", r.fromTip());
+            out.put("to_tip", r.toTip());
+            out.put("branch_moved", r.branchMoved());
+            out.put("conflicts", r.conflicts());
+            out.put("stash_kept", r.stashKept());
+            if (r.skippedReason() != null) {
+                out.put("skipped_reason", r.skippedReason());
+            }
+            ctx.status(HttpStatus.OK);
+            ctx.json(out);
+        } catch (GateException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new GateException(GateErrorCode.GATE_ERROR_IO, "base sync failed", e);
+        }
     }
 
     public static String parsePriority(Map<String, Object> req) {

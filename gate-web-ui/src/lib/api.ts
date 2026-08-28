@@ -1157,6 +1157,49 @@ export async function livePresubmit(no: string) {
   }
 }
 
+/**
+ * T-118 基座同步：把工单 clone 与权威分支快进到主分支最新 tip，未提交改动 stash 后原样重放。
+ */
+export async function liveSyncBase(no: string) {
+  setGateBusy(no, true);
+  try {
+    const r = await api<{
+      ticket_no: string;
+      status: "synced" | "healed" | "up_to_date" | "skipped";
+      behind: number;
+      from_tip: string | null;
+      to_tip: string | null;
+      branch_moved: boolean;
+      conflicts: string[];
+      stash_kept: boolean;
+      skipped_reason?: string;
+    }>(`/api/tickets/${no}/sync-base`, { method: "POST", body: JSON.stringify({ allow_dirty: true }) });
+    await refreshTicket(no);
+    if (r.status === "skipped") {
+      showToast(`基座同步已跳过：${r.skipped_reason ?? "未知原因"}`);
+    } else if (r.status === "up_to_date") {
+      pushSystemMessage(no, "基座已是最新，无需同步", "info");
+    } else if (r.conflicts.length > 0) {
+      pushSystemMessage(
+        no,
+        `基座已同步（前进 ${r.behind} 个提交），重放你的改动时出现冲突：${r.conflicts.join("、")}。请在沙箱中解决冲突标记后继续编码。`,
+        "warn",
+      );
+    } else {
+      pushSystemMessage(
+        no,
+        `基座已同步：工单分支快进 ${r.behind} 个提交，未提交改动已原样保留` +
+          (r.stash_kept ? "（部分改动仍留在 stash 中）" : ""),
+        "success",
+      );
+    }
+  } catch (e) {
+    showToast(`基座同步失败：${(e as Error).message}`);
+  } finally {
+    setGateBusy(no, false);
+  }
+}
+
 export async function liveReview(no: string, opts?: { humanPass?: boolean; note?: string }) {
   setGateBusy(no, true);
   setStage(no, "IN_REVIEW");

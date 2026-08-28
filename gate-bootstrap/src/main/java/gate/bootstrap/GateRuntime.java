@@ -108,6 +108,7 @@ public final class GateRuntime {
     private final gate.ports.store.SessionRepository sessionRepository;
     private final gate.ports.store.ProjectRepository projectRepository;
     private final WorkspaceSyncer workspaceSyncer;
+    private final gate.ports.git.CloneBaseSyncer cloneBaseSyncer;
     private final AuditLog auditLog;
     private final gate.ports.store.TicketRestartRepository ticketRestartRepository;
 
@@ -158,6 +159,7 @@ public final class GateRuntime {
         this.sessionRepository = new JdbcSessionRepository(jdbc, blobStore);
         this.projectRepository = new JdbcProjectRepository(jdbc);
         this.workspaceSyncer = new GitCliWorkspaceSyncer(git);
+        this.cloneBaseSyncer = new gate.adapters.git.GitCliBaseSyncer(git);
 
         ReviewEngineFactory reviewEngineFactory = config.engineConfigured()
                 ? new GateReviewEngineFactory(blobStore, config, providerRepository, this.kmsService)
@@ -167,7 +169,8 @@ public final class GateRuntime {
                 reviewResultRepository, publishIntentRepository, blobStore, auditLog, lockManager, txRunner, clock, gate.ports.engine.PublishProbe.NOOP, authoritativeGitService,
                 projectRepository, workspaceSyncer,
                 new gate.adapters.git.LocalGitCommitIdentityProvider(git, clock,
-                        config.publishIdentity().name(), config.publishIdentity().email()));
+                        config.publishIdentity().name(), config.publishIdentity().email()),
+                cloneBaseSyncer);
     }
 
     public GateConfig config() { return config; }
