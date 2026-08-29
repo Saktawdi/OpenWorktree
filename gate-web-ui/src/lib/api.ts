@@ -494,8 +494,9 @@ export async function loadSessionMessages(no: string, sessionId: string) {
   const hist = await api<{ messages: RawMessage[] }>(`/api/sessions/${sessionId}/messages`);
   const items: ChatItem[] = hist.messages.map(mapHistoryMessage).filter(Boolean) as ChatItem[];
   appStore.setState((st) => ({ chats: { ...st.chats, [no]: items } }));
-  // 后端历史消息不带 model/agent 标注，这里用当前会话的 agent/推理等级补齐底部 footer。
-  applyReplyMetaDefaults(no);
+  // 后端历史消息不带 model/agent 标注；用「本会话」的模型/推理等级补齐底部 footer，
+  // 显式传 sessionId 避免误用当前活跃会话的标注。
+  applyReplyMetaDefaults(no, sessionId);
 }
 
 export async function liveSendPrompt(no: string, userText: string, attachments: PendingAttachment[] = []) {

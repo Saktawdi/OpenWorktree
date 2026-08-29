@@ -86,6 +86,14 @@ export function variantLabel(v: string): string {
   return VARIANT_LABELS[v.toLowerCase()] ?? v;
 }
 
+/** Splits an AgentConfig default model ref ("provider/model") into its halves. */
+export function splitModelRef(model?: string | null): { provider: string | null; model: string | null } {
+  if (!model || !model.trim()) return { provider: null, model: null };
+  const slash = model.indexOf("/");
+  if (slash <= 0 || slash >= model.length - 1) return { provider: null, model };
+  return { provider: model.slice(0, slash), model: model.slice(slash + 1) };
+}
+
 export const PRIORITY_COLOR: Record<Priority, string> = {
   P0: "text-danger border-danger/40 bg-danger/10",
   P1: "text-warn border-warn/40 bg-warn/10",

@@ -144,7 +144,7 @@ export type ChatItem =
       thinking?: ThinkingView;
       tools: ToolCallView[];
       ts: number;
-      /** 完成本回复的模型/智能体名称（openchamber 式底部标注）。 */
+      /** 完成本回复的「供应商 · 模型」名称（openchamber 式底部标注，与会话模型选择同源）。 */
       agent?: string | null;
       /** 推理等级（reasoning-effort，如 high/medium/low）；可能为空。 */
       variant?: string | null;

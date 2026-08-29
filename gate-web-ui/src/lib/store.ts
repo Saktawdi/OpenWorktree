@@ -31,7 +31,7 @@ import {
   TREE_NEXUS,
   t102Diff,
 } from "./scenario";
-import { uid } from "./format";
+import { splitModelRef, uid } from "./format";
 
 export type CenterTab = "chat" | "diff" | "findings";
 
@@ -414,26 +414,67 @@ export function patchAssistant(no: string, id: string, fn: (a: Extract<ChatItem,
 }
 
 /**
- * 当前会话「本条回复归属」的近似标注来源（openchamber 式底部标注）：
- * - agent:   会话绑定的 AgentConfig.name（缺省回退全局 agentId、再回退首个配置）
+ * 当前会话「本条回复归属」的标注来源（openchamber 式底部标注）：
+ * - agent:   完成回复的「供应商 · 模型」名称——与会话模型选择器（Composer ModelPicker）同源：
+ *            会话内实时切换 > 服务端持久化 override > AgentConfig 默认模型（"provider/model" 拆分）。
+ *            仅在完全无法解析模型时才退回 AgentConfig.name。
  * - variant: session overrideVariant 或 sessionModelSel.variant（推理等级）
  */
-function sessionReplyMeta(no: string): { agent: string | null; variant: string | null } {
+function sessionReplyMeta(
+  no: string,
+  sessionId?: string,
+): { agent: string | null; variant: string | null } {
   const st = s();
-  const sessionId = st.activeSessionId[no];
-  const sess = (st.sessions[no] ?? []).find((x) => x.id === sessionId);
+  const sid = sessionId ?? st.activeSessionId[no];
+  const sess = (st.sessions[no] ?? []).find((x) => x.id === sid);
   const cfgId = sess?.agentConfigId ?? st.agentId;
   const cfg =
     st.agents.find((a) => a.id === cfgId) ?? st.agents.find((a) => a.id === st.agentId) ?? st.agents[0];
   return {
-    agent: cfg?.name ?? cfg?.model ?? null,
-    variant: (sess?.overrideVariant ?? (sessionId ? st.sessionModelSel[sessionId]?.variant : null)) ?? null,
+    agent: replyModelLabel(st, sid, sess, cfg),
+    variant: (sess?.overrideVariant ?? (sid ? st.sessionModelSel[sid]?.variant : null)) ?? null,
   };
 }
 
+/**
+ * 「供应商 · 模型」标签解析（与 Composer useEffectiveSel 的优先级一致）：
+ * 1. 会话内实时切换（sessionModelSel）或服务端持久化 override（overrideProvider/Model）；
+ * 2. AgentConfig 默认模型（支持 "provider/model" 形式；"default" 视为 CLI 默认、不具名）；
+ * 3. 兜底 AgentConfig.name。
+ * 供应商/模型优先取会话模型目录里的展示名，缺失时退回原始 id。
+ */
+function replyModelLabel(
+  st: AppState,
+  sessionId: string | undefined,
+  sess: ChatSession | undefined,
+  cfg: AgentConfig | undefined,
+): string | null {
+  const sel = sessionId ? st.sessionModelSel[sessionId] : undefined;
+  // 成对取用，避免把选择器的 model 和 override 的 provider 拼错对。
+  const pair = sel?.providerId && sel.modelId
+    ? { provider: sel.providerId, model: sel.modelId }
+    : sess?.overrideProvider && sess.overrideModel
+      ? { provider: sess.overrideProvider, model: sess.overrideModel }
+      : null;
+  const loneModel = pair ? null : (sel?.modelId ?? sess?.overrideModel ?? null);
+  const providers = sessionId ? st.sessionModels[sessionId] : undefined;
+  if (pair) {
+    const provider = providers?.find((p) => p.id === pair.provider);
+    const modelEntry = provider?.models.find((m) => m.id === pair.model);
+    const vendor = provider?.name ?? pair.provider;
+    const modelName = modelEntry?.name ?? pair.model;
+    return `${vendor} · ${modelName}`;
+  }
+  if (loneModel) return loneModel;
+  const ref = splitModelRef(cfg?.model);
+  if (ref.provider && ref.model) return `${ref.provider} · ${ref.model}`;
+  if (ref.model && !/^default$/i.test(ref.model)) return ref.model;
+  return cfg?.name ?? null;
+}
+
 /** 给历史加载/刷新恢复的 assistant 气泡补齐 agent/variant，避免 footer 只剩复制按钮。 */
-export function applyReplyMetaDefaults(no: string) {
-  const { agent, variant } = sessionReplyMeta(no);
+export function applyReplyMetaDefaults(no: string, sessionId?: string) {
+  const { agent, variant } = sessionReplyMeta(no, sessionId);
   if (!agent && !variant) return;
   const list = s().chats[no] ?? [];
   if (!list.some((m) => m.kind === "assistant" && (!m.agent || !m.variant))) return;

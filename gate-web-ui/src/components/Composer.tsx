@@ -19,7 +19,7 @@ import {
 import type { Icon } from "@phosphor-icons/react";
 import { actions } from "../lib/actions";
 import { appStore, NO_CHAT, setAgentId, showToast, useApp } from "../lib/store";
-import { formatTokens, variantLabel } from "../lib/format";
+import { formatTokens, splitModelRef, variantLabel } from "../lib/format";
 import {
   extractAbsolutePath,
   isAttachableImage,
@@ -105,14 +105,6 @@ function AgentPicker({ ticketNo }: { ticketNo: string }) {
 }
 
 /* ─── 会话内实时切换模型 / 推理强度（参考 OpenChamber ModelControls） ─── */
-
-/** Splits an AgentConfig default model ref ("provider/model") into its halves. */
-function splitModelRef(model?: string | null): { provider: string | null; model: string | null } {
-  if (!model || !model.trim()) return { provider: null, model: null };
-  const slash = model.indexOf("/");
-  if (slash <= 0 || slash >= model.length - 1) return { provider: null, model };
-  return { provider: model.slice(0, slash), model: model.slice(slash + 1) };
-}
 
 interface EffectiveSel extends SessionModelSel {
   /** True when resolved from persisted override rather than config defaults. */
