@@ -989,6 +989,13 @@ async function consumeSessionStream(no: string, sessionId: string) {
       if (d.status === "SUCCESS" && FILE_EDIT_TOOLS.includes(String(d.tool_name ?? "").toLowerCase())) {
         scheduleDiffRefresh(no);
       }
+      // agent 经 MCP 预提审成功 → 工单阶段已在服务端推进到 PRESUBMITTED，立即刷新工单与快照。
+      // 不刷新的话面板仍按旧阶段渲染"同步基座"按钮，点击才撞上阶段守卫报 400（T-109 实测）。
+      // opencode 给 MCP 工具加服务器前缀（gate_presubmit_create），按惯例用 includes 匹配。
+      if (d.status === "SUCCESS" && String(d.tool_name ?? "").toLowerCase().includes("presubmit_create")) {
+        void refreshTicket(no);
+        void loadPresubmits(no);
+      }
       const callId: string = d.call_id ?? "";
       const toolName: string = d.tool_name ?? "";
       const todo = isTodoTool(toolName);
@@ -1098,6 +1105,10 @@ async function consumeSessionStream(no: string, sessionId: string) {
       void refreshTicketSessionsMeta(no);
       // 回合结束：刷新变更对比的最终状态（本回合内 bash 等未跟踪的文件改动也一并覆盖）。
       void loadTicketDiff(no);
+      // 兜底同步工单阶段与快照：回合内服务端可能已推进阶段（agent 的 presubmit_create），
+      // tool_call 监听万一漏掉，这里保证面板按钮与真实阶段一致，而不是点了才报 400。
+      void refreshTicket(no);
+      void loadPresubmits(no);
       finish();
     });
     es.addEventListener("error", (ev) => {
