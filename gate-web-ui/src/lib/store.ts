@@ -78,6 +78,8 @@ export interface AppState {
   busy: Record<string, boolean>;
   /** Live 模式按会话粒度的生成中标记（key = gate session id）；按钮状态跟随当前会话。 */
   sessionBusy: Record<string, boolean>;
+  /** Agent 开始运行的时间戳（运行监控面板用于展示运行时长）；空闲时移除条目。 */
+  busySince: Record<string, number>;
   gateBusy: Record<string, boolean>;
   creatingSession: Record<string, boolean>;
   usage: Record<string, UsageView>;
@@ -194,6 +196,7 @@ export const appStore = create<AppState>(() => ({
   engine: null,
   busy: {},
   sessionBusy: {},
+  busySince: {},
   gateBusy: {},
   creatingSession: {},
   usage: {},
@@ -340,6 +343,7 @@ function tryRestore(): boolean {
       runningAgents: { count: 0, sessions: [] },
       restartDialogFor: null,
       restartsViewFor: null,
+      busySince: {},
     };
     // 旧版本快照没有 engine 字段：demo 模式视为已配置，live 交给 loadEngineConfig 回填。
     if (!clean.engine) {
@@ -358,6 +362,8 @@ function tryRestore(): boolean {
       clean.chats[no] = filtered;
     }
     appStore.setState(clean);
+    // 旧快照的 assistant 气泡可能没有 agent/variant 标注，恢复后统一补齐。
+    for (const no of Object.keys(clean.chats)) applyReplyMetaDefaults(no);
     return true;
   } catch {
     return false;
@@ -426,6 +432,20 @@ export function selectTicket(no: string) {
   if (bound && s().agentId !== bound && s().agents.some((a) => a.id === bound)) {
     setAgentId(bound);
   }
+}
+
+/**
+ * 运行监控面板的快速跳转：切回工作台并打开该工单的当前会话。
+ * 工单属于其他项目时先切换项目，避免选中后列表里看不到它。
+ */
+export function jumpToTicketSession(no: string) {
+  const st = s();
+  const ticket = st.tickets.find((t) => t.ticketNo === no);
+  if (ticket && ticket.projectId && ticket.projectId !== st.activeProjectId) {
+    patch({ activeProjectId: ticket.projectId });
+  }
+  patch({ view: "workbench" });
+  selectTicket(no);
 }
 
 export function openConnect() {
@@ -580,29 +600,53 @@ export function patchAssistant(no: string, id: string, fn: (a: Extract<ChatItem,
   }));
 }
 
+/**
+ * 当前会话「本条回复归属」的近似标注来源（openchamber 式底部标注）：
+ * - agent:   会话绑定的 AgentConfig.name（缺省回退全局 agentId、再回退首个配置）
+ * - variant: session overrideVariant 或 sessionModelSel.variant（推理等级）
+ */
+function sessionReplyMeta(no: string): { agent: string | null; variant: string | null } {
+  const st = s();
+  const sessionId = st.activeSessionId[no];
+  const sess = (st.sessions[no] ?? []).find((x) => x.id === sessionId);
+  const cfgId = sess?.agentConfigId ?? st.agentId;
+  const cfg =
+    st.agents.find((a) => a.id === cfgId) ?? st.agents.find((a) => a.id === st.agentId) ?? st.agents[0];
+  return {
+    agent: cfg?.name ?? cfg?.model ?? null,
+    variant: (sess?.overrideVariant ?? (sessionId ? st.sessionModelSel[sessionId]?.variant : null)) ?? null,
+  };
+}
+
+/** 给历史加载/刷新恢复的 assistant 气泡补齐 agent/variant，避免 footer 只剩复制按钮。 */
+export function applyReplyMetaDefaults(no: string) {
+  const { agent, variant } = sessionReplyMeta(no);
+  if (!agent && !variant) return;
+  const list = s().chats[no] ?? [];
+  if (!list.some((m) => m.kind === "assistant" && (!m.agent || !m.variant))) return;
+  set((st) => ({
+    chats: {
+      ...st.chats,
+      [no]: st.chats[no].map((m) =>
+        m.kind === "assistant"
+          ? { ...m, agent: m.agent ?? agent, variant: m.variant ?? variant }
+          : m,
+      ),
+    },
+  }));
+}
+
 export function finishAssistant(
   no: string,
   id: string,
   meta?: { agent?: string | null; variant?: string | null },
 ) {
-  // 未显式传 meta 时，从当前会话/worker 状态回填：
-  // - agent:    当前会话选中的 AgentConfig.name（openchamber 式底部标注）
-  // - variant:  session overrideVariant 或 sessionModelSel.variant（推理等级）
-  const st = s();
-  const sessionId = st.activeSessionId[no];
-  const sessList = st.sessions[no] ?? [];
-  const sess = sessList.find((x) => x.id === sessionId);
-  const cfgId = sess?.agentConfigId ?? st.agentId;
-  const cfg = st.agents.find((a) => a.id === cfgId) ?? st.agents.find((a) => a.id === st.agentId) ?? st.agents[0];
-  const fallbackAgent = cfg?.name ?? cfg?.model ?? null;
-  const fallbackVariant =
-    (sess?.overrideVariant ?? (sessionId ? st.sessionModelSel[sessionId]?.variant : null)) ?? null;
-
+  const fallback = sessionReplyMeta(no);
   patchAssistant(no, id, (a) => ({
     ...a,
     streaming: false,
-    agent: meta?.agent ?? a.agent ?? fallbackAgent,
-    variant: meta?.variant ?? a.variant ?? fallbackVariant,
+    agent: meta?.agent ?? a.agent ?? fallback.agent,
+    variant: meta?.variant ?? a.variant ?? fallback.variant,
     thinking: a.thinking ? { ...a.thinking, done: true } : a.thinking,
   }));
 }
@@ -686,7 +730,15 @@ function mirrorIntoChats(
 }
 
 export function setBusy(no: string, busy: boolean) {
-  set((st) => ({ busy: { ...st.busy, [no]: busy } }));
+  set((st) => {
+    // 运行中重复打点（重连/重复请求）不重置起始时间：仅空闲→运行转变时记录，
+    // 否则监控面板的运行时长会被误归零。
+    if (busy && st.busy[no]) return st;
+    const busySince = { ...st.busySince };
+    if (busy) busySince[no] = st.busySince[no] ?? Date.now();
+    else delete busySince[no];
+    return { busy: { ...st.busy, [no]: busy }, busySince };
+  });
 }
 
 export function setSessionBusy(sessionId: string, busy: boolean) {

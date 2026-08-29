@@ -1,9 +1,13 @@
 import {
   addSnapshot,
   addUsage,
+  applyReplyMetaDefaults,
   appStore,
   dropLiveTurn,
+  finishAssistant,
   finishLiveTurn,
+  patchAssistant,
+  pushAssistantPlaceholder,
   pushPermissionRequest,
   pushQuestionRequest,
   pushSystemMessage,
@@ -742,6 +746,8 @@ export async function loadSessionMessages(no: string, sessionId: string) {
   // 本会话没有 todowrite 就清空，不允许上一会话的侧栏状态泄漏过来。
   restoreTodosFromHistory(no, hist.messages);
   setContextTokens(no, 0);
+  // 后端历史消息不带 model/agent 标注，这里用当前会话的 agent/推理等级补齐底部 footer。
+  applyReplyMetaDefaults(no);
 }
 
 /** 以该会话历史中最后一条合法 todowrite 参数重建任务清单；没有则清空。 */
