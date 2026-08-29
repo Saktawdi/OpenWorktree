@@ -1,6 +1,8 @@
 package gate.adapters.session;
 
 import gate.adapters.mcp.McpServer;
+import gate.domain.error.GateErrorCode;
+import gate.domain.error.GateException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -12,9 +14,14 @@ import java.util.List;
  * {@code gate} executable on PATH: the backend itself runs from {@code target/classes} via
  * {@code java -cp} (see {@code start-local.bat}). A config pointing at {@code command: "gate"} can
  * therefore never spawn; the child command is rebuilt from the RUNNING JVM's own java home and
- * classpath, which already contains gate-cli's classes. The main class is referenced as a string
- * on purpose: gate-cli depends on gate-adapters, and a compile-time reference here would invert
- * the module graph.
+ * classpath. The entrypoint is chosen by resolvability on that classpath: {@code
+ * gate.bootstrap.McpServeApp} first (gate-bootstrap rides every backend classpath — gate-web and
+ * gate-cli both depend on it), then the legacy {@code gate.cli.GateApp mcp serve}. When neither is
+ * loadable the provisioning REFUSES loudly: a written-but-unstartable config once cost every
+ * session its {@code presubmit_create} (an IDE-launched web backend carries no gate-cli, so the
+ * child died with ClassNotFoundException before the agent ever saw the tool). The main class is
+ * referenced as a string on purpose: both entrypoints sit downstream of gate-adapters, and a
+ * compile-time reference here would invert the module graph.
  *
  * <p>The domain token travels via the {@code GATE_DOMAIN_TOKEN} environment variable, never argv
  * (§6.1 — argv is world-readable). It is minted per session, bound to one ticket, and its
@@ -23,30 +30,88 @@ import java.util.List;
  */
 public final class GateMcpProvisioning {
 
-    /** Referenced by name — gate-cli is a downstream module of gate-adapters (see class doc). */
-    private static final String GATE_APP_MAIN = "gate.cli.GateApp";
+    /**
+     * Preferred child entrypoint: gate-bootstrap is on every backend classpath (gate-web and
+     * gate-cli both depend on it), so it survives IDE launches, {@code java @args} files and
+     * start-local.bat alike.
+     */
+    public static final String BOOTSTRAP_SERVE_MAIN = "gate.bootstrap.McpServeApp";
+
+    /** Legacy child entrypoint ({@code gate mcp serve}); only loadable when gate-cli is on the classpath. */
+    public static final String GATE_APP_MAIN = "gate.cli.GateApp";
 
     private GateMcpProvisioning() {
     }
 
     /**
-     * argv that launches {@code gate mcp serve} as a sibling of the current JVM.
+     * argv that launches the gate MCP stdio server as a sibling of the current JVM.
      *
      * @param gateToml path passed as {@code --config}; the MCP child must resolve the same
      *                 database the web backend writes to, or token validation would read a
      *                 different credential store
+     * @throws GateException when no entrypoint is loadable from this JVM's classpath — failing
+     *                       the session loudly beats starting it without the gate tools
      */
     public static List<String> serveArgv(Path gateToml) {
+        return serveArgv(gateToml, System.getProperty("java.class.path", ""),
+                GateMcpProvisioning::resolvable);
+    }
+
+    /** Test seam: explicit classpath text and entrypoint resolvability probe. */
+    static List<String> serveArgv(Path gateToml, String classpath, java.util.function.Predicate<String> resolvable) {
+        String cp = absoluteClasspath(classpath);
+        if (resolvable.test(BOOTSTRAP_SERVE_MAIN)) {
+            return argv(cp, BOOTSTRAP_SERVE_MAIN, List.of(), gateToml);
+        }
+        if (resolvable.test(GATE_APP_MAIN)) {
+            return argv(cp, GATE_APP_MAIN, List.of("mcp", "serve"), gateToml);
+        }
+        throw new GateException(GateErrorCode.GATE_ERROR_CONFIG,
+                "no MCP entrypoint on the backend classpath: neither " + BOOTSTRAP_SERVE_MAIN
+                        + " nor " + GATE_APP_MAIN + " is loadable, so the per-session MCP server "
+                        + "(presubmit_create et al.) could never start. Launch the backend with "
+                        + "gate-bootstrap on the classpath (gate-web, gate-cli and start-local.bat "
+                        + "all carry it) or add gate-cli/target/classes.");
+    }
+
+    private static List<String> argv(String classpath, String mainClass, List<String> verb, Path gateToml) {
         List<String> argv = new ArrayList<>();
         argv.add(javaExecutable());
         argv.add("-cp");
-        argv.add(System.getProperty("java.class.path"));
-        argv.add(GATE_APP_MAIN);
-        argv.add("mcp");
-        argv.add("serve");
+        argv.add(classpath);
+        argv.add(mainClass);
+        argv.addAll(verb);
         argv.add("--config");
         argv.add(gateToml.toAbsolutePath().toString());
         return argv;
+    }
+
+    /**
+     * Re-anchors every classpath entry to an absolute path. The MCP child runs with the ticket
+     * clone as cwd, but a backend launched via {@code java @args} or an IDE may carry RELATIVE
+     * classpath entries that only resolve from the backend's own working directory — without this,
+     * the child would not find classes the parent clearly has.
+     */
+    static String absoluteClasspath(String classpath) {
+        StringBuilder sb = new StringBuilder();
+        for (String entry : classpath.split(java.io.File.pathSeparator)) {
+            if (sb.length() > 0) {
+                sb.append(java.io.File.pathSeparator);
+            }
+            // An empty entry means the JVM default dir; Path.of("").toAbsolutePath() resolves it.
+            sb.append(Path.of(entry).toAbsolutePath().normalize());
+        }
+        return sb.toString();
+    }
+
+    /** Faithful probe of what a child spawned with THIS JVM's classpath could load. */
+    static boolean resolvable(String mainClass) {
+        try {
+            Class.forName(mainClass, false, GateMcpProvisioning.class.getClassLoader());
+            return true;
+        } catch (ClassNotFoundException | LinkageError e) {
+            return false;
+        }
     }
 
     /**
