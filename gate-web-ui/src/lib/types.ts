@@ -377,12 +377,24 @@ export interface AgentConfigOption {
 
 export type GateTomlType = "int" | "bool" | "string" | "string_list";
 
+export interface GateTomlOption {
+  value: string;
+  label: string;
+}
+
 export interface GateTomlKey {
   key: string;
   value: unknown;
   type: GateTomlType;
   editable: boolean;
   default: unknown;
+  /** 有枚举取值的键：渲染为下拉选择而非自由输入 */
+  options?: GateTomlOption[];
+  /** 数值范围约束（含端点）；只有 min/max 单边约束时另一侧缺省 */
+  min?: number;
+  max?: number;
+  /** 人性化说明文字（约束、默认行为） */
+  hint?: string;
 }
 
 export interface GateTomlSection {

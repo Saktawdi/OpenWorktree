@@ -57,6 +57,100 @@ public final class SettingsController implements WebController {
         return Map.copyOf(m);
     }
 
+    /**
+     * 设置中心每个键的人性化元数据（取值约束的唯一事实来源，与 {@link GateConfig} 的域校验一致）：
+     * {@code options} 非空 → 前端渲染下拉框（有枚举取值的键不再暴露自由输入框）；
+     * {@code min}/{@code max} → 数字输入的范围约束；{@code hint} → 表单说明文字。
+     * engine.provider_id / model 与 agent.default_provider / model 的选项依赖运行期 LLM Provider
+     * 列表，静态无法下发，仅给 hint，由前端从「LLM 设置」数据动态计算。
+     */
+    private record KeyMeta(String hint, List<Map<String, String>> options, Long min, Long max) {
+
+        static KeyMeta hint(String hint) {
+            return new KeyMeta(hint, null, null, null);
+        }
+
+        /** value/label 成对给出。 */
+        static KeyMeta select(String hint, String... valueLabelPairs) {
+            if (valueLabelPairs.length % 2 != 0) {
+                throw new IllegalArgumentException("value/label pairs must be even");
+            }
+            List<Map<String, String>> opts = new ArrayList<>();
+            for (int i = 0; i < valueLabelPairs.length; i += 2) {
+                opts.add(Map.of("value", valueLabelPairs[i], "label", valueLabelPairs[i + 1]));
+            }
+            return new KeyMeta(hint, List.copyOf(opts), null, null);
+        }
+
+        static KeyMeta range(String hint, Long min, Long max) {
+            return new KeyMeta(hint, null, min, max);
+        }
+    }
+
+    private static final Map<String, KeyMeta> KEY_META = buildKeyMeta();
+
+    private static Map<String, KeyMeta> buildKeyMeta() {
+        Map<String, KeyMeta> m = new LinkedHashMap<>();
+        // —— 基本 ——
+        m.put("schema_version", KeyMeta.hint("配置结构版本，当前必须为 2，随 schema 升级"));
+        m.put("project", KeyMeta.hint("项目标识，用于门禁展示与审计"));
+        m.put("auth_repo", KeyMeta.hint("门禁认证仓路径，初始化时生成"));
+        m.put("clones_root", KeyMeta.hint("工单 clone 的存放根目录，初始化时生成"));
+        m.put("target_ref_whitelist",
+                KeyMeta.hint("门禁只允许写入这些分支；每项必须是完整的 refs/heads/… 引用名，且至少一项"));
+        m.put("gate_home", KeyMeta.hint("gate 数据主目录，初始化时生成"));
+        m.put("approvals_dir", KeyMeta.hint("人工审批文件目录，初始化时生成"));
+        m.put("db_path", KeyMeta.hint("SQLite 数据库文件路径，初始化时生成"));
+        m.put("blob_root", KeyMeta.hint("blob 存储根目录，初始化时生成"));
+        m.put("audit_path", KeyMeta.hint("审计流水文件路径，初始化时生成"));
+        m.put("locks_dir", KeyMeta.hint("锁文件目录，初始化时生成"));
+        m.put("index_dir", KeyMeta.hint("索引目录，初始化时生成"));
+        // —— 提交身份 ——
+        m.put("gate_identity.name", KeyMeta.hint("门禁提交者的 git 身份名"));
+        m.put("gate_identity.email", KeyMeta.hint("门禁提交者的 git 邮箱"));
+        m.put("gate_identity.date", KeyMeta.hint("门禁提交时间，git 风格：秒级时间戳 + 时区，如 1700000000 +0000"));
+        // —— 审查策略 ——
+        m.put("policy.strictness", KeyMeta.select(
+                "BLOCKER 驳回；WARNING 默认放行，切到 BLOCKER_AND_WARNING 后一并驳回",
+                "BLOCKER_ONLY", "BLOCKER_ONLY（只在 BLOCKER 时驳回）",
+                "BLOCKER_AND_WARNING", "BLOCKER_AND_WARNING（外加 WARNING 严拒）"));
+        m.put("policy.require_coverage", KeyMeta.hint("变更缺少测试覆盖时是否驳回"));
+        m.put("policy.max_diff_bytes", KeyMeta.range("单轮审查允许的最大 diff 字节数，超出直接驳回", 1L, null));
+        m.put("policy.max_diff_lines", KeyMeta.range("单轮审查允许的最大 diff 行数，超出直接驳回", 1L, null));
+        m.put("policy.engine_accept_degraded", KeyMeta.hint("审查引擎降级（超时/不可用）时是否放行；默认关闭（fail-closed）"));
+        // —— 审查引擎 ——
+        m.put("engine.kind", KeyMeta.select("目前只有 gate 内建审查引擎一种，其余值会被拒绝启动",
+                "gate-engine", "gate-engine（gate 内建审查引擎）"));
+        m.put("engine.timeout_seconds", KeyMeta.range("单轮审查总墙钟上限（秒）", 1L, null));
+        m.put("engine.provider_id", KeyMeta.hint("审查引擎使用的 LLM Provider，选项来自「LLM 设置」"));
+        m.put("engine.model", KeyMeta.hint("审查使用的模型，选项跟随所选 Provider"));
+        m.put("engine.idle_timeout_seconds",
+                KeyMeta.range("流式读帧的空闲失效窗口（秒），窗口内无数据帧即判停流", 1L, null));
+        m.put("engine.max_tokens", KeyMeta.range("注入请求体的输出 token 上限；不设置则交给上游默认", 1L, null));
+        // —— Web 控制台 ——
+        m.put("web.bind", KeyMeta.select(
+                "控制台只允许绑定本机回环地址；0.0.0.0 / :: 会被拒绝启动（本机驱动，不暴露网络）",
+                "127.0.0.1", "127.0.0.1（IPv4 回环）",
+                "localhost", "localhost（本机主机名）",
+                "::1", "::1（IPv6 回环）"));
+        m.put("web.port", KeyMeta.range("控制台 HTTP 端口，0 表示随机分配", 0L, 65535L));
+        m.put("web.allowed_origins", KeyMeta.hint("允许的 Host/Origin 白名单，防 DNS 重绑定；不能为空"));
+        m.put("web.human_token_file", KeyMeta.hint("HUMAN 域引导令牌的写入位置（相对 gate_home 或绝对路径）"));
+        // —— 会话编排 ——
+        m.put("session.port_range_min", KeyMeta.range("会话端口池下界，须不大于上界", 1L, 65535L));
+        m.put("session.port_range_max", KeyMeta.range("会话端口池上界", 1L, 65535L));
+        m.put("session.default_cli", KeyMeta.select("新建会话默认启动的 CLI",
+                "claude", "claude（Claude Code 无头会话）",
+                "opencode", "opencode（opencode serve 会话）"));
+        m.put("session.default_agent_config", KeyMeta.hint("新建会话默认使用的 agent 配置名"));
+        m.put("session.start_timeout_seconds", KeyMeta.range("会话冷启动健康等待上限（秒）", 5L, 900L));
+        // —— 智能体默认 ——
+        m.put("agent.default_model", KeyMeta.hint("智能体会话默认模型，选项跟随所选 Provider"));
+        m.put("agent.default_provider", KeyMeta.hint("智能体会话默认 Provider，选项来自「LLM 设置」"));
+        m.put("agent.context_template", KeyMeta.hint("智能体上下文模板文件路径（相对 gate_home 或绝对路径）"));
+        return m;
+    }
+
     private final Path gateToml;
     private final TomlGateConfigLoader loader = new TomlGateConfigLoader();
     private final TomlGateConfigWriter writer = new TomlGateConfigWriter();
@@ -87,6 +181,19 @@ public final class SettingsController implements WebController {
                 k.put("type", TomlGateConfigWriter.typeName(key));
                 k.put("editable", TomlGateConfigWriter.isEditable(key));
                 k.put("default", DEFAULTS.get(key));
+                KeyMeta meta = KEY_META.get(key);
+                if (meta != null) {
+                    if (meta.options() != null) {
+                        k.put("options", meta.options());
+                    }
+                    if (meta.min() != null) {
+                        k.put("min", meta.min());
+                    }
+                    if (meta.max() != null) {
+                        k.put("max", meta.max());
+                    }
+                    k.put("hint", meta.hint());
+                }
                 keys.add(k);
             }
             if (keys.isEmpty()) {
