@@ -195,15 +195,20 @@ public final class PublishHandler {
 
             ObjectId recomputed = commitPublisher.recomputeTree(clone);
             if (!recomputed.equals(row.treeHash())) {
+                // The locked snapshot no longer describes the worktree, so it is dead as a publish
+                // credential. Reopen the ticket instead of staying PRESUBMITTED: the workbench only
+                // offers re-presubmit in IN_PROGRESS, while PRESUBMITTED re-reviews the stale round
+                // and would trap fix-after-warning flows in a publish/TOCTOU loop.
                 tx.inTransaction(() -> {
-                    tickets.updateStage(ticket.ticketNo(), TicketStage.PRESUBMITTED, clock.now());
+                    tickets.updateStage(ticket.ticketNo(), TicketStage.IN_PROGRESS, clock.now());
                     return null;
                 });
                 audit("publish.toctou", ticket.ticketNo(), row.reviewRound(), Map.of(
                         "reviewed_tree", row.treeHash().hex(), "worktree_tree", recomputed.hex()));
                 throw new GateException(GateErrorCode.REJECT_TOCTOU,
                         "worktree changed after review: reviewed " + row.treeHash().hex()
-                                + " but worktree is now " + recomputed.hex() + "; re-run presubmit");
+                                + " but worktree is now " + recomputed.hex()
+                                + "; ticket reopened, re-run presubmit to lock the new tree");
             }
 
             Optional<PublishIntent> existing = intents.find(ticket.ticketNo(), row.reviewRound(), row.treeHash());

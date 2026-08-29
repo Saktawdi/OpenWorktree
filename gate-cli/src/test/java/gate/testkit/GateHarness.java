@@ -193,6 +193,11 @@ public final class GateHarness implements AutoCloseable {
         return clone;
     }
 
+    /** Current state of a registered ticket. */
+    public Ticket ticket(String ticketNo) {
+        return tickets.find(ticketNo).orElseThrow(() -> new IllegalStateException("no such ticket: " + ticketNo));
+    }
+
     /** Writes a file into a clone's worktree. */
     public void writeFile(RepoRef clone, String relPath, String content) {
         try {

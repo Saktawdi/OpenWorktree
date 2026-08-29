@@ -11,6 +11,7 @@ import gate.application.review.ReviewCommand;
 import gate.domain.error.GateErrorCode;
 import gate.domain.error.GateException;
 import gate.domain.git.RepoRef;
+import gate.domain.ticket.TicketStage;
 import gate.testkit.GateHarness;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -54,7 +55,7 @@ class AcceptanceTest {
         assertEquals(baseTip, r.refBefore(), "ref-before must be the base");
     }
 
-    /** A3: modify the worktree after review; publish must reject (TOCTOU) and revert to presubmit. */
+    /** A3: modify the worktree after review; publish must reject (TOCTOU) and reopen the ticket. */
     @Test
     void a3_toctouRejectAndRollBack() {
         RepoRef clone = h.createTicket("TICKET-1");
@@ -73,6 +74,18 @@ class AcceptanceTest {
         assertEquals(GateErrorCode.REJECT_TOCTOU, ex.code(), ex.getMessage());
         assertEquals(tipBefore, h.authTip(), "tip must not move on a TOCTOU reject");
         assertEquals(countBefore, h.authCommitCount());
+        // The stale round must not stay PRESUBMITTED: the workbench only offers re-presubmit from
+        // IN_PROGRESS, and PRESUBMITTED would re-review the dead snapshot in a loop.
+        assertEquals(TicketStage.IN_PROGRESS, h.ticket("TICKET-1").stage(),
+                "TOCTOU reject must reopen the ticket so a new presubmit can lock the new tree");
+
+        // Recovery: re-presubmit locks the tampered tree as a fresh round, which then publishes.
+        h.service().presubmit(new PresubmitCommand("TICKET-1"));
+        h.service().review(new ReviewCommand("TICKET-1", null, true, null));
+        PublishResult recovered = h.service().publish(new PublishCommand("TICKET-1", null));
+        assertEquals(countBefore + 1, h.authCommitCount(),
+                "the recovered round publishes exactly one commit");
+        assertEquals(recovered.commitSha(), h.authTip());
     }
 
     /** A4: a repeated publish of the same (ticket, round, tree) produces only ONE commit. */
