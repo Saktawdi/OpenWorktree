@@ -14,9 +14,12 @@ import { setCenterTab } from "../lib/store";
 
 function ContextStrip({ ticketNo }: { ticketNo: string }) {
   const ticket = useApp((s) => s.tickets.find((t) => t.ticketNo === ticketNo));
+  const project = useApp((s) => s.projects.find((p) => p.id === ticket?.projectId));
   const agent = useApp((s) => s.agents.find((a) => a.id === s.agentId));
   const panelCollapsed = useApp((s) => s.gatePanelCollapsed);
   if (!ticket) return null;
+  // 分支徽标展示项目主分支（建单基线）；未挂项目的工单退回显示自身锁定的目标分支
+  const branch = (project?.targetRef ?? ticket.targetRef).replace("refs/heads/", "");
   return (
     <div className="h-12 shrink-0 flex items-center gap-3 px-5 border-b border-edge overflow-hidden">
       <span className="font-mono text-[12.5px] text-accent bg-accent/10 border border-accent/25 rounded-md px-2 py-0.5 shrink-0">
@@ -49,9 +52,12 @@ function ContextStrip({ ticketNo }: { ticketNo: string }) {
           ))}
         </span>
       )}
-      <span className="hidden lg:inline-flex shrink-0 items-center gap-1.5 text-[12px] text-dim">
+      <span
+        className="hidden lg:inline-flex shrink-0 items-center gap-1.5 text-[12px] text-dim"
+        title={project ? "项目主分支" : "工单目标分支"}
+      >
         <GitBranch size={13} className="text-faint" />
-        <span className="font-mono">main</span>
+        <span className="font-mono">{branch}</span>
       </span>
       {agent && (
         <span className="hidden md:inline-flex shrink-0 items-center gap-1.5 text-[12px] text-dim whitespace-nowrap">

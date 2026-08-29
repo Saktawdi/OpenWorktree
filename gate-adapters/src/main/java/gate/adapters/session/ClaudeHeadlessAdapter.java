@@ -247,32 +247,41 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
         // 此前不在统计内，顶栏在该回合运行期间会错误显示 0。
         incrementInFlight(sessionId);
         try {
+            StreamEcho echo = new StreamEcho(sessionId);
             ProcessRunner.ProcRun run = processRunner.runStreaming(argv, clone, request.env(), Duration.ofMinutes(10),
-                    line -> handleStreamLine(sessionId, line), null);
+                    echo::line, null);
 
-        ParsedOutput parsed = parseStream(run.stdout());
-        Session withUsage = session;
-        if (parsed.sessionId != null) {
-            withUsage = withUsage.withCliSessionId(parsed.sessionId);
-        }
-        if (parsed.assistantText != null || parsed.usage != null) {
-            insertAssistantMessage(sessionId, parsed.assistantText == null ? "" : parsed.assistantText,
-                    parsed.usage, parsed.degraded, now);
-            if (parsed.usage != null) {
-                withUsage = withUsage.withCumulativeUsage(parsed.usage);
+            ParsedOutput parsed = parseStream(run.stdout());
+            Session withUsage = session;
+            if (parsed.sessionId() != null) {
+                withUsage = withUsage.withCliSessionId(parsed.sessionId());
+            }
+            if (parsed.errorText() != null && !parsed.errorText().isBlank()) {
+                // result.is_error：claude 以 exit 0 结束但回合失败（如网关 4xx），按错误落库。
+                insertErrorMessage(sessionId, parsed.errorText(), now);
+                emitChunk(sessionId, new SessionStreamChunk.ErrorChunk(sessionId, "PROCESS_ERROR",
+                        parsed.errorText(), now));
+            } else {
+                List<String> texts = parsed.assistantTexts();
+                for (int i = 0; i < texts.size(); i++) {
+                    insertAssistantMessage(sessionId, texts.get(i),
+                            i == texts.size() - 1 ? parsed.usage() : null, parsed.degraded(), now);
+                }
+            }
+            if (parsed.usage() != null) {
+                withUsage = withUsage.withCumulativeUsage(parsed.usage());
                 sessions.update(withUsage);
                 writeback(withUsage);
-                emitChunk(sessionId, new SessionStreamChunk.UsageChunk(sessionId, parsed.usage, now));
+                emitChunk(sessionId, new SessionStreamChunk.UsageChunk(sessionId, parsed.usage(), now));
             }
-        }
-        if (!run.ok() && parsed.sessionId == null) {
-            insertErrorMessage(sessionId, run.stderrFirstLine(), now);
-            sessions.update(withUsage.withStatus(SessionStatus.ABORTED).withFinishedAt(now));
-            emitChunk(sessionId, new SessionStreamChunk.ErrorChunk(sessionId, "PROCESS_ERROR", run.stderrFirstLine(), now));
-        } else {
-            emitChunk(sessionId, new SessionStreamChunk.DoneChunk(sessionId, sessionId, now));
-        }
-        return sessions.find(sessionId).orElse(withUsage);
+            if (!run.ok() && parsed.sessionId() == null) {
+                insertErrorMessage(sessionId, run.stderrFirstLine(), now);
+                sessions.update(withUsage.withStatus(SessionStatus.ABORTED).withFinishedAt(now));
+                emitChunk(sessionId, new SessionStreamChunk.ErrorChunk(sessionId, "PROCESS_ERROR", run.stderrFirstLine(), now));
+            } else {
+                emitChunk(sessionId, new SessionStreamChunk.DoneChunk(sessionId, sessionId, now));
+            }
+            return sessions.find(sessionId).orElse(withUsage);
         } finally {
             // 覆盖正常完成、ErrorChunk、异常、中断所有出口，不得依赖是否存在 SSE 监听者
             decrementInFlight(sessionId);
@@ -358,43 +367,79 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
     // Internals
     // -------------------------------------------------------------------------------------------
 
-    private void handleStreamLine(String sessionId, String line) {
-        if (line == null || line.isBlank()) {
-            return;
+    /**
+     * claude 流式回显（claude 专属路径，与 opencode 的 serve 事件无关）：加
+     * {@code --include-partial-messages} 后 stdout 会出现 {@code stream_event} 行，内嵌原生
+     * Anthropic 增量事件（text_delta / thinking_delta / input_json_delta）。工具块按
+     * {@code index} 跟踪生命周期：start 登记 tool_use，delta 追加参数片段，stop 置 SUCCESS
+     * ——前端按 call_id 聚合、按 argument_delta 拼参数，与 opencode 的 tool_call 契约一致。
+     *
+     * <p>每个进程一份实例：块索引在行间有状态，随 run 创建、随 run 丢弃。
+     */
+    private final class StreamEcho {
+        private final String sessionId;
+        private final Map<Integer, String> toolCallIds = new LinkedHashMap<>();
+        private final Map<Integer, String> toolNames = new LinkedHashMap<>();
+
+        StreamEcho(String sessionId) {
+            this.sessionId = sessionId;
         }
-        try {
-            Object parsed = MiniJson.parse(line.trim());
-            if (!(parsed instanceof Map<?, ?> m)) {
+
+        void line(String line) {
+            if (line == null || line.isBlank()) {
                 return;
             }
-            Map<String, Object> obj = cast(m);
-            Instant now = clock.now();
-
-            String type = String.valueOf(obj.get("type"));
-            if ("content_block_delta".equals(type)) {
-                Object deltaObj = obj.get("delta");
-                if (deltaObj instanceof Map<?, ?> dm) {
+            try {
+                Object parsed = MiniJson.parse(line.trim());
+                if (!(parsed instanceof Map<?, ?> m)) {
+                    return;
+                }
+                Map<String, Object> obj = cast(m);
+                if (!"stream_event".equals(String.valueOf(obj.get("type")))
+                        || !(obj.get("event") instanceof Map<?, ?> em)) {
+                    return;
+                }
+                Map<String, Object> event = cast(em);
+                Instant now = clock.now();
+                String eventType = String.valueOf(event.get("type"));
+                Integer index = event.get("index") instanceof Number n ? n.intValue() : null;
+                if ("content_block_delta".equals(eventType)) {
+                    if (!(event.get("delta") instanceof Map<?, ?> dm)) {
+                        return;
+                    }
                     Map<String, Object> delta = cast(dm);
                     String deltaType = String.valueOf(delta.get("type"));
                     if ("text_delta".equals(deltaType)) {
-                        String text = String.valueOf(delta.get("text"));
-                        emitChunk(sessionId, new SessionStreamChunk.ContentChunk(sessionId, text, now));
+                        emitChunk(sessionId, new SessionStreamChunk.ContentChunk(sessionId,
+                                String.valueOf(delta.get("text")), now));
                     } else if ("thinking_delta".equals(deltaType)) {
-                        String thinking = String.valueOf(delta.get("thinking"));
-                        emitChunk(sessionId, new SessionStreamChunk.ThinkingChunk(sessionId, thinking, now));
+                        emitChunk(sessionId, new SessionStreamChunk.ThinkingChunk(sessionId,
+                                String.valueOf(delta.get("thinking")), now));
+                    } else if ("input_json_delta".equals(deltaType) && toolCallIds.containsKey(index)) {
+                        String fragment = String.valueOf(delta.get("partial_json"));
+                        emitChunk(sessionId, new SessionStreamChunk.ToolCallChunk(sessionId,
+                                toolCallIds.get(index), toolNames.get(index), fragment, null, "RUNNING", now));
                     }
+                } else if ("content_block_start".equals(eventType) && index != null) {
+                    if (event.get("content_block") instanceof Map<?, ?> bm) {
+                        Map<String, Object> block = cast(bm);
+                        if ("tool_use".equals(String.valueOf(block.get("type")))) {
+                            String callId = String.valueOf(block.getOrDefault("id", "call_" + System.nanoTime()));
+                            String name = String.valueOf(block.getOrDefault("name", "unknown"));
+                            toolCallIds.put(index, callId);
+                            toolNames.put(index, name);
+                            emitChunk(sessionId, new SessionStreamChunk.ToolCallChunk(sessionId,
+                                    callId, name, "{}", null, "RUNNING", now));
+                        }
+                    }
+                } else if ("content_block_stop".equals(eventType) && toolCallIds.containsKey(index)) {
+                    emitChunk(sessionId, new SessionStreamChunk.ToolCallChunk(sessionId,
+                            toolCallIds.get(index), toolNames.get(index), "{}", null, "SUCCESS", now));
                 }
-            } else if ("tool_use".equals(type) || "tool_call".equals(type)) {
-                String callId = String.valueOf(obj.getOrDefault("id", "call_" + System.currentTimeMillis()));
-                String name = String.valueOf(obj.getOrDefault("name", "unknown"));
-                String input = obj.get("input") == null ? "{}" : String.valueOf(obj.get("input"));
-                emitChunk(sessionId, new SessionStreamChunk.ToolCallChunk(sessionId, callId, name, input, null, "RUNNING", now));
+            } catch (Exception ignored) {
             }
-        } catch (Exception ignored) {
         }
-    }
-
-    private void runSend(GateTask task, Session session, String message) {
+    }    private void runSend(GateTask task, Session session, String message) {
         try (AutoCloseable ignored = ticketLocks.acquire(session.ticketNo())) {
             // Fresh read: a live model switch persisted after enqueue must still win.
             Session latest = sessions.find(session.id()).orElse(session);
@@ -416,22 +461,33 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
             // to stay in the same conversation, and the fresh read also picks up a session id a
             // still-running previous send has written after this task was enqueued.
             List<String> argv = buildArgv(config, contextFile, mcpConfig,
-                    latest.cliSessionId(), message, latest.overrideModel());
+                    latest.cliSessionId(), message, latest.overrideModel(), latest.overrideVariant());
+            StreamEcho echo = new StreamEcho(session.id());
             ProcessRunner.ProcRun run = processRunner.runStreaming(argv, clone, Map.of(), Duration.ofMinutes(10),
-                    line -> handleStreamLine(session.id(), line), null);
+                    echo::line, null);
 
             tasks.update(progress(task, 70, "解析 stream-json"));
             ParsedOutput parsed = parseStream(run.stdout());
-            if (parsed.assistantText != null || parsed.usage != null) {
-                insertAssistantMessage(session.id(),
-                        parsed.assistantText == null ? "" : parsed.assistantText,
-                        parsed.usage, parsed.degraded, now);
-                if (parsed.usage != null) {
-                    emitChunk(session.id(), new SessionStreamChunk.UsageChunk(session.id(), parsed.usage, now));
+            if (parsed.errorText() != null && !parsed.errorText().isBlank()) {
+                // result.is_error：claude 以 exit 0 结束但回合失败（如网关 4xx），按错误落库。
+                insertErrorMessage(session.id(), parsed.errorText(), now);
+                emitChunk(session.id(), new SessionStreamChunk.ErrorChunk(session.id(), "PROCESS_ERROR",
+                        parsed.errorText(), now));
+            } else if (!parsed.assistantTexts().isEmpty()) {
+                List<String> texts = parsed.assistantTexts();
+                for (int i = 0; i < texts.size(); i++) {
+                    insertAssistantMessage(session.id(), texts.get(i),
+                            i == texts.size() - 1 ? parsed.usage() : null, parsed.degraded(), now);
+                }
+                if (parsed.usage() != null) {
+                    emitChunk(session.id(), new SessionStreamChunk.UsageChunk(session.id(), parsed.usage(), now));
                 }
             } else {
-                insertErrorMessage(session.id(), run.stderrFirstLine(), now);
-                emitChunk(session.id(), new SessionStreamChunk.ErrorChunk(session.id(), "PROCESS_ERROR", run.stderrFirstLine(), now));
+                String detail = run.timedOut()
+                        ? "claude 运行超时被终止"
+                        : "claude 未产生任何输出（exit=" + run.exitCode() + "）";
+                insertErrorMessage(session.id(), detail, now);
+                emitChunk(session.id(), new SessionStreamChunk.ErrorChunk(session.id(), "PROCESS_ERROR", detail, now));
             }
             SessionUsage cumulative = session.cumulativeUsage().add(parsed.usage == null ? SessionUsage.EMPTY : parsed.usage);
             Session updated = session.withCumulativeUsage(cumulative);
@@ -465,11 +521,12 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
 
     private List<String> buildArgv(AgentConfig config, Path contextFile, Path mcpConfig,
                                    String resumeSessionId, String prompt) {
-        return buildArgv(config, contextFile, mcpConfig, resumeSessionId, prompt, null);
+        return buildArgv(config, contextFile, mcpConfig, resumeSessionId, prompt, null, null);
     }
 
     private List<String> buildArgv(AgentConfig config, Path contextFile, Path mcpConfig,
-                                   String resumeSessionId, String prompt, String overrideModel) {
+                                   String resumeSessionId, String prompt, String overrideModel,
+                                   String overrideVariant) {
         List<String> argv = new ArrayList<>();
         argv.add(claudeExecutable);
         argv.addAll(claudePrefix);
@@ -482,14 +539,31 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
         // claude CLI hard requirement: --print + stream-json output refuses to start without
         // --verbose ("When using --print, --output-format=stream-json requires --verbose").
         argv.add("--verbose");
+        // 流式回显：stream-json 默认只输出整段的 assistant 行（整个进程退出前工作台一片
+        // 空白，而第三方转录工具能看到逐字内容）；该 flag 让 claude 额外发出 stream_event
+        // 增量事件，由 StreamEcho 实时转发给 SSE。
+        argv.add("--include-partial-messages");
         // No model flag means Claude Code resolves its own provider/model configuration. The
         // agent profile may still opt into an explicit model override when one is selected;
-        // a live per-session switch (会话内实时切换) beats the profile default.
+        // a live per-session switch (会话内实时切换) beats the profile default. Agent defaults
+        // carry a "provider/model" ref — claude --model wants the bare model id: the gateway
+        // routes by model name, the provider half is gate-internal.
         String effectiveModel = overrideModel != null && !overrideModel.isBlank()
                 ? overrideModel.trim() : config.model();
-        if (effectiveModel != null && !effectiveModel.isBlank()) {
+        // CLI 自管模型哨兵：Agent 绑定 cli-default 且 model 与 provider 同名（无 provider/ 斜杠）
+        // 表示模型由 claude 自身配置决定——不带 --model，否则网关会收到字面量 "cli-default"。
+        boolean cliManagedModel = effectiveModel != null && !effectiveModel.contains("/")
+                && effectiveModel.equalsIgnoreCase(config.providerId());
+        if (effectiveModel != null && !effectiveModel.isBlank() && !cliManagedModel) {
             argv.add("--model");
-            argv.add(effectiveModel);
+            argv.add(bareModelId(effectiveModel));
+        }
+        // 推理强度必须显式钉住：不传时 claude 按自己的默认档位发 output_config.effort，
+        // 严格网关会以 400 output_config.effort must be one of: low, medium, high, max 拒绝
+        // （2.1.240 实测）；显式传入枚举内档位后该 400 消失。候选档位由会话模型目录提供。
+        if (overrideVariant != null && !overrideVariant.isBlank()) {
+            argv.add("--effort");
+            argv.add(overrideVariant.trim());
         }
         if (resumeSessionId != null && !resumeSessionId.isBlank()) {
             argv.add("--resume");
@@ -515,6 +589,18 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
             argv.add(prompt);
         }
         return argv;
+    }
+
+    /**
+     * "provider/model" agent default → bare model id (mirrors the frontend splitModelRef rule:
+     * first slash separates, a bare id or a trailing slash passes through unchanged).
+     */
+    private static String bareModelId(String modelRef) {
+        int slash = modelRef.indexOf('/');
+        if (slash <= 0 || slash >= modelRef.length() - 1) {
+            return modelRef;
+        }
+        return modelRef.substring(slash + 1);
     }
 
     /**
@@ -579,13 +665,19 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
                 text == null ? "claude failed" : text, List.of(), null, true, at));
     }
 
+    /**
+     * claude stream-json 的终态解析：每个 {@code assistant} 行是一个完整回合（一个进程可产生
+     * 多个回合），{@code result} 行携带权威 usage 与 is_error。增量事件（stream_event）不参与
+     * 终态解析——它们只经 {@link StreamEcho} 实时转发。
+     */
     private static ParsedOutput parseStream(String stdout) {
+        List<String> assistantTexts = new ArrayList<>();
         String sessionId = null;
-        String assistantText = null;
         SessionUsage usage = null;
+        String errorText = null;
         boolean degraded = false;
         if (stdout == null || stdout.isBlank()) {
-            return new ParsedOutput(null, null, null, true);
+            return new ParsedOutput(null, assistantTexts, null, true, null);
         }
         try {
             for (String line : stdout.split("\\R")) {
@@ -601,30 +693,56 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
                 if (sid != null) {
                     sessionId = String.valueOf(sid);
                 }
-                if (assistantText == null) {
-                    assistantText = extractText(obj.get("message"), obj.get("text"));
-                }
-                Object usageObj = obj.get("usage");
-                if (usageObj instanceof Map<?, ?> um) {
-                    Map<String, Object> usageMap = cast(um);
-                    Long prompt = longOrNull(usageMap.get("input_tokens"));
-                    if (prompt == null) {
-                        prompt = longOrNull(usageMap.get("prompt_tokens"));
+                String type = String.valueOf(obj.get("type"));
+                if ("assistant".equals(type)) {
+                    String text = extractText(obj.get("message"), null);
+                    if (text != null && !text.isBlank()) {
+                        assistantTexts.add(text);
                     }
-                    Long completion = longOrNull(usageMap.get("output_tokens"));
-                    if (completion == null) {
-                        completion = longOrNull(usageMap.get("completion_tokens"));
+                    if (obj.get("message") instanceof Map<?, ?> mm) {
+                        SessionUsage messageUsage = extractUsage(cast(mm).get("usage"));
+                        if (messageUsage != null) {
+                            usage = messageUsage;
+                        }
                     }
-                    Long total = longOrNull(usageMap.get("total_tokens"));
-                    if (prompt != null || completion != null || total != null) {
-                        usage = new SessionUsage(prompt, completion, total);
+                } else if ("result".equals(type)) {
+                    SessionUsage resultUsage = extractUsage(obj.get("usage"));
+                    if (resultUsage != null) {
+                        usage = resultUsage;
+                    }
+                    if (Boolean.TRUE.equals(obj.get("is_error"))) {
+                        errorText = String.valueOf(obj.get("result"));
                     }
                 }
             }
         } catch (Exception e) {
             degraded = true;
         }
-        return new ParsedOutput(sessionId, assistantText, usage, degraded);
+        return new ParsedOutput(sessionId, assistantTexts, usage, degraded, errorText);
+    }
+
+    /** claude/兼容网关的 usage 形状归一：input/output 优先，缺 total 时以 input+output 补齐。 */
+    private static SessionUsage extractUsage(Object usageObj) {
+        if (!(usageObj instanceof Map<?, ?> um)) {
+            return null;
+        }
+        Map<String, Object> usageMap = cast(um);
+        Long prompt = longOrNull(usageMap.get("input_tokens"));
+        if (prompt == null) {
+            prompt = longOrNull(usageMap.get("prompt_tokens"));
+        }
+        Long completion = longOrNull(usageMap.get("output_tokens"));
+        if (completion == null) {
+            completion = longOrNull(usageMap.get("completion_tokens"));
+        }
+        Long total = longOrNull(usageMap.get("total_tokens"));
+        if (total == null && (prompt != null || completion != null)) {
+            total = (prompt == null ? 0 : prompt) + (completion == null ? 0 : completion);
+        }
+        if (prompt == null && completion == null && total == null) {
+            return null;
+        }
+        return new SessionUsage(prompt, completion, total);
     }
 
     private static String extractText(Object message, Object text) {
@@ -699,6 +817,7 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
         return s.replace("\\", "\\\\").replace("\"", "\\\"");
     }
 
-    private record ParsedOutput(String sessionId, String assistantText, SessionUsage usage, boolean degraded) {
+    private record ParsedOutput(String sessionId, List<String> assistantTexts, SessionUsage usage,
+                                boolean degraded, String errorText) {
     }
 }

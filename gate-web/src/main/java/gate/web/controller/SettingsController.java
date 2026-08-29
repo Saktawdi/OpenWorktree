@@ -52,7 +52,7 @@ public final class SettingsController implements WebController {
         m.put("web.allowed_origins", List.of("127.0.0.1", "localhost"));
         m.put("session.port_range_min", 49152L);
         m.put("session.port_range_max", 65535L);
-        m.put("session.default_cli", "claude");
+        m.put("session.default_cli", "opencode");
         m.put("session.start_timeout_seconds", 60L);
         return Map.copyOf(m);
     }
@@ -140,8 +140,8 @@ public final class SettingsController implements WebController {
         m.put("session.port_range_min", KeyMeta.range("会话端口池下界，须不大于上界", 1L, 65535L));
         m.put("session.port_range_max", KeyMeta.range("会话端口池上界", 1L, 65535L));
         m.put("session.default_cli", KeyMeta.select("新建会话默认启动的 CLI",
-                "claude", "claude（Claude Code 无头会话）",
-                "opencode", "opencode（opencode serve 会话）"));
+                "opencode", "opencode（opencode serve 会话）",
+                "claude", "claude（Claude Code 无头会话）"));
         m.put("session.default_agent_config", KeyMeta.hint("新建会话默认使用的 agent 配置名"));
         m.put("session.start_timeout_seconds", KeyMeta.range("会话冷启动健康等待上限（秒）", 5L, 900L));
         // —— 智能体默认 ——
@@ -251,8 +251,8 @@ public final class SettingsController implements WebController {
         body.put("transport", "stdio");
         body.put("serve_command", "gate mcp serve --config <gate.toml>");
         body.put("cli_integration", List.of(
-                Map.of("cli", "claude", "mechanism", "--mcp-config mcpServers 块（--strict-mcp-config）"),
-                Map.of("cli", "opencode", "mechanism", "OPENCODE_CONFIG 的 mcp 块（与全局配置按键合并）")));
+                Map.of("cli", "opencode", "mechanism", "OPENCODE_CONFIG 的 mcp 块（与全局配置按键合并）"),
+                Map.of("cli", "claude", "mechanism", "--mcp-config mcpServers 块（--strict-mcp-config）")));
         body.put("tools", tools);
         body.put("agent_tool_count", agentCount);
         body.put("human_tool_count", humanCount);

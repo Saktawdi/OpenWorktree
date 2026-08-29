@@ -67,18 +67,18 @@ export const DEMO_AGENTS: AgentConfig[] = [
 
 export const DEMO_RUNTIMES: AgentRuntime[] = [
   {
-    name: "claude",
-    available: true,
-    version: "2.1.34",
-    models: ["default", "sonnet", "opus", "haiku"],
-    modelSource: "cli-hints",
-  },
-  {
     name: "opencode",
     available: true,
     version: "0.6.12",
     models: ["gpt-5-codex", "claude-sonnet-4-5", "qwen3-coder-plus"],
     modelSource: "cli",
+  },
+  {
+    name: "claude",
+    available: true,
+    version: "2.1.34",
+    models: ["default", "sonnet", "opus", "haiku"],
+    modelSource: "cli-hints",
   },
 ];
 

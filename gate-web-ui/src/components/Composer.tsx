@@ -3,6 +3,7 @@ import {
   Brain,
   CaretDown,
   Check,
+  CheckCircle,
   Cpu,
   Eye,
   Lock,
@@ -114,6 +115,26 @@ function AgentPicker({ ticketNo }: { ticketNo: string }) {
 
 /* ─── 会话内实时切换模型 / 推理强度（参考 OpenChamber ModelControls） ─── */
 
+/**
+ * claude 会话的推理强度档位：claude --effort 接受 low/medium/high/xhigh/max，但网关的
+ * output_config.effort 枚举只认这四档（xhigh 会被 400 拒绝），取交集。与 opencode 走
+ * serve 目录 variants 的路径不同，claude 的档位是 CLI 固有枚举，不随模型目录变化。
+ */
+const CLAUDE_EFFORTS = ["low", "medium", "high", "max"];
+
+/**
+ * claude 原生模型预设（claude --model 接受的别名，参考 open-design 的分组）：
+ * "默认"=清空覆盖、不传 --model，由 claude 自身配置决定；其余以别名直传。
+ * 与目录无关——网关自定义模型仍走下方自定义输入。
+ */
+const CLAUDE_MODEL_PRESETS: { label: string; id?: string; clear?: boolean }[] = [
+  { label: "默认", clear: true },
+  { label: "Haiku", id: "haiku" },
+  { label: "Sonnet", id: "sonnet" },
+  { label: "Opus", id: "opus" },
+  { label: "Fable", id: "fable" },
+];
+
 /** Splits an AgentConfig default model ref ("provider/model") into its halves. */
 function splitModelRef(model?: string | null): { provider: string | null; model: string | null } {
   if (!model || !model.trim()) return { provider: null, model: null };
@@ -134,6 +155,10 @@ function useEffectiveSel(ticketNo: string): {
   currentVariants: string[];
   /** 当前选中模型是否支持图片输入；catalog 缺失时为 undefined（未知，不拦截）。 */
   imageSupported?: boolean;
+  /** claude 会话走独立路径：档位是 CLI 固有枚举，模型可自定义输入（不依赖目录）。 */
+  isClaude: boolean;
+  /** claude 自定义模型落到哪个 provider 分组（Agent 绑定的 provider，缺省 custom）。 */
+  agentProviderId: string | null;
 } {
   const sessionId = useApp((s) => s.activeSessionId[ticketNo] ?? "");
   const providers = useApp((s) => (sessionId ? s.sessionModels[sessionId] : undefined)) ?? [];
@@ -142,8 +167,12 @@ function useEffectiveSel(ticketNo: string): {
   const agents = useApp((s) => s.agents);
 
   return useMemo(() => {
-    if (!sessionId) return { sessionId, sel: null, providers, currentVariants: [] };
     const agent = agents.find((a) => a.id === (sess?.agentConfigId ?? ""));
+    const isClaude = agent?.cli === "claude";
+    const agentProviderId = agent?.providerId ?? null;
+    if (!sessionId) {
+      return { sessionId, sel: null, providers, currentVariants: [], isClaude, agentProviderId };
+    }
     const fallback = splitModelRef(agent?.model);
     let sel: EffectiveSel;
     if (stored?.providerId && stored.modelId) {
@@ -158,7 +187,7 @@ function useEffectiveSel(ticketNo: string): {
     } else if (fallback.provider && fallback.model) {
       sel = { providerId: fallback.provider, modelId: fallback.model, variant: null, overridden: false };
     } else {
-      return { sessionId, sel: null, providers, currentVariants: [] };
+      return { sessionId, sel: null, providers, currentVariants: [], isClaude, agentProviderId };
     }
     const modelEntry = providers
       .find((p) => p.id === sel.providerId)
@@ -167,8 +196,12 @@ function useEffectiveSel(ticketNo: string): {
       sessionId,
       sel,
       providers,
-      currentVariants: modelEntry?.variants ?? [],
+      // opencode：档位来自 serve 目录里该模型的 variants；claude：CLI 固有枚举，
+      // 目录缺条目（自定义模型/空目录）也不影响选强度。
+      currentVariants: modelEntry?.variants ?? (isClaude ? CLAUDE_EFFORTS : []),
       imageSupported: modelEntry?.imageInput,
+      isClaude,
+      agentProviderId,
     };
   }, [sessionId, providers, stored, sess, agents]);
 }
@@ -177,13 +210,19 @@ function ModelPicker({
   ticketNo,
   sel,
   providers,
+  isClaude,
+  agentProviderId,
 }: {
   ticketNo: string;
   sel: EffectiveSel | null;
   providers: CatalogProvider[];
+  /** claude 会话：目录仅是可选的快捷列表，模型 ID 永远可手输（claude 用自己的网关鉴权）。 */
+  isClaude: boolean;
+  agentProviderId: string | null;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const [customModel, setCustomModel] = useState("");
   const busySwitching = useRef(false);
   const q = query.trim().toLowerCase();
 
@@ -215,7 +254,26 @@ function ModelPicker({
     setOpen(false);
   };
 
+  /** claude 专属：目录之外的模型 ID 直接生效（下一回合以 --model 传给 claude）。 */
+  const pickCustom = async () => {
+    const modelId = customModel.trim();
+    if (!modelId || busySwitching.current) return;
+    setCustomModel("");
+    await pick(agentProviderId ?? "custom", modelId);
+  };
+
+  /** claude 专属：原生预设（默认=清空覆盖；别名=直接作为 model ID）。 */
+  const pickPreset = async (p: (typeof CLAUDE_MODEL_PRESETS)[number]) => {
+    setOpen(false);
+    if (p.clear) {
+      await actions.switchSessionModel(ticketNo, { providerId: "", modelId: "", variant: "" });
+      return;
+    }
+    await pick(agentProviderId ?? "custom", p.id!);
+  };
+
   const label = sel ? `${sel.providerId} · ${sel.modelId}` : "模型";
+  const catalogEmpty = providers.length === 0;
 
   return (
     <div className="relative">
@@ -225,11 +283,13 @@ function ModelPicker({
           setQuery("");
           setOpen(!open);
         }}
-        disabled={providers.length === 0}
+        disabled={catalogEmpty && !isClaude}
         title={
-          providers.length === 0
+          catalogEmpty && !isClaude
             ? "模型目录不可用"
-            : "切换本会话使用的模型（下一回合生效，可随时切换）"
+            : isClaude && catalogEmpty
+              ? "输入 Claude 网关可用的模型 ID（目录未配置）"
+              : "切换本会话使用的模型（下一回合生效，可随时切换）"
         }
       >
         <Cpu size={12} className="text-info" weight="fill" />
@@ -239,20 +299,40 @@ function ModelPicker({
         ) : null}
         <CaretDown size={11} />
       </button>
-      {open && providers.length > 0 && (
+      {open && (providers.length > 0 || isClaude) && (
         <>
           <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
           <div className="absolute bottom-9 left-0 z-40 w-[320px] card p-1.5 shadow-2xl shadow-black/50 animate-rise">
-            <div className="flex items-center gap-1.5 px-2 h-8 mb-1">
-              <MagnifyingGlass size={12} className="text-faint shrink-0" />
-              <input
-                autoFocus
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="搜索模型…"
-                className="w-full bg-transparent text-[12px] text-ink placeholder:text-faint focus:outline-none"
-              />
-            </div>
+            {isClaude && (
+              <div className="flex flex-wrap gap-1 px-2 pt-1.5 pb-1.5 border-b border-[color:var(--line)] mb-1">
+                {CLAUDE_MODEL_PRESETS.map((p) => {
+                  const active = p.clear ? !sel?.overridden : sel?.modelId === p.id;
+                  return (
+                    <button
+                      key={p.label}
+                      className={`px-2 h-6 rounded-lg text-[11px] cursor-pointer transition-colors ${
+                        active ? "bg-raised text-ink" : "text-dim hover:bg-raised hover:text-ink"
+                      }`}
+                      onClick={() => void pickPreset(p)}
+                    >
+                      {p.label}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            {providers.length > 0 && (
+              <div className="flex items-center gap-1.5 px-2 h-8 mb-1">
+                <MagnifyingGlass size={12} className="text-faint shrink-0" />
+                <input
+                  autoFocus
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="搜索模型…"
+                  className="w-full bg-transparent text-[12px] text-ink placeholder:text-faint focus:outline-none"
+                />
+              </div>
+            )}
             <div className="max-h-[300px] overflow-y-auto">
               {filtered.map((p) => (
                 <div key={p.id}>
@@ -281,9 +361,36 @@ function ModelPicker({
                 </div>
               ))}
               {filtered.length === 0 && (
-                <div className="px-3 py-6 text-center text-[12px] text-faint">无匹配模型</div>
+                <div className="px-3 py-4 text-center text-[12px] text-faint">
+                  {catalogEmpty ? "无目录模型，可直接在下方输入模型 ID" : "无匹配模型"}
+                </div>
               )}
             </div>
+            {isClaude && (
+              <div className="border-t border-[color:var(--line)] mt-1 px-2 pt-1.5 pb-1">
+                <div className="text-[10.5px] font-medium uppercase tracking-wide text-faint pb-1">
+                  自定义模型 ID（claude 网关实际可用为准）
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <input
+                    value={customModel}
+                    onChange={(e) => setCustomModel(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") void pickCustom();
+                    }}
+                    placeholder="如 glm-5.2"
+                    className="w-full bg-raised rounded-lg px-2 h-7 font-mono text-[11.5px] text-ink placeholder:text-faint focus:outline-none"
+                  />
+                  <button
+                    className="composer-btn shrink-0"
+                    onClick={() => void pickCustom()}
+                    disabled={!customModel.trim()}
+                  >
+                    使用
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </>
       )}
@@ -373,6 +480,9 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
       : (s.busy[ticketNo] ?? false),
   );
   const stage = useApp((s) => s.tickets.find((t) => t.ticketNo === ticketNo)?.stage);
+  const restartCount = useApp(
+    (s) => s.tickets.find((t) => t.ticketNo === ticketNo)?.restartCount ?? 0,
+  );
   const diffs = useApp((s) => s.diffs[ticketNo]?.length ?? 0);
   const findingsCount = useApp((s) => s.findings[ticketNo]?.length ?? 0);
   const usage = useApp((s) => s.usage[ticketNo]);
@@ -384,7 +494,8 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const live = mode === "live";
-  const { sel, providers, currentVariants, imageSupported } = useEffectiveSel(ticketNo);
+  const { sel, providers, currentVariants, imageSupported, isClaude, agentProviderId } =
+    useEffectiveSel(ticketNo);
 
   const resize = () => {
     const ta = taRef.current;
@@ -515,6 +626,10 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
       : null,
     diffs > 0 ? { label: "解释当前变更", prompt: "请解释当前工作区的全部改动", Icon: Eye } : null,
     { label: "运行本地单测", prompt: "运行本地单元测试并汇总结果", Icon: TerminalWindow },
+    // 重启过的活跃工单才有「重启理由」注入上下文（AgentContextPrompt），语录才有意义
+    restartCount > 0
+      ? { label: "完成此工单", prompt: "完成此工单，处理下重启理由", Icon: CheckCircle }
+      : null,
     findingsCount > 0 && stage === "REJECTED"
       ? { label: "按审查意见修复", prompt: "__findings__", Icon: Wrench }
       : null,
@@ -624,7 +739,13 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
               <AgentPicker ticketNo={ticketNo} />
               {live && (
                 <>
-                  <ModelPicker ticketNo={ticketNo} sel={sel} providers={providers} />
+                  <ModelPicker
+                    ticketNo={ticketNo}
+                    sel={sel}
+                    providers={providers}
+                    isClaude={isClaude}
+                    agentProviderId={agentProviderId}
+                  />
                   <VariantPicker ticketNo={ticketNo} sel={sel} variants={currentVariants} />
                   {activeSessionId && (
                     <button

@@ -81,12 +81,13 @@ class SessionCostWritebackTest {
         ticketRepo.insert(new Ticket("COST-1", "cost", "refs/heads/main", root.resolve("clone").toString(),
                 null, null, null, null, gate.domain.ticket.TicketStage.IN_PROGRESS, now, now));
 
-        // Fake claude stub emits a usage-bearing assistant message.
+        // Fake claude stub emits an assistant message carrying usage (real claude shape:
+        // usage lives inside message or on the result line, never top-level).
         Path script = root.resolve("fake-claude.cmd");
         Files.writeString(script, """
                 @echo off
                 echo {"type":"session","session_id":"sess-cost"}
-                echo {"type":"assistant","message":{"content":[{"type":"text","text":"hi"}]},"usage":{"input_tokens":10,"output_tokens":5,"total_tokens":15}}
+                echo {"type":"assistant","message":{"content":[{"type":"text","text":"hi"}],"usage":{"input_tokens":10,"output_tokens":5,"total_tokens":15}}}
                 """, StandardCharsets.UTF_8);
         Path clone = root.resolve("clone");
         Files.createDirectories(clone.resolve(".git"));

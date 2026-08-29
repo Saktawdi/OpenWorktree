@@ -269,7 +269,7 @@ public final class TomlGateConfigLoader {
             session = new GateConfig.SessionConfig(
                     (int) longValueOr(scalars, "session.port_range_min", 49152L),
                     (int) longValueOr(scalars, "session.port_range_max", 65535L),
-                    scalars.getOrDefault("session.default_cli", "claude"),
+                    scalars.getOrDefault("session.default_cli", "opencode"),
                     scalars.get("session.default_agent_config"),
                     (int) longValueOr(scalars, "session.start_timeout_seconds", 60L));
         }

@@ -121,8 +121,8 @@ final public class RuntimeInfoService {
         body.put("engine", engine);
 
         List<Map<String, Object>> agentClis = new ArrayList<>();
-        agentClis.add(probeJson(pc.claude(), "claude"));
         agentClis.add(probeJson(pc.opencode(), "opencode"));
+        agentClis.add(probeJson(pc.claude(), "claude"));
         body.put("agent_clis", agentClis);
 
         Map<String, Object> database = new LinkedHashMap<>();
@@ -177,8 +177,8 @@ final public class RuntimeInfoService {
         }
         Map<String, Object> body = new LinkedHashMap<>();
         List<Map<String, Object>> rows = new ArrayList<>();
-        rows.add(probeJson(withCatalog(pc.claude(), claudeCatalog), "claude"));
         rows.add(probeJson(withCatalog(pc.opencode(), opencodeCatalog), "opencode"));
+        rows.add(probeJson(withCatalog(pc.claude(), claudeCatalog), "claude"));
         body.put("agent_runtimes", rows);
         return body;
     }

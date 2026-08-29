@@ -1,6 +1,7 @@
 package gate.web;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -159,8 +160,42 @@ class SessionModelSwitchTest {
         insertSessionWithPort("sess-claude-1", -1);
         HttpResponse<String> res = get("/api/sessions/sess-claude-1/models");
         assertEquals(200, res.statusCode(), res.body());
-        assertTrue(res.body().contains("\"source\":\"no-server\""), res.body());
+        // claude 无 serve 端口：目录改由 Agent 绑定的 Provider 生成；oc-switch 绑定的
+        // manual provider 没有模型缓存 → 空目录 + 提示，选择器保持禁用而非报错。
+        assertTrue(res.body().contains("\"source\":\"agent-provider\""), res.body());
         assertTrue(res.body().contains("\"providers\":[]"), res.body());
+        assertTrue(res.body().contains("note"), res.body());
+    }
+
+    @Test
+    void models_endpoint_builds_agent_provider_catalog_for_claude_sessions() throws Exception {
+        // claude headless 没有 serve 端口：目录由会话绑定 Agent 的 Provider 模型缓存静态生成，
+        // 每个模型带推理强度档位（claude --effort 枚举），选择器才能选模型并自选强度。
+        // Provider 行必须先于 Agent 配置存在（agent_config.provider_id 外键）。
+        harness.components().providerRepository().upsert(
+                new gate.ports.store.ProviderRepository.ProviderRow("prov-a", "Provider A",
+                        "http://prov-a", "none", "openai", Instant.now()),
+                Instant.now());
+        harness.components().providerRepository().replaceModels("prov-a",
+                java.util.List.of("model-a", "model-b"), Instant.now());
+        assertEquals(201, post("/api/agent-configs", """
+                {"id":"cc-cat","name":"CC Cat","cli":"CLAUDE","provider_id":"prov-a",
+                 "model":"prov-a/model-a","extra_flags":[],"description":"test"}
+                """).statusCode());
+        assertEquals(201, post("/api/tickets", "{\"ticket_no\":\"SW-CC\",\"title\":\"cc catalog\"}")
+                .statusCode());
+        Path clone = harness.root().resolve("clones").resolve("sess-claude-cat");
+        harness.components().sessionRepository().insert(new Session(
+                "sess-claude-cat", "SW-CC", "cc-cat", AgentCli.CLAUDE, SessionStatus.ACTIVE,
+                "cli-sess-claude-cat", clone.toString(), -1, Instant.now(), null,
+                SessionUsage.EMPTY, null, false));
+
+        HttpResponse<String> res = get("/api/sessions/sess-claude-cat/models");
+        assertEquals(200, res.statusCode(), res.body());
+        assertTrue(res.body().contains("\"source\":\"agent-provider\""), res.body());
+        assertTrue(res.body().contains("\"id\":\"prov-a\""), res.body());
+        assertTrue(res.body().contains("\"id\":\"model-a\""), res.body());
+        assertTrue(res.body().contains("\"variants\":[\"low\",\"medium\",\"high\",\"max\"]"), res.body());
     }
 
     /** A stale serve port (process died) degrades to an empty catalog, not a 503. */
@@ -268,6 +303,41 @@ class SessionModelSwitchTest {
         Map<String, Object> m1Limit = (Map<String, Object>) models.get(0).get("limit");
         assertEquals(128000L, m1Limit.get("context"));
         assertNull(m1Limit.get("output"), "missing output key stays omitted");
+    }
+
+    @Test
+    void models_endpoint_falls_back_to_all_cached_providers_when_agent_provider_is_empty() throws Exception {
+        // 绑定 cli-default（CLI 自管模型）时目录必须为空：god/own/temp 的缓存是为审查引擎与
+        // opencode 拉取的，claude 用自己的网关与密钥鉴权，那些模型 id 对 claude 没有语义，
+        // 兜底并列只会给出必然 403 的选项。前端 claude 路径改为手输模型 ID。
+        harness.components().providerRepository().upsert(
+                new gate.ports.store.ProviderRepository.ProviderRow("cli-default", "CLI default",
+                        "local://cli-default", "none", "cli-runtime", Instant.now()),
+                Instant.now());
+        harness.components().providerRepository().upsert(
+                new gate.ports.store.ProviderRepository.ProviderRow("god", "god",
+                        "https://api.yjs.im/v1", "none", "openai", Instant.now()),
+                Instant.now());
+        harness.components().providerRepository().replaceModels("god",
+                java.util.List.of("glm-5.2"), Instant.now());
+        assertEquals(201, post("/api/agent-configs", """
+                {"id":"cc-fallback","name":"CC Fallback","cli":"CLAUDE","provider_id":"cli-default",
+                 "model":"cli-default","extra_flags":[],"description":"test"}
+                """).statusCode());
+        assertEquals(201, post("/api/tickets", "{\"ticket_no\":\"SW-FB\",\"title\":\"cc fallback\"}")
+                .statusCode());
+        Path clone = harness.root().resolve("clones").resolve("sess-claude-fb");
+        harness.components().sessionRepository().insert(new Session(
+                "sess-claude-fb", "SW-FB", "cc-fallback", AgentCli.CLAUDE, SessionStatus.ACTIVE,
+                "cli-sess-claude-fb", clone.toString(), -1, Instant.now(), null,
+                SessionUsage.EMPTY, null, false));
+
+        HttpResponse<String> res = get("/api/sessions/sess-claude-fb/models");
+        assertEquals(200, res.statusCode(), res.body());
+        assertTrue(res.body().contains("\"providers\":[]"), res.body());
+        assertTrue(res.body().contains("note"), res.body());
+        assertFalse(res.body().contains("glm-5.2"),
+                "other providers' caches must not leak into the claude catalog");
     }
 
     private static Map<String, Object> byId(java.util.List<Map<String, Object>> models, String id) {

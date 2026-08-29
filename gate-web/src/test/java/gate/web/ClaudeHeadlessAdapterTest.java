@@ -17,8 +17,11 @@ import gate.adapters.store.JdbcTicketRepository;
 import gate.adapters.store.SqliteDataSourceFactory;
 import gate.domain.session.AgentCli;
 import gate.domain.session.AgentConfig;
+import gate.domain.session.Role;
 import gate.domain.session.Session;
 import gate.domain.session.SessionMessage;
+import gate.domain.session.SessionStatus;
+import gate.domain.session.SessionUsage;
 import gate.ports.session.AgentSessionPort;
 import gate.ports.store.BlobStore;
 import gate.ports.infra.Clock;
@@ -28,6 +31,8 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import javax.sql.DataSource;
@@ -84,7 +89,7 @@ class ClaudeHeadlessAdapterTest {
         Files.writeString(script, """
                 @echo off
                 echo {"type":"session","session_id":"sess-abc"}
-                echo {"type":"assistant","message":{"content":[{"type":"text","text":"hello from claude"}]},"usage":{"input_tokens":10,"output_tokens":5,"total_tokens":15}}
+                echo {"type":"assistant","message":{"content":[{"type":"text","text":"hello from claude"}],"usage":{"input_tokens":10,"output_tokens":5,"total_tokens":15}}}
                 """, StandardCharsets.UTF_8);
 
         AgentConfig config = new AgentConfig("claude-test", "Claude Test", AgentCli.CLAUDE,
@@ -192,6 +197,157 @@ class ClaudeHeadlessAdapterTest {
         assertNull(session.cliSessionId(), "claude must not be spawned for an idle session");
         assertTrue(sessions.findMessages(session.id()).isEmpty(),
                 "idle session must not record a first user message");
+    }
+
+    @Test
+    void send_applies_model_override_effort_and_resume() throws Exception {
+        Path script = root.resolve("send-claude.cmd");
+        Files.writeString(script, """
+                @echo off
+                echo %*>"%~dp0claude-args.txt"
+                echo {"type":"session","session_id":"sess-next"}
+                echo {"type":"assistant","message":{"content":[{"type":"text","text":"ok"}]},"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}
+                """, StandardCharsets.UTF_8);
+
+        // agent_config.provider_id carries an FK — seed the provider first.
+        new gate.adapters.store.JdbcProviderRepository(jdbc).upsert(
+                new gate.ports.store.ProviderRepository.ProviderRow("prov-a", "Provider A",
+                        "http://prov-a", "none", "openai", Instant.now()),
+                Instant.now());
+        AgentConfig config = new AgentConfig("claude-send", "Claude Send", AgentCli.CLAUDE,
+                "prov-a", "prov-a/model-a", null, List.of(), "test");
+        agentConfigs.insert(config, Instant.now());
+        Path clone = root.resolve("clone");
+        Files.createDirectories(clone.resolve(".git"));
+        insertTicket("T-5");
+
+        Session session = new Session("sess-send-1", "T-5", "claude-send", AgentCli.CLAUDE,
+                SessionStatus.ACTIVE, "sess-prev", clone.toString(), -1, Instant.now(), null,
+                SessionUsage.EMPTY, null, false, "prov-a", "model-b", "high", false);
+        sessions.insert(session);
+
+        ClaudeHeadlessAdapter adapter = new ClaudeHeadlessAdapter(processRunner, agentConfigs,
+                sessions, ticketRepository, tasks, ticketLocks, clock, "cmd.exe", List.of("/c", script.toString()));
+        adapter.sendMessage(new AgentSessionPort.SendRequest("sess-send-1", "go on", true));
+
+        Instant deadline = Instant.now().plusSeconds(15);
+        while (sessions.findMessages("sess-send-1").stream().noneMatch(m -> m.role() == Role.ASSISTANT)
+                && Instant.now().isBefore(deadline)) {
+            Thread.sleep(50);
+        }
+        String args = Files.readString(root.resolve("claude-args.txt"), StandardCharsets.UTF_8);
+        assertTrue(args.contains("--resume sess-prev"),
+                "per-message spawn must resume the recorded CLI conversation");
+        assertTrue(args.contains("--model model-b"),
+                "override model reaches claude bare (no provider prefix)");
+        assertFalse(args.contains("prov-a/model-b"), "provider half of the ref is gate-internal");
+        assertTrue(args.contains("--effort high"),
+                "selected variant must pin claude's effort (gateway rejects its default)");
+    }
+
+    @Test
+    void start_omits_model_flag_for_cli_managed_model_sentinel() throws Exception {
+        // cli-default 哨兵（model 与 provider 同名、无斜杠）：模型由 claude 自身配置决定，
+        // 不能把字面量 "cli-default" 传给 --model。
+        Path script = root.resolve("sentinel-claude.cmd");
+        Files.writeString(script, """
+                @echo off
+                echo %*>"%~dp0claude-args.txt"
+                echo {"type":"session","session_id":"sess-sentinel"}
+                """, StandardCharsets.UTF_8);
+
+        new gate.adapters.store.JdbcProviderRepository(jdbc).upsert(
+                new gate.ports.store.ProviderRepository.ProviderRow("cli-default", "CLI default",
+                        "local://cli-default", "none", "cli-runtime", Instant.now()),
+                Instant.now());
+        AgentConfig config = new AgentConfig("claude-sentinel", "Claude Sentinel", AgentCli.CLAUDE,
+                "cli-default", "cli-default", null, List.of(), "test");
+        agentConfigs.insert(config, Instant.now());
+        Path clone = root.resolve("clone");
+        Files.createDirectories(clone.resolve(".git"));
+        insertTicket("T-6");
+
+        ClaudeHeadlessAdapter adapter = new ClaudeHeadlessAdapter(processRunner, agentConfigs,
+                sessions, ticketRepository, tasks, ticketLocks, clock, "cmd.exe", List.of("/c", script.toString()));
+        adapter.start(new AgentSessionPort.StartRequest(
+                "T-6", "claude-sentinel", clone.toString(), "refs/heads/main", "hello", Map.of()));
+
+        String args = Files.readString(root.resolve("claude-args.txt"), StandardCharsets.UTF_8);
+        assertFalse(args.contains("--model"), "cli-managed sentinel must not pin --model");
+        assertTrue(args.contains("hello"), "prompt still reaches claude positionally");
+    }
+
+    @Test
+    void send_streams_deltas_and_persists_full_turn() throws Exception {
+        // claude 流式路径：stream_event 增量实时转发为 SSE chunk（与 opencode 消费契约一致），
+        // 终态按 assistant 行落库、result 行取权威 usage——缺一环工作台就全程空白。
+        // ASCII-only stub content: cmd.exe reads batch files in the OEM codepage, so UTF-8
+        // Chinese in the script would be mangled before claude ever sees it.
+        Path script = root.resolve("live-claude.cmd");
+        Files.writeString(script, """
+                @echo off
+                echo {"type":"system","subtype":"init","session_id":"sess-live"}
+                echo {"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"thinking"}}}
+                echo {"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"hmm"}}}
+                echo {"type":"stream_event","event":{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu-1","name":"Bash"}}}
+                echo {"type":"stream_event","event":{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\\"cmd\\":\\"dir\\"}"}}}
+                echo {"type":"stream_event","event":{"type":"content_block_stop","index":1}}
+                echo {"type":"stream_event","event":{"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"hello"}}}
+                echo {"type":"stream_event","event":{"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"!"}}}
+                echo {"type":"assistant","message":{"content":[{"type":"text","text":"hello!"}]}}
+                echo {"type":"result","is_error":false,"usage":{"input_tokens":10,"output_tokens":5}}
+                """, StandardCharsets.UTF_8);
+
+        new gate.adapters.store.JdbcProviderRepository(jdbc).upsert(
+                new gate.ports.store.ProviderRepository.ProviderRow("manual", "manual",
+                        "local://manual", "none", "manual", Instant.now()),
+                Instant.now());
+        AgentConfig config = new AgentConfig("claude-live", "Claude Live", AgentCli.CLAUDE,
+                "manual", "manual", null, List.of(), "test");
+        agentConfigs.insert(config, Instant.now());
+        Path clone = root.resolve("clone");
+        Files.createDirectories(clone.resolve(".git"));
+        insertTicket("T-7");
+        sessions.insert(new Session("sess-live-1", "T-7", "claude-live", AgentCli.CLAUDE,
+                SessionStatus.ACTIVE, null, clone.toString(), -1, Instant.now(), null,
+                SessionUsage.EMPTY, null, false));
+
+        ClaudeHeadlessAdapter adapter = new ClaudeHeadlessAdapter(processRunner, agentConfigs,
+                sessions, ticketRepository, tasks, ticketLocks, clock, "cmd.exe", List.of("/c", script.toString()));
+        List<gate.domain.session.SessionStreamChunk> chunks =
+                Collections.synchronizedList(new ArrayList<>());
+        try (AutoCloseable sub = adapter.attachListener("sess-live-1", chunks::add)) {
+            adapter.sendMessage(new AgentSessionPort.SendRequest("sess-live-1", "hi", true));
+            Instant deadline = Instant.now().plusSeconds(15);
+            while (chunks.stream().noneMatch(c -> c instanceof gate.domain.session.SessionStreamChunk.DoneChunk)
+                    && Instant.now().isBefore(deadline)) {
+                Thread.sleep(50);
+            }
+        }
+
+        // 增量实时到达：文本分片、思考、工具生命周期、用量。
+        assertTrue(chunks.stream().anyMatch(c -> c instanceof gate.domain.session.SessionStreamChunk.ContentChunk t
+                && "hello".equals(t.textDelta())));
+        assertTrue(chunks.stream().anyMatch(c -> c instanceof gate.domain.session.SessionStreamChunk.ContentChunk t
+                && "!".equals(t.textDelta())));
+        assertTrue(chunks.stream().anyMatch(c -> c instanceof gate.domain.session.SessionStreamChunk.ThinkingChunk t
+                && "hmm".equals(t.thinkingDelta())));
+        assertTrue(chunks.stream().anyMatch(c -> c instanceof gate.domain.session.SessionStreamChunk.ToolCallChunk tc
+                && "RUNNING".equals(tc.status()) && "Bash".equals(tc.toolName()) && "{}".equals(tc.argumentDelta())));
+        assertTrue(chunks.stream().anyMatch(c -> c instanceof gate.domain.session.SessionStreamChunk.ToolCallChunk tc
+                && tc.argumentDelta() != null && tc.argumentDelta().contains("cmd")));
+        assertTrue(chunks.stream().anyMatch(c -> c instanceof gate.domain.session.SessionStreamChunk.ToolCallChunk tc
+                && "SUCCESS".equals(tc.status())));
+        assertTrue(chunks.stream().anyMatch(c -> c instanceof gate.domain.session.SessionStreamChunk.UsageChunk u
+                && u.usage() != null && u.usage().totalTokens() == 15L));
+
+        // 终态落库：全文一条助手消息，usage 来自 result 行，cli 会话 id 回写。
+        Session done = sessions.find("sess-live-1").orElseThrow();
+        assertEquals("sess-live", done.cliSessionId());
+        assertEquals(15L, done.cumulativeUsage().totalTokens());
+        SessionMessage assistant = sessions.findMessages("sess-live-1").stream()
+                .filter(m -> m.role() == Role.ASSISTANT).findFirst().orElseThrow();
+        assertEquals("hello!", assistant.content());
     }
 
     private void insertTicket(String ticketNo) {

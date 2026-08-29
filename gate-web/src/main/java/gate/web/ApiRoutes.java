@@ -40,7 +40,8 @@ public final class ApiRoutes implements WebController {
                 new ProviderController(c.providerRepository(), c.modelFetcher(), c.kmsService(), c.clock()),
                 new MetricsController(c.metricsService(), c.gateService()),
                 new SessionController(c.agentConfigRepository(), c.sessionRepository(), c.agentSessionPort(),
-                        c.ticketRepository(), c.clock(), new SessionModelCatalog(), c.credentials()),
+                        c.ticketRepository(), c.clock(), new SessionModelCatalog(), c.credentials(),
+                        c.providerRepository()),
                 new SettingsController(c.gateToml())
         );
     }

@@ -98,7 +98,7 @@ function RuntimeCards() {
 function AgentDialog({ initial, onClose }: { initial: AgentConfig | null; onClose: () => void }) {
   const runtimes = useApp((s) => s.runtimes);
   const [name, setName] = useState(initial?.name ?? "");
-  const [cli, setCli] = useState<"claude" | "opencode">(initial?.cli ?? "claude");
+  const [cli, setCli] = useState<"claude" | "opencode">(initial?.cli ?? "opencode");
   const [model, setModel] = useState(initial?.model ?? "");
   const [customMode, setCustomMode] = useState(false);
   const [systemPrompt, setSystemPrompt] = useState(initial?.systemPrompt ?? "");
@@ -172,7 +172,7 @@ function AgentDialog({ initial, onClose }: { initial: AgentConfig | null; onClos
             <div>
               <label className="field-label">第一步 · 选择本地 CLI</label>
               <div className="grid grid-cols-2 gap-2">
-                {(["claude", "opencode"] as const).map((c) => {
+                {(["opencode", "claude"] as const).map((c) => {
                   const rt = runtimes.find((r) => r.name === c);
                   const disabled = rt ? !rt.available : false;
                   return (

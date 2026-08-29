@@ -87,7 +87,7 @@ class TomlGateConfigWriterTest {
         String text = Files.readString(toml, StandardCharsets.UTF_8);
         assertFalse(text.contains("default_cli"), text);
         GateConfig reloaded = new TomlGateConfigLoader().load(toml);
-        assertEquals("claude", reloaded.session().defaultCli());
+        assertEquals("opencode", reloaded.session().defaultCli());
     }
 
     @Test

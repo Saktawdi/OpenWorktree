@@ -75,8 +75,8 @@ class RuntimeAndModelFetchTest {
         // The harness runs with the real git binary, so the probe must succeed.
         assertTrue(res.body().contains("\"git\":{\"name\":\"git\",\"available\":true"), res.body());
         // Agent CLI probes carry name/available/version regardless of the machine's installs.
-        assertTrue(res.body().contains("\"agent_clis\":[{\"name\":\"claude\",\"available\":"), res.body());
-        assertTrue(res.body().contains("{\"name\":\"opencode\",\"available\":"), res.body());
+        assertTrue(res.body().contains("\"agent_clis\":[{\"name\":\"opencode\",\"available\":"), res.body());
+        assertTrue(res.body().contains("{\"name\":\"claude\",\"available\":"), res.body());
         assertTrue(res.body().contains("\"counts\":{\"tickets\":"), res.body());
         assertTrue(res.body().contains("\"session_port_range\":"), res.body());
     }

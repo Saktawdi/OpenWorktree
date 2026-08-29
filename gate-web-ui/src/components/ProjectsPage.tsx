@@ -597,9 +597,9 @@ export function ProjectsPage() {
                 </div>
 
                 <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
-                  <span className="chip border border-edge-strong bg-raised text-dim">
+                  <span className="chip border border-edge-strong bg-raised text-dim" title="项目主分支">
                     <GitBranch size={11} />
-                    main
+                    {p.targetRef.replace("refs/heads/", "")}
                   </span>
                   {p.size && <span className="chip border border-info/25 bg-info/10 text-info">{SIZE_LABEL[p.size]}</span>}
                   {p.priority && <span className="chip border border-warn/30 bg-warn/10 text-warn font-mono">{p.priority}</span>}

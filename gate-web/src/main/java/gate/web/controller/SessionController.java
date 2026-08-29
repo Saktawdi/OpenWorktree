@@ -10,6 +10,7 @@ import gate.ports.store.AgentConfigRepository;
 import gate.ports.session.AgentSessionPort;
 import gate.ports.infra.Clock;
 import gate.ports.store.CredentialRepository;
+import gate.ports.store.ProviderRepository;
 import gate.ports.store.SessionRepository;
 import gate.ports.store.TicketRepository;
 import gate.web.security.AuthFilter;
@@ -40,8 +41,16 @@ public final class SessionController implements WebController {
     private static final int MAX_ATTACHMENTS = 10;
     private static final java.util.Set<String> IMAGE_MIMES =
             java.util.Set.of("image/png", "image/jpeg", "image/gif", "image/webp");
+    /**
+     * 推理强度档位（claude 会话目录随每个模型下发）：claude --effort 接受
+     * low/medium/high/xhigh/max，但上游网关的 output_config.effort 枚举只认这里列出的
+     * 四档（xhigh 会被 400 拒绝），取两者的交集。
+     */
+    private static final List<String> CLAUDE_EFFORT_VARIANTS =
+            List.of("low", "medium", "high", "max");
 
     private final AgentConfigRepository agentConfigs;
+    private final ProviderRepository providers;
     private final SessionRepository sessionRepository;
     private final AgentSessionPort agentSessionPort;
     private final TicketRepository tickets;
@@ -52,7 +61,8 @@ public final class SessionController implements WebController {
 
     public SessionController(AgentConfigRepository agentConfigs, SessionRepository sessionRepository,
                              AgentSessionPort agentSessionPort, TicketRepository tickets, Clock clock,
-                             SessionModelCatalog modelCatalog, CredentialRepository credentials) {
+                             SessionModelCatalog modelCatalog, CredentialRepository credentials,
+                             ProviderRepository providers) {
         this.agentConfigs = agentConfigs;
         this.sessionRepository = sessionRepository;
         this.agentSessionPort = agentSessionPort;
@@ -60,6 +70,7 @@ public final class SessionController implements WebController {
         this.clock = clock;
         this.modelCatalog = modelCatalog;
         this.credentials = credentials;
+        this.providers = providers;
         this.sessionSseHandler = new SessionSseHandler(agentSessionPort, sessionRepository);
     }
 
@@ -344,11 +355,62 @@ public final class SessionController implements WebController {
             // 否则模型选择器在旧会话上永远为空（无法切换）。
             port = agentSessionPort.ensureEndpoint(sessionId);
         } catch (UnsupportedOperationException e) {
-            // claude 等无端口管理语义的适配器：维持旧行为（用会话行记录的端口，-1 → 空目录）。
+            // claude 等 headless CLI 没有端口语义：会话行记录的端口恒为 -1。
             port = s.allocatedPort();
+        }
+        if (port <= 0) {
+            ctx.status(HttpStatus.OK);
+            ctx.json(agentProviderCatalog(s));
+            return;
         }
         ctx.status(HttpStatus.OK);
         ctx.json(modelCatalog.fetch(port));
+    }
+
+    /**
+     * claude 会话的模型目录（与 opencode 的 serve 目录代理是两条路径）：headless CLI 没有
+     * {@code /config/providers} 可代理，目录只来自 Agent <b>显式绑定</b> 的 Provider 的模型
+     * 缓存（设置中心拉取/手填），每个模型附上 claude 固有的推理强度档位。
+     *
+     * <p>不做"其他 Provider 缓存"兜底：claude CLI 用它自己的网关与密钥鉴权，模型可用性
+     * 以 claude 侧为准，别的 Provider 缓存（为审查引擎/opencode 拉取的）对 claude 没有语义。
+     * 绑定 cli-default（CLI 自管模型）或缓存为空时目录为空——前端 claude 路径支持直接
+     * 手输模型 ID，不依赖目录。
+     */
+    private Map<String, Object> agentProviderCatalog(Session s) {
+        List<Map<String, Object>> providersOut = new ArrayList<>();
+        AgentConfig config = agentConfigs.find(s.agentConfigId()).orElse(null);
+        if (config != null && config.providerId() != null) {
+            ProviderRepository.ProviderRow row = providers.find(config.providerId()).orElse(null);
+            List<String> models = row == null ? List.of() : providers.models(row.id());
+            if (row != null && !models.isEmpty()) {
+                providersOut.add(providerEntry(row.id(), row.name(), models));
+            }
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("providers", providersOut);
+        out.put("source", "agent-provider");
+        if (providersOut.isEmpty()) {
+            out.put("note", "claude 自管模型/网关：目录为空时可直接在模型选择器输入模型 ID，"
+                    + "或在 Agent 配置绑定对应 Provider 并维护其模型列表");
+        }
+        return out;
+    }
+
+    private static Map<String, Object> providerEntry(String id, String name, List<String> models) {
+        List<Map<String, Object>> modelsOut = new ArrayList<>();
+        for (String modelId : models) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("id", modelId);
+            m.put("name", modelId);
+            m.put("variants", CLAUDE_EFFORT_VARIANTS);
+            modelsOut.add(m);
+        }
+        Map<String, Object> p = new LinkedHashMap<>();
+        p.put("id", id);
+        p.put("name", name);
+        p.put("models", modelsOut);
+        return p;
     }
 
     public void listPermissions(Context ctx) {

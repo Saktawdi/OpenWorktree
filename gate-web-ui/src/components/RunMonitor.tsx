@@ -166,17 +166,19 @@ export function RunMonitor() {
   };
 
   return (
+    /* 与右侧 ViewSwitch 胶囊同族的「凹槽 + 内嵌药丸」结构：托盘常驻不动，
+       运行态只点亮内部药丸（凸起 + 强调色文字），不再叠加阴影和高饱和描边。 */
     <div
       ref={wrapRef}
-      className="relative hidden md:inline-flex"
+      className="relative ml-1.5 hidden md:inline-flex items-center rounded-full p-0.5 bg-sunken border border-edge"
       onMouseEnter={openPanel}
       onMouseLeave={scheduleClose}
     >
       <button
-        className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[12px] font-medium cursor-pointer transition-all duration-150 ${
+        className={`inline-flex items-center gap-1.5 h-7 rounded-full px-3 text-[12.5px] font-medium cursor-pointer transition-colors duration-150 border ${
           runCount > 0
-            ? "border-accent/40 bg-accent/10 text-accent shadow-sm hover:bg-accent/15 hover:border-accent/60"
-            : "border-edge-strong bg-raised text-dim hover:text-ink"
+            ? "bg-raised border-edge text-accent"
+            : "bg-transparent border-transparent text-dim hover:text-ink"
         }`}
         title="智能体运行监控：悬停查看聚焦面板，点击钉住；点击面板条目可跳转对应会话"
         aria-expanded={open}
