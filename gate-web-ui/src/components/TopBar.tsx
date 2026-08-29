@@ -176,9 +176,6 @@ export function TopBar() {
       <div className="flex items-center gap-2.5 min-w-0">
         <LogoMark />
         <span className="font-semibold tracking-tight text-[15px]">Gate</span>
-        <span className="hidden xl:inline text-[12px] text-faint border-l border-edge pl-3 ml-1">
-          本地 Git 门禁工作台
-        </span>
         <RunMonitor />
       </div>
 
