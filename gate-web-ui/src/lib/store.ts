@@ -58,6 +58,8 @@ export interface AppState {
   tasks: Record<string, TaskProgress>;
   outcomes: Record<string, PublishOutcome>;
   busy: Record<string, boolean>;
+  /** Agent 开始运行的时间戳（运行监控面板用于展示运行时长）；空闲时移除条目。 */
+  busySince: Record<string, number>;
   gateBusy: Record<string, boolean>;
   creatingSession: Record<string, boolean>;
   usage: Record<string, UsageView>;
@@ -102,6 +104,7 @@ export const appStore = create<AppState>(() => ({
   tasks: {},
   outcomes: {},
   busy: {},
+  busySince: {},
   gateBusy: {},
   creatingSession: {},
   usage: {},
@@ -224,6 +227,7 @@ function tryRestore(): boolean {
       treeViews: saved.treeViews ?? cur.treeViews,
       editingTicketNo: null,
       ticketCreatorOpen: false,
+      busySince: {},
     };
     // 旧版本会把已应答的权限卡片留在 chats 里（永久挂在底部）；恢复时只保留待决的。
     for (const [no, items] of Object.entries(clean.chats)) {
@@ -295,6 +299,20 @@ export function setSessionModelSel(sessionId: string, sel: SessionModelSel) {
 
 export function selectTicket(no: string) {
   patch({ selectedNo: no, centerTab: "chat", highlight: null });
+}
+
+/**
+ * 运行监控面板的快速跳转：切回工作台并打开该工单的当前会话。
+ * 工单属于其他项目时先切换项目，避免选中后列表里看不到它。
+ */
+export function jumpToTicketSession(no: string) {
+  const st = s();
+  const ticket = st.tickets.find((t) => t.ticketNo === no);
+  if (ticket && ticket.projectId && ticket.projectId !== st.activeProjectId) {
+    patch({ activeProjectId: ticket.projectId });
+  }
+  patch({ view: "workbench" });
+  selectTicket(no);
 }
 
 export function openConnect() {
@@ -465,7 +483,15 @@ export function finishAssistant(
 }
 
 export function setBusy(no: string, busy: boolean) {
-  set((st) => ({ busy: { ...st.busy, [no]: busy } }));
+  set((st) => {
+    // 运行中重复打点（重连/重复请求）不重置起始时间：仅空闲→运行转变时记录，
+    // 否则监控面板的运行时长会被误归零。
+    if (busy && st.busy[no]) return st;
+    const busySince = { ...st.busySince };
+    if (busy) busySince[no] = st.busySince[no] ?? Date.now();
+    else delete busySince[no];
+    return { busy: { ...st.busy, [no]: busy }, busySince };
+  });
 }
 
 export function setGateBusy(no: string, busy: boolean) {

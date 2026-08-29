@@ -15,6 +15,7 @@ import {
 } from "@phosphor-icons/react";
 import { appStore, openConnect, setView, switchProject, toggleTheme, useApp } from "../lib/store";
 import { LogoMark } from "./ui";
+import { RunMonitor } from "./RunMonitor";
 
 const VIEWS = [
   { key: "workbench", label: "工作台", Icon: SquaresFour },
@@ -187,6 +188,8 @@ export function TopBar() {
       <div className="flex-1" />
 
       <ProjectSwitcher />
+
+      <RunMonitor />
 
       <button
         onClick={openConnect}
