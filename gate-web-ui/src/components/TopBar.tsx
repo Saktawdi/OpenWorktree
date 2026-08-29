@@ -152,56 +152,6 @@ function ThemeToggle() {
   );
 }
 
-function RunningAgentsBadge() {
-  const mode = useApp((s) => s.mode);
-  const conn = useApp((s) => s.conn);
-  const runningAgents = useApp((s) => s.runningAgents);
-  // 未连接后端：灰色破折号
-  if (mode !== "live" || conn !== "ok") {
-    return (
-      <span
-        className="hidden xl:inline text-[12px] text-faint border-l border-edge pl-3 ml-1"
-        title="未连接后端"
-      >
-        —
-      </span>
-    );
-  }
-  const count = runningAgents.count;
-  const sessions = runningAgents.sessions;
-  // 构建 tooltip：工单号 · 标题（cli），最多 5 条
-  const title = (() => {
-    if (count === 0 || sessions.length === 0) return "暂无运行中的智能体";
-    const lines = sessions.slice(0, 5).map((s) => {
-      const no = s.ticket_no ?? "—";
-      const ttl = s.title ?? "无标题";
-      const cli = s.cli ? `（${s.cli}）` : "";
-      return `${no} · ${ttl}${cli}`;
-    });
-    if (sessions.length > 5) lines.push(`等 ${sessions.length - 5} 个`);
-    return lines.join("\n");
-  })();
-  if (count === 0) {
-    return (
-      <span
-        className="hidden xl:inline text-[12px] text-faint border-l border-edge pl-3 ml-1"
-        title={title}
-      >
-        0 个智能体运行
-      </span>
-    );
-  }
-  return (
-    <span
-      className="hidden xl:inline-flex text-[12px] text-accent border-l border-edge pl-3 ml-1 items-center gap-1.5"
-      title={title}
-    >
-      <span className="inline-block w-1.5 h-1.5 rounded-full bg-accent animate-breathe shrink-0" />
-      {count} 个智能体运行中
-    </span>
-  );
-}
-
 export function TopBar() {
   const conn = useApp((s) => s.conn);
   const mode = useApp((s) => s.mode);
@@ -226,7 +176,10 @@ export function TopBar() {
       <div className="flex items-center gap-2.5 min-w-0">
         <LogoMark />
         <span className="font-semibold tracking-tight text-[15px]">Gate</span>
-        <RunningAgentsBadge />
+        <span className="hidden xl:inline text-[12px] text-faint border-l border-edge pl-3 ml-1">
+          本地 Git 门禁工作台
+        </span>
+        <RunMonitor />
       </div>
 
       {/* 左缘与工单侧栏（aside w-[268px]）右缘对齐；绝对定位以避开左侧徽标/项目名称的宽度波动 */}
@@ -237,8 +190,6 @@ export function TopBar() {
       <div className="flex-1" />
 
       <ProjectSwitcher />
-
-      <RunMonitor />
 
       <button
         onClick={openConnect}
