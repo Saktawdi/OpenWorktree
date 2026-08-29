@@ -277,11 +277,35 @@ function StageFilterButton() {
   );
 }
 
+/** T-120：工单列表运行徽标 —— 会话运行中（均衡器）与 AI 审查运行中（旋转环）动效不同。 */
+function RunBadge({ kind }: { kind: "agent" | "review" }) {
+  if (kind === "review") {
+    return (
+      <span className="run-badge run-badge-review" title="AI 审查运行中">
+        <span className="review-spin" aria-hidden />
+        审查中
+      </span>
+    );
+  }
+  return (
+    <span className="run-badge run-badge-agent" title="会话运行中">
+      <span className="eq-bars" aria-hidden>
+        <i />
+        <i />
+        <i />
+      </span>
+      运行中
+    </span>
+  );
+}
+
 export function TicketList() {
   const ticketsAll = useApp((s) => s.tickets);
   const activeProjectId = useApp((s) => s.activeProjectId);
   const selectedNo = useApp((s) => s.selectedNo);
   const diffs = useApp((s) => s.diffs);
+  const busyMap = useApp((s) => s.busy);
+  const gateBusyMap = useApp((s) => s.gateBusy);
   const orderMap = useApp((s) => s.order);
   const visibleStages = useApp((s) => s.visibleStages);
   const [query, setQuery] = useState("");
@@ -344,18 +368,34 @@ export function TicketList() {
         {filtered.map((t) => {
           const active = t.ticketNo === selectedNo;
           const hasDiff = (diffs[t.ticketNo] ?? NO_DIFF).length > 0;
+          // T-120：会话运行中（任一会话在跑）与 AI 审查运行中分别以不同动效呈现
+          const sessionRunning = busyMap[t.ticketNo] ?? false;
+          const reviewRunning = gateBusyMap[t.ticketNo] ?? false;
+          const running = sessionRunning || reviewRunning;
           return (
             <motion.button
               key={t.ticketNo}
               onClick={() => actions.openTicket(t.ticketNo)}
               className={`relative w-full text-left rounded-lg px-3 py-2.5 transition-colors cursor-pointer group ${
                 active ? "bg-raised" : "hover:bg-panel"
-              }`}
+              } ${sessionRunning ? "ticket-item-run-agent" : ""}`}
               whileHover={!active ? { x: 2 } : undefined}
               transition={{ type: "spring", stiffness: 400, damping: 25 }}
             >
               {active && (
                 <span className="absolute left-0 top-2 bottom-2 w-[2px] rounded-full bg-accent" />
+              )}
+              {sessionRunning && (
+                <span
+                  aria-hidden
+                  className="ticket-run-bar absolute left-0 top-2 bottom-2 w-[2px] rounded-full bg-accent"
+                />
+              )}
+              {reviewRunning && (
+                <span
+                  aria-hidden
+                  className="ticket-item-scan pointer-events-none absolute inset-0 rounded-lg overflow-hidden"
+                />
               )}
               <div className="flex items-center gap-2">
                 <span className={`font-mono text-[11.5px] ${active ? "text-accent" : "text-faint"}`}>
@@ -370,11 +410,17 @@ export function TicketList() {
               <div className="mt-1.5 flex items-center gap-2 text-[11px] text-faint">
                 <StageDot stage={t.stage} />
                 <span>{STAGE_LABEL[t.stage]}</span>
-                {hasDiff && (
+                {hasDiff && !running && (
                   <>
                     <span className="text-edge-strong">·</span>
                     <span>有变更</span>
                   </>
+                )}
+                {running && (
+                  <span className="flex items-center gap-1">
+                    {sessionRunning && <RunBadge kind="agent" />}
+                    {reviewRunning && <RunBadge kind="review" />}
+                  </span>
                 )}
                 <span className="flex-1" />
                 <span>{relativeTime(t.updatedAt)}</span>
