@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import {
   DndContext,
   DragOverlay,
@@ -20,11 +20,25 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { Funnel, MagnifyingGlass, X } from "@phosphor-icons/react";
+import { Check, Funnel, MagnifyingGlass, X } from "@phosphor-icons/react";
 import { motion } from "motion/react";
 import { actions } from "../lib/actions";
-import { relativeTime } from "../lib/format";
-import { appStore, openTicketCreator, setTicketOrder, setView, showToast, useApp } from "../lib/store";
+import {
+  KANBAN_DEFAULT_STAGES,
+  KANBAN_LANE_COUNT,
+  KANBAN_STAGE_ORDER,
+  relativeTime,
+  STAGE_LABEL,
+} from "../lib/format";
+import {
+  appStore,
+  openTicketCreator,
+  setKanbanStages,
+  setTicketOrder,
+  setView,
+  showToast,
+  useApp,
+} from "../lib/store";
 import type { Stage, Ticket } from "../lib/types";
 import { PriorityChip, StageDot } from "./ui";
 
@@ -37,23 +51,20 @@ const LANES: Array<{ key: Stage; title: string }> = [
   { key: "DONE", title: "已完成" },
 ];
 
-const OTHER_STATUSES: Stage[] = ["REJECTED", "NEEDS_HUMAN", "CANCELLED"];
 const OTHER_LANES: Array<{ key: Stage; title: string }> = [
   { key: "REJECTED", title: "已驳回" },
   { key: "NEEDS_HUMAN", title: "需人工" },
   { key: "CANCELLED", title: "已取消" },
 ];
-const ALL_STAGES: Stage[] = [...LANES.map((lane) => lane.key), ...OTHER_STATUSES];
-type StatusFilter = "ALL" | "OTHER" | Stage;
 type PriorityFilter = "ALL" | Ticket["priority"];
 
 function groupByStage(tickets: Ticket[], orderMap: Record<string, number>): Map<Stage, Ticket[]> {
   const map = new Map<Stage, Ticket[]>();
-  for (const stage of ALL_STAGES) map.set(stage, []);
+  for (const stage of KANBAN_STAGE_ORDER) map.set(stage, []);
   for (const ticket of tickets) map.get(ticket.stage)?.push(ticket);
   const cmp = (a: Ticket, b: Ticket) =>
     (orderMap[a.ticketNo] ?? 0) - (orderMap[b.ticketNo] ?? 0);
-  for (const stage of ALL_STAGES) map.get(stage)!.sort(cmp);
+  for (const stage of KANBAN_STAGE_ORDER) map.get(stage)!.sort(cmp);
   return map;
 }
 
@@ -190,7 +201,7 @@ function Lane({
   const all = [...rejectedTickets, ...tickets];
 
   return (
-    <section className="flex-1 min-w-[276px] flex flex-col rounded-2xl border border-edge/70 bg-sunken/70 overflow-hidden">
+    <section className="flex-1 min-w-[224px] flex flex-col rounded-2xl border border-edge/70 bg-sunken/70 overflow-hidden">
       <header className="flex items-center gap-2 px-3 pt-3 pb-2">
         <StageDot stage={stage} />
         <span className="text-[12.5px] font-medium">{title}</span>
@@ -235,6 +246,211 @@ function displayedStage(ticket: Ticket): Stage {
   return ticket.stage === "REJECTED" ? "IN_PROGRESS" : ticket.stage;
 }
 
+/**
+ * 看板筛选（样式对齐工单列表的状态筛选面板）：固定 6 个上板甬道 + 优先级筛选。
+ * 6 条恰好铺满一行（最多最少都是 6），因此没有自由增减，只有「一上一下」互换：
+ * 点选一个已勾选甬道标记换下，再点一个未勾选甬道完成互换（反之亦然），重置恢复默认六甬道。
+ */
+function KanbanFilterButton({
+  open,
+  setOpen,
+  priorityFilter,
+  setPriorityFilter,
+}: {
+  open: boolean;
+  setOpen: (v: boolean) => void;
+  priorityFilter: PriorityFilter;
+  setPriorityFilter: (p: PriorityFilter) => void;
+}) {
+  // 面板用 fixed 定位并夹紧到视口内：absolute right-0 在窄窗口会把面板推出屏幕被裁剪
+  const [panelPos, setPanelPos] = useState<{ top: number; left: number }>({ top: 0, left: 8 });
+  const btnRef = useRef<HTMLButtonElement>(null);
+  // 互换第一步标记的甬道：已勾选 = 待换下，未勾选 = 待换上；再点一次取消
+  const [markedStage, setMarkedStage] = useState<Stage | null>(null);
+  const stages = useApp((s) => s.kanbanStages);
+  const ticketsAll = useApp((s) => s.tickets);
+  const activeProjectId = useApp((s) => s.activeProjectId);
+
+  const counts = useMemo(() => {
+    const m = new Map<Stage, number>();
+    for (const t of ticketsAll) {
+      if (t.projectId === activeProjectId || t.projectId === "") {
+        m.set(t.stage, (m.get(t.stage) ?? 0) + 1);
+      }
+    }
+    return m;
+  }, [ticketsAll, activeProjectId]);
+
+  const active = priorityFilter !== "ALL" ||
+    stages.length !== KANBAN_DEFAULT_STAGES.length ||
+    stages.some((st) => !KANBAN_DEFAULT_STAGES.includes(st));
+
+  const close = () => {
+    setMarkedStage(null);
+    setOpen(false);
+  };
+
+  const pick = (st: Stage) => {
+    if (markedStage === null) {
+      setMarkedStage(st);
+      return;
+    }
+    if (markedStage === st) {
+      setMarkedStage(null);
+      return;
+    }
+    const markedOn = stages.includes(markedStage);
+    if (markedOn === stages.includes(st)) {
+      // 同侧点击：互换必须一上一下，把标记挪到新点的甬道上
+      setMarkedStage(st);
+      return;
+    }
+    const out = markedOn ? markedStage : st;
+    const incoming = markedOn ? st : markedStage;
+    setKanbanStages(stages.filter((x) => x !== out).concat(incoming));
+    setMarkedStage(null);
+    showToast(`已用「${STAGE_LABEL[incoming]}」替换「${STAGE_LABEL[out]}」`);
+  };
+
+  const reset = () => {
+    setMarkedStage(null);
+    setKanbanStages([...KANBAN_DEFAULT_STAGES]);
+    setPriorityFilter("ALL");
+  };
+
+  const PANEL_WIDTH = 252;
+  const placePanel = () => {
+    const r = btnRef.current?.getBoundingClientRect();
+    if (!r) return;
+    const left = Math.max(
+      8,
+      Math.min(r.right - PANEL_WIDTH, window.innerWidth - PANEL_WIDTH - 8),
+    );
+    setPanelPos({ top: r.bottom + 6, left });
+  };
+
+  const row = (st: Stage) => {
+    const on = stages.includes(st);
+    const marked = markedStage === st;
+    const n = counts.get(st) ?? 0;
+    return (
+      <button
+        key={st}
+        className={`w-full flex items-center gap-2 px-2 h-8 rounded-lg text-left text-[12.5px] cursor-pointer transition-all ${
+          marked
+            ? "bg-accent/[0.08] ring-1 ring-inset ring-accent/45 text-ink"
+            : on
+              ? "text-ink hover:bg-raised"
+              : "text-faint hover:bg-raised"
+        }`}
+        title={
+          marked
+            ? "再点一次取消，点选状态相反的甬道完成互换"
+            : on
+              ? "已上板 · 点选后与一个未上板甬道互换"
+              : "未上板 · 点选后与一个已上板甬道互换"
+        }
+        onClick={() => pick(st)}
+      >
+        <span
+          className={`grid place-items-center w-[14px] h-[14px] rounded border transition-colors shrink-0 ${
+            on ? "bg-accent/15 border-accent/60 text-accent" : "border-edge-strong text-transparent"
+          }`}
+        >
+          <Check size={10} weight="bold" />
+        </span>
+        <StageDot stage={st} />
+        <span className="flex-1 truncate">{STAGE_LABEL[st]}</span>
+        {marked && (
+          <span className="inline-flex items-center h-[16px] px-1 rounded-md border border-accent/40 bg-accent/10 text-[9.5px] leading-none font-medium text-accent">
+            {on ? "换下" : "换上"}
+          </span>
+        )}
+        <span className={`font-mono text-[10.5px] ${n > 0 && !on ? "text-warn" : "text-faint"}`}>{n}</span>
+      </button>
+    );
+  };
+
+  const markedOn = markedStage !== null && stages.includes(markedStage);
+
+  return (
+    <>
+      <button
+        ref={btnRef}
+        className={`btn h-7 px-2 text-[12px] ${active ? "!border-accent/50 !text-accent" : ""}`}
+        title="筛选甬道与优先级"
+        aria-label="筛选甬道与优先级"
+        onClick={() => {
+          if (!open) placePanel();
+          else setMarkedStage(null);
+          setOpen(!open);
+        }}
+      >
+        <Funnel size={13} weight={active ? "fill" : "regular"} />
+        筛选
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-30" onClick={close} />
+          <div
+            className="fixed z-40 card p-1.5 shadow-2xl shadow-black/50 animate-rise"
+            style={{ top: panelPos.top, left: panelPos.left, width: PANEL_WIDTH }}
+          >
+            <div className="flex items-center gap-2 px-2 h-8">
+              <span className="text-[11px] font-medium text-dim flex-1">显示的甬道</span>
+              <span
+                className="inline-flex items-center h-[18px] px-1.5 rounded-md border border-accent/40 bg-accent/10 font-mono text-[10.5px] text-accent"
+                title="甬道数量固定为 6，恰好铺满一行"
+              >
+                {stages.length}/{KANBAN_LANE_COUNT}
+              </span>
+              <button
+                className="text-[11px] text-faint hover:text-accent cursor-pointer transition-colors"
+                onClick={reset}
+              >
+                重置
+              </button>
+            </div>
+            {markedStage !== null && (
+              <div
+                className="mx-0.5 mb-1 rounded-lg border border-accent/30 bg-accent/[0.07] px-2 py-1.5 text-[10.5px] leading-snug text-accent truncate"
+                title="再点一次标记的甬道可取消"
+              >
+                再点一个<b>{markedOn ? "未勾选" : "已勾选"}</b>甬道，与「{STAGE_LABEL[markedStage]}
+                」互换
+              </div>
+            )}
+            <div className="max-h-[324px] overflow-y-auto">
+              <div className="px-2 pt-1 pb-0.5 text-[10px] text-faint/70">默认甬道</div>
+              {LANES.map((lane) => row(lane.key))}
+              <div className="px-2 pt-1.5 pb-0.5 text-[10px] text-faint/70">其他状态</div>
+              {OTHER_LANES.map((lane) => row(lane.key))}
+            </div>
+            <div className="border-t border-edge mt-1 pt-1.5 px-1.5 pb-1">
+              <div className="px-0.5 pb-1 text-[10px] text-faint/70">优先级</div>
+              <div className="flex gap-1">
+                {(["ALL", "P0", "P1", "P2", "P3"] as const).map((p) => (
+                  <button
+                    key={p}
+                    className={`flex-1 h-6 rounded-md border font-mono text-[11px] cursor-pointer transition-colors ${
+                      priorityFilter === p
+                        ? "border-accent/50 bg-accent/10 text-accent"
+                        : "border-edge text-dim hover:text-ink hover:bg-raised"
+                    }`}
+                    onClick={() => setPriorityFilter(p)}
+                  >
+                    {p === "ALL" ? "全部" : p}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+    </>
+  );
+}
+
 export function KanbanBoard() {
   const ticketsAll = useApp((s) => s.tickets);
   const activeProjectId = useApp((s) => s.activeProjectId);
@@ -243,8 +459,9 @@ export function KanbanBoard() {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [shakenId, setShakenId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
+  const [filterOpen, setFilterOpen] = useState(false);
   const [priorityFilter, setPriorityFilter] = useState<PriorityFilter>("ALL");
+  const kanbanStages = useApp((s) => s.kanbanStages);
 
   const agentNameOf = (t: Ticket) =>
     agents.find((a) => a.id === t.agentConfigId)?.name;
@@ -262,16 +479,24 @@ export function KanbanBoard() {
         [ticket.ticketNo, ticket.title, ticket.description ?? "", ...ticket.labels].some((value) =>
           value.toLowerCase().includes(q),
         );
-      const matchesStatus =
-        statusFilter === "ALL"
-          ? true
-          : statusFilter === "OTHER"
-            ? OTHER_STATUSES.includes(ticket.stage)
-            : ticket.stage === statusFilter;
       const matchesPriority = priorityFilter === "ALL" || ticket.priority === priorityFilter;
-      return matchesQuery && matchesStatus && matchesPriority;
+      return matchesQuery && matchesPriority;
     });
-  }, [tickets, query, statusFilter, priorityFilter]);
+  }, [tickets, query, priorityFilter]);
+
+  // 勾选的甬道决定哪些状态的工单上板；未勾选甬道的工单从看板隐藏
+  const visibleTickets = useMemo(
+    () => filteredTickets.filter((t) => kanbanStages.includes(t.stage)),
+    [filteredTickets, kanbanStages],
+  );
+
+  const laneStages = useMemo(
+    () => KANBAN_STAGE_ORDER.filter((st) => kanbanStages.includes(st)),
+    [kanbanStages],
+  );
+  // 已驳回默认没有独立甬道：驳回工单内嵌在“进行中”甬道里；勾选“已驳回”后归位到自己的甬道，避免重复
+  const rejectEmbedded =
+    kanbanStages.includes("IN_PROGRESS") && !kanbanStages.includes("REJECTED");
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
@@ -372,8 +597,9 @@ export function KanbanBoard() {
     const to = resolveTargetStage(String(over.id), tickets);
     if (!to) return;
 
-    if (to === displayedFrom) {
-      reorderInLane(displayedFrom, activeNo, String(over.id));
+    if (to === displayedFrom || to === from) {
+      // 同甬道内排序；已驳回勾出独立甬道后，在自己甬道内拖拽排序也走这里
+      reorderInLane(to, activeNo, String(over.id));
       return;
     }
     const maxOrder = Math.max(-1, ...Object.values(appStore.getState().order));
@@ -382,22 +608,18 @@ export function KanbanBoard() {
   };
 
   const activeTicket = activeId ? tickets.find((t) => t.ticketNo === activeId) : null;
-  const otherView =
-    statusFilter === "OTHER" ||
-    statusFilter === "REJECTED" ||
-    statusFilter === "NEEDS_HUMAN" ||
-    statusFilter === "CANCELLED";
-  const hasFilters = Boolean(query.trim()) || statusFilter !== "ALL" || priorityFilter !== "ALL";
-  // 默认泳道不包含 NEEDS_HUMAN/CANCELLED：仅搜索/优先级筛选命中这些工单时，
-  // 在标题行提示命中数，并可一键切换到“其他状态”泳道，避免筛选结果静默缺失。
-  const hiddenOtherMatches =
-    statusFilter === "ALL"
-      ? filteredTickets.filter((t) => t.stage === "NEEDS_HUMAN" || t.stage === "CANCELLED").length
-      : 0;
+  const stagesCustom =
+    kanbanStages.length !== KANBAN_DEFAULT_STAGES.length ||
+    kanbanStages.some((st) => !KANBAN_DEFAULT_STAGES.includes(st));
+  const hasFilters = Boolean(query.trim()) || priorityFilter !== "ALL" || stagesCustom;
+  // 未勾选甬道上的工单不会上板（已驳回内嵌进行中时除外）：标题行提示数量，点击打开筛选面板
+  const hiddenCount = filteredTickets.filter(
+    (t) => !kanbanStages.includes(t.stage) && !(t.stage === "REJECTED" && rejectEmbedded),
+  ).length;
   const clearFilters = () => {
     setQuery("");
-    setStatusFilter("ALL");
     setPriorityFilter("ALL");
+    setKanbanStages([...KANBAN_DEFAULT_STAGES]);
   };
 
   return (
@@ -405,7 +627,7 @@ export function KanbanBoard() {
       <div className="flex flex-wrap items-center gap-2 px-4 pt-3 pb-2 shrink-0">
         <span className="kicker">看板</span>
         <span className="font-mono text-[11px] text-faint">
-          {hasFilters ? `${filteredTickets.length} / ${tickets.length}` : tickets.length} 个工单
+          {hasFilters ? `${visibleTickets.length} / ${tickets.length}` : tickets.length} 个工单
         </span>
         <div className="relative w-[190px]">
           <MagnifyingGlass
@@ -431,54 +653,20 @@ export function KanbanBoard() {
             </button>
           )}
         </div>
-        <label className="inline-flex items-center gap-1.5 h-7 rounded-lg border border-edge bg-sunken px-2 text-[12px] text-dim">
-          <Funnel size={12} className="text-faint" />
-          <span className="sr-only">状态筛选</span>
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
-            className="bg-transparent text-ink outline-none cursor-pointer"
-            aria-label="按状态筛选"
-          >
-            <option value="ALL">全部状态</option>
-            <optgroup label="默认甬道">
-              {LANES.map((lane) => (
-                <option key={lane.key} value={lane.key}>
-                  {lane.title}
-                </option>
-              ))}
-            </optgroup>
-            <optgroup label="其他状态">
-              <option value="OTHER">其他状态</option>
-              <option value="REJECTED">已驳回</option>
-              <option value="NEEDS_HUMAN">需人工</option>
-              <option value="CANCELLED">已取消</option>
-            </optgroup>
-          </select>
-        </label>
-        <label className="inline-flex items-center h-7 rounded-lg border border-edge bg-sunken px-2 text-[12px] text-dim">
-          <span className="sr-only">优先级筛选</span>
-          <select
-            value={priorityFilter}
-            onChange={(e) => setPriorityFilter(e.target.value as PriorityFilter)}
-            className="bg-transparent text-ink outline-none cursor-pointer"
-            aria-label="按优先级筛选"
-          >
-            <option value="ALL">全部优先级</option>
-            <option value="P0">P0</option>
-            <option value="P1">P1</option>
-            <option value="P2">P2</option>
-            <option value="P3">P3</option>
-          </select>
-        </label>
-        {hiddenOtherMatches > 0 && (
+        <KanbanFilterButton
+          open={filterOpen}
+          setOpen={setFilterOpen}
+          priorityFilter={priorityFilter}
+          setPriorityFilter={setPriorityFilter}
+        />
+        {hiddenCount > 0 && (
           <button
             type="button"
             className="chip border border-warn/40 bg-warn/10 text-warn cursor-pointer hover:border-warn/60 transition-colors"
-            onClick={() => setStatusFilter("OTHER")}
-            title="点击切换到其他状态泳道查看这些工单"
+            onClick={() => setFilterOpen(true)}
+            title="点击打开筛选面板，勾选对应甬道查看这些工单"
           >
-            另有 {hiddenOtherMatches} 条在其他状态
+            另有 {hiddenCount} 条工单未显示
           </button>
         )}
         {hasFilters && (
@@ -514,20 +702,14 @@ export function KanbanBoard() {
       >
         <div className="flex-1 min-h-0 overflow-x-auto overflow-y-hidden px-4 pb-4">
           <div className="h-full flex gap-3 w-full">
-            {(otherView ? OTHER_LANES : LANES).map(({ key, title }) => (
+            {laneStages.map((key) => (
               <Lane
                 key={key}
                 stage={key}
-                title={title}
-                tickets={otherView && key === "REJECTED" ? [] : byLane.get(key) ?? []}
+                title={STAGE_LABEL[key]}
+                tickets={byLane.get(key) ?? []}
                 rejectedTickets={
-                  otherView
-                    ? key === "REJECTED"
-                      ? byLane.get("REJECTED") ?? []
-                      : []
-                    : key === "IN_PROGRESS"
-                      ? byLane.get("REJECTED") ?? []
-                      : []
+                  key === "IN_PROGRESS" && rejectEmbedded ? byLane.get("REJECTED") ?? [] : []
                 }
                 shakenId={shakenId}
                 agentNameOf={agentNameOf}

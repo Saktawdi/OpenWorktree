@@ -36,7 +36,7 @@ import {
   TREE_NEXUS,
   t102Diff,
 } from "./scenario";
-import { ALL_STAGES, uid } from "./format";
+import { ALL_STAGES, KANBAN_DEFAULT_STAGES, KANBAN_LANE_COUNT, KANBAN_STAGE_ORDER, uid } from "./format";
 
 export type CenterTab = "chat" | "diff" | "findings";
 
@@ -111,6 +111,8 @@ export interface AppState {
   runningAgents: { count: number; sessions: Array<{ session_id: string; title: string | null; ticket_no: string | null; cli: string | null }> };
   /** 工单列表按状态筛选：勾选可见的状态集合。 */
   visibleStages: Stage[];
+  /** 看板甬道筛选：勾选显示的甬道状态集合（默认流水线六甬道，上限 6）。 */
+  kanbanStages: Stage[];
   /** 重启历史（T-117）：每工单的重启记录列表 */
   restarts: Record<string, RestartRecord[]>;
   /** 重启理由弹窗目标工单（null = 关闭） */
@@ -141,6 +143,19 @@ export interface GateSections {
   info: boolean;
   pipeline: boolean;
   sessions: boolean;
+}
+
+/** 读取本地持久化的看板甬道；数量不足固定 6 条或含非法值时回退默认六甬道，并按甬道顺序去重。 */
+function loadKanbanStages(): Stage[] {
+  try {
+    const raw = typeof window !== "undefined" ? localStorage.getItem("gate-kanban-stages") : null;
+    if (!raw) return [...KANBAN_DEFAULT_STAGES];
+    const parsed = JSON.parse(raw) as Stage[];
+    const valid = KANBAN_STAGE_ORDER.filter((x) => parsed.includes(x));
+    return valid.length === KANBAN_LANE_COUNT ? valid : [...KANBAN_DEFAULT_STAGES];
+  } catch {
+    return [...KANBAN_DEFAULT_STAGES];
+  }
 }
 
 const GATE_PANEL_KEY = "gate-panel-collapsed";
@@ -221,6 +236,7 @@ export const appStore = create<AppState>(() => ({
   liveTurns: {},
   runningAgents: { count: 0, sessions: [] },
   visibleStages: loadVisibleStages(),
+  kanbanStages: loadKanbanStages(),
   restarts: {},
   restartDialogFor: null,
   restartsViewFor: null,
@@ -866,6 +882,18 @@ export function setVisibleStages(stages: Stage[]) {
   patch({ visibleStages: unique });
   try {
     localStorage.setItem("gate-visible-stages", JSON.stringify(unique));
+  } catch {
+    /* ignore */
+  }
+}
+
+/** 更新看板甬道（持久化到 localStorage；按甬道顺序去重，数量必须恰为固定 6 条，否则回退默认六甬道）。 */
+export function setKanbanStages(stages: Stage[]) {
+  const unique = KANBAN_STAGE_ORDER.filter((x) => stages.includes(x));
+  const next = unique.length === KANBAN_LANE_COUNT ? unique : [...KANBAN_DEFAULT_STAGES];
+  patch({ kanbanStages: next });
+  try {
+    localStorage.setItem("gate-kanban-stages", JSON.stringify(next));
   } catch {
     /* ignore */
   }

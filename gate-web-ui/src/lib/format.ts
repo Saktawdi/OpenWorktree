@@ -127,6 +127,28 @@ export const ALL_STAGES: Stage[] = [
   "CANCELLED",
 ];
 
+/** 看板甬道渲染顺序：流水线六状态在前，其他状态（已驳回/需人工/已取消）在后。 */
+export const KANBAN_STAGE_ORDER: Stage[] = [
+  "PENDING",
+  "IN_PROGRESS",
+  "PRESUBMITTED",
+  "IN_REVIEW",
+  "READY_TO_PUBLISH",
+  "DONE",
+  "REJECTED",
+  "NEEDS_HUMAN",
+  "CANCELLED",
+];
+
+/** 看板默认勾选的甬道：流水线六状态，恰好铺满一行，视觉最均衡。 */
+export const KANBAN_DEFAULT_STAGES: Stage[] = KANBAN_STAGE_ORDER.slice(0, 6);
+
+/**
+ * 看板固定同时上板的甬道数：最多最少都是 6 条，恰好铺满一行，视觉最均衡。
+ * 勾选数量因此恒等于 6，更换甬道只能「一上一下」互换，而非自由增减。
+ */
+export const KANBAN_LANE_COUNT = 6;
+
 export function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
