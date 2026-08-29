@@ -202,7 +202,7 @@ function Lane({
 
   return (
     <section className="flex-1 min-w-[224px] flex flex-col rounded-2xl border border-edge/70 bg-sunken/70 overflow-hidden">
-      <header className="flex items-center gap-2 px-3 pt-3 pb-2">
+      <header className="flex items-center gap-2 px-3 pt-3 pb-2 shrink-0">
         <StageDot stage={stage} />
         <span className="text-[12.5px] font-medium">{title}</span>
         <span className="font-mono text-[11px] text-faint">{all.length}</span>
@@ -210,7 +210,7 @@ function Lane({
       </header>
       <div
         ref={setNodeRef}
-        className={`flex-1 min-h-[120px] space-y-2 px-2 pb-2 transition-colors rounded-b-2xl ${
+        className={`flex-1 min-h-[120px] space-y-2 px-2 pb-2 overflow-y-auto overscroll-contain transition-colors rounded-b-2xl ${
           isOver ? "bg-accent/[0.05] ring-1 ring-inset ring-accent/25" : ""
         }`}
       >
