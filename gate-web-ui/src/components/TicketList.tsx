@@ -1,6 +1,15 @@
 import { useMemo, useRef, useState } from "react";
 import { motion } from "motion/react";
-import { Check, Funnel, MagnifyingGlass, Plus } from "@phosphor-icons/react";
+import {
+  Check,
+  CheckCircle,
+  Funnel,
+  MagnifyingGlass,
+  Plus,
+  Question,
+  ShieldWarning,
+  WarningCircle,
+} from "@phosphor-icons/react";
 import { actions } from "../lib/actions";
 import {
   ALL_STAGES,
@@ -18,7 +27,7 @@ import {
   NO_DIFF,
 } from "../lib/store";
 import type { Priority, Stage } from "../lib/types";
-import { PriorityChip, StageDot } from "./ui";
+import { LabelInput, PriorityChip, StageDot } from "./ui";
 
 const PRIORITIES: Priority[] = ["P0", "P1", "P2", "P3"];
 
@@ -27,7 +36,7 @@ function NewTicketButton() {
   const [title, setTitle] = useState("");
   const [priority, setPriority] = useState<Priority>("P1");
   const [description, setDescription] = useState("");
-  const [labels, setLabels] = useState("");
+  const [labels, setLabels] = useState<string[]>([]);
   const [targetBranch, setTargetBranch] = useState("");
   const agents = useApp((s) => s.agents);
   const agentId = useApp((s) => s.agentId);
@@ -36,17 +45,13 @@ function NewTicketButton() {
     if (!title.trim()) return;
     actions.newTicket(title.trim(), priority, {
       description: description.trim() || undefined,
-      labels: labels
-        .split(/[,，]/)
-        .map((x) => x.trim())
-        .filter(Boolean)
-        .slice(0, 20),
+      labels,
       agentConfigId: agentId,
       targetBranch: targetBranch.trim() || undefined,
     });
     setTitle("");
     setDescription("");
-    setLabels("");
+    setLabels([]);
     setTargetBranch("");
     closeTicketCreator();
   };
@@ -130,13 +135,8 @@ function NewTicketButton() {
               </div>
 
               <div>
-                <label className="field-label">标签（逗号分隔，可选）</label>
-                <input
-                  className="text-input"
-                  placeholder="backend, security"
-                  value={labels}
-                  onChange={(e) => setLabels(e.target.value)}
-                />
+                <label className="field-label">标签（可选）</label>
+                <LabelInput labels={labels} onChange={setLabels} />
               </div>
 
               <div>
@@ -299,6 +299,39 @@ function RunBadge({ kind }: { kind: "agent" | "review" }) {
   );
 }
 
+/** T-120 增强：待决询问徽标 —— 智能体的 question/permission 正等待用户处理。 */
+function AskBadge({ kind, count }: { kind: "question" | "permission"; count: number }) {
+  const isQuestion = kind === "question";
+  return (
+    <span
+      className="run-badge run-badge-ask"
+      title={isQuestion ? "智能体在等待你回答问题" : "智能体在等待权限确认"}
+    >
+      {isQuestion ? <Question size={9} weight="bold" /> : <ShieldWarning size={9} weight="bold" />}
+      {isQuestion ? "待回答" : "待授权"}
+      {count > 1 ? ` ×${count}` : ""}
+    </span>
+  );
+}
+
+/** T-120 增强：会话结束提醒徽标 —— 正常结束（绿）与出错/中止（红）。 */
+function EndBadge({ kind }: { kind: "done" | "failed" }) {
+  if (kind === "failed") {
+    return (
+      <span className="run-badge run-badge-end-failed" title="会话已异常结束（出错或中止）">
+        <WarningCircle size={9} weight="bold" />
+        已中断
+      </span>
+    );
+  }
+  return (
+    <span className="run-badge run-badge-end-done" title="会话回合已结束">
+      <CheckCircle size={9} weight="bold" />
+      已结束
+    </span>
+  );
+}
+
 export function TicketList() {
   const ticketsAll = useApp((s) => s.tickets);
   const activeProjectId = useApp((s) => s.activeProjectId);
@@ -306,9 +339,25 @@ export function TicketList() {
   const diffs = useApp((s) => s.diffs);
   const busyMap = useApp((s) => s.busy);
   const gateBusyMap = useApp((s) => s.gateBusy);
+  const sessionEnded = useApp((s) => s.sessionEnded);
+  const pendingPermissions = useApp((s) => s.pendingPermissions);
+  const pendingQuestions = useApp((s) => s.pendingQuestions);
   const orderMap = useApp((s) => s.order);
   const visibleStages = useApp((s) => s.visibleStages);
   const [query, setQuery] = useState("");
+
+  // T-120 增强：每工单的待决询问/权限数量（徽标数据源）
+  const pendingAsks = useMemo(() => {
+    const m = new Map<string, { questions: number; permissions: number }>();
+    const bump = (no: string, key: "questions" | "permissions") => {
+      const cur = m.get(no) ?? { questions: 0, permissions: 0 };
+      cur[key] += 1;
+      m.set(no, cur);
+    };
+    for (const { ticketNo } of Object.values(pendingPermissions)) bump(ticketNo, "permissions");
+    for (const { ticketNo } of Object.values(pendingQuestions)) bump(ticketNo, "questions");
+    return m;
+  }, [pendingPermissions, pendingQuestions]);
 
   const tickets = useMemo(
     () =>
@@ -372,13 +421,16 @@ export function TicketList() {
           const sessionRunning = busyMap[t.ticketNo] ?? false;
           const reviewRunning = gateBusyMap[t.ticketNo] ?? false;
           const running = sessionRunning || reviewRunning;
+          // T-120 增强：待决询问（question/permission）与会话结束提醒
+          const asks = pendingAsks.get(t.ticketNo);
+          const ended = !running ? sessionEnded[t.ticketNo]?.kind : undefined;
           return (
             <motion.button
               key={t.ticketNo}
               onClick={() => actions.openTicket(t.ticketNo)}
               className={`relative w-full text-left rounded-lg px-3 py-2.5 transition-colors cursor-pointer group ${
                 active ? "bg-raised" : "hover:bg-panel"
-              } ${sessionRunning ? "ticket-item-run-agent" : ""}`}
+              } ${sessionRunning ? "ticket-item-run-agent" : ""} ${asks ? "ticket-item-ask" : ""}`}
               whileHover={!active ? { x: 2 } : undefined}
               transition={{ type: "spring", stiffness: 400, damping: 25 }}
             >
@@ -407,23 +459,29 @@ export function TicketList() {
               <div className={`mt-0.5 text-[13px] leading-snug line-clamp-2 ${active ? "text-ink" : "text-dim group-hover:text-ink"}`}>
                 {t.title}
               </div>
-              <div className="mt-1.5 flex items-center gap-2 text-[11px] text-faint">
+              <div className="mt-1.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] text-faint">
                 <StageDot stage={t.stage} />
-                <span>{STAGE_LABEL[t.stage]}</span>
-                {hasDiff && !running && (
+                <span className="shrink-0">{STAGE_LABEL[t.stage]}</span>
+                {hasDiff && !running && !ended && !asks && (
                   <>
                     <span className="text-edge-strong">·</span>
                     <span>有变更</span>
                   </>
                 )}
+                {asks && (
+                  <>
+                    {asks.questions > 0 && <AskBadge kind="question" count={asks.questions} />}
+                    {asks.permissions > 0 && <AskBadge kind="permission" count={asks.permissions} />}
+                  </>
+                )}
                 {running && (
-                  <span className="flex items-center gap-1">
+                  <span className="flex items-center gap-1.5">
                     {sessionRunning && <RunBadge kind="agent" />}
                     {reviewRunning && <RunBadge kind="review" />}
                   </span>
                 )}
-                <span className="flex-1" />
-                <span>{relativeTime(t.updatedAt)}</span>
+                {ended && <EndBadge kind={ended} />}
+                <span className="ml-auto shrink-0">{relativeTime(t.updatedAt)}</span>
               </div>
             </motion.button>
           );

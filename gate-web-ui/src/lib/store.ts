@@ -80,6 +80,8 @@ export interface AppState {
   sessionBusy: Record<string, boolean>;
   /** Agent 开始运行的时间戳（运行监控面板用于展示运行时长）；空闲时移除条目。 */
   busySince: Record<string, number>;
+  /** T-120 增强：会话结束提醒（key = 工单号）。done=回合正常完成；failed=出错/中止。打开工单或再次运行时清除。 */
+  sessionEnded: Record<string, { kind: "done" | "failed"; at: number }>;
   gateBusy: Record<string, boolean>;
   creatingSession: Record<string, boolean>;
   usage: Record<string, UsageView>;
@@ -107,6 +109,10 @@ export interface AppState {
   sessionModelSel: Record<string, SessionModelSel>;
   /** 生成中的回合（key = gate session id）：回合在 idle 前不落库，切走再切回时靠它恢复流式内容。 */
   liveTurns: Record<string, LiveTurn>;
+  /** T-120 增强：待决权限登记（permissionId → 归属工单/会话）。SSE asked 与恢复拉取登记，replied/应答注销。 */
+  pendingPermissions: Record<string, { ticketNo: string; sessionId: string }>;
+  /** T-120 增强：待决提问登记（requestId → 归属工单/会话）。 */
+  pendingQuestions: Record<string, { ticketNo: string; sessionId: string }>;
   /** 运行中的智能体数量（GET /api/agents/busy 轮询） */
   runningAgents: { count: number; sessions: Array<{ session_id: string; title: string | null; ticket_no: string | null; cli: string | null }> };
   /** 工单列表按状态筛选：勾选可见的状态集合。 */
@@ -212,6 +218,7 @@ export const appStore = create<AppState>(() => ({
   busy: {},
   sessionBusy: {},
   busySince: {},
+  sessionEnded: {},
   gateBusy: {},
   creatingSession: {},
   usage: {},
@@ -234,6 +241,8 @@ export const appStore = create<AppState>(() => ({
   sessionModels: {},
   sessionModelSel: {},
   liveTurns: {},
+  pendingPermissions: {},
+  pendingQuestions: {},
   runningAgents: { count: 0, sessions: [] },
   visibleStages: loadVisibleStages(),
   kanbanStages: loadKanbanStages(),
@@ -309,9 +318,13 @@ export function seedDemo(force = false) {
     // demo 模式没有真实引擎配置，AI 审查入口始终可用（走本地演示脚本）。
     engine: { configured: true, providerId: "demo", model: "demo-engine" },
     busy: {},
+    sessionBusy: {},
+    sessionEnded: {},
     gateBusy: {},
     usage: {},
     liveTurns: {},
+    pendingPermissions: {},
+    pendingQuestions: {},
     runningAgents: { count: 0, sessions: [] },
     centerTab: "chat",
     agents: DEMO_AGENTS.map((a) => ({ ...a })),
@@ -441,6 +454,8 @@ export function setSessionModelSel(sessionId: string, sel: SessionModelSel) {
 }
 
 export function selectTicket(no: string) {
+  // 打开工单即视为看见"会话已结束"提醒
+  clearSessionEnded(no);
   patch({ selectedNo: no, centerTab: "chat", highlight: null });
   // 与 live 的 selectTicketLive 一致：进工单时把绑定 agent 同步为默认选择，
   // 避免选择器显示与工单无关的全局默认。
@@ -543,17 +558,24 @@ export function resolvePermission(
 ) {
   resolvedPermissions.add(permissionId);
   const id = `perm-${permissionId}`;
-  set((st) => ({
-    chats: {
-      ...st.chats,
-      [no]: (st.chats[no] ?? []).filter((m) => !(m.kind === "permission" && m.id === id)),
-    },
-  }));
+  set((st) => {
+    const pendingPermissions = { ...st.pendingPermissions };
+    delete pendingPermissions[permissionId];
+    return {
+      pendingPermissions,
+      chats: {
+        ...st.chats,
+        [no]: (st.chats[no] ?? []).filter((m) => !(m.kind === "permission" && m.id === id)),
+      },
+    };
+  });
 }
 
 /** 应答提交失败：清掉墓碑，调用方随后重新 pushPermissionRequest 恢复待决卡片。 */
-export function revertPermission(_no: string, permissionId: string) {
+export function revertPermission(no: string, permissionId: string) {
   resolvedPermissions.delete(permissionId);
+  // 待决登记同步恢复（sessionId 取当前查看的会话——应答就发生在该会话视图里）
+  notePendingPermission(permissionId, no, s().activeSessionId[no] ?? "");
 }
 
 /** 已作答/已跳过 question id 的墓碑：阻止重放的 asked 事件复活卡片。 */
@@ -579,17 +601,24 @@ export function pushQuestionRequest(no: string, request: QuestionRequestView) {
 export function resolveQuestion(no: string, requestId: string, _rejected: boolean) {
   resolvedQuestions.add(requestId);
   const id = `ques-${requestId}`;
-  set((st) => ({
-    chats: {
-      ...st.chats,
-      [no]: (st.chats[no] ?? []).filter((m) => !(m.kind === "question" && m.id === id)),
-    },
-  }));
+  set((st) => {
+    const pendingQuestions = { ...st.pendingQuestions };
+    delete pendingQuestions[requestId];
+    return {
+      pendingQuestions,
+      chats: {
+        ...st.chats,
+        [no]: (st.chats[no] ?? []).filter((m) => !(m.kind === "question" && m.id === id)),
+      },
+    };
+  });
 }
 
 /** 提交失败：清掉墓碑，调用方随后重新 pushQuestionRequest 恢复待决卡片。 */
-export function revertQuestion(_no: string, requestId: string) {
+export function revertQuestion(no: string, requestId: string) {
   resolvedQuestions.delete(requestId);
+  // 待决登记同步恢复（sessionId 取当前查看的会话——作答就发生在该会话视图里）
+  notePendingQuestion(requestId, no, s().activeSessionId[no] ?? "");
 }
 
 export function pushAssistantPlaceholder(no: string): string {
@@ -775,6 +804,70 @@ export function refreshTicketBusy(no: string) {
 export function setGateBusy(no: string, busy: boolean) {
   set((st) => ({ gateBusy: { ...st.gateBusy, [no]: busy } }));
 }
+
+/* ─── T-120 增强：工单列表的会话结束提醒与待决询问/权限徽标 ─── */
+
+/**
+ * 记录一次会话回合结束（done=正常完成，failed=出错/中止）供工单列表提醒。
+ * 用户当前停留在该工单的工作台时视为"已看见"回合结束，不叠加列表提醒。
+ */
+export function markSessionEnded(no: string, kind: "done" | "failed") {
+  set((st) => {
+    if (st.selectedNo === no && st.view === "workbench") return st;
+    return { sessionEnded: { ...st.sessionEnded, [no]: { kind, at: Date.now() } } };
+  });
+}
+
+/** 清除会话结束提醒（打开工单或该工单再次运行时调用）。 */
+export function clearSessionEnded(no: string) {
+  set((st) => {
+    if (!st.sessionEnded[no]) return st;
+    const sessionEnded = { ...st.sessionEnded };
+    delete sessionEnded[no];
+    return { sessionEnded };
+  });
+}
+
+/** 登记一条待决权限（按 permissionId 幂等，重复 asked 事件不叠加）。 */
+export function notePendingPermission(permissionId: string, ticketNo: string, sessionId: string) {
+  set((st) =>
+    st.pendingPermissions[permissionId]
+      ? st
+      : { pendingPermissions: { ...st.pendingPermissions, [permissionId]: { ticketNo, sessionId } } },
+  );
+}
+
+/** 登记一条待决提问（按 requestId 幂等）。 */
+export function notePendingQuestion(requestId: string, ticketNo: string, sessionId: string) {
+  set((st) =>
+    st.pendingQuestions[requestId]
+      ? st
+      : { pendingQuestions: { ...st.pendingQuestions, [requestId]: { ticketNo, sessionId } } },
+  );
+}
+
+/** 会话被删除时注销其名下全部待决登记（请求随会话消亡，不再可答）。 */
+export function dropSessionPendings(sessionId: string) {
+  set((st) => {
+    const pendingPermissions = { ...st.pendingPermissions };
+    const pendingQuestions = { ...st.pendingQuestions };
+    let touched = false;
+    for (const [id, ref] of Object.entries(pendingPermissions)) {
+      if (ref.sessionId === sessionId) {
+        delete pendingPermissions[id];
+        touched = true;
+      }
+    }
+    for (const [id, ref] of Object.entries(pendingQuestions)) {
+      if (ref.sessionId === sessionId) {
+        delete pendingQuestions[id];
+        touched = true;
+      }
+    }
+    return touched ? { pendingPermissions, pendingQuestions } : st;
+  });
+}
+
 
 export function setCreatingSession(no: string, busy: boolean) {
   set((st) => {

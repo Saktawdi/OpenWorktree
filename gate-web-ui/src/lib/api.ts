@@ -3,9 +3,14 @@ import {
   addUsage,
   applyReplyMetaDefaults,
   appStore,
+  clearSessionEnded,
   dropLiveTurn,
+  dropSessionPendings,
   finishAssistant,
   finishLiveTurn,
+  markSessionEnded,
+  notePendingPermission,
+  notePendingQuestion,
   patchAssistant,
   pushAssistantPlaceholder,
   pushPermissionRequest,
@@ -205,6 +210,8 @@ export async function loadTicketDiff(no: string) {
 }
 
 export async function selectTicketLive(no: string) {
+  // 打开工单即视为看见"会话已结束"提醒
+  clearSessionEnded(no);
   appStore.setState({ selectedNo: no, centerTab: "chat", highlight: null });
   // 工单绑定的 agent 是新会话的默认协作对象：进工单时同步全局选择，
   // 否则选择器停留在全局默认（如 claude），首条消息会建到错误的 agent 上。
@@ -534,6 +541,7 @@ export async function loadSessionPermissions(no: string, sessionId: string) {
       `/api/sessions/${sessionId}/permissions`,
     );
     for (const p of data.permissions ?? []) {
+      if (p.permission_id) notePendingPermission(p.permission_id, no, sessionId);
       pushPermissionRequest(no, mapPermissionAsk(p));
     }
   } catch (e) {
@@ -579,7 +587,10 @@ export async function loadSessionQuestions(no: string, sessionId: string) {
       `/api/sessions/${sessionId}/questions`,
     );
     for (const q of data.questions ?? []) {
-      if (q.request_id) pushQuestionRequest(no, mapQuestionAsk(q));
+      if (q.request_id) {
+        notePendingQuestion(q.request_id, no, sessionId);
+        pushQuestionRequest(no, mapQuestionAsk(q));
+      }
     }
   } catch (e) {
     /* 提问恢复失败不阻断会话打开 */
@@ -627,9 +638,14 @@ export async function deleteSessionLive(id: string, ticketNo: string) {
   }
   dropLiveTurn(id);
   setSessionBusy(id, false);
+  // 会话删除后其未决权限/提问随会话消亡，工单列表的待决徽标同步注销
+  dropSessionPendings(id);
   await loadTicketSessions(ticketNo).catch(() => {});
   refreshTicketBusy(ticketNo);
 }
+
+/** 正在执行中止的会话：sse 的 done 到达时按"已中止"而非"已完成"提醒。 */
+const abortingSessions = new Set<string>();
 
 export async function abortLive(no: string) {
   const sid = appStore.getState().activeSessionId[no];
@@ -637,9 +653,11 @@ export async function abortLive(no: string) {
   // 乐观翻转按钮：后端的 done 事件可能迟到，用户的点击必须立刻可见。
   setSessionBusy(sid, false);
   refreshTicketBusy(no);
+  abortingSessions.add(sid);
   try {
     await api(`/api/sessions/${sid}/abort`, { method: "POST" });
   } catch (e) {
+    abortingSessions.delete(sid);
     showToast(`中断失败：${(e as Error).message}`);
   }
   await loadTicketSessions(no).catch(() => {});
@@ -769,6 +787,8 @@ export async function liveSendPrompt(no: string, userText: string, attachments: 
   // userText 已含 [图片 #n] 引用（Composer 粘贴时插入），原样推送与发送。
   const sessionId = st.activeSessionId[no];
   if (sessionId && st.sessionBusy[sessionId]) return;
+  // 工单重新进入运行状态：上一次的"会话已结束"提醒随之失效
+  clearSessionEnded(no);
   pushUserMessage(no, userText);
   setBusy(no, true);
   let sid: string | null = sessionId || null;
@@ -808,6 +828,8 @@ export async function liveSendPrompt(no: string, userText: string, attachments: 
     await consumeSessionStream(no, sid);
   } catch (e) {
     pushSystemMessage(no, `会话失败：${(e as Error).message}`, "warn");
+    // 请求都没发出去/流建立失败：没有 done/error 事件可依赖，这里直接打点
+    markSessionEnded(no, "failed");
   } finally {
     if (sid) setSessionBusy(sid, false);
     refreshTicketBusy(no);
@@ -946,6 +968,7 @@ async function consumeSessionStream(no: string, sessionId: string) {
     let watchdog: ReturnType<typeof setTimeout> | null = null;
     const finish = () => {
       if (watchdog) clearTimeout(watchdog);
+      abortingSessions.delete(sessionId);
       es.close();
       resolve();
     };
@@ -1061,8 +1084,10 @@ async function consumeSessionStream(no: string, sessionId: string) {
     es.addEventListener("permission_asked", (ev) => {
       arm();
       const d = JSON.parse((ev as MessageEvent).data);
-      // 卡片只挂当前查看的会话视图；用户已切去别的会话时不挂（避免误挂 + 应答发错
-      // session），切回时 loadSessionPermissions 会重新拉取 pending 卡片。
+      // 待决登记与视图无关：无论当前查看哪个会话，工单列表的"待授权"徽标都要亮起；
+      // 卡片仍只挂当前查看的会话视图（避免误挂 + 应答发错 session），切回时
+      // loadSessionPermissions 会重新拉取 pending 卡片。
+      if (d.permission_id) notePendingPermission(d.permission_id, no, sessionId);
       if (appStore.getState().activeSessionId[no] === sessionId) {
         pushPermissionRequest(no, mapPermissionAsk(d));
       }
@@ -1075,7 +1100,8 @@ async function consumeSessionStream(no: string, sessionId: string) {
     es.addEventListener("question_asked", (ev) => {
       arm();
       const d = JSON.parse((ev as MessageEvent).data);
-      // 与权限卡片同策略：只挂当前查看的会话视图，切回时 loadSessionQuestions 重新拉取。
+      // 待决登记与视图无关（工单列表"待回答"徽标的数据源）；卡片挂载策略与权限相同。
+      if (d.request_id) notePendingQuestion(d.request_id, no, sessionId);
       if (d.request_id && appStore.getState().activeSessionId[no] === sessionId) {
         pushQuestionRequest(no, mapQuestionAsk(d));
       }
@@ -1100,6 +1126,8 @@ async function consumeSessionStream(no: string, sessionId: string) {
       }));
     });
     es.addEventListener("done", () => {
+      // T-120 增强：回合结束提醒（用户中止的会话按"已中断"呈现）。
+      markSessionEnded(no, abortingSessions.has(sessionId) ? "failed" : "done");
       // 后端此刻已把 opencode 的自动生成标题写库（session.updated → sessions.update）。
       // 只刷新列表数据，不动 activeSessionId，避免把用户在查看的会话顶走。
       void refreshTicketSessionsMeta(no);
@@ -1134,6 +1162,8 @@ async function consumeSessionStream(no: string, sessionId: string) {
           /* ignore */
         }
       }
+      // T-120 增强：意外失败中止也属于"会话结束"，工单列表按"已中断"提醒。
+      markSessionEnded(no, "failed");
       updateLiveTurn(sessionId, (a) => ({ ...a, streaming: false }));
       pushSystemMessage(no, msg, "warn");
       finish();

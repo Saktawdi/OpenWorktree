@@ -18,9 +18,11 @@ import { loadProjectRepoView, loadProjectTree, syncProjectWorkspace } from "../l
 import { relativeTime, shortHash } from "../lib/format";
 import { setView, showToast, switchProject, useApp } from "../lib/store";
 import type { GitCommit, GitRepoView, GitTreeEntry, Project } from "../lib/types";
-import { CopyButton } from "./ui";
+import { CopyButton, LabelInput } from "./ui";
 
 const SIZE_LABEL: Record<string, string> = { small: "小型", medium: "中型", large: "大型" };
+// 项目标签偏向领域/类型划分，与工单标签（开发、BUG…）区分开
+const PROJECT_COMMON_LABELS = ["电商", "内容", "文档", "数据", "AI", "工具", "前端", "后端"];
 
 function ProjectDialog({
   initial,
@@ -37,24 +39,19 @@ function ProjectDialog({
   const [initGit, setInitGit] = useState(!initial);
   const [priority, setPriority] = useState<string | null>(initial?.priority ?? null);
   const [size, setSize] = useState<string | null>(initial?.size ?? null);
-  const [tags, setTags] = useState((initial?.tags ?? []).join(", "));
+  const [tags, setTags] = useState<string[]>(initial?.tags ?? []);
   const [saving, setSaving] = useState(false);
 
   const save = async () => {
     if (!name.trim() || (!initial && !workspacePath.trim())) return;
     setSaving(true);
-    const tagList = tags
-      .split(/[,，]/)
-      .map((x) => x.trim())
-      .filter(Boolean)
-      .slice(0, 20);
     if (initial) {
       await actions.editProject(initial.id, {
         name: name.trim(),
         targetBranch: targetBranch.trim(),
         priority: priority as Project["priority"] | null,
         size: size as Project["size"] | null,
-        tags: tagList,
+        tags,
       });
     } else {
       await actions.createProject({
@@ -64,7 +61,7 @@ function ProjectDialog({
         initGit,
         priority,
         size,
-        tags: tagList,
+        tags,
       });
     }
     setSaving(false);
@@ -162,13 +159,8 @@ function ProjectDialog({
             </div>
           </div>
           <div>
-            <label className="field-label">标签（逗号分隔）</label>
-            <input
-              className="text-input"
-              placeholder="电商, 交易链路"
-              value={tags}
-              onChange={(e) => setTags(e.target.value)}
-            />
+            <label className="field-label">标签</label>
+            <LabelInput labels={tags} onChange={setTags} suggestions={PROJECT_COMMON_LABELS} />
           </div>
         </div>
         <div className="flex justify-end gap-2 px-5 py-4 border-t border-edge">

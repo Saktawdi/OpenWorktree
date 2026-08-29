@@ -298,6 +298,9 @@ body {
   /* ── Chips & Badges ── */
   .chip {
     @apply inline-flex items-center gap-1 rounded-full px-2 py-px text-[11px] font-medium leading-[18px];
+    /* 徽标是原子元素：被 flex 挤压时宁可溢出也不许文字竖排（一字一行） */
+    white-space: nowrap;
+    flex-shrink: 0;
   }
   .badge {
     @apply inline-flex items-center justify-center rounded-full font-mono text-[10px] font-semibold leading-none;
@@ -664,4 +667,33 @@ body {
   border: 1.5px solid color-mix(in srgb, var(--color-info) 35%, transparent);
   border-top-color: var(--color-info);
   animation: spin 0.8s linear infinite;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   7. TICKET LIST ATTENTION BADGES (T-120 增强)
+   待决询问：琥珀内缘提示环 + 待回答/待授权徽标（agent 等用户）；
+   会话结束：正常结束为 accent 静态徽标，出错/中止为 danger。
+   徽标均复用 .run-badge 的形状基类，仅换配色。
+   ═══════════════════════════════════════════════════════════ */
+
+/* 待决询问：工单条目内缘的琥珀提示环（静态，避免与运行中呼吸光晕的 box-shadow 动画打架） */
+.ticket-item-ask {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-warn) 38%, transparent);
+}
+.run-badge-ask {
+  color: var(--color-warn);
+  background: color-mix(in srgb, var(--color-warn) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-warn) 32%, transparent);
+}
+
+/* 会话结束提醒：正常结束 / 出错中止 */
+.run-badge-end-done {
+  color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-accent) 30%, transparent);
+}
+.run-badge-end-failed {
+  color: var(--color-danger);
+  background: color-mix(in srgb, var(--color-danger) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-danger) 30%, transparent);
 }

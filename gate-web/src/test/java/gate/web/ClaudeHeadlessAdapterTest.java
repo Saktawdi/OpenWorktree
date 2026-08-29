@@ -1,6 +1,7 @@
 package gate.web;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -113,6 +114,35 @@ class ClaudeHeadlessAdapterTest {
                 .findFirst().orElseThrow();
         assertEquals("hello from claude", assistant.content());
         assertEquals(15L, assistant.usage().totalTokens());
+    }
+
+    @Test
+    void start_passes_prompt_positionally_and_never_uses_stream_json_input() throws Exception {
+        Path script = root.resolve("args-claude.cmd");
+        Files.writeString(script, """
+                @echo off
+                echo %*>"%~dp0claude-args.txt"
+                echo {"type":"session","session_id":"sess-args"}
+                """, StandardCharsets.UTF_8);
+
+        AgentConfig config = new AgentConfig("claude-args", "Claude Args", AgentCli.CLAUDE,
+                "manual", "claude-args", null, List.of(), "test");
+        agentConfigs.insert(config, Instant.now());
+        Path clone = root.resolve("clone");
+        Files.createDirectories(clone.resolve(".git"));
+        insertTicket("T-4");
+
+        ClaudeHeadlessAdapter adapter = new ClaudeHeadlessAdapter(processRunner, agentConfigs,
+                sessions, ticketRepository, tasks, ticketLocks, clock, "cmd.exe", List.of("/c", script.toString()));
+        adapter.start(new AgentSessionPort.StartRequest(
+                "T-4", "claude-args", clone.toString(), "refs/heads/main", "please work", Map.of()));
+
+        String args = Files.readString(root.resolve("claude-args.txt"), StandardCharsets.UTF_8);
+        assertTrue(args.contains("please work"),
+                "prompt must reach claude as a positional argument");
+        assertTrue(args.contains("--output-format stream-json"));
+        assertFalse(args.contains("--input-format"),
+                "--input-format=stream-json makes claude ignore the positional prompt and exit 0 silently");
     }
 
     @Test

@@ -1,9 +1,11 @@
 import {
   addSnapshot,
   addUsage,
+  clearSessionEnded,
   currentCancelSeq,
   ensureActiveSession,
   finishAssistant,
+  markSessionEnded,
   patchAssistant,
   pushAssistantPlaceholder,
   pushSystemMessage,
@@ -171,6 +173,8 @@ export async function demoSendPrompt(no: string, userText: string) {
   ensureActiveSession(no);
   const seq = currentCancelSeq(no) + 1;
   appStore.setState({ cancelSeq: { ...st0.cancelSeq, [no]: seq } });
+  // 工单重新进入运行状态：上一次的"会话已结束"提醒随之失效
+  clearSessionEnded(no);
   pushUserMessage(no, userText);
   setBusy(no, true);
   try {
@@ -181,7 +185,10 @@ export async function demoSendPrompt(no: string, userText: string) {
       await scriptAck(no, userText, seq);
     }
   } finally {
-    if (alive(no, seq)) setBusy(no, false);
+    const finished = alive(no, seq);
+    if (finished) setBusy(no, false);
+    // 与 live 的 done/error 对齐：正常收尾与中断分别打点，供工单列表提醒
+    markSessionEnded(no, finished ? "done" : "failed");
   }
 }
 
@@ -482,11 +489,14 @@ export async function demoReturnWithFindings(no: string) {
   appStore.setState({ cancelSeq: { ...st.cancelSeq, [no]: seq } });
   const lines = findings.map((f, i) => `${i + 1}. [${f.severity}] ${f.path}${f.lineStart ? ":" + f.lineStart : ""} — ${f.message}`);
   pushUserMessage(no, ["请按以下审查意见逐条修复：", ...lines].join("\n"));
+  clearSessionEnded(no);
   setBusy(no, true);
   try {
     await scriptFix(no, seq);
   } finally {
-    if (alive(no, seq)) setBusy(no, false);
+    const finished = alive(no, seq);
+    if (finished) setBusy(no, false);
+    markSessionEnded(no, finished ? "done" : "failed");
   }
 }
 

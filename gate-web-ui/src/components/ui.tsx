@@ -1,7 +1,7 @@
 import type { Priority, Severity, Stage } from "../lib/types";
 import { PRIORITY_COLOR, SEVERITY_LABEL, STAGE_LABEL } from "../lib/format";
 import { useEffect, useRef, useState } from "react";
-import { Copy } from "@phosphor-icons/react";
+import { Copy, X } from "@phosphor-icons/react";
 
 export function LogoMark({ size = 22 }: { size?: number }) {
   return (
@@ -137,5 +137,124 @@ export function CopyButton({ text, label }: { text: string; label?: string }) {
         <Copy size={14} weight="regular" />
       )}
     </button>
+  );
+}
+
+const COMMON_LABELS = ["开发", "BUG", "优化", "重构", "文档", "安全", "性能", "测试"];
+const MAX_LABELS = 20;
+
+/**
+ * 标签输入框：已选标签渲染为可删除的 chip；输入中按回车（或逗号）自动分割成标签，
+ * 空草稿按退格删除末尾标签；下方提供常用标签一键填充（suggestions 可按场景定制），再次点击取消。
+ */
+export function LabelInput({
+  labels,
+  onChange,
+  placeholder = "输入后回车添加，可用逗号分隔",
+  suggestions = COMMON_LABELS,
+}: {
+  labels: string[];
+  onChange: (next: string[]) => void;
+  placeholder?: string;
+  suggestions?: string[];
+}) {
+  const [draft, setDraft] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const addParts = (parts: string[]) => {
+    const next = [...labels];
+    for (const part of parts) {
+      const tag = part.trim();
+      if (!tag || next.length >= MAX_LABELS) continue;
+      if (!next.some((l) => l.toLowerCase() === tag.toLowerCase())) next.push(tag);
+    }
+    if (next.length !== labels.length) onChange(next);
+  };
+
+  const remove = (tag: string) => onChange(labels.filter((l) => l !== tag));
+
+  return (
+    <div>
+      <div
+        className="flex w-full min-h-9 flex-wrap items-center gap-1 rounded-lg border border-edge bg-sunken px-2 py-1 cursor-text transition-all duration-150 hover:border-edge-strong focus-within:border-accent/50"
+        onClick={() => inputRef.current?.focus()}
+      >
+        {labels.map((l) => (
+          <span
+            key={l}
+            className="inline-flex h-6 items-center gap-0.5 rounded-md border border-edge-strong bg-raised pl-1.5 pr-1 text-[11px] font-medium leading-none text-dim"
+          >
+            {l}
+            <button
+              type="button"
+              className="grid h-4 w-4 place-items-center rounded text-faint cursor-pointer hover:text-danger"
+              onClick={() => remove(l)}
+              aria-label={`移除标签 ${l}`}
+            >
+              <X size={9} weight="bold" />
+            </button>
+          </span>
+        ))}
+        <input
+          ref={inputRef}
+          className="h-7 min-w-[72px] flex-1 bg-transparent text-[13px] text-ink placeholder:text-faint outline-none"
+          value={draft}
+          placeholder={labels.length === 0 ? placeholder : ""}
+          onChange={(e) => {
+            const v = e.target.value;
+            if (/[,，]/.test(v)) {
+              const parts = v.split(/[,，]/);
+              const tail = parts.pop() ?? "";
+              addParts(parts);
+              setDraft(tail);
+            } else {
+              setDraft(v);
+            }
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              addParts([draft]);
+              setDraft("");
+            } else if (e.key === "Backspace" && draft === "" && labels.length > 0) {
+              onChange(labels.slice(0, -1));
+            }
+          }}
+          onPaste={(e) => {
+            const text = e.clipboardData.getData("text");
+            if (/[,，\n]/.test(text)) {
+              e.preventDefault();
+              addParts(text.split(/[,，\n]/));
+            }
+          }}
+          onBlur={() => {
+            if (draft.trim()) {
+              addParts([draft]);
+              setDraft("");
+            }
+          }}
+        />
+      </div>
+      <div className="mt-1.5 flex flex-wrap items-center gap-1">
+        <span className="mr-0.5 text-[10.5px] text-faint">常用</span>
+        {suggestions.map((tag) => {
+          const existing = labels.find((l) => l.toLowerCase() === tag.toLowerCase());
+          return (
+            <button
+              key={tag}
+              type="button"
+              className={`h-[22px] rounded-md border px-1.5 text-[11px] leading-none cursor-pointer transition-colors ${
+                existing
+                  ? "border-accent/50 bg-accent/10 text-accent"
+                  : "border-edge text-faint hover:text-dim hover:border-edge-strong hover:bg-raised"
+              }`}
+              onClick={() => (existing ? remove(existing) : addParts([tag]))}
+            >
+              {tag}
+            </button>
+          );
+        })}
+      </div>
+    </div>
   );
 }

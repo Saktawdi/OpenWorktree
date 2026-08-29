@@ -48,8 +48,9 @@ import java.util.function.Consumer;
 import java.util.stream.Stream;
 
 /**
- * Claude headless adapter (执行文档-后端-web §5.3.2, ADR-12): per-message {@code claude -p} spawn with
- * {@code stream-json} in/out and {@code --resume} for continuation.
+ * Claude headless adapter (执行文档-后端-web §5.3.2, ADR-12): per-message {@code claude -p} spawn
+ * with the prompt as a positional argument, {@code stream-json} output and {@code --resume} for
+ * continuation.
  *
  * <p>This is the first session adapter (D4 ②). The port returns structured records; transport or
  * parse failures become an ERROR {@link SessionMessage} instead of escaping the port where possible.
@@ -286,7 +287,7 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
         GateTask task = tasks.register("session-send", session.ticketNo(), session.id());
         // 入队即算运行：登记发生在提交 executor 之前，排队等待也算运行中；同一 session 多次 send 用引用计数
         incrementInFlight(session.id());
-        executor.submit(() -> runSend(task, session, request.message(), request.resume()));
+        executor.submit(() -> runSend(task, session, request.message()));
         return task.id();
     }
 
@@ -393,7 +394,7 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
         }
     }
 
-    private void runSend(GateTask task, Session session, String message, boolean resume) {
+    private void runSend(GateTask task, Session session, String message) {
         try (AutoCloseable ignored = ticketLocks.acquire(session.ticketNo())) {
             // Fresh read: a live model switch persisted after enqueue must still win.
             Session latest = sessions.find(session.id()).orElse(session);
@@ -411,9 +412,11 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
             writeContext(contextFile, latest.ticketNo(),
                     ctxTicket == null ? null : ctxTicket.targetRef(), config);
 
+            // Always continue the recorded CLI conversation: a per-message spawn needs --resume
+            // to stay in the same conversation, and the fresh read also picks up a session id a
+            // still-running previous send has written after this task was enqueued.
             List<String> argv = buildArgv(config, contextFile, mcpConfig,
-                    resume ? session.cliSessionId() : session.cliSessionId(), message,
-                    latest.overrideModel());
+                    latest.cliSessionId(), message, latest.overrideModel());
             ProcessRunner.ProcRun run = processRunner.runStreaming(argv, clone, Map.of(), Duration.ofMinutes(10),
                     line -> handleStreamLine(session.id(), line), null);
 
@@ -471,8 +474,9 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
         argv.add(claudeExecutable);
         argv.addAll(claudePrefix);
         argv.add("-p");
-        argv.add("--input-format");
-        argv.add("stream-json");
+        // The prompt must stay a positional argument: with --input-format=stream-json claude
+        // ignores it and waits for stdin (closed by the runner) — it then exits 0 with no
+        // output and never creates a CLI session.
         argv.add("--output-format");
         argv.add("stream-json");
         // claude CLI hard requirement: --print + stream-json output refuses to start without

@@ -3,6 +3,7 @@ import { NotePencil, Trash } from "@phosphor-icons/react";
 import { actions } from "../lib/actions";
 import { openTicketEditor, setAgentId, useApp } from "../lib/store";
 import type { Priority } from "../lib/types";
+import { LabelInput } from "./ui";
 
 const PRIORITIES: Priority[] = ["P0", "P1", "P2", "P3"];
 
@@ -15,7 +16,7 @@ export function TicketEditDialog() {
   const [priority, setPriority] = useState<Priority>("P1");
   const [description, setDescription] = useState("");
   const [note, setNote] = useState("");
-  const [labels, setLabels] = useState("");
+  const [labels, setLabels] = useState<string[]>([]);
   const [agentConfigId, setAgentConfigId] = useState<string>("");
   const [confirmCancel, setConfirmCancel] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -26,7 +27,7 @@ export function TicketEditDialog() {
     setPriority(ticket.priority);
     setDescription(ticket.description ?? "");
     setNote(ticket.note ?? "");
-    setLabels(ticket.labels.join(", "));
+    setLabels([...ticket.labels]);
     setAgentConfigId(ticket.agentConfigId ?? "");
     setConfirmCancel(false);
   }, [ticket, editingNo]);
@@ -41,11 +42,7 @@ export function TicketEditDialog() {
       priority,
       description: description.trim() || undefined,
       note: note.trim() || undefined,
-      labels: labels
-        .split(/[,，]/)
-        .map((x) => x.trim())
-        .filter(Boolean)
-        .slice(0, 20),
+      labels,
       agentConfigId: agentConfigId || null,
     });
     setSaving(false);
@@ -121,13 +118,8 @@ export function TicketEditDialog() {
           </div>
 
           <div>
-            <label className="field-label">标签（逗号分隔）</label>
-            <input
-              className="text-input"
-              placeholder="backend, security"
-              value={labels}
-              onChange={(e) => setLabels(e.target.value)}
-            />
+            <label className="field-label">标签</label>
+            <LabelInput labels={labels} onChange={setLabels} />
           </div>
 
           <div>
