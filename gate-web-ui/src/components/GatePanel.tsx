@@ -517,7 +517,7 @@ function SessionSection({ ticketNo, locked = false }: { ticketNo: string; locked
   );
 
   return (
-    <div className="flex-1 min-h-0 flex flex-col">
+    <div className={expanded ? "flex-1 min-h-0 flex flex-col" : "shrink-0 flex flex-col"}>
       <button
         className="w-full shrink-0 flex items-center gap-2 px-4 py-2.5 text-left hover:bg-raised/50 transition-colors cursor-pointer"
         onClick={() => setGateSection("sessions", !expanded)}
@@ -886,6 +886,7 @@ export function GatePanel({ ticketNo }: { ticketNo: string }) {
   const gateBusy = useApp((s) => s.gateBusy[ticketNo] ?? false);
   const diffCount = useApp((s) => s.diffs[ticketNo]?.length ?? 0);
   const outcome = useApp((s) => s.outcomes[ticketNo]);
+  const sessionsExpanded = useApp((s) => s.gateSections.sessions);
   const sessions = useApp((s) => s.sessions[ticketNo] ?? NO_SESSIONS);
   const activeSessionId = useApp((s) => s.activeSessionId[ticketNo]);
 
@@ -953,9 +954,15 @@ export function GatePanel({ ticketNo }: { ticketNo: string }) {
     <aside className="w-[400px] shrink-0 border-l border-edge flex flex-col bg-canvas">
       {/* ─── Scrollable Content ─── */}
       <div className="flex-1 min-h-0 flex flex-col">
-        {/* 工单信息 + 门禁流水线：内容超高时在 65% 高度内自行滚动，
-            不再无限撑开面板挤压会话列表、叠压底部操作区（右侧面板样式 BUG 的根源） */}
-        <div className="min-h-0 max-h-[65%] overflow-y-auto">
+        {/* 工单信息 + 门禁流水线：会话列表收起时撑满整个上部（滚动视口用足空白，
+            段头被自然推到底部）；展开时退回自然高度 + 65% 滚动上限，让位给会话列表 */}
+        <div
+          className={
+            sessionsExpanded
+              ? "shrink-0 min-h-0 max-h-[65%] overflow-y-auto"
+              : "flex-1 min-h-0 overflow-y-auto"
+          }
+        >
           {/* Ticket Info */}
           <TicketInfo ticketNo={ticketNo} />
 
@@ -973,7 +980,7 @@ export function GatePanel({ ticketNo }: { ticketNo: string }) {
           />
         </div>
 
-        {/* Session List (collapsible, fills the rest) */}
+        {/* Session List (collapsible, fills the rest when expanded) */}
         <SessionSection ticketNo={ticketNo} locked={stage === "CANCELLED"} />
       </div>
 
