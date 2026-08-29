@@ -168,17 +168,17 @@ export function RunMonitor() {
   return (
     <div
       ref={wrapRef}
-      className="relative"
+      className="relative hidden md:inline-flex"
       onMouseEnter={openPanel}
       onMouseLeave={scheduleClose}
     >
       <button
-        className={`chip border cursor-pointer transition-colors ${
+        className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[12px] font-medium cursor-pointer transition-all duration-150 ${
           runCount > 0
-            ? "border-accent/30 bg-accent/10 text-accent"
-            : "border-edge-strong bg-raised text-dim"
+            ? "border-accent/40 bg-accent/10 text-accent shadow-sm hover:bg-accent/15 hover:border-accent/60"
+            : "border-edge-strong bg-raised text-dim hover:text-ink"
         }`}
-        title="智能体运行监控（悬停查看聚焦面板，点击钉住）"
+        title="智能体运行监控：悬停查看聚焦面板，点击钉住；点击面板条目可跳转对应会话"
         aria-expanded={open}
         onClick={() => {
           if (open && pinned) closePanel();
@@ -188,12 +188,14 @@ export function RunMonitor() {
           }
         }}
       >
-        <Pulse size={12} weight="bold" />
-        <span className="hidden lg:inline">运行监控</span>
-        {runCount > 0 ? (
-          <span className="badge badge-accent">{runCount}</span>
-        ) : (
-          <span className="w-1.5 h-1.5 rounded-full bg-dim" />
+        <Pulse
+          size={13}
+          weight="bold"
+          className={`shrink-0 ${runCount > 0 ? "animate-pulse" : "text-faint"}`}
+        />
+        {runCount > 0 ? `${runCount} 个智能体运行中` : "智能体空闲"}
+        {runCount > 0 && (
+          <span className="w-1.5 h-1.5 rounded-full bg-accent animate-breathe shrink-0" />
         )}
       </button>
 
@@ -202,7 +204,7 @@ export function RunMonitor() {
           initial={{ opacity: 0, y: -4, scale: 0.97 }}
           animate={{ opacity: 1, y: 0, scale: 1 }}
           transition={{ type: "spring", stiffness: 500, damping: 30 }}
-          className="absolute right-0 top-9 z-40 w-[340px] card p-1.5 shadow-xl shadow-black/50"
+          className="absolute left-0 top-9 z-40 w-[340px] card p-1.5 shadow-xl shadow-black/50"
         >
           <div className="flex items-center gap-2 px-2.5 pt-1.5 pb-1">
             <span className="kicker">运行监控 · 聚焦</span>

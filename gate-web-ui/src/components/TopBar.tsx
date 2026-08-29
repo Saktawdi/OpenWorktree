@@ -179,6 +179,7 @@ export function TopBar() {
         <span className="hidden xl:inline text-[12px] text-faint border-l border-edge pl-3 ml-1">
           本地 Git 门禁工作台
         </span>
+        <RunMonitor />
       </div>
 
       <div className="hidden md:block">
@@ -188,8 +189,6 @@ export function TopBar() {
       <div className="flex-1" />
 
       <ProjectSwitcher />
-
-      <RunMonitor />
 
       <button
         onClick={openConnect}
