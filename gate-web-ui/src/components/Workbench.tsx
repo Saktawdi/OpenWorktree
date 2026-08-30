@@ -1,6 +1,8 @@
-import { CaretDoubleLeft, CaretDoubleRight, GitBranch, NotePencil, Sparkle } from "@phosphor-icons/react";
+import { CaretDoubleLeft, CaretDoubleRight, GitBranch, NotePencil, Sparkle, TerminalWindow } from "@phosphor-icons/react";
 import { AnimatePresence, motion } from "motion/react";
-import { NO_CHAT, openTicketCreator, openTicketEditor, setGatePanelCollapsed, useApp } from "../lib/store";
+import { NO_CHAT, openTicketCreator, openTicketEditor, setGatePanelCollapsed, showToast, useApp } from "../lib/store";
+import { openTerminalSession } from "../lib/store";
+import { appStore } from "../lib/store";
 import { ChatStream } from "./ChatStream";
 import { Composer } from "./Composer";
 import { DiffView } from "./DiffView";
@@ -90,6 +92,27 @@ function CenterTabs({ ticketNo }: { ticketNo: string }) {
   const tab = useApp((s) => s.centerTab);
   const diffCount = useApp((s) => s.diffs[ticketNo]?.length ?? 0);
   const findingsCount = useApp((s) => s.findings[ticketNo]?.length ?? 0);
+  const mode = useApp((s) => s.mode);
+
+  // 跳过目录选择：直接以当前工单克隆目录为 base 拉起终端标签
+  const openTicketTerminal = () => {
+    if (mode !== "live") {
+      showToast("终端需要连接本地后端（live 模式）后使用");
+      return;
+    }
+    const ticket = appStore.getState().tickets.find((t) => t.ticketNo === ticketNo);
+    if (!ticket?.clonePath) {
+      showToast("当前工单没有可用的克隆目录");
+      return;
+    }
+    const project = appStore.getState().projects.find((p) => p.id === ticket.projectId);
+    openTerminalSession({
+      projectId: ticket.projectId ?? "",
+      projectName: project?.name ?? ticket.projectId ?? "",
+      dir: ticket.clonePath,
+      label: ticket.ticketNo,
+    });
+  };
 
   const item = (key: "chat" | "diff" | "findings", label: string, badge?: number) => (
     <button
@@ -121,6 +144,15 @@ function CenterTabs({ ticketNo }: { ticketNo: string }) {
       {item("chat", "会话")}
       {item("diff", "变更对比", diffCount)}
       {item("findings", "审查发现", findingsCount)}
+      <span className="flex-1" />
+      <button
+        className="self-center icon-btn"
+        title="在此工单克隆目录中打开终端"
+        aria-label="工单终端"
+        onClick={openTicketTerminal}
+      >
+        <TerminalWindow size={14} />
+      </button>
     </div>
   );
 }
