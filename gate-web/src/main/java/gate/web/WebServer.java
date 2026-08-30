@@ -20,15 +20,18 @@ public final class WebServer implements AutoCloseable {
     private static final Logger LOG = LoggerFactory.getLogger(WebServer.class);
 
     private static final String ROOT = "/static";
-    private static final Map<String, String> CONTENT_TYPES = Map.of(
-            ".html", "text/html; charset=utf-8",
-            ".js", "text/javascript; charset=utf-8",
-            ".css", "text/css; charset=utf-8",
-            ".json", "application/json; charset=utf-8",
-            ".svg", "image/svg+xml",
-            ".ico", "image/x-icon",
-            ".png", "image/png",
-            ".woff2", "font/woff2");
+    private static final Map<String, String> CONTENT_TYPES = Map.ofEntries(
+            Map.entry(".html", "text/html; charset=utf-8"),
+            Map.entry(".js", "text/javascript; charset=utf-8"),
+            Map.entry(".css", "text/css; charset=utf-8"),
+            Map.entry(".json", "application/json; charset=utf-8"),
+            Map.entry(".svg", "image/svg+xml"),
+            Map.entry(".ico", "image/x-icon"),
+            Map.entry(".png", "image/png"),
+            Map.entry(".webp", "image/webp"),
+            Map.entry(".woff2", "font/woff2"),
+            Map.entry(".woff", "font/woff"),
+            Map.entry(".ttf", "font/ttf"));
 
     private final Javalin app;
     private final WebComponents components;
