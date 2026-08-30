@@ -40,3 +40,11 @@ docx/reference/
 /local-git-gate.runtime.*
 # Maven classpath 临时转储
 gate-cli/gate-cp.txt
+
+# release outputs (keep templates only)
+release/OpenWorktree/lib/
+release/OpenWorktree/ui/
+release/OpenWorktree/config/
+release/OpenWorktree/data/
+release/OpenWorktree/__test_start.bat
+release/*.zip
