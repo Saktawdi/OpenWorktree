@@ -195,7 +195,7 @@ class SessionModelSwitchTest {
         assertTrue(res.body().contains("\"source\":\"agent-provider\""), res.body());
         assertTrue(res.body().contains("\"id\":\"prov-a\""), res.body());
         assertTrue(res.body().contains("\"id\":\"model-a\""), res.body());
-        assertTrue(res.body().contains("\"variants\":[\"low\",\"medium\",\"high\",\"max\"]"), res.body());
+        assertTrue(res.body().contains("\"variants\":[\"low\",\"medium\",\"high\",\"max\",\"xhigh\"]"), res.body());
     }
 
     /** A stale serve port (process died) degrades to an empty catalog, not a 503. */

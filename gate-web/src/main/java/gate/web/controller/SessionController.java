@@ -43,11 +43,9 @@ public final class SessionController implements WebController {
             java.util.Set.of("image/png", "image/jpeg", "image/gif", "image/webp");
     /**
      * 推理强度档位（claude 会话目录随每个模型下发）：claude --effort 接受
-     * low/medium/high/xhigh/max，但上游网关的 output_config.effort 枚举只认这里列出的
-     * 四档（xhigh 会被 400 拒绝），取两者的交集。
      */
     private static final List<String> CLAUDE_EFFORT_VARIANTS =
-            List.of("low", "medium", "high", "max");
+            List.of("low", "medium", "high", "max", "xhigh");
 
     private final AgentConfigRepository agentConfigs;
     private final ProviderRepository providers;

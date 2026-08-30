@@ -465,18 +465,17 @@ export function closeRepoView() {
 
 let terminalSeq = 0;
 
-/** 打开（或聚焦）一个终端会话：同项目同目录的会话幂等复用。 */
+/**
+ * 新开一个终端标签：同目录允许多开（例如同一工作区一个跑前端、一个跑后端），
+ * 同名标签自动追加序号（工作区、工作区 2…）以便区分。
+ */
 export function openTerminalSession(meta: Omit<TerminalSessionMeta, "id">) {
   set((st) => {
-    const existing = st.terminalSessions.find(
-      (t) => t.projectId === meta.projectId && t.dir === meta.dir,
-    );
-    if (existing) {
-      return { activeTerminalId: existing.id, terminalView: "open" as const };
-    }
+    const sameLabel = st.terminalSessions.filter((t) => t.label === meta.label).length;
+    const label = sameLabel === 0 ? meta.label : `${meta.label} ${sameLabel + 1}`;
     const id = `term-${++terminalSeq}-${Date.now().toString(36)}`;
     return {
-      terminalSessions: [...st.terminalSessions, { ...meta, id }],
+      terminalSessions: [...st.terminalSessions, { ...meta, label, id }],
       activeTerminalId: id,
       terminalView: "open" as const,
     };
