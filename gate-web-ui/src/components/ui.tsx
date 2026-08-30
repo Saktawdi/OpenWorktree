@@ -2,24 +2,21 @@ import type { Priority, Severity, Stage } from "../lib/types";
 import { PRIORITY_COLOR, SEVERITY_LABEL, STAGE_LABEL } from "../lib/format";
 import { useEffect, useRef, useState } from "react";
 import { Copy, X } from "@phosphor-icons/react";
+import { useApp } from "../lib/store";
 
+/** 品牌 OW 徽章：跟随主题切换静态图（不播动画，动画版见 TopBar 的 BrandMark）。 */
 export function LogoMark({ size = 22 }: { size?: number }) {
+  const theme = useApp((s) => s.theme);
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden>
-      <path
-        d="M12 2.4l7.6 2.85v5.9c0 4.62-3.23 7.86-7.6 10.05-4.37-2.19-7.6-5.43-7.6-10.05v-5.9L12 2.4z"
-        stroke="var(--color-accent)"
-        strokeWidth="1.6"
-        strokeLinejoin="round"
-      />
-      <path
-        d="M8.6 11.8l2.5 2.5 4.4-5"
-        stroke="var(--color-accent)"
-        strokeWidth="1.8"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
+    <img
+      src={theme === "dark" ? "/brand/ow-dark-badge-64.png" : "/brand/ow-light-badge-64.png"}
+      alt=""
+      width={size}
+      height={size}
+      draggable={false}
+      aria-hidden
+      className="select-none shrink-0"
+    />
   );
 }
 

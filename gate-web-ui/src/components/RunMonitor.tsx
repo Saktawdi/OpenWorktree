@@ -170,12 +170,12 @@ export function RunMonitor() {
        运行态只点亮内部药丸（凸起 + 强调色文字），不再叠加阴影和高饱和描边。 */
     <div
       ref={wrapRef}
-      className="relative ml-1.5 hidden md:inline-flex items-center rounded-full p-0.5 bg-sunken border border-edge"
+      className="relative hidden md:inline-flex items-center rounded-full p-0.5 bg-sunken border border-edge min-w-0"
       onMouseEnter={openPanel}
       onMouseLeave={scheduleClose}
     >
       <button
-        className={`inline-flex items-center gap-1.5 h-7 rounded-full px-3 text-[12.5px] font-medium cursor-pointer transition-colors duration-150 border ${
+        className={`inline-flex items-center gap-1.5 h-7 rounded-full px-2.5 text-[12.5px] font-medium cursor-pointer transition-colors duration-150 border min-w-0 ${
           runCount > 0
             ? "bg-raised border-edge text-accent"
             : "bg-transparent border-transparent text-dim hover:text-ink"
@@ -195,7 +195,9 @@ export function RunMonitor() {
           weight="bold"
           className={`shrink-0 ${runCount > 0 ? "animate-pulse" : "text-faint"}`}
         />
-        {runCount > 0 ? `${runCount} 个智能体运行中` : "智能体空闲"}
+        <span className="truncate">
+          {runCount > 0 ? `${runCount} 个运行中` : "智能体空闲"}
+        </span>
         {runCount > 0 && (
           <span className="w-1.5 h-1.5 rounded-full bg-accent animate-breathe shrink-0" />
         )}

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { motion } from "motion/react";
 import {
   CaretDown,
@@ -14,9 +14,51 @@ import {
   Moon,
 } from "@phosphor-icons/react";
 import { appStore, openConnect, setView, switchProject, toggleTheme, useApp } from "../lib/store";
-import { LogoMark } from "./ui";
 import { RunMonitor } from "./RunMonitor";
 import { TerminalMinimizedChip } from "./ProjectTerminal";
+
+/** 主题切换动画时长（抽帧加速版：54 帧 × 37ms ≈ 2.0s，留少量余量）。 */
+const ANIM_MS = 2050;
+
+/**
+ * 左上角品牌徽章：主题切换时播放「由昼入夜 / 由夜入昼」的 OW 过渡动画，
+ * 播完停在目标主题的静态徽章。prefers-reduced-motion 时直接换静态图。
+ */
+function BrandMark() {
+  const theme = useApp((s) => s.theme);
+  const prev = useRef(theme);
+  const [anim, setAnim] = useState<{ toLight: boolean; nonce: number } | null>(null);
+
+  useEffect(() => {
+    if (prev.current === theme) return;
+    prev.current = theme;
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    setAnim({ toLight: theme === "light", nonce: Date.now() });
+  }, [theme]);
+
+  useEffect(() => {
+    if (!anim) return;
+    const t = window.setTimeout(() => setAnim(null), ANIM_MS);
+    return () => window.clearTimeout(t);
+  }, [anim]);
+
+  const src = anim
+    ? `/brand/ow-theme-switch${anim.toLight ? "-reverse" : ""}.webp?v=${anim.nonce}`
+    : theme === "dark"
+      ? "/brand/ow-dark-badge-64.png"
+      : "/brand/ow-light-badge-64.png";
+  return (
+    <img
+      src={src}
+      alt=""
+      width={20}
+      height={20}
+      draggable={false}
+      aria-hidden
+      className="select-none shrink-0"
+    />
+  );
+}
 
 const VIEWS = [
   { key: "workbench", label: "工作台", Icon: SquaresFour },
@@ -174,9 +216,12 @@ export function TopBar() {
 
   return (
     <header className="relative h-13 shrink-0 flex items-center gap-4 px-4 border-b border-edge bg-surface">
-      <div className="flex items-center gap-2.5 min-w-0">
-        <LogoMark />
-        <span className="font-semibold tracking-tight text-[15px]">Gate</span>
+      {/* 限宽 244px：顶栏 px-4 的左内边距 + 8px 间隙后，右缘恰好压在 268px 基准线内
+          （ViewSwitch 绝对定位处，与 aside 对齐）；品牌簇越界会与之重叠，
+          超出时由运行监控 chip 截断兜底。 */}
+      <div className="flex items-center gap-1.5 min-w-0 max-w-[244px]">
+        <BrandMark />
+        <span className="font-semibold tracking-tight text-[14px] shrink-0">OpenWorktree</span>
         <RunMonitor />
       </div>
 
