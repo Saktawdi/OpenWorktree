@@ -51,6 +51,7 @@ import type {
   QuestionRequestView,
   Severity,
   Snapshot,
+  TerminalEntry,
   WorkspaceSyncResult,
   GateTomlResponse,
   McpStatus,
@@ -1538,6 +1539,83 @@ export async function loadProjectTree(projectId: string, dir = ""): Promise<GitT
     appStore.setState((st) => ({ treeViews: { ...st.treeViews, [projectId]: entries } }));
   }
   return entries;
+}
+
+/* ─── 项目 → 终端（克隆目录列表 + WebSocket shell） ─── */
+
+interface RawTerminalEntry {
+  path: string;
+  label: string;
+  type: string;
+  ticket_no?: string | null;
+  ticket_title?: string | null;
+  exists?: boolean | null;
+}
+
+/** GET /api/projects/{id}/terminals — 工作区 + 各工单克隆目录（供终端选择 base 目录）。 */
+export async function loadProjectTerminals(projectId: string): Promise<TerminalEntry[]> {
+  const data = await api<{ entries?: RawTerminalEntry[] }>(
+    `/api/projects/${projectId}/terminals`,
+  );
+  return (data.entries ?? []).map((e) => ({
+    path: e.path,
+    label: e.label,
+    type: e.type === "clone" ? "clone" : "workspace",
+    ticketNo: e.ticket_no ?? null,
+    ticketTitle: e.ticket_title ?? null,
+    exists: e.exists ?? true,
+  }));
+}
+
+/** 打开项目终端 WebSocket；返回的连接按 JSON 信封收发（服务端 TerminalController）。 */
+export function openTerminalSocket(
+  projectId: string,
+  dir: string,
+  handlers: {
+    onData: (text: string) => void;
+    onExit: (code: number) => void;
+    onError: (message: string) => void;
+    onStarted: () => void;
+  },
+): WebSocket {
+  const token = appStore.getState().token;
+  const proto = window.location.protocol === "https:" ? "wss" : "ws";
+  const ws = new WebSocket(`${proto}://${window.location.host}/ws/terminal`);
+  ws.onopen = () => {
+    // 心跳：终端静置时无流量，Jetty 的 WebSocket idle timeout（30s）会掐掉连接
+    const beat = setInterval(() => {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ op: "ping" }));
+      } else {
+        clearInterval(beat);
+      }
+    }, 15000);
+    ws.addEventListener("close", () => clearInterval(beat));
+    try {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ op: "start", token, project: projectId, dir }));
+      }
+    } catch {
+      /* 连接在启动帧前即被关闭 */
+    }
+  };
+  ws.onmessage = (ev) => {
+    try {
+      const msg = JSON.parse(ev.data as string) as {
+        op: string;
+        data?: string;
+        code?: number;
+        message?: string;
+      };
+      if (msg.op === "data") handlers.onData(msg.data ?? "");
+      else if (msg.op === "exit") handlers.onExit(msg.code ?? -1);
+      else if (msg.op === "error") handlers.onError(msg.message ?? "未知错误");
+      else if (msg.op === "started") handlers.onStarted();
+    } catch {
+      /* 忽略无法解析的帧 */
+    }
+  };
+  return ws;
 }
 
 export async function createProjectLive(body: {

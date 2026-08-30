@@ -111,6 +111,26 @@ export interface GitTreeEntry {
   lastMessage: string;
 }
 
+/** 项目所属的可用终端目录：工作区本体或某个工单的克隆目录。 */
+export interface TerminalEntry {
+  path: string;
+  label: string;
+  type: "workspace" | "clone";
+  ticketNo: string | null;
+  ticketTitle: string | null;
+  exists: boolean;
+}
+
+/** 一个存活的终端会话（tab）：对应后端一个 shell 进程 + 一条 WebSocket。 */
+export interface TerminalSessionMeta {
+  id: string;
+  projectId: string;
+  projectName: string;
+  dir: string;
+  /** tab 标题：工作区 / 工单号 */
+  label: string;
+}
+
 export type ToolStatus = "running" | "ok" | "error";
 
 export type ToolIconKind = "file" | "search" | "edit" | "terminal" | "test" | "code" | "question" | "web" | "custom" | "todo";

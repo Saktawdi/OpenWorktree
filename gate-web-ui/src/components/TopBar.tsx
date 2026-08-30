@@ -16,6 +16,7 @@ import {
 import { appStore, openConnect, setView, switchProject, toggleTheme, useApp } from "../lib/store";
 import { LogoMark } from "./ui";
 import { RunMonitor } from "./RunMonitor";
+import { TerminalMinimizedChip } from "./ProjectTerminal";
 
 const VIEWS = [
   { key: "workbench", label: "工作台", Icon: SquaresFour },
@@ -187,6 +188,9 @@ export function TopBar() {
       <div className="flex-1" />
 
       <ProjectSwitcher />
+
+      {/* 最小化到后台的终端会话（进程保持运行，点击恢复工作台） */}
+      <TerminalMinimizedChip />
 
       <button
         onClick={openConnect}

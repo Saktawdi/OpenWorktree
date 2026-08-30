@@ -17,6 +17,7 @@ import type {
   QuestionRequestView,
   RestartRecord,
   SessionModelSel,
+  TerminalSessionMeta,
   Snapshot,
   TaskProgress,
   Ticket,
@@ -57,7 +58,15 @@ export interface AppState {
   token: string;
   connectOpen: boolean;
   theme: Theme;
-  view: "workbench" | "kanban" | "projects" | "agents" | "settings";
+  view: "workbench" | "kanban" | "projects" | "agents" | "settings" | "repo";
+  /** 仓库视图整页（view="repo"）当前展示的项目；null = 未打开。 */
+  repoViewProjectId: string | null;
+  /** 终端会话（tab）列表；进程与 WebSocket 随会话存活，最小化不影响运行。 */
+  terminalSessions: TerminalSessionMeta[];
+  /** 终端工作台当前激活的 tab；null = 无。 */
+  activeTerminalId: string | null;
+  /** 终端工作台展示状态：closed=无窗口，open=弹窗，minimized=缩入顶栏圆钮。 */
+  terminalView: "closed" | "open" | "minimized";
   projects: Project[];
   activeProjectId: string;
   tickets: Ticket[];
@@ -201,6 +210,10 @@ export const appStore = create<AppState>(() => ({
   connectOpen: false,
   theme: (typeof window !== "undefined" && localStorage.getItem("gate-theme") as Theme) || "dark",
   view: "workbench",
+  repoViewProjectId: null,
+  terminalSessions: [],
+  activeTerminalId: null,
+  terminalView: "closed",
   projects: [],
   activeProjectId: "",
   tickets: [],
@@ -327,6 +340,10 @@ export function seedDemo(force = false) {
     pendingQuestions: {},
     runningAgents: { count: 0, sessions: [] },
     centerTab: "chat",
+    repoViewProjectId: null,
+    terminalSessions: [],
+    activeTerminalId: null,
+    terminalView: "closed",
     agents: DEMO_AGENTS.map((a) => ({ ...a })),
     runtimes: DEMO_RUNTIMES.map((r) => ({ ...r })),
     gitViews: { "acme-checkout": GIT_ACME, "nexus-docs": GIT_NEXUS },
@@ -367,6 +384,10 @@ function tryRestore(): boolean {
       treeViews: saved.treeViews ?? cur.treeViews,
       editingTicketNo: null,
       ticketCreatorOpen: false,
+      // 终端会话依赖活的 WebSocket/进程，快照无法延续：恢复时全部作废。
+      terminalSessions: [],
+      activeTerminalId: null,
+      terminalView: "closed",
       // 恢复时没有 EventSource，生成中的回合无法续流：丢弃 stash 并定格视图里的流式标记。
       liveTurns: {},
       runningAgents: { count: 0, sessions: [] },
@@ -428,6 +449,76 @@ export function ticketByNo(no: string | null): Ticket | undefined {
 
 export function setView(view: AppState["view"]) {
   patch({ view });
+}
+
+/** 打开某项目的仓库视图整页（弹窗放大按钮跳转入口）。 */
+export function openRepoView(projectId: string) {
+  patch({ view: "repo", repoViewProjectId: projectId });
+}
+
+/** 关闭仓库视图整页，回到项目列表。 */
+export function closeRepoView() {
+  patch({ view: "projects", repoViewProjectId: null });
+}
+
+/* ─── 终端工作台：多标签 + 最小化后台（进程随会话存活） ─── */
+
+let terminalSeq = 0;
+
+/** 打开（或聚焦）一个终端会话：同项目同目录的会话幂等复用。 */
+export function openTerminalSession(meta: Omit<TerminalSessionMeta, "id">) {
+  set((st) => {
+    const existing = st.terminalSessions.find(
+      (t) => t.projectId === meta.projectId && t.dir === meta.dir,
+    );
+    if (existing) {
+      return { activeTerminalId: existing.id, terminalView: "open" as const };
+    }
+    const id = `term-${++terminalSeq}-${Date.now().toString(36)}`;
+    return {
+      terminalSessions: [...st.terminalSessions, { ...meta, id }],
+      activeTerminalId: id,
+      terminalView: "open" as const,
+    };
+  });
+}
+
+export function activateTerminalSession(id: string) {
+  patch({ activeTerminalId: id, terminalView: "open" });
+}
+
+/** 关闭一个终端会话（组件卸载即断开 WebSocket、结束 shell 进程）。 */
+export function closeTerminalSession(id: string) {
+  set((st) => {
+    const terminalSessions = st.terminalSessions.filter((t) => t.id !== id);
+    const activeTerminalId =
+      st.activeTerminalId === id
+        ? (terminalSessions[terminalSessions.length - 1]?.id ?? null)
+        : st.activeTerminalId;
+    return {
+      terminalSessions,
+      activeTerminalId,
+      terminalView:
+        terminalSessions.length === 0
+          ? ("closed" as const)
+          : st.terminalView === "open"
+            ? ("open" as const)
+            : st.terminalView,
+    };
+  });
+}
+
+export function closeAllTerminalSessions() {
+  patch({ terminalSessions: [], activeTerminalId: null, terminalView: "closed" });
+}
+
+/** 最小化终端工作台：会话与进程保持运行，顶栏圆钮可恢复。 */
+export function minimizeTerminal() {
+  patch({ terminalView: "minimized" });
+}
+
+export function restoreTerminal() {
+  patch({ terminalView: "open" });
 }
 
 export function setCenterTab(tab: CenterTab) {

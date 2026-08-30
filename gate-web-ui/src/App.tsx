@@ -5,6 +5,8 @@ import { TopBar } from "./components/TopBar";
 import { Workbench } from "./components/Workbench";
 import { KanbanBoard } from "./components/KanbanBoard";
 import { ProjectsPage } from "./components/ProjectsPage";
+import { RepoViewPage } from "./components/RepoView";
+import { TerminalWorkbench } from "./components/ProjectTerminal";
 import { AgentsPage } from "./components/AgentsPage";
 import { SettingsPage } from "./components/SettingsPage";
 import { ConnectionDialog } from "./components/ConnectionDialog";
@@ -36,9 +38,11 @@ export default function App() {
       {view === "workbench" && <Workbench />}
       {view === "kanban" && <KanbanBoard />}
       {view === "projects" && <ProjectsPage />}
+      {view === "repo" && <RepoViewPage />}
       {view === "agents" && <AgentsPage />}
       {view === "settings" && <SettingsPage />}
       <ConnectionDialog />
+      <TerminalWorkbench />
       <Toast />
     </div>
   );

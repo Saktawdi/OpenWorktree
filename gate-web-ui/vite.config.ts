@@ -14,6 +14,10 @@ export default defineConfig({
         target: backend,
         changeOrigin: true,
       },
+      "/ws": {
+        target: backend,
+        ws: true,
+      },
     },
   },
 });
