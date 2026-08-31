@@ -1208,14 +1208,15 @@ export async function livePresubmit(no: string) {
 }
 
 /**
- * T-118 基座同步：把工单 clone 与权威分支快进到主分支最新 tip，未提交改动 stash 后原样重放。
+ * T-118 基座同步：先把源仓库（注册工作区）的基分支导入权威镜像，再把工单 clone 与权威分支
+ * 快进到基分支最新 tip，未提交改动 stash 后原样重放。
  */
 export async function liveSyncBase(no: string) {
   setGateBusy(no, true);
   try {
     const r = await api<{
       ticket_no: string;
-      status: "synced" | "healed" | "up_to_date" | "skipped";
+      status: "synced" | "healed" | "replanted" | "up_to_date" | "skipped";
       behind: number;
       from_tip: string | null;
       to_tip: string | null;
@@ -1223,12 +1224,27 @@ export async function liveSyncBase(no: string) {
       conflicts: string[];
       stash_kept: boolean;
       skipped_reason?: string;
+      import_kind?: "up_to_date" | "fast_forwarded" | "adopted" | "skipped";
+      import_reason?: string;
     }>(`/api/tickets/${no}/sync-base`, { method: "POST", body: JSON.stringify({ allow_dirty: true }) });
     await refreshTicket(no);
     if (r.status === "skipped") {
       showToast(`基座同步已跳过：${r.skipped_reason ?? "未知原因"}`);
+    } else if (r.import_kind === "skipped" && r.import_reason) {
+      // 基线本身没动（多为源仓库历史分叉等需人工处理的情况），必须可见，不能静默。
+      pushSystemMessage(no, `基座同步完成，但源仓库基线未导入：${r.import_reason}`, "warn");
+    } else if (r.import_kind === "fast_forwarded" || r.import_kind === "adopted") {
+      pushSystemMessage(
+        no,
+        r.import_kind === "adopted"
+          ? "已从源仓库采纳基线并同步工单基座：源仓库历史已进入克隆目录"
+          : `已从源仓库导入基线并同步工单基座（前进 ${r.behind} 个提交）`,
+        "success",
+      );
     } else if (r.status === "up_to_date") {
       pushSystemMessage(no, "基座已是最新，无需同步", "info");
+    } else if (r.status === "replanted") {
+      pushSystemMessage(no, "工单分支已重锚到源仓库基线，未提交改动已原样保留", "success");
     } else if (r.conflicts.length > 0) {
       pushSystemMessage(
         no,

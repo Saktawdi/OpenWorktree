@@ -43,6 +43,14 @@ public final class GitCliTopologyInitializer implements TopologyInitializer {
     private static final CommitIdentity SEED_IDENTITY =
             new CommitIdentity("gate", "gate@localhost", "1700000000 +0000");
 
+    /**
+     * The seed commit's exact subject. The pre-receive hook demands exactly one parent, so no
+     * other root commit can ever enter an auth repo — subject + singleton {@code .gitkeep} tree
+     * therefore identify "this branch tip is still the untouched bootstrap seed" unambiguously,
+     * which the base importer relies on when adopting a workspace's unrelated history.
+     */
+    static final String SEED_COMMIT_SUBJECT = "gate: seed base commit";
+
     private final GitCli git;
     private final HookInstaller hookInstaller;
     private final List<String> targetRefWhitelist;
@@ -182,7 +190,7 @@ public final class GitCliTopologyInitializer implements TopologyInitializer {
             env.put("GIT_COMMITTER_NAME", SEED_IDENTITY.name());
             env.put("GIT_COMMITTER_EMAIL", SEED_IDENTITY.email());
             env.put("GIT_COMMITTER_DATE", SEED_IDENTITY.date());
-            git.must(seedDir, env, "commit", "-m", "gate: seed base commit");
+            git.must(seedDir, env, "commit", "-m", SEED_COMMIT_SUBJECT);
 
             // Land the seed via a server-side fetch into the bare repo, never via `git push`:
             // on a re-init the previously installed pre-receive hook is still live and would

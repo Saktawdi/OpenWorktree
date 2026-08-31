@@ -201,6 +201,190 @@ class BaseSyncApiTest {
         assertTrue(res.body().contains("\"behind\":0"), res.body());
     }
 
+    @Test
+    void workspace_commit_imported_into_mirror_then_synced_into_clone() throws Exception {
+        // The T-125 shape, ongoing half: the human commits in the registered workspace, the
+        // gate-owned mirror knows nothing of it, and the old sync reported up_to_date forever.
+        // The sync must first import the workspace base into the mirror, then land it in the
+        // clone.
+        String projectId = registerWorkspaceProject("WSIMP", true);
+        String ticketNo = createProjectTicket(projectId, "WSIMP-1");
+        Path workspace = Path.of(projectWorkspace(projectId));
+        Path clone = harness.components().config().clonesRoot().resolve(ticketNo);
+
+        // The human adds a doc directory in the workspace and commits it on the base branch.
+        Files.createDirectories(workspace.resolve("doc"));
+        Files.writeString(workspace.resolve("doc").resolve("guide.md"), "导入的文档\n");
+        commitInWorkspace(workspace, "建立doc文档库");
+
+        HttpResponse<String> res = post("/api/tickets/" + ticketNo + "/sync-base", "{}");
+        assertEquals(200, res.statusCode(), res.body());
+        assertTrue(res.body().contains("\"import_kind\":\"fast_forwarded\""), res.body());
+        assertTrue(res.body().contains("\"status\":\"synced\""), res.body());
+        assertTrue(res.body().contains("\"behind\":1"), res.body());
+        assertEquals("导入的文档\n", Files.readString(clone.resolve("doc").resolve("guide.md")),
+                "the workspace commit must reach the clone via the mirror import");
+
+        // A second sync without new workspace work stays up_to_date (no double import).
+        HttpResponse<String> again = post("/api/tickets/" + ticketNo + "/sync-base", "{}");
+        assertEquals(200, again.statusCode(), again.body());
+        assertTrue(again.body().contains("\"import_kind\":\"up_to_date\""), again.body());
+        assertTrue(again.body().contains("\"status\":\"up_to_date\""), again.body());
+    }
+
+    @Test
+    void unrelated_workspace_history_is_adopted_and_seed_clone_replanted() throws Exception {
+        // The full T-125 incident: the ticket was cut while the workspace had no commits yet, so
+        // mirror base, ticket branch and clone all sit on the empty gate seed. The human then
+        // builds real (unrelated) history in the workspace — the sync must adopt it as the new
+        // base and replant the seed-only branch and clone onto it.
+        String projectId = registerWorkspaceProject("WSADOPT", false);
+        String ticketNo = createProjectTicket(projectId, "WSADOPT-1");
+        Path workspace = Path.of(projectWorkspace(projectId));
+        Path projectMirror = Path.of(projectAuthRepo(projectId));
+        Path clone = harness.components().config().clonesRoot().resolve(ticketNo);
+        var git = harness.components().git();
+        String seedTip = tip(projectMirror, "refs/heads/main");
+        assertEquals(seedTip, tip(clone, "HEAD"), "the fresh clone starts on the gate seed");
+
+        // The human turns the workspace into a real repository with its own root.
+        git.must(gate.domain.git.RepoRef.of(workspace), "init", "-b", "main");
+        Files.writeString(workspace.resolve("doc-base.md"), "建立doc文档库\n");
+        commitInWorkspace(workspace, "建立doc文档库");
+
+        HttpResponse<String> res = post("/api/tickets/" + ticketNo + "/sync-base", "{}");
+        assertEquals(200, res.statusCode(), res.body());
+        assertTrue(res.body().contains("\"import_kind\":\"adopted\""), res.body());
+        assertTrue(res.body().contains("\"status\":\"replanted\""), res.body());
+
+        String wsTip = tip(workspace, "refs/heads/main");
+        assertEquals(wsTip, tip(projectMirror, "refs/heads/main"),
+                "the mirror base must adopt the workspace lineage");
+        assertEquals(wsTip, tip(projectMirror, "refs/heads/" + ticketNo),
+                "the seed-only authoritative ticket branch is replanted alongside");
+        assertEquals(wsTip, tip(clone, "HEAD"),
+                "the seed clone must be replanted onto the adopted base");
+        assertEquals("建立doc文档库\n", Files.readString(clone.resolve("doc-base.md")),
+                "the adopted workspace content must be present in the clone");
+    }
+
+    @Test
+    void diverged_workspace_history_is_never_imported() throws Exception {
+        // Adoption is reserved for the pure-seed baseline: once real history sits in the mirror,
+        // an unrelated workspace line must be refused, not force-merged (fail-closed).
+        String projectId = registerWorkspaceProject("WSDIV", true);
+        String ticketNo = createProjectTicket(projectId, "WSDIV-1");
+        Path workspace = Path.of(projectWorkspace(projectId));
+        Path projectMirror = Path.of(projectAuthRepo(projectId));
+        var git = harness.components().git();
+        String mirrorBefore = tip(projectMirror, "refs/heads/main");
+
+        // The workspace is wiped and rebuilt on an independent root.
+        deleteRecursively(workspace.resolve(".git"));
+        git.must(gate.domain.git.RepoRef.of(workspace), "init", "-b", "main");
+        Files.writeString(workspace.resolve("elsewhere.md"), "独立演化的工作区提交\n");
+        commitInWorkspace(workspace, "独立演化的工作区提交");
+
+        HttpResponse<String> res = post("/api/tickets/" + ticketNo + "/sync-base", "{}");
+        assertEquals(200, res.statusCode(), res.body());
+        assertTrue(res.body().contains("\"import_kind\":\"skipped\""), res.body());
+        assertTrue(res.body().contains("历史分叉"), res.body());
+        assertEquals(mirrorBefore, tip(projectMirror, "refs/heads/main"),
+                "the mirror base must stay untouched on refusal");
+    }
+
+    @Test
+    void project_registration_adopts_existing_workspace_history() throws Exception {
+        // Registering a project against a pre-existing repository must adopt its history right
+        // away, so the very first ticket clone is cut from the real baseline, not the seed.
+        String projectId = registerWorkspaceProject("WSREG", true);
+        Path workspace = Path.of(projectWorkspace(projectId));
+        Path projectMirror = Path.of(projectAuthRepo(projectId));
+
+        assertEquals(tip(workspace, "refs/heads/main"), tip(projectMirror, "refs/heads/main"),
+                "registration must adopt the workspace history into the mirror");
+    }
+
+    /**
+     * Registers a project over a fresh workspace directory, optionally seeded with an independent
+     * git history (root commit holding {@code doc-base.md}) before registration — the shape of a
+     * pre-existing human repository.
+     */
+    private String registerWorkspaceProject(String name, boolean preSeedHistory) throws Exception {
+        Path workspace = harness.root().resolve("ws-" + name.toLowerCase() + "-" + System.nanoTime());
+        Files.createDirectories(workspace);
+        var git = harness.components().git();
+        if (preSeedHistory) {
+            git.must(gate.domain.git.RepoRef.of(workspace), "init", "-b", "main");
+            Files.writeString(workspace.resolve("doc-base.md"), "项目基线内容\n");
+            commitInWorkspace(workspace, "初始化源仓库");
+        }
+        HttpResponse<String> res = post("/api/projects", "{\"name\":\"" + name
+                + "\",\"workspace_path\":\"" + workspace.toString().replace('\\', '/') + "\"}");
+        assertEquals(201, res.statusCode(), res.body());
+        return extract(res.body(), "id");
+    }
+
+    private String projectAuthRepo(String projectId) throws Exception {
+        HttpResponse<String> res = get("/api/projects");
+        var projects = (java.util.List<?>)
+                ((java.util.Map<?, ?>) gate.application.util.MiniJson.parse(res.body().trim()))
+                        .get("projects");
+        for (Object o : projects) {
+            var p = (java.util.Map<?, ?>) o;
+            if (projectId.equals(String.valueOf(p.get("id")))) {
+                return String.valueOf(p.get("auth_repo"));
+            }
+        }
+        throw new AssertionError("project not found: " + projectId);
+    }
+
+    private String projectWorkspace(String projectId) throws Exception {
+        HttpResponse<String> res = get("/api/projects");
+        var projects = (java.util.List<?>)
+                ((java.util.Map<?, ?>) gate.application.util.MiniJson.parse(res.body().trim()))
+                        .get("projects");
+        for (Object o : projects) {
+            var p = (java.util.Map<?, ?>) o;
+            if (projectId.equals(String.valueOf(p.get("id")))) {
+                return String.valueOf(p.get("workspace_path"));
+            }
+        }
+        throw new AssertionError("project not found: " + projectId);
+    }
+
+    private String createProjectTicket(String projectId, String ticketNo) throws Exception {
+        HttpResponse<String> res = post("/api/projects/" + projectId + "/tickets",
+                "{\"ticket_no\":\"" + ticketNo + "\",\"title\":\"t\"}");
+        assertEquals(201, res.statusCode(), res.body());
+        return ticketNo;
+    }
+
+    private void commitInWorkspace(Path workspace, String message) {
+        var git = harness.components().git();
+        git.must(gate.domain.git.RepoRef.of(workspace), "add", "-A");
+        git.must(gate.domain.git.RepoRef.of(workspace), "-c", "user.name=human",
+                "-c", "user.email=human@localhost", "commit", "-m", message);
+    }
+
+    private static void deleteRecursively(Path root) throws Exception {
+        if (!Files.exists(root)) {
+            return;
+        }
+        try (var walk = Files.walk(root)) {
+            walk.sorted(java.util.Comparator.reverseOrder()).forEach(p -> {
+                try {
+                    // git object files are read-only on Windows; force-writable before delete
+                    p.toFile().setWritable(true);
+                    Files.delete(p);
+                } catch (java.io.IOException e) {
+                    throw new RuntimeException(e);
+                }
+            });
+        }
+    }
+
+
     /**
      * Adds {@code n} empty commits to the authoritative main branch. The commit is built in a
      * throwaway clone and landed with a server-side {@code git fetch} into the bare repo — the

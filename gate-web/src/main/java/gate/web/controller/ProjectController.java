@@ -40,17 +40,20 @@ public final class ProjectController implements WebController {
     private final TopologyInitializer topologyInitializer;
     private final GateConfig config;
     private final WorkspaceSyncer workspaceSyncer;
+    private final gate.ports.git.CloneBaseSyncer cloneBaseSyncer;
     private final GitCli git;
     private final gate.ports.infra.Clock clock;
 
     public ProjectController(ProjectRepository projects, TicketRepository tickets,
                              TopologyInitializer topologyInitializer, GateConfig config,
-                             WorkspaceSyncer workspaceSyncer, GitCli git, gate.ports.infra.Clock clock) {
+                             WorkspaceSyncer workspaceSyncer, gate.ports.git.CloneBaseSyncer cloneBaseSyncer,
+                             GitCli git, gate.ports.infra.Clock clock) {
         this.projects = projects;
         this.tickets = tickets;
         this.topologyInitializer = topologyInitializer;
         this.config = config;
         this.workspaceSyncer = workspaceSyncer;
+        this.cloneBaseSyncer = cloneBaseSyncer;
         this.git = git;
         this.clock = clock;
     }
@@ -142,6 +145,14 @@ public final class ProjectController implements WebController {
                         .orElse(config.primaryTargetRef());
         topologyInitializer.initAuthRepo(RepoRef.of(projectAuthRepo), effectiveTargetRef,
                 config.approvalsDir());
+        // T-125: when the workspace already carries real history, the mirror adopts it as the
+        // base instead of keeping the empty gate seed — otherwise the first clones are cut from
+        // an empty baseline and the project's actual files never reach them. Fail-open: a
+        // non-git or commit-less workspace just keeps the seed.
+        if (cloneBaseSyncer != null && Files.exists(workspace.resolve(".git"))) {
+            cloneBaseSyncer.importWorkspaceBase(RepoRef.of(workspace), RepoRef.of(projectAuthRepo),
+                    effectiveTargetRef);
+        }
         Project p = new Project(id, name, workspace.toString(),
                 effectiveTargetRef, projectAuthRepo.toString(), priority, size, tags, now, now);
         projects.insert(p);

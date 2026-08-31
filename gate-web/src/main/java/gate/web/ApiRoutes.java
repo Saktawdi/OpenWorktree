@@ -30,7 +30,7 @@ public final class ApiRoutes implements WebController {
                 new AuthController(c.credentials()),
                 new StatusController(c.gateService(), c.config(), c.runtimeInfo()),
                 new ProjectController(c.projectRepository(), c.ticketRepository(), c.topologyInitializer(),
-                        c.config(), c.workspaceSyncer(), c.git(), c.clock()),
+                        c.config(), c.workspaceSyncer(), c.cloneBaseSyncer(), c.git(), c.clock()),
                 new RepoViewController(c.projectRepository(), c.git()),
                 new TerminalController(c.projectRepository(), c.ticketRepository(), c.credentials()),
                 new TicketController(c.ticketRepository(), c.projectRepository(), c.agentConfigRepository(),

@@ -67,22 +67,52 @@ public final class BaseSyncHandler implements BaseSynchronizer {
         }
 
         var topology = authResolver.forTicket(ticket);
+        String baseRef = authResolver.baseRefFor(ticket);
+
+        // T-125: humans commit in the registered workspace, not in the gate-owned mirror. Without
+        // importing the workspace's base branch first, the mirror — and with it every clone —
+        // never sees that work, and every sync truthfully reports "up_to_date" against a base
+        // that is itself stale. Read-only on the workspace and fail-open: a refused import
+        // degrades to an audit note and the sync proceeds against the mirror as-is.
+        CloneBaseSyncer.ImportResult imported = null;
+        java.nio.file.Path workspace = authResolver.workspaceFor(ticket).orElse(null);
+        if (workspace != null) {
+            imported = syncer.importWorkspaceBase(RepoRef.of(workspace), topology.authRepo(), baseRef);
+            if (imported.kind() != CloneBaseSyncer.ImportKind.UP_TO_DATE) {
+                auditLog.append(gate.domain.audit.AuditEvent.of(clock.now(),
+                        imported.kind() == CloneBaseSyncer.ImportKind.SKIPPED
+                                ? "basesync.import_skipped" : "basesync.import",
+                        ticket.ticketNo(), null,
+                        Map.of("trigger", command.trigger(),
+                                "kind", imported.kind().name().toLowerCase(java.util.Locale.ROOT),
+                                "tip", imported.tip() == null ? "" : imported.tip(),
+                                "reason", imported.skippedReason() == null
+                                        ? "" : imported.skippedReason())));
+            }
+        }
 
         CloneBaseSyncer.Report report = syncer.sync(
                 RepoRef.of(java.nio.file.Path.of(ticket.clonePath())),
-                topology.authRepo(), ticket.targetRef(), authResolver.baseRefFor(ticket),
-                command.allowDirty());
+                topology.authRepo(), ticket.targetRef(), baseRef,
+                command.allowDirty()).withImport(imported);
 
         String event = "skipped".equals(report.status()) ? "basesync.skipped" : "basesync.ok";
-        auditLog.append(gate.domain.audit.AuditEvent.of(clock.now(), event, ticket.ticketNo(), null,
-                Map.of("trigger", command.trigger(),
-                        "status", report.status(),
-                        "behind", String.valueOf(report.behind()),
-                        "from", report.fromTip() == null ? "" : report.fromTip(),
-                        "to", report.toTip() == null ? "" : report.toTip(),
-                        "auth_moved", String.valueOf(report.branchMoved()),
-                        "conflicts", String.join(",", report.conflicts()),
-                        "reason", report.skippedReason() == null ? "" : report.skippedReason())));
+        Map<String, String> fields = new java.util.LinkedHashMap<>();
+        fields.put("trigger", command.trigger());
+        fields.put("status", report.status());
+        fields.put("behind", String.valueOf(report.behind()));
+        fields.put("from", report.fromTip() == null ? "" : report.fromTip());
+        fields.put("to", report.toTip() == null ? "" : report.toTip());
+        fields.put("auth_moved", String.valueOf(report.branchMoved()));
+        fields.put("conflicts", String.join(",", report.conflicts()));
+        fields.put("reason", report.skippedReason() == null ? "" : report.skippedReason());
+        if (report.importKind() != null) {
+            fields.put("import", report.importKind());
+            if (report.importReason() != null) {
+                fields.put("import_reason", report.importReason());
+            }
+        }
+        auditLog.append(gate.domain.audit.AuditEvent.of(clock.now(), event, ticket.ticketNo(), null, fields));
         return report;
     }
 }

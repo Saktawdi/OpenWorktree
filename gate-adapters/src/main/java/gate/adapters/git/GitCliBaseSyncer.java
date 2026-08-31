@@ -5,9 +5,9 @@ import gate.domain.error.GateException;
 import gate.domain.git.RepoRef;
 import gate.ports.git.CloneBaseSyncer;
 import gate.ports.infra.ProcessRunner;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 
 /**
  * The only {@link CloneBaseSyncer} implementation: real git binary, real refs (架构落地执行文档
@@ -18,10 +18,15 @@ import java.util.Map;
  * {@code reset} covers both "clone behind base" (ticket sat in the queue) and "clone behind its
  * own branch" (a publish advanced the branch, T-113 round-2 incident). When the branch cannot
  * fast-forward onto base, the branch tip itself is the target; the clone still catches up, the
- * base-freshness goal simply waits.
+ * base-freshness goal simply waits. A branch (or clone HEAD) still sitting on the untouched
+ * bootstrap seed is the one exception: it carries no work, so when the base jumped to the
+ * workspace's own lineage (see {@link #importWorkspaceBase}) it is <em>replanted</em> onto the new
+ * baseline instead of being declared diverged forever (the T-125 bug).
  *
  * <p>Mutation order is chosen so every crash point converges on the next run:
  * <ol>
+ *   <li>import the workspace base branch into the authoritative mirror (read-only on the
+ *       workspace; the mirror's base only fast-forwards, or adopts while it is still pure seed);</li>
  *   <li>fetch base + target refs into {@code refs/gate-sync/*} (objects land locally, no worktree
  *       or ref of consequence is touched);</li>
  *   <li>CAS-fast-forward the authoritative targetRef when base allows it (fails harmlessly if a
@@ -31,7 +36,7 @@ import java.util.Map;
  *       content-identical divergence heal, which moves no worktree byte;</li>
  *   <li>pop the stash back; conflicts stay in the worktree and the stash entry survives.</li>
  * </ol>
- * A crash between 2 and 4 leaves the clone behind, which is exactly the state this sync repairs —
+ * A crash between 3 and 5 leaves the clone behind, which is exactly the state this sync repairs —
  * idempotent by construction.
  */
 public final class GitCliBaseSyncer implements CloneBaseSyncer {
@@ -76,11 +81,15 @@ public final class GitCliBaseSyncer implements CloneBaseSyncer {
         // targetRef tip"; base freshness is the secondary goal, so when the authoritative branch
         // can fast-forward onto the base tip we take the base tip (one hop covers both the
         // queue-stale and the just-published state), otherwise the branch tip itself (a publish
-        // advanced it while main did not yet contain it — the normal in-flight shape).
+        // advanced it while main did not yet contain it — the normal in-flight shape). A branch
+        // that never left the seed baseline is replanted onto the base tip even across a lineage
+        // jump: it holds no commit worth freezing.
         boolean branchCanFollowBase = isAncestor(authRepo, authTip, mainTip);
-        boolean branchMoved = branchCanFollowBase && !authTip.equals(mainTip);
-        String finalTip = branchCanFollowBase ? mainTip : authTip;
-        String finalTipInClone = branchCanFollowBase ? SYNC_BASE_REF : SYNC_TARGET_REF;
+        boolean branchIsSeed = !branchCanFollowBase && isSeedCommit(authRepo, authTip);
+        boolean followBase = branchCanFollowBase || branchIsSeed;
+        boolean branchMoved = followBase && !authTip.equals(mainTip);
+        String finalTip = followBase ? mainTip : authTip;
+        String finalTipInClone = followBase ? SYNC_BASE_REF : SYNC_TARGET_REF;
 
         if (cloneHead.equals(finalTip)) {
             if (branchMoved) {
@@ -98,18 +107,20 @@ public final class GitCliBaseSyncer implements CloneBaseSyncer {
         // skipped outcome below leaves repo state untouched.
         boolean fastForwardable = isAncestor(cloneRepo, cloneHead, finalTipInClone);
         boolean contentIdentical = !fastForwardable && treesEqual(cloneRepo, cloneHead, finalTipInClone);
-        if (!fastForwardable && !contentIdentical) {
+        boolean replant = !fastForwardable && !contentIdentical && isSeedCommit(cloneRepo, cloneHead);
+        if (!fastForwardable && !contentIdentical && !replant) {
             return skipped(behindBase, cloneHead,
                     "clone 与工单分支/基分支历史分叉（存在对方都不包含的本地提交），需要人工处理");
         }
 
         boolean dirty = isDirty(cloneRepo);
-        if (fastForwardable && dirty && !allowDirty) {
+        boolean hardLanding = fastForwardable || replant;
+        if (hardLanding && dirty && !allowDirty) {
             return skipped(behindBase, cloneHead,
                     "clone 工作区有未提交改动；为避免干扰已跳过同步（可手动同步重放改动）");
         }
         boolean stashed = false;
-        if (fastForwardable && dirty) {
+        if (hardLanding && dirty) {
             ProcessRunner.ProcRun stash = git.run(cloneRepo,
                     "-c", "user.name=gate", "-c", "user.email=gate@localhost",
                     "stash", "push", "-u", "-m", "gate-sync-base");
@@ -129,9 +140,11 @@ public final class GitCliBaseSyncer implements CloneBaseSyncer {
             }
         }
 
-        if (fastForwardable) {
+        if (hardLanding) {
             // Fast-forward the clone: covers the clone lagging its own branch (publish advanced
-            // it) as well as the clone lagging base (ticket sat in the queue).
+            // it) as well as the clone lagging base (ticket sat in the queue). The replant path
+            // reuses the same reset even across unrelated histories — the seed baseline holds no
+            // committed work, and uncommitted work was stashed above.
             ProcessRunner.ProcRun reset = git.run(cloneRepo, "reset", "--hard", finalTipInClone);
             if (!reset.ok()) {
                 undoStash(cloneRepo, stashed);
@@ -148,7 +161,7 @@ public final class GitCliBaseSyncer implements CloneBaseSyncer {
                 }
             }
             String toTip = resolve(cloneRepo, "HEAD");
-            return new Report("synced", behindBase, cloneHead, toTip, branchMoved,
+            return new Report(replant ? "replanted" : "synced", behindBase, cloneHead, toTip, branchMoved,
                     List.copyOf(conflicts), stashKept, null);
         }
 
@@ -159,6 +172,81 @@ public final class GitCliBaseSyncer implements CloneBaseSyncer {
             return skipped(behindBase, cloneHead, "soft re-point failed: " + reset.stderrFirstLine());
         }
         return new Report("healed", behindBase, cloneHead, finalTip, branchMoved, List.of(), false, null);
+    }
+
+    @Override
+    public ImportResult importWorkspaceBase(RepoRef workspaceRepo, RepoRef authRepo, String baseRef) {
+        try {
+            if (workspaceRepo == null || !Files.isDirectory(workspaceRepo.path())
+                    || !Files.exists(workspaceRepo.path().resolve(".git"))) {
+                return skippedImport(authRepo, baseRef, "registered workspace is not a git repository");
+            }
+            String branch = baseRef.startsWith("refs/heads/")
+                    ? baseRef.substring("refs/heads/".length()) : baseRef;
+            ProcessRunner.ProcRun wsTipRun = git.run(workspaceRepo, "rev-parse", "--verify",
+                    "refs/heads/" + branch);
+            if (!wsTipRun.ok()) {
+                return skippedImport(authRepo, baseRef,
+                        "workspace has no " + branch + " branch (no commits yet?)");
+            }
+            String workspaceTip = wsTipRun.stdout().trim();
+            String authTip = resolve(authRepo, baseRef);
+            if (authTip == null) {
+                return new ImportResult(ImportKind.SKIPPED, null,
+                        "authoritative repo has no " + baseRef + " branch");
+            }
+            if (workspaceTip.equals(authTip)) {
+                return new ImportResult(ImportKind.UP_TO_DATE, authTip, null);
+            }
+
+            // Objects only: a bare refspec writes FETCH_HEAD and touches no branch of the mirror.
+            ProcessRunner.ProcRun fetch = git.run(authRepo, "fetch", workspaceRepo.pathString(),
+                    "refs/heads/" + branch);
+            if (!fetch.ok()) {
+                return skippedImport(authRepo, baseRef,
+                        "fetch from workspace failed: " + fetch.stderrFirstLine());
+            }
+            String fetchedTip = resolve(authRepo, "FETCH_HEAD");
+            if (fetchedTip == null || !fetchedTip.equals(workspaceTip)) {
+                return skippedImport(authRepo, baseRef,
+                        "workspace " + branch + " moved during import; the next sync retries");
+            }
+
+            if (isAncestor(authRepo, authTip, fetchedTip)) {
+                // Ordinary fast-forward: the workspace built on what the mirror already holds.
+                if (!updateRef(authRepo, baseRef, fetchedTip, authTip)) {
+                    return skippedImport(authRepo, baseRef,
+                            "authoritative base move failed (moved concurrently?)");
+                }
+                return new ImportResult(ImportKind.FAST_FORWARDED, fetchedTip, null);
+            }
+            if (isAncestor(authRepo, fetchedTip, authTip)) {
+                return skippedImport(authRepo, baseRef, "workspace " + branch
+                        + " 落后于权威基座（可能存在已发布提交待回写工作区），不导入较旧的 tip");
+            }
+
+            // Unrelated histories. Adopting the workspace line wholesale is legitimate only while
+            // the mirror's base is still the pure bootstrap seed — real (published) history is
+            // never discarded, and a genuine divergence is left for a human to merge.
+            if (!isSeedCommit(authRepo, authTip)) {
+                return skippedImport(authRepo, baseRef, "workspace " + branch
+                        + " 与权威基线历史分叉（互不包含），保持镜像不动，需要人工合并");
+            }
+            if (!updateRef(authRepo, baseRef, fetchedTip, authTip)) {
+                return skippedImport(authRepo, baseRef,
+                        "authoritative base move failed (moved concurrently?)");
+            }
+            return new ImportResult(ImportKind.ADOPTED, fetchedTip, null);
+        } catch (Exception e) {
+            String message = e.getMessage();
+            return new ImportResult(ImportKind.SKIPPED, null,
+                    message == null || message.isBlank() ? e.getClass().getSimpleName() : message);
+        }
+    }
+
+    private ImportResult skippedImport(RepoRef authRepo, String baseRef, String reason) {
+        String tip = authRepo == null ? null : resolve(authRepo, baseRef);
+        return new ImportResult(ImportKind.SKIPPED, tip, reason);
     }
 
     private void undoStash(RepoRef cloneRepo, boolean stashed) {
@@ -206,6 +294,30 @@ public final class GitCliBaseSyncer implements CloneBaseSyncer {
         return exit == 0;
     }
 
+    /**
+     * True when {@code commit} is the untouched bootstrap seed. The pre-receive hook demands
+     * exactly one parent, so no other root commit can ever enter an auth repo; subject plus the
+     * singleton {@code .gitkeep} tree pin the identification on both sides of the adoption
+     * decision (mirror base tip, ticket branch tip, clone HEAD).
+     */
+    private boolean isSeedCommit(RepoRef repo, String commit) {
+        ProcessRunner.ProcRun subject = git.run(repo, "log", "-1", "--format=%s", commit);
+        if (!subject.ok() || !GitCliTopologyInitializer.SEED_COMMIT_SUBJECT.equals(subject.stdout().trim())) {
+            return false;
+        }
+        ProcessRunner.ProcRun tree = git.run(repo, "ls-tree", "-r", "--name-only", commit);
+        if (!tree.ok()) {
+            return false;
+        }
+        List<String> files = tree.stdout().lines().map(String::trim).filter(s -> !s.isEmpty()).toList();
+        return files.equals(List.of(".gitkeep"));
+    }
+
+    /** CAS {@code update-ref}: succeeds only when the ref still sits on {@code oldTip}. */
+    private boolean updateRef(RepoRef repo, String ref, String newTip, String oldTip) {
+        return git.run(repo, "update-ref", ref, newTip, oldTip).ok();
+    }
+
     private boolean isDirty(RepoRef cloneRepo) {
         ProcessRunner.ProcRun status = git.run(cloneRepo, "status", "--porcelain");
         if (!status.ok()) {
@@ -231,7 +343,7 @@ public final class GitCliBaseSyncer implements CloneBaseSyncer {
     /** Merge / cherry-pick / rebase in progress cannot be expressed by a fast-forward sync. */
     private static void assertNoMergeInProgress(RepoRef cloneRepo) {
         for (String marker : List.of("MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "REBASE_HEAD")) {
-            if (java.nio.file.Files.exists(cloneRepo.path().resolve(".git").resolve(marker))) {
+            if (Files.exists(cloneRepo.path().resolve(".git").resolve(marker))) {
                 throw new GateException(GateErrorCode.REJECT_PRECONDITION,
                         "refusing base sync while " + marker + " exists");
             }

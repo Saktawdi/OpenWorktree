@@ -206,6 +206,7 @@ public final class GateRuntime {
     public gate.ports.store.SessionRepository sessionRepository() { return sessionRepository; }
     public gate.ports.store.ProjectRepository projectRepository() { return projectRepository; }
     public WorkspaceSyncer workspaceSyncer() { return workspaceSyncer; }
+    public gate.ports.git.CloneBaseSyncer cloneBaseSyncer() { return cloneBaseSyncer; }
 
     /** Seeds a provider required by the review-result foreign key. Safe to call repeatedly. */
     public void seedProvider(String id, String name, String baseUrl, String apiKeyRef, String type) {

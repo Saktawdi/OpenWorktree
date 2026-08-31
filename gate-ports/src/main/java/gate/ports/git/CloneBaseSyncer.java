@@ -37,6 +37,33 @@ public interface CloneBaseSyncer {
     Report sync(RepoRef cloneRepo, RepoRef authRepo, String targetRef, String baseRef, boolean allowDirty);
 
     /**
+     * Pulls the human workspace's {@code baseRef} branch into the authoritative repo before a
+     * ticket clone syncs against it (T-118 补环：工作区 → 权威镜像). Without this leg the mirror
+     * never sees commits made in the registered workspace, and every sync truthfully reports the
+     * clone up to date with a base that is itself stale (the T-125 bug: a fresh doc commit in the
+     * source repo could never reach the clone).
+     *
+     * <p>The import is read-only on the workspace and fail-open: any refusal degrades to
+     * {@link ImportKind#SKIPPED} with a reason and the caller proceeds against the mirror as-is.
+     */
+    ImportResult importWorkspaceBase(RepoRef workspaceRepo, RepoRef authRepo, String baseRef);
+
+    /** How the authoritative base branch came to sit on its post-import tip. */
+    enum ImportKind {
+        /** Mirror already matched the workspace branch. */
+        UP_TO_DATE,
+        /** Mirror fast-forwarded onto new workspace commits. */
+        FAST_FORWARDED,
+        /** Mirror adopted the workspace history wholesale (the seed-only line was abandoned). */
+        ADOPTED,
+        /** Nothing was moved — see {@code skippedReason}. */
+        SKIPPED
+    }
+
+    record ImportResult(ImportKind kind, String tip, String skippedReason) {
+    }
+
+    /**
      * @param status       {@code synced} (fast-forwarded), {@code healed} (content-identical
      *                     divergence re-pointed via reset --soft), {@code up_to_date},
      *                     {@code skipped}
@@ -48,8 +75,29 @@ public interface CloneBaseSyncer {
      * @param stashKept    true when a stash entry survived (conflict or pop failure) and still
      *                     holds the pre-sync worktree state
      * @param skippedReason human-readable reason, only when {@code status == "skipped"}
+     * @param importKind   lowercase {@link ImportKind} of the workspace import performed just
+     *                     before this sync, {@code null} when no import was attempted
+     * @param importReason  human-readable refusal reason, only when {@code importKind == "skipped"}
      */
     record Report(String status, int behind, String fromTip, String toTip, boolean branchMoved,
-                  List<String> conflicts, boolean stashKept, String skippedReason) {
+                  List<String> conflicts, boolean stashKept, String skippedReason,
+                  String importKind, String importReason) {
+
+        /** Legacy 8-field shape: no workspace import was attempted. */
+        public Report(String status, int behind, String fromTip, String toTip, boolean branchMoved,
+                      List<String> conflicts, boolean stashKept, String skippedReason) {
+            this(status, behind, fromTip, toTip, branchMoved, conflicts, stashKept, skippedReason, null, null);
+        }
+
+        /** The same sync outcome, annotated with the workspace-import result that preceded it. */
+        public Report withImport(ImportResult imported) {
+            if (imported == null) {
+                return this;
+            }
+            String kind = imported.kind().name().toLowerCase(java.util.Locale.ROOT);
+            String reason = imported.kind() == ImportKind.SKIPPED ? imported.skippedReason() : null;
+            return new Report(status, behind, fromTip, toTip, branchMoved, conflicts, stashKept,
+                    skippedReason, kind, reason);
+        }
     }
 }

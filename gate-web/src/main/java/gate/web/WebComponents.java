@@ -71,6 +71,7 @@ public final class WebComponents {
     private final Path gateToml;
     private final gate.ports.store.ProjectRepository projectRepository;
     private final gate.ports.git.WorkspaceSyncer workspaceSyncer;
+    private final gate.ports.git.CloneBaseSyncer cloneBaseSyncer;
     private final gate.ports.infra.KmsService kmsService;
     private final ProviderModelFetcher modelFetcher;
     private final RuntimeInfoService runtimeInfo;
@@ -121,6 +122,7 @@ public final class WebComponents {
         this.agentConfigRepository = runtime.agentConfigRepository();
         this.projectRepository = runtime.projectRepository();
         this.workspaceSyncer = runtime.workspaceSyncer();
+        this.cloneBaseSyncer = runtime.cloneBaseSyncer();
         this.kmsService = runtime.kmsService();
         this.modelFetcher = new ProviderModelFetcher(this.kmsService);
         gate.ports.store.SessionRepository sessionRepo = runtime.sessionRepository();
@@ -210,6 +212,7 @@ public final class WebComponents {
     public TicketLockManager ticketLockManager() { return ticketLockManager; }
     public gate.ports.store.ProjectRepository projectRepository() { return projectRepository; }
     public gate.ports.git.WorkspaceSyncer workspaceSyncer() { return workspaceSyncer; }
+    public gate.ports.git.CloneBaseSyncer cloneBaseSyncer() { return cloneBaseSyncer; }
     public gate.ports.infra.KmsService kmsService() { return kmsService; }
     public ProviderModelFetcher modelFetcher() { return modelFetcher; }
     public RuntimeInfoService runtimeInfo() { return runtimeInfo; }
