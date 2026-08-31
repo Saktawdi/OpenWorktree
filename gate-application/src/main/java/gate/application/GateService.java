@@ -30,5 +30,11 @@ public interface GateService {
 
     gate.ports.git.CloneBaseSyncer.Report syncBase(gate.application.basesync.SyncBaseCommand command);
 
+    /**
+     * Creates a ticket (validates, cuts the branch, materializes the clone). Serves both the web
+     * console and the agent-facing MCP {@code ticket_create} tool from one rule set.
+     */
+    gate.domain.ticket.Ticket createTicket(gate.application.ticket.CreateTicketCommand command);
+
     StatusResult status(StatusQuery query);
 }

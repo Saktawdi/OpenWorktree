@@ -207,6 +207,7 @@ class PermissionDomainTest {
     /** Provides minimal valid args for each tool so the domain check is the only thing tested. */
     private static Map<String, Object> defaultArgsFor(String tool) {
         return switch (tool) {
+            case "ticket_create" -> Map.of("title", "agent spawned follow-up");
             case "presubmit_create" -> Map.of("ticket_no", "T-1");
             case "presubmit_get_diff" -> Map.of("ticket_no", "T-1");
             case "review_result_get" -> Map.of("ticket_no", "T-1");

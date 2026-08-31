@@ -92,6 +92,7 @@ public final class McpToolDispatcher {
         }
 
         return switch (tool.name()) {
+            case "ticket_create" -> ticketCreate(arguments);
             case "presubmit_create" -> presubmitCreate(arguments);
             case "presubmit_get_diff" -> presubmitGetDiff(arguments);
             case "review_result_get" -> reviewResultGet(arguments);
@@ -125,6 +126,37 @@ public final class McpToolDispatcher {
     }
 
     // --- tool implementations ---
+
+    private Map<String, Object> ticketCreate(Map<String, Object> args) {
+        List<String> labels = null;
+        Object rawLabels = args.get("labels");
+        if (rawLabels instanceof List<?> list) {
+            labels = list.stream().map(String::valueOf).toList();
+        } else if (rawLabels != null) {
+            throw new ToolException(McpJsonRpc.INVALID_PARAMS, "labels must be an array of strings");
+        }
+        gate.domain.ticket.Ticket t = gateService.createTicket(new gate.application.ticket.CreateTicketCommand(
+                strArg(args, "ticket_no"),
+                requiredStr(args, "title"),
+                strArg(args, "project_id"),
+                strArg(args, "target_branch"),
+                null,
+                strArg(args, "priority"),
+                strArg(args, "description"),
+                strArg(args, "note"),
+                labels,
+                null));
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("ticket_no", t.ticketNo());
+        result.put("title", t.title());
+        result.put("target_ref", t.targetRef());
+        result.put("clone_path", t.clonePath());
+        result.put("stage", t.stage().name());
+        result.put("project_id", t.projectId());
+        result.put("priority", t.priority());
+        result.put("labels", t.labels());
+        return result;
+    }
 
     private Map<String, Object> presubmitCreate(Map<String, Object> args) {
         String ticketNo = requiredStr(args, "ticket_no");

@@ -62,6 +62,7 @@ public final class GateServiceImpl implements GateService {
     private final gate.application.review.ReviewHandler reviewHandler;
     private final gate.application.publish.PublishHandler publishHandler;
     private final gate.application.basesync.BaseSyncHandler baseSyncHandler;
+    private final gate.application.ticket.TicketCreationHandler ticketCreationHandler;
     private final gate.application.project.ProjectAuthResolver authResolver;
 
     public GateServiceImpl(GateConfig config, SnapshotCapture snapshotCapture, CommitPublisher commitPublisher,
@@ -141,6 +142,23 @@ public final class GateServiceImpl implements GateService {
                            gate.ports.store.ProjectRepository projects, WorkspaceSyncer workspaceSyncer,
                            gate.ports.git.CommitIdentityProvider commitIdentityProvider,
                            gate.ports.git.CloneBaseSyncer cloneBaseSyncer) {
+        this(config, snapshotCapture, commitPublisher, refObserver, approvalStore, reviewEngineFactory, gatePolicy,
+                tickets, presubmits, reviewResults, intents, blobStore, auditLog, lockManager, tx, clock,
+                publishProbe, authoritativeGitService, projects, workspaceSyncer, commitIdentityProvider,
+                cloneBaseSyncer, null);
+    }
+
+    /** Fullest constructor: {@code topologyInitializer} backs the ticket-creation use case. */
+    public GateServiceImpl(GateConfig config, SnapshotCapture snapshotCapture, CommitPublisher commitPublisher,
+                           RefObserver refObserver, ApprovalStore approvalStore, ReviewEngineFactory reviewEngineFactory,
+                           GatePolicy gatePolicy, TicketRepository tickets, PresubmitRepository presubmits,
+                           ReviewResultRepository reviewResults, PublishIntentRepository intents, BlobStore blobStore,
+                           AuditLog auditLog, LockManager lockManager, DbTransactionRunner tx, Clock clock,
+                           gate.ports.engine.PublishProbe publishProbe, gate.ports.git.AuthoritativeGitService authoritativeGitService,
+                           gate.ports.store.ProjectRepository projects, WorkspaceSyncer workspaceSyncer,
+                           gate.ports.git.CommitIdentityProvider commitIdentityProvider,
+                           gate.ports.git.CloneBaseSyncer cloneBaseSyncer,
+                           gate.ports.git.TopologyInitializer topologyInitializer) {
         this.config = config;
         this.refObserver = refObserver;
         this.tickets = tickets;
@@ -160,6 +178,9 @@ public final class GateServiceImpl implements GateService {
         this.baseSyncHandler = cloneBaseSyncer == null ? null
                 : new gate.application.basesync.BaseSyncHandler(
                         tickets, projects, config, cloneBaseSyncer, auditLog, clock);
+        this.ticketCreationHandler = topologyInitializer == null ? null
+                : new gate.application.ticket.TicketCreationHandler(
+                        tickets, projects, config, topologyInitializer, clock);
     }
 
     @Override
@@ -189,6 +210,15 @@ public final class GateServiceImpl implements GateService {
                     "base sync is not wired into this GateService instance");
         }
         return baseSyncHandler.handle(command);
+    }
+
+    @Override
+    public gate.domain.ticket.Ticket createTicket(gate.application.ticket.CreateTicketCommand command) {
+        if (ticketCreationHandler == null) {
+            throw new GateException(GateErrorCode.GATE_ERROR_CONFIG,
+                    "ticket creation is not wired into this GateService instance");
+        }
+        return ticketCreationHandler.handle(command);
     }
 
     @Override

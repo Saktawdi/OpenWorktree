@@ -58,6 +58,7 @@ class McpProtocolTest {
     @Test
     void tools_list_returns_all_registered_tools() throws Exception {
         String resp = send("{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\"}");
+        assertTrue(resp.contains("ticket_create"), "must list ticket_create");
         assertTrue(resp.contains("presubmit_create"), "must list presubmit_create");
         assertTrue(resp.contains("presubmit_get_diff"), "must list presubmit_get_diff");
         assertTrue(resp.contains("review_result_get"), "must list review_result_get");

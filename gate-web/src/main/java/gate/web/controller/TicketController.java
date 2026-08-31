@@ -170,32 +170,6 @@ public final class TicketController implements WebController {
 
     private Map<String, Object> createTicket(String requestBody, String scopedProjectId) {
         Map<String, Object> req = Json.parseObject(requestBody);
-        String requestedNo = str(req, "ticket_no");
-        if (requestedNo != null && requestedNo.isBlank()) {
-            requestedNo = null;
-        }
-        String title = str(req, "title");
-        if (title == null) {
-            title = "";
-        }
-        String ticketNo = requestedNo != null ? requestedNo : generateTicketNo();
-        if (tickets.find(ticketNo).isPresent()) {
-            throw new GateException(GateErrorCode.USAGE, "ticket already exists: " + ticketNo);
-        }
-        TicketStage stage = TicketStage.IN_PROGRESS;
-        String stageRaw = str(req, "stage");
-        if (stageRaw != null) {
-            TicketStage parsed = parseStage(stageRaw);
-            if (parsed != TicketStage.PENDING && parsed != TicketStage.IN_PROGRESS) {
-                throw new GateException(GateErrorCode.USAGE,
-                        "new ticket stage must be PENDING or IN_PROGRESS, got " + stageRaw);
-            }
-            stage = parsed;
-        }
-        String priority = parsePriority(req);
-        String description = optionalText(req, "description");
-        String note = optionalText(req, "note");
-        List<String> labels = req.containsKey("labels") ? parseTicketLabels(req) : List.of();
         String requestedProjectId = str(req, "project_id");
         if (requestedProjectId != null && requestedProjectId.isBlank()) {
             requestedProjectId = null;
@@ -206,14 +180,10 @@ public final class TicketController implements WebController {
                     "project_id does not match the project ticket board");
         }
         String projectId = scopedProjectId != null ? scopedProjectId : requestedProjectId;
-        if (projectId != null && projectId.isBlank()) {
-            projectId = null;
-        }
-        Project project = null;
-        if (projectId != null) {
-            final String pid = projectId;
-            project = projects.find(pid).orElseThrow(() -> new GateException(
-                    GateErrorCode.USAGE, "no such project: " + pid));
+        String requestedBranch = null;
+        if (req.containsKey("target_branch") || req.containsKey("target_ref")) {
+            Object raw = req.get("target_branch") != null ? req.get("target_branch") : req.get("target_ref");
+            requestedBranch = raw == null ? null : String.valueOf(raw);
         }
         String agentConfigId = str(req, "agent_config_id");
         if (agentConfigId != null && agentConfigId.isBlank()) {
@@ -222,30 +192,19 @@ public final class TicketController implements WebController {
         if (agentConfigId != null && agentConfigs.find(agentConfigId).isEmpty()) {
             throw new GateException(GateErrorCode.USAGE, "no such agent config: " + agentConfigId);
         }
-
-        // Project tickets clone from the project's own auth repo; only unaffiliated tickets use
-        // the gate-level topology (ProjectAuthResolver — cross-project clones caused T-107).
-        var topology = new gate.application.project.ProjectAuthResolver(projects, config).forNewTicket(project);
-        String primaryRef = topology.targetRef();
-        String targetRef = resolveTicketTargetRef(req, ticketNo);
-        RepoRef auth = topology.authRepo();
-        if (!java.nio.file.Files.exists(auth.path())) {
-            throw new GateException(GateErrorCode.USAGE,
-                    "auth repo for this ticket does not exist: " + auth.pathString()
-                            + " (init it before creating tickets)");
-        }
-        if (!targetRef.equals(primaryRef)) {
-            topologyInitializer.ensureBranch(auth, targetRef, primaryRef);
-        }
-        Path cloneDir = config.clonesRoot().resolve(ticketNo);
-        RepoRef clone = topologyInitializer.createClone(auth, targetRef, cloneDir);
-
-        Instant now = clock.now();
-        Ticket t = new Ticket(ticketNo, title, targetRef, clone.pathString(),
-                null, null, "manual", "human", stage, now, now,
-                null, null, agentConfigId, priority, projectId,
-                description, note, labels);
-        tickets.insert(t);
+        // One creation path with the MCP ticket_create tool — validation, auto numbering and the
+        // clone materialization cannot drift between the two entry points.
+        Ticket t = gateService.createTicket(new gate.application.ticket.CreateTicketCommand(
+                str(req, "ticket_no"),
+                str(req, "title") == null ? "" : str(req, "title"),
+                projectId,
+                requestedBranch,
+                str(req, "stage"),
+                parsePriority(req),
+                optionalText(req, "description"),
+                optionalText(req, "note"),
+                req.containsKey("labels") ? parseTicketLabels(req) : List.of(),
+                agentConfigId));
         return ticketJson(t, projectNameIndex());
     }
 
@@ -346,28 +305,6 @@ public final class TicketController implements WebController {
         return id.trim();
     }
 
-    private static String resolveTicketTargetRef(Map<String, Object> req, String ticketNo) {
-        Object raw = req.get("target_branch");
-        if (raw == null) {
-            raw = req.get("target_ref");
-        }
-        String name;
-        if (raw == null || String.valueOf(raw).isBlank()) {
-            name = ticketNo;
-        } else {
-            name = String.valueOf(raw).trim();
-            if (name.startsWith("refs/heads/")) {
-                name = name.substring("refs/heads/".length());
-            }
-        }
-        if (name.isEmpty() || name.equals(".") || name.equals("..") || name.endsWith(".lock")
-                || !name.matches("[A-Za-z0-9._-]+") || name.length() > 80) {
-            throw new GateException(GateErrorCode.USAGE,
-                    "target_branch must match [A-Za-z0-9._-]+ (single segment, no slash): " + raw);
-        }
-        return "refs/heads/" + name;
-    }
-
     /** Restart history size for the ticket JSON badge (0 when restart storage is absent). */
     private long restartCount(String ticketNo) {
         return restarts == null ? 0 : restarts.count(ticketNo);
@@ -447,6 +384,12 @@ public final class TicketController implements WebController {
             out.put("stash_kept", r.stashKept());
             if (r.skippedReason() != null) {
                 out.put("skipped_reason", r.skippedReason());
+            }
+            if (r.importKind() != null) {
+                out.put("import_kind", r.importKind());
+                if (r.importReason() != null) {
+                    out.put("import_reason", r.importReason());
+                }
             }
             ctx.status(HttpStatus.OK);
             ctx.json(out);
@@ -532,21 +475,6 @@ public final class TicketController implements WebController {
         }
         throw new GateException(GateErrorCode.USAGE,
                 "review-gated stage; use presubmit/review/publish endpoints (" + from + " -> " + to + ")");
-    }
-
-    private String generateTicketNo() {
-        java.util.regex.Pattern numbered = java.util.regex.Pattern.compile("T-(\\d+)");
-        int next = 101;
-        for (Ticket t : tickets.findAll()) {
-            java.util.regex.Matcher m = numbered.matcher(t.ticketNo());
-            if (m.matches()) {
-                next = Math.max(next, Integer.parseInt(m.group(1)) + 1);
-            }
-        }
-        while (tickets.find("T-" + next).isPresent()) {
-            next++;
-        }
-        return "T-" + next;
     }
 
     private Map<String, String> projectNameIndex() {

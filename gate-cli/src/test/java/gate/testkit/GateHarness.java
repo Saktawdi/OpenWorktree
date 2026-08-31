@@ -176,7 +176,9 @@ public final class GateHarness implements AutoCloseable {
 
         this.gateService = new GateServiceImpl(config, snapshotCapture, commitPublisher, refObserver,
                 approvalStore, reviewEngineFactory, gatePolicy, tickets, presubmits, reviewResults, intents,
-                blobStore, auditLog, lockManager, txRunner, clock);
+                blobStore, auditLog, lockManager, txRunner, clock,
+                gate.ports.engine.PublishProbe.NOOP, null, null, null, null, null,
+                this.topologyInitializer);
 
         // Build the topology: bare auth repo + seeded base + installed hook.
         this.baseCommit = topologyInitializer.initAuthRepo(RepoRef.of(config.authRepo()),

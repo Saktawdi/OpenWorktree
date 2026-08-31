@@ -12,7 +12,9 @@ import java.util.Set;
  * <p><b>Two domains, two credential sets:</b>
  * <ul>
  *   <li><b>agent domain</b> (low privilege, bound to one ticket,下发 with the worktree):
- *       {@code presubmit_create}, {@code presubmit_get_diff}, {@code review_result_get}.</li>
+ *       {@code presubmit_create}, {@code presubmit_get_diff}, {@code review_result_get} — plus
+ *       {@code ticket_create}, which is agent-callable but not ticket-bound (its whole point is
+ *       creating NEW tickets, e.g. follow-ups discovered mid-work).</li>
  *   <li><b>human/orchestrator domain</b> (high privilege):
  *       {@code review_run}, {@code commit_and_publish}, {@code config_show}, {@code provider_list}.</li>
  * </ul>
@@ -34,6 +36,37 @@ public final class McpToolRegistry {
 
     static {
         // --- agent domain (low privilege) ---
+        register(new ToolDef(
+                "ticket_create",
+                AGENT_DOMAIN,
+                "Create a new ticket in the gate: validates the request, cuts the ticket branch "
+                + "from the base tip and materializes its worktree clone. Use project_id to bind "
+                + "it to a registered project (clones from that project's own auth repo); omit it "
+                + "for the gate-level default repo. Returns the assigned ticket_no and clone_path.",
+                schema(Map.of(
+                        "type", "object",
+                        "properties", Map.of(
+                                "title", Map.of("type", "string", "description",
+                                        "Short ticket title (required)"),
+                                "project_id", Map.of("type", "string", "description",
+                                        "Registered project id to bind the ticket to; omit for the "
+                                                + "gate-level default repo"),
+                                "ticket_no", Map.of("type", "string", "description",
+                                        "Optional explicit ticket number; auto-generated (next T-nnn) "
+                                                + "when omitted"),
+                                "target_branch", Map.of("type", "string", "description",
+                                        "Optional ticket branch name; defaults to the ticket number"),
+                                "priority", Map.of("type", "string", "description",
+                                        "Optional priority: P0, P1, P2 or P3"),
+                                "description", Map.of("type", "string",
+                                        "description", "What this ticket should accomplish"),
+                                "note", Map.of("type", "string", "description",
+                                        "Free-form notes for the human reviewer"),
+                                "labels", Map.of("type", "array",
+                                        "items", Map.of("type", "string"),
+                                        "description", "Optional labels (max 20, each max 32 chars)")),
+                        "required", List.of("title")))));
+
         register(new ToolDef(
                 "presubmit_create",
                 AGENT_DOMAIN,

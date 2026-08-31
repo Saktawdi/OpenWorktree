@@ -3,6 +3,7 @@ package gate.mcp;
 import gate.adapters.mcp.McpServer;
 import gate.adapters.mcp.McpToolDispatcher;
 import gate.domain.git.RepoRef;
+import gate.domain.ticket.Ticket;
 import gate.testkit.GateHarness;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -120,6 +121,40 @@ class McpEndToEndTest {
         assertTrue(pub.contains("\"error\""), "agent publish must be a JSON-RPC error: " + pub);
         assertTrue(pub.contains("permission denied"), "must say permission denied: " + pub);
         assertEquals(0, harness.authCommitCount() - harness.authCommitCount(), "no side effect");
+    }
+
+    /**
+     * ticket_create is agent-callable and NOT ticket-bound: an agent working T-1 may spawn a
+     * follow-up ticket (auto-numbered past every existing one) and its clone must materialize.
+     */
+    @Test
+    void agent_creates_a_follow_up_ticket() {
+        String r = call(agentServer, "ticket_create",
+                "{\"title\":\"agent spawned follow-up\",\"labels\":[\"跟进\"],"
+                        + "\"priority\":\"P2\",\"description\":\"discovered mid-work\"}");
+        assertFalse(r.contains("\"isError\":true"), "ticket_create must succeed: " + r);
+        assertTrue(r.contains("ticket_no"), r);
+        assertTrue(r.contains("T-101"), "auto numbering must pick the next free T-nnn: " + r);
+        assertTrue(r.contains("IN_PROGRESS"), r);
+        assertTrue(r.contains("P2"), r);
+        assertTrue(r.contains("refs/heads/T-101"), r);
+
+        Ticket created = harness.ticket("T-101");
+        assertEquals("跟进", created.labels().get(0));
+        assertTrue(java.nio.file.Files.exists(java.nio.file.Path.of(created.clonePath())),
+                "the clone must be materialized at creation time");
+        // The new ticket's branch is cut from the base tip and its clone sits on it.
+        assertEquals(harness.authTip(),
+                harness.gitCli().line(RepoRef.of(java.nio.file.Path.of(created.clonePath())), "rev-parse", "HEAD").trim());
+    }
+
+    /** ticket_create requires a title. */
+    @Test
+    void ticket_create_without_title_is_rejected() {
+        String r = call(agentServer, "ticket_create", "{}");
+        assertTrue(r.contains("\"error\""), "missing title must be a JSON-RPC error: " + r);
+        assertTrue(r.contains("-32602"), "invalid params must map to -32602: " + r);
+        assertTrue(r.contains("missing required parameter: title"), r);
     }
 
     // --- helpers ---

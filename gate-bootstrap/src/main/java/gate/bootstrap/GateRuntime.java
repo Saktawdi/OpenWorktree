@@ -170,7 +170,7 @@ public final class GateRuntime {
                 projectRepository, workspaceSyncer,
                 new gate.adapters.git.LocalGitCommitIdentityProvider(git, clock,
                         config.publishIdentity().name(), config.publishIdentity().email()),
-                cloneBaseSyncer);
+                cloneBaseSyncer, this.topologyInitializer);
     }
 
     public GateConfig config() { return config; }
