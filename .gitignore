@@ -7,6 +7,7 @@ gate-web-ui/dist/
 
 # Archival / test output — build artifacts dumps
 doc/归档/
+doc/local/
 .archive/
 
 # OhMyOpenCode agent state
