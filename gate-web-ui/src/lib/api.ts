@@ -1877,9 +1877,12 @@ export async function fetchBusyAgents(): Promise<void> {
 
 let busyPollTimer: ReturnType<typeof setInterval> | null = null;
 let busyPollVisibilityAttached = false;
+// 工单列表慢节拍补拉的节流窗与上次时间戳（15s：agent 建票不必实时推送，最终一致即可）
+const TICKETS_REFETCH_MS = 15000;
+let lastTicketsFetch = 0;
 
 function handleBusyVisibility() {
-  // 切回可见时立即拉一次
+  // 切回可见时立即拉一次（含工单列表：后台 agent 可能在不可见期间建了票）
   if (document.hidden) return;
   const st = appStore.getState();
   if (st.mode !== "live" || st.conn !== "ok") {
@@ -1888,6 +1891,8 @@ function handleBusyVisibility() {
     return;
   }
   void fetchBusyAgents();
+  lastTicketsFetch = Date.now();
+  void loadTickets().catch(() => {});
 }
 
 export function startAgentBusyPolling() {
@@ -1915,6 +1920,12 @@ export function startAgentBusyPolling() {
       return;
     }
     void fetchBusyAgents();
+    // 工单可由 agent 经 MCP ticket_create 带外创建；列表只在连接建立时加载过，
+    // 这里按慢节拍补拉，让侧栏/看板最终一致（失败静默，下一拍重试）。
+    if (Date.now() - lastTicketsFetch >= TICKETS_REFETCH_MS) {
+      lastTicketsFetch = Date.now();
+      void loadTickets().catch(() => {});
+    }
   }, 3000);
 }
 
