@@ -8,6 +8,7 @@ import gate.domain.error.GateErrorCode;
 import gate.domain.error.GateException;
 import java.io.InputStream;
 import java.io.PrintStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.List;
 
@@ -33,8 +34,14 @@ public final class McpServeApp {
     public static void main(String[] args) {
         int exitCode;
         try {
+            // The MCP client expects UTF-8 on stdio, but on Windows JDK 17 System.out wraps the
+            // console charset (GBK on zh-CN) — tool results containing 中文 would leave the child
+            // as GBK bytes and reach the agent as mojibake (the T-126 garbled title). The reader
+            // side is already UTF-8 (McpServer); the writer side is forced to match here.
+            PrintStream utf8Out = new PrintStream(System.out, true, StandardCharsets.UTF_8);
+            PrintStream utf8Err = new PrintStream(System.err, true, StandardCharsets.UTF_8);
             exitCode = run(List.of(args), System.getenv(McpServer.TOKEN_ENV),
-                    System.in, System.out, System.err);
+                    System.in, utf8Out, utf8Err);
         } catch (GateException e) {
             System.err.println("gate-mcp: " + e.getMessage());
             exitCode = e.code().code();

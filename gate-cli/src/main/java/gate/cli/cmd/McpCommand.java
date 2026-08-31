@@ -9,6 +9,7 @@ import gate.adapters.mcp.McpToolDispatcher;
 import gate.application.util.MiniJson;
 import gate.domain.error.GateErrorCode;
 import gate.domain.error.GateException;
+import java.io.PrintStream;
 import java.util.Map;
 import picocli.CommandLine;
 
@@ -54,7 +55,11 @@ public final class McpCommand implements Runnable {
                     c.presubmitRepository(), c.reviewResultRepository(),
                     c.blobStore(), c.providerRepository(), c.config());
             McpServer server = new McpServer(dispatcher, domainToken);
-            server.run(System.in, System.out, System.err);
+            // 与 McpServeApp 同理：stdio 上的 MCP 客户端期望 UTF-8，Windows 控制台默认
+            // 字符集（GBK）会把工具结果里的中文写成乱码；写入侧强制 UTF-8。
+            PrintStream utf8Out = new PrintStream(System.out, true, java.nio.charset.StandardCharsets.UTF_8);
+            PrintStream utf8Err = new PrintStream(System.err, true, java.nio.charset.StandardCharsets.UTF_8);
+            server.run(System.in, utf8Out, utf8Err);
         }
     }
 
