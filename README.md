@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="gate-web-ui/public/brand/ow-dark-badge-64.png" width="88" alt="OpenWorktree">
+  <img src="gate-web-ui/public/brand/ow-light-badge-64.png" width="88" alt="OpenWorktree">
 </p>
 
 <h1 align="center">OpenWorktree</h1>
@@ -14,15 +14,15 @@
   <img src="https://img.shields.io/badge/React-19-149eca?style=flat-square&logo=react&logoColor=white" alt="React 19">
   <img src="https://img.shields.io/badge/运行方式-local--first-35d99e?style=flat-square" alt="Local first">
 </p>
-
 <p align="center">
   <a href="#界面展示">界面展示</a> ·
   <a href="#核心流程">核心流程</a> ·
-  <a href="#快速开始">快速开始</a> ·
-  <a href="release/README.md">发行说明</a>
+  <a href="#mcp-工具">MCP 工具</a> ·
+  <a href="#快速开始">快速开始</a>
 </p>
 
-OpenWorktree（缩写源自字标 **OW**：圆即字母 O，W 一笔穿环而出）是一个本地优先的工单驱动开发工作台。它把「一张工单 = 一次受控的开发交付」作为最小闭环：工单派给编码智能体，在专属的隔离克隆里写代码；提交前锁定快照并执行门禁审查，发现与判决全程留痕；审查通过后，以可追溯的身份安全发布回目标分支。
+
+OpenWorktree 是一个本地优先的工单驱动开发工作台。它把「一张工单 = 一次受控的开发交付」作为最小闭环：工单派给编码智能体，在专属的隔离克隆里写代码；提交前锁定快照并执行门禁审查，发现与判决全程留痕；审查通过后，以可追溯的身份安全发布回目标分支。
 
 ## 为什么是 OpenWorktree
 
@@ -30,7 +30,7 @@ AI 编码不应该只留下一个「看起来改好了」的结果。OpenWorktre
 
 ## 界面展示
 
-以下截图来自实际工作台，图片保留在 [`doc/`](doc/) 目录中。使用 HTML 表格单元格作为边框容器，在 GitHub、Gitee 等 Markdown 渲染器中都能保持清晰的图片分组。
+以下截图来自实际工作台。
 
 <table>
   <tr>
@@ -88,7 +88,7 @@ AI 编码不应该只留下一个「看起来改好了」的结果。OpenWorktre
 
 ### 2. 隔离执行
 
-每张工单使用独立的 Git worktree / 克隆目录。Agent 可以流式回显文本、编辑文件、运行命令和持续更新任务清单；需要人工介入时，会话会明确提示结束状态或待决询问。主仓库不直接承受 Agent 的中间改动。
+每张工单使用独立的 Git worktree / 克隆目录。Agent 可以流式回显文本、编辑文件、运行命令和持续更新任务清单；需要人工介入时，会话会明确提示结束状态或待决询问。主仓库不直接承受 Agent 的中间改动。Agent 还能通过内置 MCP 工具建票、送审与读取审查反馈（见 [MCP 工具](#mcp-工具)）。
 
 ### 3. 快照与审查
 
@@ -98,13 +98,36 @@ AI 编码不应该只留下一个「看起来改好了」的结果。OpenWorktre
 
 只有通过门禁并获得授权的工单才能发布。发布提交可以固定为系统身份，也可以使用本机 Git 作者信息；提交时间使用真实时间，便于在项目历史中追溯工单与代码的对应关系。
 
+## MCP 工具
+
+OpenWorktree 内置一套 MCP（Model Context Protocol）stdio 服务器，是 Agent 与门禁交互的唯一通道。接入是全自动的：启动会话时，后端会为 Claude Code 写入 `--mcp-config`、为 OpenCode 写入 `OPENCODE_CONFIG`，MCP 子进程以工单克隆为工作目录就地拉起，无需任何手工配置。
+
+工具按权限分为两个域，凭据随会话签发并绑定单张工单：
+
+| 工具 | 权限域 | 功能 |
+| --- | --- | --- |
+| `ticket_create` | Agent | 创建新工单：校验请求、从基线切出工单分支并生成隔离克隆，返回工单号与克隆路径。适合 Agent 在开发中途发现后续工作时随手建票 |
+| `presubmit_create` | Agent | 预提审：把当前工作区冻结为不可变快照并开启一轮审查。这是 Agent 唯一能触发的状态迁移 |
+| `presubmit_get_diff` | Agent | 读取某轮预提审锁定的差异文本，确认送审内容 |
+| `review_result_get` | Agent | 读取审查结果（判决 + 结构化发现），据此修复后再次送审 |
+| `review_run` | Human | 执行一轮审查（内置引擎或人工判决），产出发现与判决 |
+| `commit_and_publish` | Human | 把已审查的快照提交并经门禁发布到目标分支 |
+| `config_show` | Human | 查看门禁生效配置（路径、目标引用、引擎状态） |
+| `provider_list` | Human | 列出已配置的 LLM Provider 及其缓存模型 |
+
+安全设计：
+
+- **判决权不在 Agent 手里**：`review_run` 与 `commit_and_publish` 永不进入 Agent 域——否则 Agent 可以反复跑审查直到碰运气通过。判决始终由门禁策略铸造。
+- **凭据最小化**：会话令牌按会话签发、绑定单张工单，通过 `GATE_DOMAIN_TOKEN` 环境变量传递（不经 argv），明文只存在于子进程与克隆的 `.git/gate-context/` 内，不会出现在工单 diff 中。
+- **可独立编排**：也可以脱离工作台手工使用——`gate mcp serve` 启动 stdio 服务器，`gate mcp issue-token --ticket T-101`（或 `--human`）签发对应权限域的令牌；明文只打印一次，数据库只存 SHA-256 哈希。
+
 ## 核心特性
 
 - **工单看板**：六泳道看板，拖拽即流转；门禁泳道会执行对应的预提审、审查和发布操作。
 - **隔离工作区**：每张工单独立克隆，主仓库保持干净，多个任务可以并行推进。
 - **会话工作台**：接入 Claude headless、OpenCode serve 等 CLI 智能体，支持流式回显、模型与推理强度切换。
+- **MCP 工具链**：Agent 经由低权限 MCP 工具建票、送审、读取审查反馈；审查执行与发布授权保留在人类域。
 - **运行监控**：集中查看正在运行的 Agent、会话结束状态和待决询问，避免后台任务无声退出。
-- **任务随行**：从会话中的 `todowrite` 事件同步任务进度，打开或切换会话时仍能看到工作状态。
 - **可追溯审查**：快照、差异、发现、判决、修复和审计日志形成完整证据链。
 - **安全发布**：发布需要授权，提交身份可控，目标分支与发布结果明确可见。
 - **终端工作台**：多标签终端可直连工单克隆目录，支持最小化后台与进程保活。
@@ -113,13 +136,13 @@ AI 编码不应该只留下一个「看起来改好了」的结果。OpenWorktre
 
 ## 架构
 
-Java 17 多模块，依赖单向倒置；Web 层刻意不使用 Spring Boot Web，仅用 JDK `HttpServer` + Javalin 保持轻量。前端是独立的 React 19 + Vite 单页应用。
+Java 17 多模块，依赖单向倒置；Web 层刻意不使用 Spring Boot，仅用 Javalin（Jetty）保持轻量。前端是独立的 React 19 + Vite 单页应用。
 
 ```text
 gate-domain        领域模型与规则（纯 Java，无框架）
 gate-ports         端口接口定义
 gate-application   用例编排
-gate-adapters      外部适配（git CLI、引擎、凭据等）
+gate-adapters      外部适配（git CLI、引擎、MCP、凭据等）
 gate-web           HTTP/SSE 服务（Javalin；API + SPA 静态伺服 + SSE）
 gate-bootstrap     装配启动
 gate-cli           命令行入口（picocli）
@@ -130,73 +153,141 @@ gate-web-ui        前端（React 19 + Vite + Tailwind v4 + zustand + motion + x
 - **持久化**：SQLite 由 Flyway 管理迁移，本地 blob 保存运行数据，数据集中在运行目录。
 - **安全边界**：仅允许本地回环绑定；Web 请求令牌与 SSE 分别校验；LLM API Key 加密落库。
 
+<p align="center">
+  <img src="doc/openworktree.png" alt="OpenWorktree 架构图" width="100%">
+  <br><sub><b>系统架构</b> · 从浏览器到隔离工作区的数据流与安全边界</sub>
+</p>
+
 ## 快速开始
 
 ### 环境要求
 
-- JDK 17+
-- Maven 3.9+
-- Node.js 18+ 与 npm
-- Git
+| 工具 | 版本 | 检查命令 |
+| --- | --- | --- |
+| JDK | 17+ | `java -version` |
+| Maven | 3.9+ | `mvn -v` |
+| Node.js + npm | 18+ | `node -v` |
+| Git | 任意近期版本 | `git --version` |
 
-### 源码开发（Windows）
+<details>
+<summary><b>还没有环境？各系统一键安装</b></summary>
 
-项目提供一键启动脚本：
+**Windows**（winget）：
 
-```bat
-start-local.bat
+```powershell
+winget install Microsoft.OpenJDK.17 Apache.Maven OpenJS.NodeJS.LTS Git.Git
 ```
 
-脚本会按需构建后端、启动 `gate-web`（`127.0.0.1:4097`）和 Vite 开发服务器（`127.0.0.1:5173`），然后打开浏览器。后端令牌可从后端窗口的 `GATE_WEB_TOKEN=` 行获取，也会写入 `local-run/gate-home/web-token`。
+没有 winget 时，到 Adoptium（JDK 17）、Maven、nodejs.org 与 Git 官网手动下载安装即可。
 
-也可以分步执行：
+**Ubuntu / Debian**：
 
 ```bash
-# 后端
+sudo apt install openjdk-17-jdk maven git
+# 旧版源里的 Node 太老，建议用 nvm 装 Node 20：
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
+nvm install 20
+```
+
+**CentOS / Fedora / RHEL**：
+
+```bash
+sudo dnf install java-17-openjdk-devel maven git   # Node 18+ 同样建议用 nvm 安装
+```
+
+**macOS**（Homebrew）：
+
+```bash
+brew install openjdk@17 maven node git
+```
+
+</details>
+
+### 第 0 步：克隆并构建
+
+```bash
+git clone https://github.com/Saktawdi/OpenWorktree.git
+cd OpenWorktree
+
+# 后端构建（用 IDEA 直接跑 main 的话，第二条可跳过）
 mvn -DskipTests install
 mvn -pl gate-web dependency:copy-dependencies
 
-# 前端
+# 前端依赖
+cd gate-web-ui && npm install && cd ..
+```
+
+### 第 1 步：启动后端（两种方式任选）
+
+**方式 A：终端命令行**（保持终端开启，报错也在这里看）
+
+```powershell
+# Windows
+java -Dfile.encoding=UTF-8 -cp "gate-web/target/classes;gate-web/target/dependency/*" gate.web.GateWebApp
+```
+
+```bash
+# Linux / macOS
+java -Dfile.encoding=UTF-8 -cp "gate-web/target/classes:gate-web/target/dependency/*" gate.web.GateWebApp
+```
+
+**方式 B：IDEA 等 IDE**
+
+直接运行 `gate.web.GateWebApp` 的 main，无需 `dependency:copy-dependencies`。Run/Debug 配置：
+
+| 配置项 | 值 |
+| --- | --- |
+| Main class | `gate.web.GateWebApp` |
+| Working directory | 仓库根目录 |
+| Program arguments | 留空 |
+| VM options | `-Dfile.encoding=UTF-8`（Windows 建议，避免中文日志乱码） |
+| JRE | 17+ |
+
+VS Code / Cursor 用 launch.json 等价配置（`mainClass: gate.web.GateWebApp`，`cwd` 指向仓库根）。
+
+首次启动会自动生成 `local-run/gate.toml`（loopback 127.0.0.1:18080），数据库、令牌等运行数据也一并自动创建；之后端口、审查引擎等都在「设置中心」改（写回该文件），无需手编。看到 `GATE_WEB_TOKEN=...` 与 `listening on http://127.0.0.1:18080/` 即成功。
+
+### 第 2 步：启动前端
+
+另开一个终端：
+
+```bash
 cd gate-web-ui
-npm install
 npm run dev
 ```
 
-在「设置中心」配置 LLM Provider 后，即可使用 Agent 会话、预提审、审查和发布流程。API Key 只会以加密形式落库，请勿把本地运行目录或令牌文件提交到版本库。
+浏览器打开 <http://127.0.0.1:5173>（Vite 已把 API 代理到 18080 的后端）。
 
-### Windows 发行包
+### 第 3 步：登录并开工
 
-发行包组装步骤、目录结构、冒烟验证清单和已知问题见 [release/README.md](release/README.md)。发行 zip 是构建产物，不作为源码文件提交；如果使用已有发行包，解压后双击 `start_web_windows.bat`，默认访问 `http://127.0.0.1:18080/`。
+- **登录令牌**：后端日志的 `GATE_WEB_TOKEN=` 行，或 `local-run/gate-home/web-token` 文件。
+- **配置 Provider**：「设置中心 → LLM Providers」填 API Key（加密落库），再到「审查引擎」选 Provider 与模型。
+- **注册项目**：「项目」页注册你的代码目录——注册时自动初始化该项目专属的门禁镜像仓，随后建工单即可开工。
+- **Agent 侧零配置**：会话启动时 MCP 工具（建票、送审、读审查结果）自动注入 Agent，见 [MCP 工具](#mcp-工具)。
 
-## 项目结构与文档
-
-```text
-doc/               界面截图、设计与架构资料、品牌资产说明
-local-run/         本机运行时配置与数据目录（不入库）
-release/           发行打包模板与说明
-gate-*/            Java 后端模块
-gate-web-ui/       React 前端
-start-local.bat    Windows 开发环境一键启动脚本
-```
-
-- [发行打包说明](release/README.md)
-- [品牌资产说明](doc/local/brand.md)
-- [本地文档索引](doc/local/README.md)
-
-## 开发与测试
-
-提交前建议至少运行：
+如果还想让**不挂项目**的工单也可用，执行一次 `gate init` 初始化门禁级默认镜像仓（幂等，可重复执行）：
 
 ```bash
-# 后端编译与测试
-mvn test
-
-# 前端类型检查与生产构建
-cd gate-web-ui
-npm run build
+mvn -pl gate-cli dependency:copy-dependencies
+# Windows 把 classpath 分隔符换成 ; ，Linux/macOS 用 :
+java -cp "gate-cli/target/classes:gate-cli/target/dependency/*" gate.cli.GateApp init -c local-run/gate.toml
 ```
 
-涉及 Git、SSE、门禁和发布逻辑时，也请按 [发行说明中的冒烟验证清单](release/README.md#冒烟验证清单) 做一次端到端验证。
+### 常见问题
+
+- **端口 18080 被占用**：修改 `local-run/gate.toml` 中 `[web].port`，并让前端代理指向新端口：`VITE_BACKEND_URL=http://127.0.0.1:<新端口> npm run dev`。
+- **后端起不来**：多数是漏了第 1 步的两条构建命令；看启动终端报错的第一行即可定位。
+- **令牌文件、数据库等都落在 `local-run/`**：整目录不入库，整目录拷走即可迁移。
+
+## 路线图
+
+近期规划方向：
+
+- 持续打磨使用体验，修复缺陷
+- 审计记录查阅页、工单 Token 用量与成本统计页
+- 通用 LLM 助手接入
+- 接入更多 CLI 智能体
+- Docker 云版本与团队版
 
 ## 许可证
 
