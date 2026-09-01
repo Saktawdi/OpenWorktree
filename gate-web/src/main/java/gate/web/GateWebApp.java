@@ -11,7 +11,9 @@ import org.slf4j.LoggerFactory;
  * gate-web entry point (执行文档-后端-web §2.2): a lightweight {@code main}, NOT Spring Boot web
  * (§2.4 chose the JDK {@link com.sun.net.httpserver.HttpServer}).
  *
- * <p>Usage: {@code java -jar gate-web.jar --config gate.toml [--git <git>]}. Startup sequence:
+ * <p>Usage: {@code java -cp ... gate.web.GateWebApp [--config gate.toml] [--git <git>]}. Without
+ * {@code --config} the default {@code local-run/gate.toml} is used and generated on first run
+ * ({@link BootstrapConfig}). Startup sequence:
  * <ol>
  *   <li>load config + assemble the graph ({@link WebComponents#fromConfig});</li>
  *   <li>bootstrap/read the HUMAN web token ({@link WebToken#ensure}) and print it once;</li>
@@ -41,13 +43,12 @@ public final class GateWebApp {
                 }
             }
         }
-        if (configPath == null) {
-            LOG.error("--config <gate.toml> is required");
-            System.exit(GateErrorExit.USAGE);
-        }
+        // no --config: fall back to local-run/gate.toml, generated on first run (BootstrapConfig)
 
         try {
-            WebComponents components = WebComponents.fromConfig(Path.of(configPath), gitExecutable);
+            Path config = BootstrapConfig.resolve(
+                    configPath == null ? null : Path.of(configPath));
+            WebComponents components = WebComponents.fromConfig(config, gitExecutable);
             GateConfig.WebConfig web = components.config().web();
 
             String token = WebToken.ensure(web.humanTokenFile(), components.credentials(),
