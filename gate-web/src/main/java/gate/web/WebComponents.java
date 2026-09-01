@@ -120,6 +120,7 @@ public final class WebComponents {
         this.taskRegistry = runtime.taskRegistry();
 
         this.agentConfigRepository = runtime.agentConfigRepository();
+        seedDefaultAgentConfig();
         this.projectRepository = runtime.projectRepository();
         this.workspaceSyncer = runtime.workspaceSyncer();
         this.cloneBaseSyncer = runtime.cloneBaseSyncer();
@@ -189,6 +190,30 @@ public final class WebComponents {
                     "cli-default", "CLI default (internal)", "local://cli-default", "none", "cli-runtime",
                     clock.now()), clock.now());
         }
+    }
+
+    /**
+     * 首次使用预置一条默认的 opencode 智能体员工：provider/model 留空 = 完全交给 opencode
+     * 自身配置决定，开箱即可在工单上发起会话，不必先手工建配置。幂等；用户删掉后不再复活，
+     * 与用户自建配置无任何区别。
+     */
+    private void seedDefaultAgentConfig() {
+        String defaultId = "opencode-default";
+        if (agentConfigRepository.find(defaultId).isPresent()
+                || !agentConfigRepository.findAll().isEmpty()) {
+            return;
+        }
+        agentConfigRepository.insert(new gate.domain.session.AgentConfig(
+                defaultId,
+                "默认智能体",
+                gate.domain.session.AgentCli.OPENCODE,
+                null,
+                null,
+                null,
+                java.util.List.of(),
+                "首次启动预置：跟随本机 opencode 自身配置（provider/model 由 CLI 决定）",
+                true),
+                clock.now());
     }
 
     public GateConfig config() { return config; }

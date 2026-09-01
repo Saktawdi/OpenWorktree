@@ -71,16 +71,30 @@ class AgentConfigApiTest {
     }
 
     @Test
+    void first_boot_seeds_default_opencode_agent() throws Exception {
+        HttpResponse<String> list = get("/api/agent-configs");
+        assertEquals(200, list.statusCode(), list.body());
+        assertTrue(list.body().contains("\"id\":\"opencode-default\""), list.body());
+
+        HttpResponse<String> detail = get("/api/agent-configs/opencode-default");
+        assertEquals(200, detail.statusCode(), detail.body());
+        assertTrue(detail.body().contains("\"cli\":\"OPENCODE\""), detail.body());
+        // 默认员工不绑定 provider/model：完全跟随本机 opencode 自身配置。
+        assertTrue(detail.body().contains("\"provider_id\":null"), detail.body());
+        assertTrue(detail.body().contains("\"model\":null"), detail.body());
+    }
+
+    @Test
     void cli_profile_can_leave_provider_and_model_to_the_cli() throws Exception {
         HttpResponse<String> create = post("/api/agent-configs", """
-                {"id":"opencode-default","name":"OpenCode Default","cli":"OPENCODE",
+                {"id":"opencode-bare","name":"OpenCode Bare","cli":"OPENCODE",
                  "system_prompt":null,"extra_flags":[],"description":"uses CLI config"}
                 """);
         assertEquals(201, create.statusCode(), create.body());
         assertTrue(create.body().contains("\"provider_id\":null"), create.body());
         assertTrue(create.body().contains("\"model\":null"), create.body());
 
-        HttpResponse<String> detail = get("/api/agent-configs/opencode-default");
+        HttpResponse<String> detail = get("/api/agent-configs/opencode-bare");
         assertEquals(200, detail.statusCode(), detail.body());
         assertTrue(detail.body().contains("\"provider_id\":null"), detail.body());
         assertTrue(detail.body().contains("\"model\":null"), detail.body());
