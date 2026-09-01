@@ -2,6 +2,7 @@ package gate.web;
 
 import gate.web.controller.AuthController;
 import gate.web.controller.MetricsController;
+import gate.web.controller.OpenCodeProviderController;
 import gate.web.controller.PresubmitController;
 import gate.web.controller.ProjectController;
 import gate.web.controller.ProviderController;
@@ -14,6 +15,7 @@ import gate.web.controller.TaskController;
 import gate.web.controller.TicketController;
 import gate.web.controller.WebController;
 import gate.web.service.SessionModelCatalog;
+import gate.web.service.OpenCodeConfigService;
 import io.javalin.Javalin;
 import java.util.List;
 
@@ -40,6 +42,7 @@ public final class ApiRoutes implements WebController {
                         c.reviewResultRepository(), c.blobStore(), c.ticketLockManager(), c.git(), c.config()),
                 new TaskController(c.taskRegistry(), c.taskRunner()),
                 new ProviderController(c.providerRepository(), c.modelFetcher(), c.kmsService(), c.clock()),
+                new OpenCodeProviderController(new OpenCodeConfigService()),
                 new MetricsController(c.metricsService(), c.gateService()),
                 new SessionController(c.agentConfigRepository(), c.sessionRepository(), c.agentSessionPort(),
                         c.ticketRepository(), c.clock(), new SessionModelCatalog(), c.credentials(),

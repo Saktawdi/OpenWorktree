@@ -83,6 +83,25 @@ export interface AgentRuntime {
   modelSource: string;
 }
 
+/** OpenCode 配置文件（opencode.json(c)）provider 节点里的一条供应商（扁平视图）。 */
+export interface OpenCodeProvider {
+  /** provider 节点的键，同时也是 opencode 模型 id 的前缀（如 deepseek/deepseek-chat）。 */
+  key: string;
+  name: string;
+  npm?: string | null;
+  baseURL?: string | null;
+  apiKey?: string | null;
+  models: string[];
+  modelCount: number;
+}
+
+/** GET /api/opencode/providers 的返回。 */
+export interface OpenCodeProvidersView {
+  configPath: string;
+  configExists: boolean;
+  providers: OpenCodeProvider[];
+}
+
 export interface GitCommit {
   sha: string;
   parents: string[];

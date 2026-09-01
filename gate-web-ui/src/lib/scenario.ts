@@ -86,6 +86,27 @@ export const DEMO_RUNTIMES: AgentRuntime[] = [
   },
 ];
 
+export const DEMO_OC_PROVIDERS: import("./types").OpenCodeProvider[] = [
+  {
+    key: "github-copilot",
+    name: "GitHub Copilot",
+    npm: "@ai-sdk/openai-compatible",
+    baseURL: "https://api.githubcopilot.com/",
+    apiKey: null,
+    models: ["gpt-4.1", "claude-sonnet-4.5"],
+    modelCount: 2,
+  },
+  {
+    key: "deepseek",
+    name: "DeepSeek",
+    npm: "@ai-sdk/openai-compatible",
+    baseURL: "https://api.deepseek.com/v1",
+    apiKey: null,
+    models: ["deepseek-chat", "deepseek-reasoner"],
+    modelCount: 2,
+  },
+];
+
 const T = (h: number) => new Date(Date.now() - h * 3600_000).toISOString();
 
 export const DEMO_TICKETS: Ticket[] = [

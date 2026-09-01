@@ -1934,6 +1934,78 @@ export async function loadRuntimes(): Promise<boolean> {
   }
 }
 
+/* ─── OpenCode 供应商管理（opencode.json provider 节点 CRUD） ─── */
+
+interface RawOcProvider {
+  key: string;
+  name: string;
+  npm?: string | null;
+  base_url?: string | null;
+  api_key?: string | null;
+  models?: string[] | null;
+  model_count?: number | null;
+}
+
+function mapOcProvider(p: RawOcProvider): import("./types").OpenCodeProvider {
+  return {
+    key: p.key,
+    name: p.name,
+    npm: p.npm ?? null,
+    baseURL: p.base_url ?? null,
+    apiKey: p.api_key ?? null,
+    models: p.models ?? [],
+    modelCount: p.model_count ?? (p.models?.length ?? 0),
+  };
+}
+
+export async function loadOcProviders(): Promise<boolean> {
+  try {
+    const data = await api<{ config_path: string; config_exists: boolean; providers: RawOcProvider[] }>(
+      "/api/opencode/providers",
+    );
+    appStore.setState({
+      ocProviders: (data.providers ?? []).map(mapOcProvider),
+      ocConfigPath: data.config_path ?? null,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function upsertOcProviderLive(
+  p: import("./types").OpenCodeProvider,
+): Promise<boolean> {
+  try {
+    await api(`/api/opencode/providers/${encodeURIComponent(p.key)}`, {
+      method: "PUT",
+      body: JSON.stringify({
+        name: p.name,
+        npm: p.npm || null,
+        base_url: p.baseURL || null,
+        api_key: p.apiKey ?? "",
+        models: p.models,
+      }),
+    });
+    await loadOcProviders();
+    return true;
+  } catch (e) {
+    showToast(`保存 OpenCode 供应商失败：${(e as Error).message}`);
+    return false;
+  }
+}
+
+export async function deleteOcProviderLive(key: string): Promise<boolean> {
+  try {
+    await api(`/api/opencode/providers/${encodeURIComponent(key)}`, { method: "DELETE" });
+    await loadOcProviders();
+    return true;
+  } catch (e) {
+    showToast(`删除 OpenCode 供应商失败：${(e as Error).message}`);
+    return false;
+  }
+}
+
 /* ─── 运行中智能体轮询（GET /api/agents/busy） ─── */
 
 interface RawBusyAgent {

@@ -6,6 +6,7 @@ import {
   CircleNotch,
   Plus,
   PencilSimple,
+  Plug,
   Sparkle,
   TerminalWindow,
   Trash,
@@ -13,7 +14,7 @@ import {
 } from "@phosphor-icons/react";
 import { actions } from "../lib/actions";
 import { appStore, useApp } from "../lib/store";
-import type { AgentConfig } from "../lib/types";
+import type { AgentConfig, OpenCodeProvider } from "../lib/types";
 
 const CLI_LABEL: Record<string, string> = { claude: "Claude Code", opencode: "OpenCode" };
 
@@ -50,8 +51,7 @@ function RuntimeCards() {
   const runtimes = useApp((s) => s.runtimes);
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-      {runtimes.map((r) => (
-        <div key={r.name} className="card p-4">
+      {runtimes.map((r) => (        <div key={r.name} className="card p-4">
           <div className="flex items-center gap-2.5">
             <span className="w-8 h-8 rounded-lg bg-raised border border-edge grid place-items-center">
               <TerminalWindow size={16} className={r.available ? "text-accent" : "text-faint"} />
@@ -92,6 +92,261 @@ function RuntimeCards() {
         </div>
       ))}
     </div>
+  );
+}
+
+/* ── OpenCode 供应商管理（读写 opencode.json(c) 的 provider 节点，参考 ai-toolbox） ── */
+
+const NPM_PRESETS = [
+  "@ai-sdk/openai-compatible",
+  "@ai-sdk/anthropic",
+  "@ai-sdk/google",
+];
+
+function OcProviderDialog({
+  initial,
+  onClose,
+}: {
+  initial: OpenCodeProvider | null;
+  onClose: () => void;
+}) {
+  const [key, setKey] = useState(initial?.key ?? "");
+  const [name, setName] = useState(initial?.name ?? "");
+  const [npm, setNpm] = useState(initial?.npm ?? NPM_PRESETS[0]);
+  const [baseURL, setBaseURL] = useState(initial?.baseURL ?? "");
+  const [apiKey, setApiKey] = useState(initial?.apiKey ?? "");
+  const [models, setModels] = useState((initial?.models ?? []).join(", "));
+  const [saving, setSaving] = useState(false);
+
+  const keyValid = /^[A-Za-z0-9._\-/]+$/.test(key.trim());
+  const canSave = keyValid && name.trim().length > 0 && !saving;
+
+  const save = async () => {
+    if (!canSave) return;
+    setSaving(true);
+    const ok = await actions.saveOcProvider({
+      key: key.trim(),
+      name: name.trim(),
+      npm: npm.trim() || null,
+      baseURL: baseURL.trim() || null,
+      apiKey: apiKey.trim() || null,
+      models: models.split(/[,，]/).map((m) => m.trim()).filter(Boolean),
+      modelCount: 0,
+    });
+    setSaving(false);
+    if (ok) onClose();
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/55 backdrop-blur-[2px]" onClick={onClose}>
+      <div className="w-[520px] card shadow-2xl shadow-black/60 animate-rise" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center gap-2 px-5 h-12 border-b border-edge">
+          <Plug size={15} className="text-accent" weight="fill" />
+          <span className="text-[13.5px] font-semibold">
+            {initial ? "编辑 OpenCode 供应商" : "新增 OpenCode 供应商"}
+          </span>
+        </div>
+
+        <div className="p-5 space-y-4 max-h-[70vh] overflow-y-auto">
+          <div>
+            <label className="field-label">供应商 key（模型 id 前缀）</label>
+            <input
+              autoFocus={!initial}
+              disabled={!!initial}
+              className="text-input font-mono text-[12px] disabled:opacity-50"
+              placeholder="例如：deepseek"
+              value={key}
+              onChange={(e) => setKey(e.target.value)}
+            />
+            {key.trim() && !keyValid && (
+              <div className="mt-1 text-[11px] text-warn">仅允许字母、数字与 . _ - /</div>
+            )}
+            <div className="mt-1 text-[11px] text-faint">
+              写入 opencode.json 后，模型 id 形如 <span className="font-mono">{key.trim() || "key"}/模型名</span>
+            </div>
+          </div>
+
+          <div>
+            <label className="field-label">显示名称</label>
+            <input
+              className="text-input"
+              placeholder="例如：DeepSeek"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+            />
+          </div>
+
+          <div>
+            <label className="field-label">npm SDK 包</label>
+            <input
+              className="text-input font-mono text-[12px]"
+              list="oc-npm-presets"
+              placeholder="@ai-sdk/openai-compatible"
+              value={npm ?? ""}
+              onChange={(e) => setNpm(e.target.value)}
+            />
+            <datalist id="oc-npm-presets">
+              {NPM_PRESETS.map((n) => (
+                <option key={n} value={n} />
+              ))}
+            </datalist>
+          </div>
+
+          <div>
+            <label className="field-label">Base URL</label>
+            <input
+              className="text-input font-mono text-[12px]"
+              placeholder="https://api.deepseek.com/v1"
+              value={baseURL ?? ""}
+              onChange={(e) => setBaseURL(e.target.value)}
+            />
+          </div>
+
+          <div>
+            <label className="field-label">API Key{initial?.apiKey ? "（已保存，覆盖或清空即改写）" : ""}</label>
+            <input
+              className="text-input font-mono text-[12px]"
+              type="password"
+              placeholder={initial?.apiKey ? "••••••••" : "sk-…"}
+              value={apiKey ?? ""}
+              onChange={(e) => setApiKey(e.target.value)}
+            />
+            {initial?.apiKey && (
+              <div className="mt-1 text-[11px] text-faint">清空此字段会从配置文件中删除已保存的 Key</div>
+            )}
+          </div>
+
+          <div>
+            <label className="field-label">模型列表（逗号分隔，可选）</label>
+            <input
+              className="text-input font-mono text-[12px]"
+              placeholder="deepseek-chat, deepseek-reasoner"
+              value={models}
+              onChange={(e) => setModels(e.target.value)}
+            />
+          </div>
+
+          <div className="text-[11px] text-faint">
+            保存会直接写入本机 OpenCode 配置文件（只改 provider 节点，其余内容原样保留；写前自动备份 .bak）。
+          </div>
+        </div>
+
+        <div className="flex justify-end gap-2 px-5 py-4 border-t border-edge">
+          <button className="btn" onClick={onClose}>
+            取消
+          </button>
+          <button className="btn btn-primary" disabled={!canSave} onClick={save}>
+            {saving ? "保存中…" : "保存"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function OcProvidersSection() {
+  const ocProviders = useApp((s) => s.ocProviders);
+  const ocConfigPath = useApp((s) => s.ocConfigPath);
+  const mode = useApp((s) => s.mode);
+  const [dialog, setDialog] = useState<{ open: boolean; provider: OpenCodeProvider | null }>({
+    open: false,
+    provider: null,
+  });
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+
+  useEffect(() => {
+    actions.loadOcProviders();
+  }, []);
+
+  return (
+    <section>
+      <div className="flex items-center gap-3 pb-3">
+        <span className="kicker">OpenCode 供应商</span>
+        <span className="font-mono text-[11px] text-faint">
+          {ocConfigPath ?? "opencode.json"}
+        </span>
+        <span className="flex-1" />
+        <button className="btn btn-primary h-8" onClick={() => setDialog({ open: true, provider: null })}>
+          <Plus size={14} weight="bold" />
+          新增供应商
+        </button>
+      </div>
+
+      <div className="space-y-2">
+        {ocProviders.map((p) => (
+          <div key={p.key} className="card p-4">
+            <div className="flex items-center gap-2.5">
+              <span className="w-7 h-7 rounded-lg bg-raised border border-edge grid place-items-center text-accent shrink-0">
+                <Plug size={14} />
+              </span>
+              <span className="text-[13.5px] font-semibold">{p.name}</span>
+              <span className="chip border border-edge-strong bg-raised text-dim font-mono">{p.key}</span>
+              {p.npm && <span className="chip border border-edge bg-canvas text-faint font-mono">{p.npm}</span>}
+              <span className="flex-1" />
+              {confirmDelete === p.key ? (
+                <span className="flex items-center gap-1">
+                  <button
+                    className="chip border border-danger/40 bg-danger/10 text-danger cursor-pointer"
+                    onClick={() => {
+                      void actions.deleteOcProvider(p.key);
+                      setConfirmDelete(null);
+                    }}
+                  >
+                    确认删除
+                  </button>
+                  <button className="chip border border-edge-strong text-dim cursor-pointer" onClick={() => setConfirmDelete(null)}>
+                    返回
+                  </button>
+                </span>
+              ) : (
+                <>
+                  <button
+                    className="icon-btn"
+                    title="编辑"
+                    aria-label="编辑"
+                    onClick={() => setDialog({ open: true, provider: p })}
+                  >
+                    <PencilSimple size={13} />
+                  </button>
+                  <button
+                    className="icon-btn hover:!text-danger"
+                    title="删除"
+                    aria-label="删除"
+                    onClick={() => setConfirmDelete(p.key)}
+                  >
+                    <Trash size={13} />
+                  </button>
+                </>
+              )}
+            </div>
+            <div className="mt-2.5 flex items-center gap-3 text-[11.5px] text-faint">
+              {p.baseURL && (
+                <span className="font-mono truncate max-w-[380px]" title={p.baseURL}>
+                  {p.baseURL}
+                </span>
+              )}
+              <span>
+                模型 <span className="font-mono text-dim">{p.models.length > 0 ? p.models.join(" · ") : "—"}</span>
+              </span>
+            </div>
+          </div>
+        ))}
+        {ocProviders.length === 0 && (
+          <div className="card border-dashed p-8 text-center">
+            <div className="text-[13px] text-dim">
+              {mode === "live"
+                ? "opencode.json 里还没有 provider，或文件尚未创建"
+                : "还没有供应商配置"}
+            </div>
+            <div className="mt-1 text-[12px] text-faint">新增一个 OpenCode 兼容供应商后，智能体即可选用它的模型</div>
+          </div>
+        )}
+      </div>
+
+      {dialog.open && (
+        <OcProviderDialog initial={dialog.provider} onClose={() => setDialog({ open: false, provider: null })} />
+      )}
+    </section>
   );
 }
 
@@ -392,6 +647,8 @@ export function AgentsPage() {
           </div>
           <RuntimeCards />
         </section>
+
+        <OcProvidersSection />
 
         <section>
           <div className="flex items-center gap-3 pb-3">

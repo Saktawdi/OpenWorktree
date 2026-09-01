@@ -28,6 +28,7 @@ import type {
 } from "./types";
 import {
   DEMO_AGENTS,
+  DEMO_OC_PROVIDERS,
   DEMO_PROJECTS,
   DEMO_RUNTIMES,
   DEMO_TICKETS,
@@ -101,6 +102,9 @@ export interface AppState {
   centerTab: CenterTab;
   agents: AgentConfig[];
   runtimes: AgentRuntime[];
+  /** OpenCode 配置文件的 provider 列表（live 从后端读写文件，demo 为示例数据）。 */
+  ocProviders: import("./types").OpenCodeProvider[];
+  ocConfigPath: string | null;
   gitViews: Record<string, GitRepoView>;
   treeViews: Record<string, GitTreeEntry[]>;
   editingTicketNo: string | null;
@@ -240,6 +244,8 @@ export const appStore = create<AppState>(() => ({
   centerTab: "chat",
   agents: DEMO_AGENTS,
   runtimes: DEMO_RUNTIMES,
+  ocProviders: DEMO_OC_PROVIDERS,
+  ocConfigPath: null,
   gitViews: { "acme-checkout": GIT_ACME, "nexus-docs": GIT_NEXUS },
   treeViews: { "acme-checkout": TREE_ACME, "nexus-docs": TREE_NEXUS },
   editingTicketNo: null,
@@ -346,6 +352,7 @@ export function seedDemo(force = false) {
     terminalView: "closed",
     agents: DEMO_AGENTS.map((a) => ({ ...a })),
     runtimes: DEMO_RUNTIMES.map((r) => ({ ...r })),
+    ocProviders: DEMO_OC_PROVIDERS.map((p) => ({ ...p })),
     gitViews: { "acme-checkout": GIT_ACME, "nexus-docs": GIT_NEXUS },
     treeViews: { "acme-checkout": TREE_ACME, "nexus-docs": TREE_NEXUS },
     editingTicketNo: null,
@@ -1187,6 +1194,18 @@ export function removeAgentConfig(id: string) {
     agents: st.agents.filter((a) => a.id !== id),
     agentId: st.agentId === id ? (st.agents.find((a) => a.id !== id)?.id ?? "") : st.agentId,
   }));
+}
+
+export function upsertOcProvider(p: import("./types").OpenCodeProvider) {
+  set((st) => ({
+    ocProviders: st.ocProviders.some((x) => x.key === p.key)
+      ? st.ocProviders.map((x) => (x.key === p.key ? p : x))
+      : [...st.ocProviders, p],
+  }));
+}
+
+export function removeOcProvider(key: string) {
+  set((st) => ({ ocProviders: st.ocProviders.filter((p) => p.key !== key) }));
 }
 
 export function openTicketEditor(no: string | null) {

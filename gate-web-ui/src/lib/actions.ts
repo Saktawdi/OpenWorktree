@@ -9,6 +9,7 @@ import {
   deleteSession as deleteSessionLocal,
   pushSystemMessage,
   removeAgentConfig,
+  removeOcProvider,
   removeProject,
   requestCancel,
   restoreSession as restoreSessionLocal,
@@ -22,10 +23,11 @@ import {
   switchSession as switchSessionLocal,
   updateTicket,
   upsertAgentConfig,
+  upsertOcProvider,
   upsertProject,
   wipePersisted,
 } from "./store";
-import type { AgentConfig, PendingAttachment, Project, Ticket } from "./types";
+import type { AgentConfig, OpenCodeProvider, PendingAttachment, Project, Ticket } from "./types";
 
 export const actions = {
   sendPrompt(no: string, text: string, attachments: PendingAttachment[] = []) {
@@ -296,6 +298,27 @@ export const actions = {
       void live.loadRuntimes();
     }
   },
+  loadOcProviders() {
+    if (appStore.getState().mode === "live") {
+      void live.loadOcProviders();
+    }
+  },
+  saveOcProvider(p: OpenCodeProvider) {
+    if (appStore.getState().mode === "live") {
+      return live.upsertOcProviderLive(p);
+    }
+    upsertOcProvider(p);
+    showToast("OpenCode 供应商已保存（demo）");
+    return Promise.resolve(true);
+  },
+  deleteOcProvider(key: string) {
+    if (appStore.getState().mode === "live") {
+      return live.deleteOcProviderLive(key);
+    }
+    removeOcProvider(key);
+    showToast("OpenCode 供应商已删除（demo）");
+    return Promise.resolve(true);
+  },
   openTicket(no: string) {
     appStore.setState({ view: "workbench" });
     if (appStore.getState().mode === "live") return live.selectTicketLive(no);
@@ -313,6 +336,7 @@ export const actions = {
         live.loadProjects(),
         live.loadAgentConfigs(),
         live.loadRuntimes(),
+        live.loadOcProviders(),
         live.loadEngineConfig(),
       ]);
       // Demo leaves a demo project/agent id behind; live data is filtered by the project
