@@ -402,6 +402,10 @@ export interface WorkspaceListing {
   path: string;
   parent: string | null;
   exists: boolean;
+  /** 后端运行平台：linux / windows / mac，路径提示与默认值按它适配 */
+  platform: string;
+  /** 后端的用户家目录（linux 容器里即 /home/…） */
+  userHome: string;
   roots: { name: string; path: string }[];
   directories: {
     name: string;

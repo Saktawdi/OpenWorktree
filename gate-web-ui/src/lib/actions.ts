@@ -267,6 +267,14 @@ export const actions = {
     }
     return live.browseWorkspace(path);
   },
+  /** 目录选择器的「新建文件夹」，同样只走 live 后端。 */
+  createWorkspaceDir(parent: string, name: string) {
+    if (appStore.getState().mode !== "live") {
+      showToast("新建文件夹需要连接本地后端（live 模式）");
+      return Promise.resolve(null);
+    }
+    return live.createWorkspaceDir(parent, name);
+  },
   saveAgentConfig(c: AgentConfig) {
     if (appStore.getState().mode === "live") {
       return live.upsertAgentConfigLive(c);

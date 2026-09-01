@@ -62,6 +62,7 @@ public final class ProjectController implements WebController {
     public void register(Javalin app) {
         app.get("/api/workspaces", this::listWorkspaces);
         app.post("/api/workspaces", this::inspectWorkspace);
+        app.post("/api/workspaces/mkdir", this::createWorkspaceDir);
         app.get("/api/projects", this::listProjects);
         app.post("/api/projects", this::createProject);
         app.post("/api/projects/reorder", this::reorderProjects);
@@ -80,6 +81,40 @@ public final class ProjectController implements WebController {
         String path = req.get("path") == null ? null : req.get("path").toString();
         ctx.status(HttpStatus.OK);
         ctx.json(renderWorkspaces(path));
+    }
+
+    /**
+     * 在已存在的父目录下新建一层子目录（目录选择器的「新建文件夹」）。只创建一层、
+     * 父目录必须真实存在——不做静默的递归创建，路径打错时立刻报错而不是造出一串
+     * 错层级的空目录。
+     */
+    public void createWorkspaceDir(Context ctx) {
+        Map<String, Object> req = Json.parseObject(ctx.body());
+        String parentRaw = required(req, "parent");
+        String name = required(req, "name");
+        if (!name.matches("[A-Za-z0-9._\\- ()\\u4e00-\\u9fa5]+") || name.startsWith(".")) {
+            throw new GateException(GateErrorCode.USAGE,
+                    "invalid directory name: " + name);
+        }
+        Path parent = normalizeWorkspace(parentRaw);
+        if (!Files.isDirectory(parent)) {
+            throw new GateException(GateErrorCode.USAGE, "parent directory does not exist: " + parent);
+        }
+        Path target = parent.resolve(name).normalize();
+        if (!target.startsWith(parent) || target.getParent() == null
+                || !target.getParent().equals(parent)) {
+            throw new GateException(GateErrorCode.USAGE, "invalid directory name: " + name);
+        }
+        try {
+            Files.createDirectory(target);
+        } catch (IOException e) {
+            throw new GateException(GateErrorCode.GATE_ERROR_IO,
+                    "cannot create directory " + target + ": " + e.getMessage(), e);
+        }
+        ctx.status(HttpStatus.CREATED);
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("path", target.toString());
+        ctx.json(body);
     }
 
     public void listProjects(Context ctx) {
@@ -309,6 +344,11 @@ public final class ProjectController implements WebController {
         body.put("path", dir.toString());
         body.put("parent", dir.getParent() == null ? null : dir.getParent().toString());
         body.put("exists", Files.isDirectory(dir));
+        // 前端据此适配路径提示与默认值：Linux 容器里可直接填不存在路径（注册时自动创建），
+        // Windows 的盘符相对路径会被 toAbsolutePath 吸到当前盘，必须提示选绝对路径。
+        String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
+        body.put("platform", os.contains("win") ? "windows" : os.contains("mac") ? "mac" : "linux");
+        body.put("user_home", System.getProperty("user.home"));
         List<Map<String, Object>> roots = new ArrayList<>();
         for (Path root : FileSystems.getDefault().getRootDirectories()) {
             if (!Files.isDirectory(root)) continue;

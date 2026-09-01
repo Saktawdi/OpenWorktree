@@ -73,6 +73,41 @@ function ProjectDialog({
   const [tags, setTags] = useState<string[]>(initial?.tags ?? []);
   const [saving, setSaving] = useState(false);
   const [browserOpen, setBrowserOpen] = useState(false);
+  // 后端运行平台（linux/windows/mac）：路径提示按它适配——容器部署时后端是 Linux，
+  // /home/… 风格路径可直接填，注册时自动创建；Windows 才引导盘符风格。
+  const [backendPlatform, setBackendPlatform] = useState<string | null>(null);
+  const [backendHome, setBackendHome] = useState("");
+
+  useEffect(() => {
+    if (initial || mode !== "live") return;
+    void actions.browseWorkspace("").then((d) => {
+      if (d) {
+        setBackendPlatform(d.platform || null);
+        setBackendHome(d.userHome || "");
+      }
+    });
+    // 仅在弹窗打开时探测一次即可
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initial, mode]);
+
+  const pathHint = (() => {
+    if (backendPlatform === "linux" || backendPlatform === "mac") {
+      return {
+        placeholder: `${backendHome || (backendPlatform === "mac" ? "/Users/you" : "/home/you")}/my-project`,
+        hint: `后端运行在 ${backendPlatform === "linux" ? "Linux" : "macOS"}：手动输入或点右侧图标浏览；目录不存在时会在接入时自动创建`,
+      };
+    }
+    if (backendPlatform === "windows") {
+      return {
+        placeholder: "D:/work/my-project",
+        hint: "后端运行在 Windows：请填盘符开头的绝对路径；目录不存在时会自动创建",
+      };
+    }
+    return {
+      placeholder: "D:/work/my-project 或 /home/you/my-project",
+      hint: "手动输入或点击右侧文件夹图标浏览本地目录；目录不存在时会自动创建",
+    };
+  })();
 
   const save = async () => {
     if (!name.trim() || (!initial && !workspacePath.trim())) return;
@@ -133,7 +168,7 @@ function ProjectDialog({
                 <div className="relative">
                   <input
                     className="text-input font-mono text-[12px] pr-10"
-                    placeholder="D:/work/my-project"
+                    placeholder={pathHint.placeholder}
                     value={workspacePath}
                     onChange={(e) => setWorkspacePath(e.target.value)}
                   />
@@ -148,7 +183,7 @@ function ProjectDialog({
                   </button>
                 </div>
                 <div className="mt-1 text-[11px] text-faint">
-                  手动输入或点击右侧文件夹图标浏览本地目录
+                  {pathHint.hint}
                 </div>
               </div>
               <label className="flex items-center gap-2 text-[12.5px] text-dim cursor-pointer select-none">

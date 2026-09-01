@@ -1723,6 +1723,8 @@ interface RawWorkspaceListing {
   path: string;
   parent?: string | null;
   exists: boolean;
+  platform?: string | null;
+  user_home?: string | null;
   roots?: { name: string; path: string }[] | null;
   directories?: {
     name: string;
@@ -1730,6 +1732,23 @@ interface RawWorkspaceListing {
     is_git_repo?: boolean | null;
     is_registered_project?: boolean | null;
   }[] | null;
+}
+
+function toWorkspaceListing(data: RawWorkspaceListing): WorkspaceListing {
+  return {
+    path: data.path,
+    parent: data.parent ?? null,
+    exists: data.exists,
+    platform: data.platform ?? "",
+    userHome: data.user_home ?? "",
+    roots: data.roots ?? [],
+    directories: (data.directories ?? []).map((d) => ({
+      name: d.name,
+      path: d.path,
+      isGitRepo: d.is_git_repo ?? false,
+      isRegisteredProject: d.is_registered_project ?? false,
+    })),
+  };
 }
 
 /** 目录浏览（工作区路径选择器）：lists child directories of `path`，空串/缺省 = 用户家目录。 */
@@ -1741,20 +1760,22 @@ export async function browseWorkspace(path: string): Promise<WorkspaceListing | 
       // 空 path 不带字段：后端回退到用户家目录（传空串会被解析成进程工作目录）
       body: JSON.stringify(trimmed ? { path: trimmed } : {}),
     });
-    return {
-      path: data.path,
-      parent: data.parent ?? null,
-      exists: data.exists,
-      roots: data.roots ?? [],
-      directories: (data.directories ?? []).map((d) => ({
-        name: d.name,
-        path: d.path,
-        isGitRepo: d.is_git_repo ?? false,
-        isRegisteredProject: d.is_registered_project ?? false,
-      })),
-    };
+    return toWorkspaceListing(data);
   } catch (e) {
     showToast(`目录浏览失败：${(e as Error).message}`);
+    return null;
+  }
+}
+
+/** 目录选择器里的「新建文件夹」：在 parent 下创建一层子目录，返回新目录信息。 */
+export async function createWorkspaceDir(parent: string, name: string): Promise<{ path: string } | null> {
+  try {
+    return await api<{ path: string }>("/api/workspaces/mkdir", {
+      method: "POST",
+      body: JSON.stringify({ parent, name }),
+    });
+  } catch (e) {
+    showToast(`新建文件夹失败：${(e as Error).message}`);
     return null;
   }
 }

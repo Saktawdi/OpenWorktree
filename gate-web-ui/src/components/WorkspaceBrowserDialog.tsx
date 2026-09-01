@@ -4,6 +4,7 @@ import {
   CaretRight,
   FolderIcon,
   FolderOpen,
+  FolderPlus,
   GitBranch,
   X,
 } from "@phosphor-icons/react";
@@ -13,7 +14,8 @@ import { Spinner } from "./ui";
 
 /**
  * 本地目录浏览器（后端 /api/workspaces 驱动）— 为「接入新项目」表单选择工作区绝对路径。
- * 单击选中子目录，双击进入；顶部地址栏可直接粘贴/编辑绝对路径回车跳转。
+ * 单击选中子目录，双击进入；顶部地址栏可直接粘贴/编辑绝对路径回车跳转；
+ * 支持在当前目录下新建文件夹（后端 /api/workspaces/mkdir，单层创建）。
  */
 export function WorkspaceBrowserDialog({
   initialPath,
@@ -28,6 +30,9 @@ export function WorkspaceBrowserDialog({
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<string | null>(null);
   const [address, setAddress] = useState(initialPath ?? "");
+  const [creating, setCreating] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [creatingDir, setCreatingDir] = useState(false);
 
   const load = async (path: string) => {
     setLoading(true);
@@ -49,6 +54,26 @@ export function WorkspaceBrowserDialog({
   const confirm = () => {
     const pick = selected ?? listing?.path;
     if (pick) onPick(pick);
+  };
+
+  const startCreate = () => {
+    if (!listing?.exists || creating) return;
+    setCreating(true);
+    setNewName("");
+  };
+
+  const submitCreate = async () => {
+    const name = newName.trim();
+    if (!listing || !name) return;
+    setCreatingDir(true);
+    const res = await actions.createWorkspaceDir(listing.path, name);
+    setCreatingDir(false);
+    if (res) {
+      setCreating(false);
+      setNewName("");
+      await load(res.path);
+      setSelected(res.path);
+    }
   };
 
   return (
@@ -74,7 +99,7 @@ export function WorkspaceBrowserDialog({
             <input
               autoFocus
               className="text-input h-8 font-mono text-[12px] flex-1"
-              placeholder="D:\path\to\workspace"
+              placeholder="D:\path\to\workspace 或 /home/you/workspace"
               value={address}
               onChange={(e) => setAddress(e.target.value)}
               onKeyDown={(e) => {
@@ -97,7 +122,41 @@ export function WorkspaceBrowserDialog({
             >
               <ArrowUp size={14} />
             </button>
+            <button
+              className="icon-btn h-8 w-8"
+              title="在此目录下新建文件夹"
+              aria-label="新建文件夹"
+              disabled={!listing?.exists || creating}
+              onClick={startCreate}
+            >
+              <FolderPlus size={15} />
+            </button>
           </div>
+          {creating && (
+            <div className="mt-2 flex items-center gap-2">
+              <input
+                autoFocus
+                className="text-input h-8 font-mono text-[12px] flex-1"
+                placeholder="新文件夹名称"
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && newName.trim()) void submitCreate();
+                  if (e.key === "Escape") setCreating(false);
+                }}
+              />
+              <button
+                className="btn btn-primary h-8 px-2.5"
+                disabled={!newName.trim() || creatingDir}
+                onClick={() => void submitCreate()}
+              >
+                {creatingDir ? "创建中…" : "创建"}
+              </button>
+              <button className="btn h-8 px-2.5" onClick={() => setCreating(false)}>
+                取消
+              </button>
+            </div>
+          )}
           {listing && listing.roots.length > 0 && (
             <div className="mt-2 flex flex-wrap gap-1">
               {listing.roots.map((r) => (
