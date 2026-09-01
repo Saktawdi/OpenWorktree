@@ -1,0 +1,33 @@
+# 版本与工具目录
+.git
+.idea
+.vscode
+.vs
+.zcode
+.codegraph
+.codegraph_bin
+.openchamber
+.playwright-mcp
+.archive
+
+# 本机构建产物（Docker 内会重新构建）
+**/target
+**/node_modules
+gate-web-ui/dist
+
+# 本地运行数据，绝不进镜像
+local-run
+verify-toml
+
+# 文档/演示产物，不参与构建
+doc
+docx
+release
+local-git-gate.runtime*
+
+# 其他杂项
+*.log
+*.bak
+test.json
+.dockerignore
+compose.yaml

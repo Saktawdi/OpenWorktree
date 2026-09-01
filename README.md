@@ -12,6 +12,8 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0-2ea44f?style=flat-square" alt="License GPL-3.0"></a>
   <img src="https://img.shields.io/badge/Java-17-ED8B00?style=flat-square&logo=openjdk&logoColor=white" alt="Java 17">
   <img src="https://img.shields.io/badge/React-19-149eca?style=flat-square&logo=react&logoColor=white" alt="React 19">
+  <img src="https://img.shields.io/badge/opencode-已适配-7c5cff?style=flat-square" alt="opencode 已适配">
+  <img src="https://img.shields.io/badge/Claude_Code-已适配-D97757?style=flat-square" alt="Claude Code 已适配">
   <img src="https://img.shields.io/badge/运行方式-local--first-35d99e?style=flat-square" alt="Local first">
 </p>
 <p align="center">
@@ -160,7 +162,53 @@ gate-web-ui        前端（React 19 + Vite + Tailwind v4 + zustand + motion + x
 
 ## 快速开始
 
-### 环境要求
+### 方式一：Docker（推荐，无需本地环境）
+
+镜像以多架构（amd64/arm64）发布在 Docker Hub：[`saktawdi/openworktree`](https://hub.docker.com/r/saktawdi/openworktree)。不必克隆仓库，把下面这份存成 `compose.yaml`（放任意目录）：
+
+```yaml
+services:
+  openworktree:
+    image: saktawdi/openworktree:latest
+    ports:
+      - "8080:8080"                      # 宿主机上改左边这个数，例如 9000:8080
+    environment:
+      # 局域网/反向代理访问时，把入口 Host 加进白名单（逗号分隔）：
+      # OW_ALLOWED_ORIGINS: 192.168.1.10,worktree.internal
+      OW_ALLOWED_ORIGINS: ""
+    volumes:
+      - openworktree-data:/data         # 配置、SQLite、令牌、工单克隆全在这
+    restart: unless-stopped
+volumes:
+  openworktree-data:
+```
+
+```bash
+docker compose up -d                                     # 拉取并启动
+docker compose logs openworktree | grep GATE_WEB_TOKEN   # 复制登录令牌 → 页面登录
+```
+
+打开 <http://localhost:8080>。
+
+要点：
+
+- **镜像内容**：JDK 17 + git + nginx + 构建好的前端 + **opencode（项目默认 Agent CLI，内置，Agent 会话开箱即用）**。工单、审查、发布、隔离终端不依赖外部环境；Claude Code 按下面方式扩装。
+- **安全边界不变**：后端只能绑容器内回环（`GateConfig.WebConfig` fail-closed），对外界只有一个 nginx；`allowed_origins` Host 白名单照旧生效——局域网访问记得填 `OW_ALLOWED_ORIGINS`。
+- **数据**：`/data/gate.toml` 首启自动生成；改配置后 `docker compose restart`。
+- **门禁初始化（可选，不挂项目的工单用）**：`docker compose exec openworktree java -cp "/app/lib/*" gate.cli.GateApp init -c /data/gate.toml`。
+
+要加 Claude Code（或其他 Agent CLI），写个一行继承镜像再上自己的 compose：
+
+```dockerfile
+FROM saktawdi/openworktree:latest
+RUN npm install -g @anthropic-ai/claude-code && npm cache clean --force
+```
+
+从源码自构建（开发时）：仓库根目录 `docker compose up -d --build`，build-arg `INSTALL_CLAUDE=true` 让 Claude Code 随镜像出来。
+
+### 方式二：本地开发
+
+#### 环境要求
 
 | 工具 | 版本 | 检查命令 |
 | --- | --- | --- |
@@ -203,7 +251,7 @@ brew install openjdk@17 maven node git
 
 </details>
 
-### 第 0 步：克隆并构建
+#### 第 0 步：克隆并构建
 
 ```bash
 git clone https://github.com/Saktawdi/OpenWorktree.git
@@ -217,7 +265,7 @@ mvn -pl gate-web dependency:copy-dependencies
 cd gate-web-ui && npm install && cd ..
 ```
 
-### 第 1 步：启动后端（两种方式任选）
+#### 第 1 步：启动后端（两种方式任选）
 
 **方式 A：终端命令行**（保持终端开启，报错也在这里看）
 
@@ -247,7 +295,7 @@ VS Code / Cursor 用 launch.json 等价配置（`mainClass: gate.web.GateWebApp`
 
 首次启动会自动生成 `local-run/gate.toml`（loopback 127.0.0.1:18080），数据库、令牌等运行数据也一并自动创建；之后端口、审查引擎等都在「设置中心」改（写回该文件），无需手编。看到 `GATE_WEB_TOKEN=...` 与 `listening on http://127.0.0.1:18080/` 即成功。
 
-### 第 2 步：启动前端
+#### 第 2 步：启动前端
 
 另开一个终端：
 
@@ -258,7 +306,7 @@ npm run dev
 
 浏览器打开 <http://127.0.0.1:5173>（Vite 已把 API 代理到 18080 的后端）。
 
-### 第 3 步：登录并开工
+#### 第 3 步：登录并开工
 
 - **登录令牌**：后端日志的 `GATE_WEB_TOKEN=` 行，或 `local-run/gate-home/web-token` 文件。
 - **配置 Provider**：「设置中心 → LLM Providers」填 API Key（加密落库），再到「审查引擎」选 Provider 与模型。
@@ -287,7 +335,7 @@ java -cp "gate-cli/target/classes:gate-cli/target/dependency/*" gate.cli.GateApp
 - 审计记录查阅页、工单 Token 用量与成本统计页
 - 通用 LLM 助手接入
 - 接入更多 CLI 智能体
-- Docker 云版本与团队版
+- 云端团队版（多租户；单机 Docker 镜像已发布至 Docker Hub，见「快速开始」）
 
 ## 许可证
 

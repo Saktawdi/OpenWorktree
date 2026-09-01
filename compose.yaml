@@ -1,0 +1,41 @@
+name: openworktree
+
+# 拉镜像直接用（默认行为）：
+#   docker compose up -d
+# 仓库内从源码自构建（覆盖拉取，只影响本地）：
+#   docker compose up -d --build
+# 首启令牌：docker compose logs openworktree | grep GATE_WEB_TOKEN
+services:
+  openworktree:
+    image: saktawdi/openworktree:latest   # Docker Hub 官方镜像；要换命名空间改这一行
+    build:
+      context: .
+      args:
+        # 本地自构建时把 Claude Code 一并装进镜像：INSTALL_CLAUDE=true
+        # （opencode 是项目默认会话 CLI，镜像自带）
+        INSTALL_CLAUDE: ${INSTALL_CLAUDE:-false}
+    container_name: openworktree
+    ports:
+      # 宿主侧端口可用 OW_PORT 覆盖：OW_PORT=9000 docker compose up -d
+      - "${OW_PORT:-8080}:8080"
+    environment:
+      # 局域网/反向代理访问时把入口 Host 加进来（逗号分隔），例如：
+      # OW_ALLOWED_ORIGINS=192.168.1.10,worktree.internal
+      OW_ALLOWED_ORIGINS: ${OW_ALLOWED_ORIGINS:-}
+      JAVA_OPTS: ${JAVA_OPTS:-}
+    volumes:
+      # 全部运行数据（gate.toml、SQLite、令牌、工单克隆）都在这一个卷里，
+      # 备份/迁移只需导出该卷。改用宿主目录时请确保容器内 uid 10002 可写。
+      - openworktree-data:/data
+    restart: unless-stopped
+    healthcheck:
+      # 经过 nginx → Java 全链路探测；后端刻意只绑容器内回环，
+      # 不要改成直连 18080 做检查（架构使然，见 Dockerfile 头注释）
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/api/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 120s
+
+volumes:
+  openworktree-data:
