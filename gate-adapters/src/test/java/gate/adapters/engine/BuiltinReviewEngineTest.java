@@ -107,6 +107,55 @@ class BuiltinReviewEngineTest {
     }
 
     @Test
+    void thinkPrefixedAnswerFromReasoningModelStillParses() throws Exception {
+        // kimi-k3 类 thinking 模型：思维链以 <think>…</think> 内联进 content，真身 JSON 跟在闭合标记后；
+        // 跨帧送达验证剥离发生在拼接后的完整 content 上，而非单帧。
+        start(ex -> {
+            try {
+                String think = "<think>\nFind bugs. Weigh candidates one by one.\n</think>\n";
+                sse(ex, delta(think.substring(0, think.length() / 2)),
+                        delta(think.substring(think.length() / 2) + findingsJson()), "[DONE]");
+                ex.close();
+            } catch (IOException ignored) {
+            }
+        });
+        EngineReport report = assertInstanceOf(EngineReport.class,
+                engine(Duration.ofSeconds(10), Duration.ofSeconds(5), null).review(req()));
+        assertEquals(1, report.findings().size(), "think 块剥离后正文 JSON 正常解析");
+        assertTrue(new String(blobs.store.get(report.rawOutput().relPath()), StandardCharsets.UTF_8)
+                .startsWith("<think>"), "blob 仍存原样输出，含完整思维链");
+    }
+
+    @Test
+    void thinkInsideFenceStillParses() throws Exception {
+        start(ex -> {
+            try {
+                sse(ex, delta("```json\n<think>deliberate</think>\n" + findingsJson() + "\n```"), "[DONE]");
+                ex.close();
+            } catch (IOException ignored) {
+            }
+        });
+        EngineReport report = assertInstanceOf(EngineReport.class,
+                engine(Duration.ofSeconds(10), Duration.ofSeconds(5), null).review(req()));
+        assertEquals(1, report.findings().size(), "围栏内嵌 think 块的两级剥离");
+    }
+
+    @Test
+    void unclosedThinkBlockFailsClosedAsUnparseable() throws Exception {
+        start(ex -> {
+            try {
+                sse(ex, delta("<think>\nreasoning cut off before the answer"), "[DONE]");
+                ex.close();
+            } catch (IOException ignored) {
+            }
+        });
+        EngineFailure failure = assertInstanceOf(EngineFailure.class,
+                engine(Duration.ofSeconds(10), Duration.ofSeconds(5), null).review(req()));
+        assertEquals(EngineFailure.FailureKind.UNPARSEABLE, failure.kind(),
+                "未闭合 think 块 = 正文无 JSON，诚实失败而非空 findings");
+    }
+
+    @Test
     void streamWithoutUsageDegradesTelemetryOnly() throws Exception {
         start(ex -> {
             try {

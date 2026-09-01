@@ -134,6 +134,11 @@ final class PrismJson {
                 i++;
             }
             String num = s.substring(start, i);
+            if (num.isEmpty() || num.equals("-")) {
+                // 非数字开头的垃圾（如 thinking 模型混入的 <think>）在此零消费：必须指认字符与位置，
+                // 否则 Long.parseLong("") 只会给出无从定位的 "For input string: \"\""。
+                throw new IllegalArgumentException("expected number but got '" + peek() + "' at " + i);
+            }
             if (num.contains(".") || num.contains("e") || num.contains("E")) {
                 return Double.parseDouble(num);
             }

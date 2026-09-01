@@ -350,8 +350,8 @@ public final class BuiltinReviewEngine implements ReviewEngine {
                 promptTokens, completionTokens, totalTokens);
     }
 
-    /** 原样存 blob → 剥围栏仅用于解析 → 组装报告（usage 随证据闭环传递）。
-     *  blob 存的是上游原封不动的完整输出（含可能的 ```json 围栏），
+    /** 原样存 blob → 围栏/think 块剥离仅用于解析 → 组装报告（usage 随证据闭环传递）。
+     *  blob 存的是上游原封不动的完整输出（含可能的 ```json 围栏与 &lt;think&gt; 思维链），
      *  UNPARSEABLE 失败时它是排查指令遵循/格式错误的唯一现场。 */
     private ReviewEvidence finishReport(ReviewRequest request, EngineDescriptor descriptor,
                                         String rawContent, Instant started,
@@ -361,7 +361,7 @@ public final class BuiltinReviewEngine implements ReviewEngine {
         BlobRef rawRef = blobStore.put(rawContent.getBytes(StandardCharsets.UTF_8),
                 "raw/" + request.ticketNo() + "/" + request.reviewRound() + "/builtin.json");
 
-        String raw = stripCodeFence(rawContent);
+        String raw = stripForParse(rawContent);
         PrismOutput out;
         try {
             out = PrismJson.parse(raw);
@@ -474,6 +474,23 @@ public final class BuiltinReviewEngine implements ReviewEngine {
             }
         }
         return t;
+    }
+
+    /** thinking 模型（如 kimi-k3）把思维链以 &lt;think&gt;…&lt;/think&gt; 内联进 content，真身 JSON 只在
+     *  闭合标记之后；未闭合意味着正文没有 JSON——剥成空串走 UNPARSEABLE（blob 留有完整原文）。 */
+    private static String stripThinkBlock(String raw) {
+        String t = raw == null ? "" : raw.trim();
+        if (!t.startsWith("<think>")) {
+            return raw;
+        }
+        int end = t.indexOf("</think>");
+        return end < 0 ? "" : t.substring(end + "</think>".length()).trim();
+    }
+
+    /** 解析输入的容忍性清洗：think 块与围栏都可能包住真身 JSON，且两种嵌套方向都会出现，
+     *  故围栏剥两次、think 剥中间一次。只作用于解析，blob 落盘永远走原样。 */
+    private static String stripForParse(String raw) {
+        return stripCodeFence(stripThinkBlock(stripCodeFence(raw)));
     }
 
     private static Severity mapSeverity(String raw) {
