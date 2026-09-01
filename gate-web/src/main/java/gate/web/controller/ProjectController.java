@@ -64,6 +64,7 @@ public final class ProjectController implements WebController {
         app.post("/api/workspaces", this::inspectWorkspace);
         app.get("/api/projects", this::listProjects);
         app.post("/api/projects", this::createProject);
+        app.post("/api/projects/reorder", this::reorderProjects);
         app.put("/api/projects/{id}", this::updateProject);
         app.delete("/api/projects/{id}", this::deleteProject);
         app.post("/api/projects/{id}/workspace-sync", this::syncWorkspace);
@@ -154,7 +155,8 @@ public final class ProjectController implements WebController {
                     effectiveTargetRef);
         }
         Project p = new Project(id, name, workspace.toString(),
-                effectiveTargetRef, projectAuthRepo.toString(), priority, size, tags, now, now);
+                effectiveTargetRef, projectAuthRepo.toString(), priority, size, tags,
+                false, nextSortOrder(), now, now);
         projects.insert(p);
         ctx.status(HttpStatus.CREATED);
         ctx.json(projectJson(p));
@@ -167,9 +169,10 @@ public final class ProjectController implements WebController {
         Map<String, Object> req = Json.parseObject(ctx.body());
         if (!req.containsKey("name") && !req.containsKey("workspace_path")
                 && !req.containsKey("target_ref") && !req.containsKey("priority")
-                && !req.containsKey("size") && !req.containsKey("tags")) {
+                && !req.containsKey("size") && !req.containsKey("tags")
+                && !req.containsKey("starred") && !req.containsKey("sort_order")) {
             throw new GateException(GateErrorCode.USAGE,
-                    "nothing to update: provide name, workspace_path, target_ref, priority, size or tags");
+                    "nothing to update: provide name, workspace_path, target_ref, priority, size, tags, starred or sort_order");
         }
         String name = req.containsKey("name") ? required(req, "name") : existing.name();
         String workspace = existing.workspacePath();
@@ -197,11 +200,44 @@ public final class ProjectController implements WebController {
         String priority = req.containsKey("priority") ? TicketController.parsePriority(req) : existing.priority();
         String size = req.containsKey("size") ? parseProjectSize(req) : existing.size();
         List<String> tags = req.containsKey("tags") ? parseProjectTags(req) : existing.tags();
+        boolean starred = req.containsKey("starred") ? parseBoolean(req.get("starred")) : existing.starred();
+        // 星标/排序是纯整理动作：只改键携带时也不该刷新「更新于」，避免掩盖真实的内容变更时间
+        long sortOrder = req.containsKey("sort_order") ? parseSortOrder(req.get("sort_order")) : existing.sortOrder();
         Project updated = new Project(id, name, workspace, targetRef, existing.authRepo(),
-                priority, size, tags, existing.createdAt(), clock.now());
+                priority, size, tags, starred, sortOrder, existing.createdAt(), clock.now());
         projects.update(updated);
         ctx.status(HttpStatus.OK);
         ctx.json(projectJson(updated));
+    }
+
+    /**
+     * Console drag-order persistence: {@code {"order": ["idA","idB",…]}} assigns dense
+     * {@code sort_order} 1..N in the given sequence; ids not in the list are left untouched.
+     */
+    public void reorderProjects(Context ctx) {
+        Map<String, Object> req = Json.parseObject(ctx.body());
+        Object raw = req.get("order");
+        if (!(raw instanceof List<?> list)) {
+            throw new GateException(GateErrorCode.USAGE, "order must be an array of project ids");
+        }
+        List<Project> all = projects.findAll();
+        List<Project> updated = new ArrayList<>(list.size());
+        for (int i = 0; i < list.size(); i++) {
+            Object item = list.get(i);
+            if (item == null) {
+                throw new GateException(GateErrorCode.USAGE, "order entry must not be null");
+            }
+            String id = item.toString();
+            Project p = all.stream().filter(x -> x.id().equals(id)).findFirst()
+                    .orElseThrow(() -> new GateException(GateErrorCode.USAGE, "no such project: " + id));
+            updated.add(new Project(p.id(), p.name(), p.workspacePath(), p.targetRef(), p.authRepo(),
+                    p.priority(), p.size(), p.tags(), p.starred(), i + 1L, p.createdAt(), clock.now()));
+        }
+        updated.forEach(projects::update);
+        ctx.status(HttpStatus.OK);
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("ok", true);
+        ctx.json(body);
     }
 
     public void deleteProject(Context ctx) {
@@ -315,6 +351,8 @@ public final class ProjectController implements WebController {
         m.put("priority", p.priority());
         m.put("size", p.size());
         m.put("tags", p.tags());
+        m.put("starred", p.starred());
+        m.put("sort_order", p.sortOrder());
         List<Ticket> projectTickets = tickets.findAllByProject(p.id());
         m.put("ticket_count", projectTickets.size());
         m.put("active_ticket_count", (int) projectTickets.stream()
@@ -326,6 +364,33 @@ public final class ProjectController implements WebController {
 
     private String effectiveTargetRef(String targetRef) {
         return targetRef == null || targetRef.isBlank() ? config.primaryTargetRef() : targetRef;
+    }
+
+    /** 新项目落在手动排序尾部：1-based 最大值+1；全部未排过时从 1 开始。 */
+    private long nextSortOrder() {
+        return projects.findAll().stream().mapToLong(Project::sortOrder).max().orElse(0L) + 1L;
+    }
+
+    private static boolean parseBoolean(Object raw) {
+        if (raw instanceof Boolean b) {
+            return b;
+        }
+        String s = String.valueOf(raw).trim().toLowerCase(Locale.ROOT);
+        if (!s.equals("true") && !s.equals("false")) {
+            throw new GateException(GateErrorCode.USAGE, "starred must be a boolean: " + raw);
+        }
+        return Boolean.parseBoolean(s);
+    }
+
+    private static long parseSortOrder(Object raw) {
+        if (raw instanceof Number n) {
+            return n.longValue();
+        }
+        try {
+            return Long.parseLong(String.valueOf(raw).trim());
+        } catch (NumberFormatException e) {
+            throw new GateException(GateErrorCode.USAGE, "sort_order must be an integer: " + raw);
+        }
     }
 
     /**

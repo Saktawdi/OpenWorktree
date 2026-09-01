@@ -26,7 +26,7 @@ class AgentContextPromptTest {
     @Test
     void legacy_null_project_target_ref_renders_main_not_null() {
         Project project = new Project("p1", "Proj", "D:/ws/p1", null, "D:/auth/p1.git",
-                null, null, List.of(), Instant.EPOCH, Instant.EPOCH);
+                null, null, List.of(), false, 0L, Instant.EPOCH, Instant.EPOCH);
         Ticket ticket = new Ticket("T-1", "标题", "refs/heads/main", null, null, null, null, null,
                 TicketStage.PENDING, Instant.EPOCH, Instant.EPOCH);
         String prompt = AgentContextPrompt.compose(config, "T-1", ticket.targetRef(), ticket, project);
@@ -38,7 +38,7 @@ class AgentContextPromptTest {
     @Test
     void ticket_clone_path_renders_as_workspace_not_project_workspace() {
         Project project = new Project("p1", "Proj", "D:/ws/p1", "refs/heads/main",
-                "D:/auth/p1.git", null, null, List.of(), Instant.EPOCH, Instant.EPOCH);
+                "D:/auth/p1.git", null, null, List.of(), false, 0L, Instant.EPOCH, Instant.EPOCH);
         Ticket ticket = new Ticket("T-1", "标题", "refs/heads/main", "D:/clones/t-1", null, null,
                 null, null, TicketStage.PENDING, Instant.EPOCH, Instant.EPOCH);
         String prompt = AgentContextPrompt.compose(config, "T-1", ticket.targetRef(), ticket, project);
@@ -52,7 +52,7 @@ class AgentContextPromptTest {
     @Test
     void concrete_project_target_ref_renders_verbatim() {
         Project project = new Project("p1", "Proj", "D:/ws/p1", "refs/heads/release",
-                "D:/auth/p1.git", null, null, List.of(), Instant.EPOCH, Instant.EPOCH);
+                "D:/auth/p1.git", null, null, List.of(), false, 0L, Instant.EPOCH, Instant.EPOCH);
         Ticket ticket = new Ticket("T-1", "标题", "refs/heads/release", null, null, null, null, null,
                 TicketStage.PENDING, Instant.EPOCH, Instant.EPOCH);
         String prompt = AgentContextPrompt.compose(config, "T-1", ticket.targetRef(), ticket, project);

@@ -24,6 +24,10 @@ export interface Project {
   priority: Priority | null;
   size: "small" | "medium" | "large" | null;
   tags: string[];
+  /** 星标置顶：true 时排在项目列表最前 */
+  starred: boolean;
+  /** 手动拖拽顺序（1-based；0 = 未排，按名称兜底） */
+  sortOrder: number;
   ticketCount: number;
   activeTicketCount: number;
   createdAt: string;
@@ -391,6 +395,20 @@ export interface AgentConfigOption {
   name: string;
   model: string;
   cli: "claude" | "opencode";
+}
+
+/** POST /api/workspaces 的目录浏览结果（接入项目表单选目录用） */
+export interface WorkspaceListing {
+  path: string;
+  parent: string | null;
+  exists: boolean;
+  roots: { name: string; path: string }[];
+  directories: {
+    name: string;
+    path: string;
+    isGitRepo: boolean;
+    isRegisteredProject: boolean;
+  }[];
 }
 
 /* ── 设置中心 ── */

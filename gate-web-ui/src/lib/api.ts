@@ -52,6 +52,7 @@ import type {
   Severity,
   Snapshot,
   TerminalEntry,
+  WorkspaceListing,
   WorkspaceSyncResult,
   GateTomlResponse,
   McpStatus,
@@ -1451,6 +1452,8 @@ interface RawProject {
   priority?: string | null;
   size?: string | null;
   tags?: string[] | null;
+  starred?: boolean | null;
+  sort_order?: number | null;
   ticket_count?: number;
   active_ticket_count?: number;
   created_at: string;
@@ -1467,6 +1470,8 @@ function mapProject(p: RawProject): import("./types").Project {
     priority: (p.priority as import("./types").Priority | null) ?? null,
     size: (p.size as "small" | "medium" | "large" | null) ?? null,
     tags: p.tags ?? [],
+    starred: p.starred ?? false,
+    sortOrder: p.sort_order ?? 0,
     ticketCount: p.ticket_count ?? 0,
     activeTicketCount: p.active_ticket_count ?? 0,
     createdAt: p.created_at,
@@ -1681,6 +1686,76 @@ export async function deleteProjectLive(id: string): Promise<boolean> {
   } catch (e) {
     showToast(`删除项目失败：${(e as Error).message}`);
     return false;
+  }
+}
+
+/** 星标/取消星标（控制台整理动作，走 updateProject 但只带 starred 键）。 */
+export async function setProjectStarredLive(id: string, starred: boolean): Promise<boolean> {
+  try {
+    await api(`/api/projects/${id}`, {
+      method: "PUT",
+      body: JSON.stringify({ starred }),
+    });
+    await loadProjects();
+    return true;
+  } catch (e) {
+    showToast(`星标更新失败：${(e as Error).message}`);
+    return false;
+  }
+}
+
+/** 拖拽排序持久化：console 给出全量展示顺序，后端写 1..N 的 sort_order。 */
+export async function reorderProjectsLive(orderedIds: string[]): Promise<boolean> {
+  try {
+    await api("/api/projects/reorder", {
+      method: "POST",
+      body: JSON.stringify({ order: orderedIds }),
+    });
+    await loadProjects();
+    return true;
+  } catch (e) {
+    showToast(`排序保存失败：${(e as Error).message}`);
+    return false;
+  }
+}
+
+interface RawWorkspaceListing {
+  path: string;
+  parent?: string | null;
+  exists: boolean;
+  roots?: { name: string; path: string }[] | null;
+  directories?: {
+    name: string;
+    path: string;
+    is_git_repo?: boolean | null;
+    is_registered_project?: boolean | null;
+  }[] | null;
+}
+
+/** 目录浏览（工作区路径选择器）：lists child directories of `path`，空串/缺省 = 用户家目录。 */
+export async function browseWorkspace(path: string): Promise<WorkspaceListing | null> {
+  try {
+    const trimmed = path.trim();
+    const data = await api<RawWorkspaceListing>("/api/workspaces", {
+      method: "POST",
+      // 空 path 不带字段：后端回退到用户家目录（传空串会被解析成进程工作目录）
+      body: JSON.stringify(trimmed ? { path: trimmed } : {}),
+    });
+    return {
+      path: data.path,
+      parent: data.parent ?? null,
+      exists: data.exists,
+      roots: data.roots ?? [],
+      directories: (data.directories ?? []).map((d) => ({
+        name: d.name,
+        path: d.path,
+        isGitRepo: d.is_git_repo ?? false,
+        isRegisteredProject: d.is_registered_project ?? false,
+      })),
+    };
+  } catch (e) {
+    showToast(`目录浏览失败：${(e as Error).message}`);
+    return null;
   }
 }
 

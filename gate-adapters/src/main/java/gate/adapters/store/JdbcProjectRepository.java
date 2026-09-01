@@ -31,6 +31,8 @@ public final class JdbcProjectRepository implements ProjectRepository {
             rs.getString("priority"),
             rs.getString("size"),
             decodeTags(rs.getString("tags")),
+            rs.getBoolean("starred"),
+            rs.getLong("sort_order"),
             Instant.parse(rs.getString("created_at")),
             Instant.parse(rs.getString("updated_at")));
 
@@ -38,11 +40,12 @@ public final class JdbcProjectRepository implements ProjectRepository {
     public void insert(Project project) {
         jdbc.update("""
                 INSERT INTO project(id, name, workspace_path, target_ref, auth_repo, priority, size, tags,
-                                    created_at, updated_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?)
+                                    starred, sort_order, created_at, updated_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 project.id(), project.name(), project.workspacePath(), project.targetRef(),
                 project.authRepo(), project.priority(), project.size(), encodeTags(project.tags()),
+                project.starred() ? 1 : 0, project.sortOrder(),
                 project.createdAt().toString(), project.updatedAt().toString());
     }
 
@@ -62,18 +65,22 @@ public final class JdbcProjectRepository implements ProjectRepository {
 
     @Override
     public List<Project> findAll() {
-        return jdbc.query("SELECT * FROM project ORDER BY name", MAPPER);
+        // 首页看板顺序：星标置顶 → 手动拖拽顺序（0 = 未排，收尾兜底按名称）
+        return jdbc.query(
+                "SELECT * FROM project ORDER BY starred DESC, sort_order ASC, name ASC", MAPPER);
     }
 
     @Override
     public void update(Project project) {
         int updated = jdbc.update("""
                 UPDATE project SET name = ?, workspace_path = ?, target_ref = ?, auth_repo = ?,
-                                   priority = ?, size = ?, tags = ?, updated_at = ?
+                                   priority = ?, size = ?, tags = ?, starred = ?, sort_order = ?,
+                                   updated_at = ?
                 WHERE id = ?
                 """,
                 project.name(), project.workspacePath(), project.targetRef(), project.authRepo(),
                 project.priority(), project.size(), encodeTags(project.tags()),
+                project.starred() ? 1 : 0, project.sortOrder(),
                 project.updatedAt().toString(), project.id());
         if (updated != 1) {
             throw new IllegalStateException("no such project: " + project.id());

@@ -183,6 +183,8 @@ export const actions = {
       priority: (body.priority as Project["priority"]) ?? null,
       size: body.size as Project["size"],
       tags: body.tags,
+      starred: false,
+      sortOrder: Math.max(0, ...st.projects.map((p) => p.sortOrder ?? 0)) + 1,
       ticketCount: 0,
       activeTicketCount: 0,
       createdAt: new Date().toISOString(),
@@ -231,6 +233,39 @@ export const actions = {
     removeProject(id);
     showToast("项目已移除（工单保留为未分配）");
     return Promise.resolve(true);
+  },
+  /** 星标开关：置顶展示，不参与「更新于」时间刷新。 */
+  setProjectStarred(id: string, starred: boolean) {
+    if (appStore.getState().mode === "live") {
+      return live.setProjectStarredLive(id, starred);
+    }
+    const st = appStore.getState();
+    const p = st.projects.find((x) => x.id === id);
+    if (!p) return Promise.resolve(false);
+    upsertProject({ ...p, starred });
+    showToast(starred ? `已置顶「${p.name}」` : `已取消「${p.name}」置顶`);
+    return Promise.resolve(true);
+  },
+  /** 拖拽排序结果落库（live 后端 + demo 本地 store）。 */
+  reorderProjects(orderedIds: string[]) {
+    if (appStore.getState().mode === "live") {
+      return live.reorderProjectsLive(orderedIds);
+    }
+    const st = appStore.getState();
+    const order = new Map(orderedIds.map((id, i) => [id, i + 1]));
+    for (const p of st.projects) {
+      const next = order.get(p.id);
+      if (next !== undefined) upsertProject({ ...p, sortOrder: next });
+    }
+    return Promise.resolve(true);
+  },
+  /** 目录浏览只走 live 后端；demo 模式下无本地文件系统可调。 */
+  browseWorkspace(path: string) {
+    if (appStore.getState().mode !== "live") {
+      showToast("目录浏览需要连接本地后端（live 模式）");
+      return Promise.resolve(null);
+    }
+    return live.browseWorkspace(path);
   },
   saveAgentConfig(c: AgentConfig) {
     if (appStore.getState().mode === "live") {

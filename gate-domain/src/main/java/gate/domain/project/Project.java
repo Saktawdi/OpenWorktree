@@ -15,6 +15,10 @@ import java.util.List;
  * <p>V6 project meta: {@code priority} (P0..P3) and {@code size} are nullable console-managed
  * fields; {@code tags} is a free-form label list. All three are optional — the home board falls
  * back to ticket-derived aggregates when they are unset.
+ *
+ * <p>Console ordering meta: {@code starred} pins a project to the top of the home board;
+ * {@code sortOrder} is the manual drag order (0 = unset, falls back to name ordering; the reorder
+ * endpoint assigns 1..N in display order).
  */
 public record Project(
         String id,
@@ -25,6 +29,8 @@ public record Project(
         String priority,
         String size,
         List<String> tags,
+        boolean starred,
+        long sortOrder,
         Instant createdAt,
         Instant updatedAt) {
 
