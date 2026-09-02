@@ -3,6 +3,7 @@ package gate.web.controller;
 import gate.domain.error.GateErrorCode;
 import gate.domain.error.GateException;
 import gate.web.service.OpenCodeConfigService;
+import gate.web.service.OpenCodeModelsApi;
 import gate.web.util.Json;
 import io.javalin.Javalin;
 import io.javalin.http.Context;
@@ -23,9 +24,11 @@ import java.util.Map;
 public final class OpenCodeProviderController implements WebController {
 
     private final OpenCodeConfigService configService;
+    private final OpenCodeModelsApi modelsApi;
 
-    public OpenCodeProviderController(OpenCodeConfigService configService) {
+    public OpenCodeProviderController(OpenCodeConfigService configService, OpenCodeModelsApi modelsApi) {
         this.configService = configService;
+        this.modelsApi = modelsApi;
     }
 
     @Override
@@ -35,6 +38,13 @@ public final class OpenCodeProviderController implements WebController {
         app.post("/api/opencode/providers/{key}", this::create);
         app.put("/api/opencode/providers/{key}", this::update);
         app.delete("/api/opencode/providers/{key}", this::delete);
+        // Upstream probes (ai-toolbox parity): pull the model list / test one chat completion.
+        // They take explicit base_url + api_key from the edit dialog so a provider can be
+        // verified before it is ever written to opencode.json. Registered outside the
+        // /providers/{key} namespace: a single-segment path here would collide with the POST
+        // create route (Javalin matches "test" as a provider key).
+        app.post("/api/opencode/models/fetch", this::fetchModels);
+        app.post("/api/opencode/models/test", this::test);
     }
 
     public void configPath(Context ctx) {
@@ -92,6 +102,32 @@ public final class OpenCodeProviderController implements WebController {
         body.put("ok", true);
         ctx.status(HttpStatus.OK);
         ctx.json(body);
+    }
+
+    public void fetchModels(Context ctx) {
+        Map<String, Object> req = Json.parseObject(ctx.body());
+        List<String> models = modelsApi.fetchModels(str(req, "base_url"), str(req, "api_key"));
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("models", models);
+        ctx.status(HttpStatus.OK);
+        ctx.json(body);
+    }
+
+    public void test(Context ctx) {
+        Map<String, Object> req = Json.parseObject(ctx.body());
+        String model = str(req, "model");
+        if (model == null || model.isBlank()) {
+            throw new GateException(GateErrorCode.USAGE, "model is required");
+        }
+        Map<String, Object> result = modelsApi.testModel(
+                str(req, "base_url"), str(req, "api_key"), model.trim(), str(req, "prompt"));
+        ctx.status(HttpStatus.OK);
+        ctx.json(result);
+    }
+
+    private static String str(Map<String, Object> map, String key) {
+        Object value = map.get(key);
+        return value == null ? null : value.toString();
     }
 
     private static Map<String, Object> renderOne(String key, Map<String, Object> providers) {

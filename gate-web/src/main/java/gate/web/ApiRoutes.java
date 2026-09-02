@@ -16,6 +16,7 @@ import gate.web.controller.TicketController;
 import gate.web.controller.WebController;
 import gate.web.service.SessionModelCatalog;
 import gate.web.service.OpenCodeConfigService;
+import gate.web.service.OpenCodeModelsApi;
 import io.javalin.Javalin;
 import java.util.List;
 
@@ -42,7 +43,7 @@ public final class ApiRoutes implements WebController {
                         c.reviewResultRepository(), c.blobStore(), c.ticketLockManager(), c.git(), c.config()),
                 new TaskController(c.taskRegistry(), c.taskRunner()),
                 new ProviderController(c.providerRepository(), c.modelFetcher(), c.kmsService(), c.clock()),
-                new OpenCodeProviderController(new OpenCodeConfigService()),
+                new OpenCodeProviderController(new OpenCodeConfigService(), new OpenCodeModelsApi()),
                 new MetricsController(c.metricsService(), c.gateService()),
                 new SessionController(c.agentConfigRepository(), c.sessionRepository(), c.agentSessionPort(),
                         c.ticketRepository(), c.clock(), new SessionModelCatalog(), c.credentials(),

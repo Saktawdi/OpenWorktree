@@ -88,7 +88,7 @@ public final class ProviderModelFetcher {
     }
 
     /** Best-effort parse of the known upstream model-list shapes; empty list on no match. */
-    private static List<String> parseModelIds(String body) {
+    public static List<String> parseModelIds(String body) {
         Object parsed;
         try {
             parsed = MiniJson.parse(body == null ? "" : body.trim());

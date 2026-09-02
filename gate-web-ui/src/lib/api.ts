@@ -2007,6 +2007,35 @@ export async function deleteOcProviderLive(key: string): Promise<boolean> {
   }
 }
 
+/** 拉取上游模型列表（保存前即可探测）；失败抛错由调用方展示。 */
+export async function fetchOcModelsLive(baseUrl: string, apiKey: string): Promise<string[]> {
+  const data = await api<{ models: string[] }>("/api/opencode/models/fetch", {
+    method: "POST",
+    body: JSON.stringify({ base_url: baseUrl, api_key: apiKey || null }),
+  });
+  return data.models ?? [];
+}
+
+export interface OcModelTestResult {
+  ok: boolean;
+  status_code: number;
+  latency_ms: number;
+  reply?: string;
+  error?: string;
+}
+
+/** 连通测试：对单个模型发一条最小 chat completion，结果作为数据返回（不抛错）。 */
+export async function testOcModelLive(
+  baseUrl: string,
+  apiKey: string,
+  model: string,
+): Promise<OcModelTestResult> {
+  return api<OcModelTestResult>("/api/opencode/models/test", {
+    method: "POST",
+    body: JSON.stringify({ base_url: baseUrl, api_key: apiKey || null, model }),
+  });
+}
+
 /* ─── 运行中智能体轮询（GET /api/agents/busy） ─── */
 
 interface RawBusyAgent {

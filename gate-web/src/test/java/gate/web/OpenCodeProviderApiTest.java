@@ -6,10 +6,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import gate.web.service.OpenCodeConfigService;
+import java.net.InetSocketAddress;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
@@ -32,9 +34,45 @@ class OpenCodeProviderApiTest {
     private String base;
     private String token;
     private Path configFile;
+    private com.sun.net.httpserver.HttpServer upstream;
+    private int upstreamPort;
 
     @BeforeEach
     void setUp() throws Exception {
+        // Fake OpenAI-compatible upstream: /v1/models + /v1/chat/completions (mock-error 500s).
+        upstream = com.sun.net.httpserver.HttpServer.create(
+                new InetSocketAddress("127.0.0.1", 0), 0);
+        upstream.createContext("/v1/models", ex -> {
+            byte[] body = """
+                    {"data":[{"id":"mock-alpha"},{"id":"mock-beta"}]}
+                    """.getBytes(StandardCharsets.UTF_8);
+            ex.getResponseHeaders().add("Content-Type", "application/json");
+            ex.sendResponseHeaders(200, body.length);
+            ex.getResponseBody().write(body);
+            ex.close();
+        });
+        upstream.createContext("/v1/chat/completions", ex -> {
+            byte[] reqBody = ex.getRequestBody().readAllBytes();
+            String req = new String(reqBody, StandardCharsets.UTF_8);
+            int status;
+            byte[] body;
+            if (req.contains("mock-error")) {
+                status = 500;
+                body = "{\"error\":\"boom\"}".getBytes(StandardCharsets.UTF_8);
+            } else {
+                status = 200;
+                body = """
+                        {"choices":[{"message":{"content":"pong"}}]}
+                        """.getBytes(StandardCharsets.UTF_8);
+            }
+            ex.getResponseHeaders().add("Content-Type", "application/json");
+            ex.sendResponseHeaders(status, body.length);
+            ex.getResponseBody().write(body);
+            ex.close();
+        });
+        upstream.start();
+        upstreamPort = upstream.getAddress().getPort();
+
         configFile = Files.createTempDirectory("opencode-cfg-test-").resolve("opencode.json");
         Files.writeString(configFile, """
                 {
@@ -68,6 +106,9 @@ class OpenCodeProviderApiTest {
     @AfterEach
     void tearDown() throws Exception {
         System.clearProperty(OpenCodeConfigService.CONFIG_PATH_PROPERTY);
+        if (upstream != null) {
+            upstream.stop(0);
+        }
         if (server != null) {
             server.close();
         }
@@ -145,6 +186,44 @@ class OpenCodeProviderApiTest {
     void delete_unknown_key_is_rejected() throws Exception {
         HttpResponse<String> res = delete("/api/opencode/providers/does-not-exist");
         assertEquals(400, res.statusCode(), res.body());
+    }
+
+    @Test
+    void fetch_models_pulls_upstream_model_list() throws Exception {
+        HttpResponse<String> res = post("/api/opencode/models/fetch", """
+                {"base_url":"http://127.0.0.1:%d/v1","api_key":"sk-fake"}
+                """.formatted(upstreamPort));
+        assertEquals(200, res.statusCode(), res.body());
+        assertTrue(res.body().contains("mock-alpha"), res.body());
+        assertTrue(res.body().contains("mock-beta"), res.body());
+    }
+
+    @Test
+    void fetch_models_rejects_non_http_base_url() throws Exception {
+        HttpResponse<String> res = post("/api/opencode/models/fetch", """
+                {"base_url":"ftp://example.com"}
+                """);
+        assertEquals(400, res.statusCode(), res.body());
+    }
+
+    @Test
+    void test_model_reports_ok_with_reply() throws Exception {
+        HttpResponse<String> res = post("/api/opencode/models/test", """
+                {"base_url":"http://127.0.0.1:%d/v1","api_key":"sk-fake","model":"mock-alpha"}
+                """.formatted(upstreamPort));
+        assertEquals(200, res.statusCode(), res.body());
+        assertTrue(res.body().contains("\"ok\":true"), res.body());
+        assertTrue(res.body().contains("pong"), res.body());
+    }
+
+    @Test
+    void test_model_reports_failure_as_data() throws Exception {
+        HttpResponse<String> res = post("/api/opencode/models/test", """
+                {"base_url":"http://127.0.0.1:%d/v1","api_key":"sk-fake","model":"mock-error"}
+                """.formatted(upstreamPort));
+        assertEquals(200, res.statusCode(), res.body());
+        assertTrue(res.body().contains("\"ok\":false"), res.body());
+        assertTrue(res.body().contains("500"), res.body());
     }
 
     private HttpResponse<String> get(String path) throws Exception {
