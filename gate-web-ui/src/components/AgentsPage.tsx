@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { AnimatePresence, motion } from "motion/react";
 import {
   ArrowClockwise,
   CaretDown,
@@ -120,7 +121,10 @@ interface ProbeState {
   text?: string;
 }
 
-function OcProviderDialog({
+/**
+ * 供应商编辑面板：由 OpenCodeProvidersModal 以右侧滑入面板承载（motion 动效在父级）。
+ */
+function OcProviderPanel({
   initial,
   onClose,
 }: {
@@ -203,16 +207,19 @@ function OcProviderDialog({
   };
 
   return (
-    <div className="fixed inset-0 z-[60] grid place-items-center bg-black/55 backdrop-blur-[2px]" onClick={onClose}>
-      <div className="w-[540px] card shadow-2xl shadow-black/60 animate-rise" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center gap-2 px-5 h-12 border-b border-edge">
+    <div className="flex h-full flex-col bg-canvas">
+        <div className="flex items-center gap-2 px-5 h-12 border-b border-edge shrink-0">
           <Plug size={15} className="text-accent" weight="fill" />
           <span className="text-[13.5px] font-semibold">
-            {initial ? "编辑 OpenCode 供应商" : "新增 OpenCode 供应商"}
+            {initial ? `编辑供应商 · ${initial.key}` : "新增 OpenCode 供应商"}
           </span>
+          <span className="flex-1" />
+          <button className="icon-btn" title="关闭" aria-label="关闭" onClick={onClose}>
+            <X size={15} />
+          </button>
         </div>
 
-        <div className="p-5 space-y-4 max-h-[72vh] overflow-y-auto">
+        <div className="p-5 space-y-4 flex-1 overflow-y-auto">
           <div>
             <label className="field-label">供应商 key（模型 id 前缀）</label>
             <input
@@ -302,6 +309,15 @@ function OcProviderDialog({
               </button>
             </div>
 
+            {mode !== "live" && (
+              <div className="mb-2 text-[11px] text-warn">
+                演示模式下无法访问本机后端：连接本地后端（live）后即可拉取模型与测试连通。
+              </div>
+            )}
+            {mode === "live" && !baseURL.trim() && (
+              <div className="mb-2 text-[11px] text-faint">填写 Base URL 后可拉取上游模型并测试连通。</div>
+            )}
+
             {probe.kind !== "idle" && probe.kind !== "fetching" && probe.kind !== "testing" && (
               <div className={`mb-2 text-[11.5px] ${probe.ok ? "text-accent" : "text-danger"}`}>
                 {probe.ok ? "✓ " : "✗ "}
@@ -389,7 +405,7 @@ function OcProviderDialog({
           </div>
         </div>
 
-        <div className="flex justify-end gap-2 px-5 py-4 border-t border-edge">
+        <div className="flex justify-end gap-2 px-5 py-4 border-t border-edge shrink-0">
           <button className="btn" onClick={onClose}>
             取消
           </button>
@@ -397,7 +413,6 @@ function OcProviderDialog({
             {saving ? "保存中…" : "保存"}
           </button>
         </div>
-      </div>
     </div>
   );
 }
@@ -444,7 +459,7 @@ function OpenCodeProvidersModal({ onClose }: { onClose: () => void }) {
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/55 backdrop-blur-[2px]" onClick={onClose}>
       <div
-        className="w-[860px] max-w-[94vw] max-h-[86vh] flex flex-col card shadow-2xl shadow-black/60 animate-rise"
+        className="relative w-[860px] max-w-[94vw] max-h-[86vh] h-[640px] flex flex-col card shadow-2xl shadow-black/60 animate-rise overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center gap-2 px-5 h-12 border-b border-edge shrink-0">
@@ -465,7 +480,7 @@ function OpenCodeProvidersModal({ onClose }: { onClose: () => void }) {
           </button>
         </div>
 
-        <div className="p-5 overflow-y-auto space-y-2">
+        <div className="p-5 overflow-y-auto space-y-2 flex-1">
           {ocProviders.map((p) => (
             <div key={p.key} className="card p-4">
               <div className="flex items-center gap-2.5">
@@ -550,11 +565,34 @@ function OpenCodeProvidersModal({ onClose }: { onClose: () => void }) {
             </div>
           )}
         </div>
-      </div>
 
-      {dialog.open && (
-        <OcProviderDialog initial={dialog.provider} onClose={() => setDialog({ open: false, provider: null })} />
-      )}
+        {/* 编辑侧边面板：从右侧滑入，覆盖列表右缘 */}
+        <AnimatePresence>
+          {dialog.open && (
+            <>
+              <motion.div
+                key="panel-scrim"
+                className="absolute inset-0 z-10 bg-black/35"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.22 }}
+                onClick={() => setDialog({ open: false, provider: null })}
+              />
+              <motion.div
+                key={`provider-panel-${dialog.provider?.key ?? "new"}`}
+                className="absolute inset-y-0 right-0 z-20 w-[520px] max-w-[92%] border-l border-edge bg-canvas shadow-[-24px_0_48px_-12px_rgba(0,0,0,0.55)]"
+                initial={{ x: "100%" }}
+                animate={{ x: 0 }}
+                exit={{ x: "100%" }}
+                transition={{ type: "spring", stiffness: 380, damping: 38, mass: 0.9 }}
+              >
+                <OcProviderPanel initial={dialog.provider} onClose={() => setDialog({ open: false, provider: null })} />
+              </motion.div>
+            </>
+          )}
+        </AnimatePresence>
+      </div>
     </div>
   );
 }
