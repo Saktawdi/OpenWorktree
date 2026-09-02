@@ -1977,8 +1977,9 @@ export async function upsertOcProviderLive(
   p: import("./types").OpenCodeProvider,
 ): Promise<boolean> {
   try {
+    const exists = appStore.getState().ocProviders.some((x) => x.key === p.key);
     await api(`/api/opencode/providers/${encodeURIComponent(p.key)}`, {
-      method: "PUT",
+      method: exists ? "PUT" : "POST",
       body: JSON.stringify({
         name: p.name,
         npm: p.npm || null,
