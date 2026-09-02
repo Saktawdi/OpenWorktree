@@ -189,6 +189,30 @@ class OpenCodeProviderApiTest {
     }
 
     @Test
+    void model_configs_round_trip_as_objects() throws Exception {
+        HttpResponse<String> created = post("/api/opencode/providers/glm", """
+                {"name":"智谱","npm":"@ai-sdk/openai-compatible","base_url":"https://open.bigmodel.cn/api/paas/v4",
+                 "api_key":"sk-glm",
+                 "models":{"glm-4.6":{"name":"GLM-4.6","limit":{"context":200000,"output":16000},
+                   "modalities":{"input":["text","image"],"output":["text"]},
+                   "tool_call":true,"temperature":true,"reasoning":false,
+                   "variants":{"high":{"reasoningEffort":"high"}},"store":false}}}
+                """);
+        assertEquals(201, created.statusCode(), created.body());
+        assertTrue(created.body().contains("\"id\":\"glm-4.6\""), created.body());
+        assertTrue(created.body().contains("200000"), created.body());
+        assertTrue(created.body().contains("reasoningEffort"), created.body());
+
+        // The raw file keeps the full nested config untouched.
+        String saved = Files.readString(configFile);
+        assertTrue(saved.contains("200000"), saved);
+        assertTrue(saved.contains("reasoningEffort"), saved);
+
+        HttpResponse<String> list = get("/api/opencode/providers");
+        assertTrue(list.body().contains("\"input\":[\"text\",\"image\"]"), list.body());
+    }
+
+    @Test
     void fetch_models_pulls_upstream_model_list() throws Exception {
         HttpResponse<String> res = post("/api/opencode/models/fetch", """
                 {"base_url":"http://127.0.0.1:%d/v1","api_key":"sk-fake"}

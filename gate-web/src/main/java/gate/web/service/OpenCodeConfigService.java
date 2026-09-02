@@ -137,14 +137,19 @@ public final class OpenCodeConfigService {
         row.put("base_url", opts.get("baseURL"));
         row.put("api_key", opts.get("apiKey"));
         Object models = raw.get("models");
-        List<String> modelIds = new ArrayList<>();
+        List<Map<String, Object>> modelEntries = new ArrayList<>();
         if (models instanceof Map<?, ?> m) {
-            for (Object id : m.keySet()) {
-                modelIds.add(String.valueOf(id));
+            for (Map.Entry<?, ?> e : m.entrySet()) {
+                Map<String, Object> entry = new LinkedHashMap<>();
+                entry.put("id", String.valueOf(e.getKey()));
+                entry.put("config", e.getValue() instanceof Map<?, ?> cm
+                        ? asLinked(cm)
+                        : new LinkedHashMap<String, Object>());
+                modelEntries.add(entry);
             }
         }
-        row.put("models", modelIds);
-        row.put("model_count", modelIds.size());
+        row.put("models", modelEntries);
+        row.put("model_count", modelEntries.size());
         return row;
     }
 
@@ -196,17 +201,30 @@ public final class OpenCodeConfigService {
         }
         if (req.containsKey("models")) {
             target.remove("models");
-            if (req.get("models") instanceof List<?> list) {
-                Map<String, Object> models = new LinkedHashMap<>();
+            Object rawModels = req.get("models");
+            Map<String, Object> models = new LinkedHashMap<>();
+            if (rawModels instanceof Map<?, ?> mm) {
+                // 新形状：id → 完整模型配置（limit/modalities/variants/… 原样透传）。
+                for (Map.Entry<?, ?> e : mm.entrySet()) {
+                    String id = str(e.getKey());
+                    if (id == null || id.isBlank()) {
+                        continue;
+                    }
+                    models.put(id.trim(), e.getValue() instanceof Map<?, ?> cm
+                            ? new LinkedHashMap<>(asLinked(cm))
+                            : new LinkedHashMap<String, Object>());
+                }
+            } else if (rawModels instanceof List<?> list) {
+                // 兼容旧形状：仅模型 id 列表，配置留空由 opencode 默认。
                 for (Object id : list) {
                     String modelId = str(id);
                     if (modelId != null && !modelId.isBlank() && !models.containsKey(modelId.trim())) {
                         models.put(modelId.trim(), new LinkedHashMap<String, Object>());
                     }
                 }
-                if (!models.isEmpty()) {
-                    target.put("models", models);
-                }
+            }
+            if (!models.isEmpty()) {
+                target.put("models", models);
             }
         }
     }

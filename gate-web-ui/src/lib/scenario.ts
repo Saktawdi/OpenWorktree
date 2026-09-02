@@ -93,7 +93,10 @@ export const DEMO_OC_PROVIDERS: import("./types").OpenCodeProvider[] = [
     npm: "@ai-sdk/openai-compatible",
     baseURL: "https://api.githubcopilot.com/",
     apiKey: null,
-    models: ["gpt-4.1", "claude-sonnet-4.5"],
+    models: [
+      { id: "gpt-4.1", config: { name: "GPT-4.1", limit: { context: 128000, output: 16384 }, tool_call: true } },
+      { id: "claude-sonnet-4.5", config: { name: "Claude Sonnet 4.5", limit: { context: 200000, output: 8192 }, tool_call: true } },
+    ],
     modelCount: 2,
   },
   {
@@ -102,7 +105,10 @@ export const DEMO_OC_PROVIDERS: import("./types").OpenCodeProvider[] = [
     npm: "@ai-sdk/openai-compatible",
     baseURL: "https://api.deepseek.com/v1",
     apiKey: null,
-    models: ["deepseek-chat", "deepseek-reasoner"],
+    models: [
+      { id: "deepseek-chat", config: { name: "DeepSeek Chat", limit: { context: 64000, output: 8000 }, tool_call: true } },
+      { id: "deepseek-reasoner", config: { name: "DeepSeek Reasoner", reasoning: true, limit: { context: 64000, output: 32000 } } },
+    ],
     modelCount: 2,
   },
 ];

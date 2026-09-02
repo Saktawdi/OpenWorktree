@@ -91,6 +91,7 @@
   --animate-scale-in: scaleIn var(--duration-normal) var(--ease-spring) both;
   --animate-slide-up: slideUp var(--duration-slow) var(--ease-default) both;
   --animate-slide-down: slideDown var(--duration-normal) var(--ease-out) both;
+  --animate-panel-in: panelIn 0.32s var(--ease-out) both;
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -145,6 +146,10 @@
 }
 @keyframes slideIn {
   from { opacity: 0; transform: translateX(14px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+@keyframes panelIn {
+  from { opacity: 0; transform: translateX(40px); }
   to { opacity: 1; transform: translateX(0); }
 }
 @keyframes flashLine {

@@ -1936,13 +1936,18 @@ export async function loadRuntimes(): Promise<boolean> {
 
 /* ─── OpenCode 供应商管理（opencode.json provider 节点 CRUD） ─── */
 
+interface RawOcModel {
+  id: string;
+  config?: Record<string, unknown> | null;
+}
+
 interface RawOcProvider {
   key: string;
   name: string;
   npm?: string | null;
   base_url?: string | null;
   api_key?: string | null;
-  models?: string[] | null;
+  models?: RawOcModel[] | null;
   model_count?: number | null;
 }
 
@@ -1953,7 +1958,7 @@ function mapOcProvider(p: RawOcProvider): import("./types").OpenCodeProvider {
     npm: p.npm ?? null,
     baseURL: p.base_url ?? null,
     apiKey: p.api_key ?? null,
-    models: p.models ?? [],
+    models: (p.models ?? []).map((m) => ({ id: m.id, config: m.config ?? {} })),
     modelCount: p.model_count ?? (p.models?.length ?? 0),
   };
 }
@@ -1985,7 +1990,7 @@ export async function upsertOcProviderLive(
         npm: p.npm || null,
         base_url: p.baseURL || null,
         api_key: p.apiKey ?? "",
-        models: p.models,
+        models: Object.fromEntries(p.models.map((m) => [m.id, m.config])),
       }),
     });
     await loadOcProviders();

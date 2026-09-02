@@ -365,14 +365,14 @@ export function seedDemo(force = false) {
   });
 }
 
-const SNAPSHOT_KEY = "gate-ui-state-v2";
+const SNAPSHOT_KEY = "gate-ui-state-v3";
 
 function tryRestore(): boolean {
   try {
     const raw = sessionStorage.getItem(SNAPSHOT_KEY);
     if (!raw) return false;
     const saved = JSON.parse(raw) as AppState & { _v?: number };
-    if (saved._v !== 1 || !saved.tickets?.length) return false;
+    if (saved._v !== 2 || !saved.tickets?.length) return false;
     const cur = appStore.getState();
     const clean: AppState = {
       ...cur,
@@ -433,7 +433,7 @@ appStore.subscribe(() => {
   saveTimer = setTimeout(() => {
     try {
       const st = appStore.getState();
-      const data = JSON.stringify({ ...st, _v: 1, toast: null, connectOpen: false, highlight: null });
+      const data = JSON.stringify({ ...st, _v: 2, toast: null, connectOpen: false, highlight: null });
       sessionStorage.setItem(SNAPSHOT_KEY, data);
     } catch {
       /* 存储满或不可用时忽略 */

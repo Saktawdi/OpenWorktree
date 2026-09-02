@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from "react";
-import { AnimatePresence, motion } from "motion/react";
 import {
   ArrowClockwise,
   CaretDown,
@@ -18,7 +17,7 @@ import {
 import { actions } from "../lib/actions";
 import * as live from "../lib/api";
 import { appStore, useApp } from "../lib/store";
-import type { AgentConfig, OpenCodeProvider } from "../lib/types";
+import type { AgentConfig, OpenCodeModelEntry, OpenCodeProvider } from "../lib/types";
 
 const CLI_LABEL: Record<string, string> = { claude: "Claude Code", opencode: "OpenCode" };
 
@@ -121,8 +120,257 @@ interface ProbeState {
   text?: string;
 }
 
+/** opencode 模型配置里已知的结构化字段；其余键作为「额外参数」JSON 透传。 */
+const KNOWN_MODEL_KEYS = new Set([
+  "name",
+  "limit",
+  "modalities",
+  "reasoning",
+  "tool_call",
+  "temperature",
+  "attachment",
+  "variants",
+]);
+
+const MODALITY_PRESETS = ["text", "image", "pdf", "video", "audio"];
+
+/** 兼容旧持久化形状（string[]）：统一归一为 {id, config} 条目。 */
+function normalizeModelEntries(models: (OpenCodeModelEntry | string)[] | undefined): OpenCodeModelEntry[] {
+  return (models ?? []).map((m) => (typeof m === "string" ? { id: m, config: {} } : m));
+}
+
+function parseModelConfig(cfg: Record<string, unknown>) {
+  const limit = (cfg.limit ?? {}) as Record<string, unknown>;
+  const mods = (cfg.modalities ?? {}) as Record<string, unknown>;
+  const extra: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(cfg)) {
+    if (!KNOWN_MODEL_KEYS.has(k)) extra[k] = v;
+  }
+  return {
+    name: typeof cfg.name === "string" ? cfg.name : "",
+    context: limit.context != null ? String(limit.context) : "",
+    output: limit.output != null ? String(limit.output) : "",
+    input: Array.isArray(mods.input) ? (mods.input as string[]) : [],
+    outputMods: Array.isArray(mods.output) ? (mods.output as string[]) : [],
+    reasoning: cfg.reasoning === true,
+    toolCall: cfg.tool_call === true,
+    temperature: cfg.temperature === true,
+    attachment: cfg.attachment === true,
+    variants: cfg.variants != null ? JSON.stringify(cfg.variants, null, 2) : "",
+    extra: Object.keys(extra).length > 0 ? JSON.stringify(extra, null, 2) : "",
+  };
+}
+
+/** ai-toolbox 式模型编辑器：限制 / 模态 / 能力 / 变体 / 额外参数，内联展开在模型行下方。 */
+function ModelEditor({
+  entry,
+  onSave,
+  onCancel,
+}: {
+  entry: OpenCodeModelEntry;
+  onSave: (next: OpenCodeModelEntry) => void;
+  onCancel: () => void;
+}) {
+  const parsed = parseModelConfig(entry.config);
+  const [name, setName] = useState(parsed.name);
+  const [context, setContext] = useState(parsed.context);
+  const [output, setOutput] = useState(parsed.output);
+  const [input, setInput] = useState<string[]>(parsed.input);
+  const [outputMods, setOutputMods] = useState<string[]>(parsed.outputMods);
+  const [reasoning, setReasoning] = useState(parsed.reasoning);
+  const [toolCall, setToolCall] = useState(parsed.toolCall);
+  const [temperature, setTemperature] = useState(parsed.temperature);
+  const [attachment, setAttachment] = useState(parsed.attachment);
+  const [variants, setVariants] = useState(parsed.variants);
+  const [extra, setExtra] = useState(parsed.extra);
+  const [advancedOpen, setAdvancedOpen] = useState(
+    parsed.input.length > 0 ||
+      parsed.outputMods.length > 0 ||
+      parsed.reasoning ||
+      parsed.toolCall ||
+      parsed.temperature ||
+      parsed.attachment ||
+      parsed.variants !== "" ||
+      parsed.extra !== "",
+  );
+  const [jsonError, setJsonError] = useState<string | null>(null);
+
+  const toggleModality = (list: string[], set: (v: string[]) => void, m: string) =>
+    set(list.includes(m) ? list.filter((x) => x !== m) : [...list, m]);
+
+  const save = () => {
+    let parsedVariants: unknown = undefined;
+    let parsedExtra: Record<string, unknown> = {};
+    try {
+      if (variants.trim()) parsedVariants = JSON.parse(variants);
+      if (extra.trim()) parsedExtra = JSON.parse(extra) as Record<string, unknown>;
+      setJsonError(null);
+    } catch (e) {
+      setJsonError(`JSON 解析失败：${(e as Error).message}`);
+      return;
+    }
+    const cfg: Record<string, unknown> = { ...parsedExtra };
+    if (name.trim()) cfg.name = name.trim();
+    const limit: Record<string, number> = {};
+    if (context.trim()) limit.context = Number(context.trim());
+    if (output.trim()) limit.output = Number(output.trim());
+    if (Object.keys(limit).length > 0) cfg.limit = limit;
+    const mods: Record<string, string[]> = {};
+    if (input.length > 0) mods.input = input;
+    if (outputMods.length > 0) mods.output = outputMods;
+    if (Object.keys(mods).length > 0) cfg.modalities = mods;
+    if (reasoning) cfg.reasoning = true;
+    if (toolCall) cfg.tool_call = true;
+    if (temperature) cfg.temperature = true;
+    if (attachment) cfg.attachment = true;
+    if (parsedVariants !== undefined) cfg.variants = parsedVariants;
+    onSave({ id: entry.id, config: cfg });
+  };
+
+  const cap = (label: string, v: boolean, set: (b: boolean) => void) => (
+    <label className="flex items-center gap-1.5 cursor-pointer text-[12.5px]">
+      <input type="checkbox" className="accent-accent" checked={v} onChange={(e) => set(e.target.checked)} />
+      {label}
+    </label>
+  );
+
+  return (
+    <div className="rounded-lg border border-accent/30 bg-raised/40 p-4 space-y-3.5">
+      <div className="flex items-center gap-2">
+        <span className="text-[12.5px] font-semibold">编辑模型</span>
+        <span className="chip border border-edge-strong bg-canvas text-dim font-mono">{entry.id}</span>
+        <span className="flex-1" />
+        <button type="button" className="icon-btn" title="取消" aria-label="取消编辑模型" onClick={onCancel}>
+          <X size={13} />
+        </button>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="field-label">模型名称</label>
+          <input className="text-input" placeholder={entry.id} value={name} onChange={(e) => setName(e.target.value)} />
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="field-label">上下文限制</label>
+            <input
+              className="text-input font-mono text-[12px]"
+              inputMode="numeric"
+              placeholder="200000"
+              value={context}
+              onChange={(e) => setContext(e.target.value)}
+            />
+          </div>
+          <div>
+            <label className="field-label">输出限制</label>
+            <input
+              className="text-input font-mono text-[12px]"
+              inputMode="numeric"
+              placeholder="16000"
+              value={output}
+              onChange={(e) => setOutput(e.target.value)}
+            />
+          </div>
+        </div>
+      </div>
+
+      <button
+        type="button"
+        className="flex items-center gap-1 text-[12px] text-accent cursor-pointer bg-transparent border-0 p-0"
+        onClick={() => setAdvancedOpen((v) => !v)}
+      >
+        <CaretDown size={12} className={`transition-transform ${advancedOpen ? "" : "-rotate-90"}`} />
+        高级设置
+      </button>
+
+      {advancedOpen && (
+        <div className="space-y-3.5">
+          <div>
+            <label className="field-label">输入模态</label>
+            <div className="flex flex-wrap gap-1.5">
+              {MODALITY_PRESETS.map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  className={`chip cursor-pointer font-mono ${
+                    input.includes(m)
+                      ? "border-accent/40 bg-accent/10 text-accent"
+                      : "border-edge-strong bg-canvas text-faint"
+                  }`}
+                  onClick={() => toggleModality(input, setInput, m)}
+                >
+                  {m}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <label className="field-label">输出模态</label>
+            <div className="flex flex-wrap gap-1.5">
+              {MODALITY_PRESETS.map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  className={`chip cursor-pointer font-mono ${
+                    outputMods.includes(m)
+                      ? "border-accent/40 bg-accent/10 text-accent"
+                      : "border-edge-strong bg-canvas text-faint"
+                  }`}
+                  onClick={() => toggleModality(outputMods, setOutputMods, m)}
+                >
+                  {m}
+                </button>
+              ))}
+            </div>
+            <div className="mt-1 text-[11px] text-faint">配置模型支持的输入输出类型，如 text、image、pdf、video、audio 等</div>
+          </div>
+          <div>
+            <label className="field-label">模型能力</label>
+            <div className="flex flex-wrap gap-4">
+              {cap("推理", reasoning, setReasoning)}
+              {cap("工具调用", toolCall, setToolCall)}
+              {cap("温度", temperature, setTemperature)}
+              {cap("附件", attachment, setAttachment)}
+            </div>
+            <div className="mt-1 text-[11px] text-faint">模型是否具备相应能力</div>
+          </div>
+          <div>
+            <label className="field-label">模型变体（JSON）</label>
+            <textarea
+              className="text-input font-mono text-[12px] h-28 resize-y"
+              placeholder={'{\n  "high": { "reasoningEffort": "high" }\n}'}
+              value={variants}
+              onChange={(e) => setVariants(e.target.value)}
+            />
+            <div className="mt-1 text-[11px] text-faint">配置模型的不同变体，如推理强度、输出详细程度等</div>
+          </div>
+          <div>
+            <label className="field-label">额外参数（JSON）</label>
+            <textarea
+              className="text-input font-mono text-[12px] h-20 resize-y"
+              placeholder={'{\n  "store": false\n}'}
+              value={extra}
+              onChange={(e) => setExtra(e.target.value)}
+            />
+          </div>
+          {jsonError && <div className="text-[11.5px] text-danger">{jsonError}</div>}
+        </div>
+      )}
+
+      <div className="flex justify-end gap-2 pt-1">
+        <button type="button" className="btn h-8" onClick={onCancel}>
+          取消
+        </button>
+        <button type="button" className="btn btn-primary h-8" onClick={save}>
+          应用模型配置
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /**
- * 供应商编辑面板：由 OpenCodeProvidersModal 以右侧滑入面板承载（motion 动效在父级）。
+ * 供应商编辑面板：由 OpenCodeProvidersModal 以右侧拼接面板承载（motion 动效在父级）。
  */
 function OcProviderPanel({
   initial,
@@ -137,23 +385,29 @@ function OcProviderPanel({
   const [npm, setNpm] = useState(initial?.npm ?? NPM_PRESETS[0]);
   const [baseURL, setBaseURL] = useState(initial?.baseURL ?? "");
   const [apiKey, setApiKey] = useState(initial?.apiKey ?? "");
-  const [selected, setSelected] = useState<string[]>(initial?.models ?? []);
+  const [models, setModels] = useState<OpenCodeModelEntry[]>(normalizeModelEntries(initial?.models));
   const [fetched, setFetched] = useState<string[]>([]);
   const [customModel, setCustomModel] = useState("");
+  const [editingModel, setEditingModel] = useState<string | null>(null);
   const [probe, setProbe] = useState<ProbeState>({ kind: "idle" });
   const [saving, setSaving] = useState(false);
 
   const keyValid = /^[A-Za-z0-9._\-/]+$/.test(key.trim());
   const canSave = keyValid && name.trim().length > 0 && !saving;
   const canProbe = mode === "live" && !!baseURL.trim() && probe.kind !== "fetching" && probe.kind !== "testing";
+  const selectedIds = models.map((m) => m.id);
 
   const toggleModel = (id: string) =>
-    setSelected((prev) => (prev.includes(id) ? prev.filter((m) => m !== id) : [...prev, id]));
+    setModels((prev) =>
+      prev.some((m) => m.id === id)
+        ? prev.filter((m) => m.id !== id)
+        : [...prev, { id, config: {} }],
+    );
 
   const addCustomModel = () => {
     const id = customModel.trim();
     if (!id) return;
-    setSelected((prev) => (prev.includes(id) ? prev : [...prev, id]));
+    setModels((prev) => (prev.some((m) => m.id === id) ? prev : [...prev, { id, config: {} }]));
     setCustomModel("");
   };
 
@@ -163,7 +417,7 @@ function OcProviderPanel({
     try {
       const list = await live.fetchOcModelsLive(baseURL.trim(), apiKey.trim());
       setFetched(list);
-      // 已选但上游没返回的手工模型保留在已选里；上游新模型默认不勾选，由用户多选。
+      // 已选但上游没返回的手工模型保留；上游新模型默认不勾选，由用户多选。
       setProbe({ kind: "done", ok: true, text: `拉取到 ${list.length} 个模型，勾选要写入配置的模型` });
     } catch (e) {
       setProbe({ kind: "error", ok: false, text: (e as Error).message });
@@ -172,7 +426,7 @@ function OcProviderPanel({
 
   const testModel = async () => {
     if (!canProbe) return;
-    const model = selected[0] ?? fetched[0];
+    const model = models[0]?.id ?? fetched[0];
     if (!model) {
       setProbe({ kind: "error", ok: false, text: "先拉取或填写至少一个模型再测试" });
       return;
@@ -199,8 +453,8 @@ function OcProviderPanel({
       npm: npm.trim() || null,
       baseURL: baseURL.trim() || null,
       apiKey: apiKey.trim() || null,
-      models: selected,
-      modelCount: selected.length,
+      models,
+      modelCount: models.length,
     });
     setSaving(false);
     if (ok) onClose();
@@ -333,7 +587,12 @@ function OcProviderPanel({
                   <button
                     type="button"
                     className="cursor-pointer bg-transparent border-0 p-0 text-dim hover:text-accent"
-                    onClick={() => setSelected(Array.from(new Set([...selected, ...fetched])))}
+                    onClick={() =>
+                      setModels((prev) => {
+                        const have = new Set(prev.map((m) => m.id));
+                        return [...prev, ...fetched.filter((id) => !have.has(id)).map((id) => ({ id, config: {} }))];
+                      })
+                    }
                   >
                     全选
                   </button>
@@ -341,7 +600,7 @@ function OcProviderPanel({
                   <button
                     type="button"
                     className="cursor-pointer bg-transparent border-0 p-0 text-dim hover:text-accent"
-                    onClick={() => setSelected(selected.filter((m) => !fetched.includes(m)))}
+                    onClick={() => setModels(models.filter((m) => !fetched.includes(m.id)))}
                   >
                     清空上游项
                   </button>
@@ -354,7 +613,7 @@ function OcProviderPanel({
                     <input
                       type="checkbox"
                       className="accent-accent"
-                      checked={selected.includes(m)}
+                      checked={selectedIds.includes(m)}
                       onChange={() => toggleModel(m)}
                     />
                     {m}
@@ -381,20 +640,48 @@ function OcProviderPanel({
               </button>
             </div>
 
-            {selected.length > 0 && (
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                {selected.map((m) => (
-                  <span key={m} className="chip border border-edge-strong bg-raised text-dim font-mono">
-                    {m}
-                    <button
-                      type="button"
-                      className="ml-1 cursor-pointer bg-transparent border-0 p-0 text-faint hover:text-danger"
-                      aria-label={`移除 ${m}`}
-                      onClick={() => setSelected((prev) => prev.filter((x) => x !== m))}
-                    >
-                      ×
-                    </button>
-                  </span>
+            {models.length > 0 && (
+              <div className="mt-2 space-y-2">
+                {models.map((m) => (
+                  <div key={m.id}>
+                    <div className="flex items-center gap-2 rounded-lg border border-edge bg-raised/40 px-3 py-2">
+                      <span className="font-mono text-[12px] text-dim truncate">{m.id}</span>
+                      {typeof m.config.name === "string" && m.config.name && (
+                        <span className="text-[11.5px] text-faint truncate">{m.config.name}</span>
+                      )}
+                      <span className="flex-1" />
+                      <button
+                        type="button"
+                        className="icon-btn"
+                        title="编辑模型配置"
+                        aria-label="编辑模型配置"
+                        onClick={() => setEditingModel(editingModel === m.id ? null : m.id)}
+                      >
+                        <PencilSimple size={12} />
+                      </button>
+                      <button
+                        type="button"
+                        className="icon-btn hover:!text-danger"
+                        title="移除模型"
+                        aria-label="移除模型"
+                        onClick={() => setModels((prev) => prev.filter((x) => x.id !== m.id))}
+                      >
+                        <Trash size={12} />
+                      </button>
+                    </div>
+                    {editingModel === m.id && (
+                      <div className="mt-2">
+                        <ModelEditor
+                          entry={m}
+                          onSave={(next) => {
+                            setModels((prev) => prev.map((x) => (x.id === next.id ? next : x)));
+                            setEditingModel(null);
+                          }}
+                          onCancel={() => setEditingModel(null)}
+                        />
+                      </div>
+                    )}
+                  </div>
                 ))}
               </div>
             )}
@@ -417,6 +704,7 @@ function OcProviderPanel({
   );
 }
 
+
 /** 供应商管理全屏弹窗：从 OpenCode 运行时卡片的入口进入。 */
 function OpenCodeProvidersModal({ onClose }: { onClose: () => void }) {
   const ocProviders = useApp((s) => s.ocProviders);
@@ -435,7 +723,7 @@ function OpenCodeProvidersModal({ onClose }: { onClose: () => void }) {
   }, []);
 
   const testProvider = async (p: OpenCodeProvider) => {
-    const model = p.models[0];
+    const model = normalizeModelEntries(p.models)[0]?.id;
     if (!model || !p.baseURL) {
       setTestResult({ key: p.key, ok: false, text: "缺少 Base URL 或模型，无法测试" });
       return;
@@ -458,10 +746,14 @@ function OpenCodeProvidersModal({ onClose }: { onClose: () => void }) {
 
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/55 backdrop-blur-[2px]" onClick={onClose}>
+      {/* 编辑面板打开时整个弹窗加宽：因居中布局，列表自然左移，面板在右侧拼接。
+          宽度用 CSS transition（motion 对 auto→px 的宽度插值不可靠），滑入用 motion。 */}
       <div
-        className="relative w-[860px] max-w-[94vw] max-h-[86vh] h-[640px] flex flex-col card shadow-2xl shadow-black/60 animate-rise overflow-hidden"
+        className="relative flex card shadow-2xl shadow-black/60 animate-rise overflow-hidden transition-[width] duration-300 ease-out"
+        style={{ width: dialog.open ? 1180 : 700, maxWidth: "96vw", height: 640 }}
         onClick={(e) => e.stopPropagation()}
       >
+        <div className="w-[700px] max-w-full shrink-0 flex flex-col min-w-0">
         <div className="flex items-center gap-2 px-5 h-12 border-b border-edge shrink-0">
           <Plug size={15} className="text-accent" weight="fill" />
           <span className="text-[13.5px] font-semibold">OpenCode 供应商管理</span>
@@ -549,7 +841,12 @@ function OpenCodeProvidersModal({ onClose }: { onClose: () => void }) {
                   </span>
                 )}
                 <span>
-                  模型 <span className="font-mono text-dim">{p.models.length > 0 ? p.models.join(" · ") : "—"}</span>
+                  模型{" "}
+                  <span className="font-mono text-dim">
+                    {normalizeModelEntries(p.models).length > 0
+                      ? normalizeModelEntries(p.models).map((m) => m.id).join(" · ")
+                      : "—"}
+                  </span>
                 </span>
               </div>
             </div>
@@ -565,33 +862,17 @@ function OpenCodeProvidersModal({ onClose }: { onClose: () => void }) {
             </div>
           )}
         </div>
+        </div>
 
-        {/* 编辑侧边面板：从右侧滑入，覆盖列表右缘 */}
-        <AnimatePresence>
-          {dialog.open && (
-            <>
-              <motion.div
-                key="panel-scrim"
-                className="absolute inset-0 z-10 bg-black/35"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.22 }}
-                onClick={() => setDialog({ open: false, provider: null })}
-              />
-              <motion.div
-                key={`provider-panel-${dialog.provider?.key ?? "new"}`}
-                className="absolute inset-y-0 right-0 z-20 w-[520px] max-w-[92%] border-l border-edge bg-canvas shadow-[-24px_0_48px_-12px_rgba(0,0,0,0.55)]"
-                initial={{ x: "100%" }}
-                animate={{ x: 0 }}
-                exit={{ x: "100%" }}
-                transition={{ type: "spring", stiffness: 380, damping: 38, mass: 0.9 }}
-              >
-                <OcProviderPanel initial={dialog.provider} onClose={() => setDialog({ open: false, provider: null })} />
-              </motion.div>
-            </>
-          )}
-        </AnimatePresence>
+        {/* 编辑面板：右侧拼接；滑入用 CSS 关键帧（后台标签页也不受 rAF 节流影响） */}
+        {dialog.open && (
+          <div
+            key={`provider-panel-${dialog.provider?.key ?? "new"}`}
+            className="w-[480px] shrink-0 border-l border-edge bg-canvas animate-panel-in"
+          >
+            <OcProviderPanel initial={dialog.provider} onClose={() => setDialog({ open: false, provider: null })} />
+          </div>
+        )}
       </div>
     </div>
   );

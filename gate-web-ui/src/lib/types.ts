@@ -83,6 +83,12 @@ export interface AgentRuntime {
   modelSource: string;
 }
 
+/** opencode.json 里一个模型的完整配置（limit/modalities/variants/… 原样透传）。 */
+export interface OpenCodeModelEntry {
+  id: string;
+  config: Record<string, unknown>;
+}
+
 /** OpenCode 配置文件（opencode.json(c)）provider 节点里的一条供应商（扁平视图）。 */
 export interface OpenCodeProvider {
   /** provider 节点的键，同时也是 opencode 模型 id 的前缀（如 deepseek/deepseek-chat）。 */
@@ -91,7 +97,7 @@ export interface OpenCodeProvider {
   npm?: string | null;
   baseURL?: string | null;
   apiKey?: string | null;
-  models: string[];
+  models: OpenCodeModelEntry[];
   modelCount: number;
 }
 
