@@ -13,6 +13,21 @@ WEB_PORT="${OW_WEB_PORT:-18080}"
 
 mkdir -p "$GATE_HOME" "$DATA_DIR/logs" "$DATA_DIR/nginx-tmp"
 
+# —— OpenCode 全局配置目录软链到 /data 卷 ——
+# 智能体页的供应商 CRUD 直接写 $HOME/.config/opencode/opencode.json（与桌面版
+# opencode 同一份全局配置，会话子进程会把它与每会话 MCP 配置合并读取）；
+# HOME 在镜像层不持久，软链进卷后重建容器不丢已配置的供应商。
+OC_PARENT="${HOME:-/home/openworktree}/.config"
+mkdir -p "$OC_PARENT" "$DATA_DIR/opencode"
+if [ ! -L "$OC_PARENT/opencode" ]; then
+    if [ -d "$OC_PARENT/opencode" ]; then
+        # 镜像里若已预置内容，迁移进卷（卷里同名文件优先，不覆盖）
+        cp -rn "$OC_PARENT/opencode/." "$DATA_DIR/opencode/" 2>/dev/null || true
+        rm -rf "$OC_PARENT/opencode"
+    fi
+    ln -s "$DATA_DIR/opencode" "$OC_PARENT/opencode"
+fi
+
 # —— 首次启动生成配置 ——
 if [ ! -f "$CONFIG" ]; then
     origins='"127.0.0.1", "localhost"'
