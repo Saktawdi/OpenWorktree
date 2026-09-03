@@ -88,13 +88,16 @@ jobs:
             -cp "$CP" \
             -o ow-linux-x86_64 \
             gate.web.GateWebApp
+          # 只去调试信息，保留符号表（产物从 55MB 降到 ~45MB）
+          objcopy --strip-debug ow-linux-x86_64
 
       - name: Native image compile (Windows)
         if: runner.os == 'Windows'
         shell: bash
         run: |
           CP="gate-domain/target/classes;gate-ports/target/classes;gate-application/target/classes;gate-adapters/target/classes;gate-bootstrap/target/classes;gate-web/target/classes;gate-web-ui/dist;$(ls gate-web/target/dependency/*.jar | grep -vE 'junit|archunit|opentest4j|apiguardian' | tr '\n' ';')"
-          native-image --no-fallback \
+          # git-bash 不做 PATHEXT 解析：裸 native-image 解析不到 native-image.cmd，必须带扩展名
+          native-image.cmd --no-fallback \
             -H:+ReportExceptionStackTraces \
             -H:ConfigurationFileDirectories=native-poc/agent-config \
             -H:IncludeResources='db/migration/.*' \
@@ -128,12 +131,19 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ow-native-${{ matrix.os }}
-          path: |
-            ow-linux-x86_64
-            ow-windows-x86_64
+          name: ow-native-${{ runner.os }}
+          path: ow-linux-x86_64
           retention-days: 14
           if-no-files-found: error
+        if: runner.os == 'Linux'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ow-native-${{ runner.os }}
+          path: ow-windows-x86_64
+          retention-days: 14
+          if-no-files-found: error
+        if: runner.os == 'Windows'
 
       # 打 tag（v*）时把二进制附到 GitHub Release —— 私有仓库的 Release 同样仅协作者可见。
       - name: Attach to release
