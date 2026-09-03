@@ -48,9 +48,21 @@ public final class SqliteDataSourceFactory {
 
     /** Runs Flyway and verifies the four PRAGMAs actually took effect. */
     public static void migrate(DataSource dataSource) {
+        // Native image: Flyway's classpath scanner cannot enumerate embedded resources
+        // ("unsupported protocol: resource"), so NativeMigrations materializes the SQL files
+        // into a temp dir and we point Flyway at it. JVM deployments: classpath as before.
+        String location;
+        try {
+            location = NativeMigrations.extractTo(
+                    SqliteDataSourceFactory.class.getClassLoader(),
+                    Path.of(System.getProperty("java.io.tmpdir"), "gate-migrations"));
+        } catch (java.io.IOException e) {
+            throw new GateException(GateErrorCode.GATE_ERROR_IO,
+                    "cannot materialize native migrations", e);
+        }
         Flyway.configure()
                 .dataSource(dataSource)
-                .locations("classpath:db/migration")
+                .locations(location != null ? location : "classpath:db/migration")
                 .validateOnMigrate(true)
                 .baselineOnMigrate(false)
                 .load()

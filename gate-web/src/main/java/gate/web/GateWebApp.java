@@ -13,7 +13,10 @@ import org.slf4j.LoggerFactory;
  *
  * <p>Usage: {@code java -cp ... gate.web.GateWebApp [--config gate.toml] [--git <git>]}. Without
  * {@code --config} the default {@code local-run/gate.toml} is used and generated on first run
- * ({@link BootstrapConfig}). Startup sequence:
+ * ({@link BootstrapConfig}). In the native-image deployment the SAME binary doubles as the MCP
+ * stdio server: {@code ow mcp --config gate.toml} dispatches to {@code McpServeApp} — this is how
+ * {@link GateMcpProvisioning} addresses the child when there is no JVM to rebuild a classpath
+ * from. Startup sequence:
  * <ol>
  *   <li>load config + assemble the graph ({@link WebComponents#fromConfig});</li>
  *   <li>bootstrap/read the HUMAN web token ({@link WebToken#ensure}) and print it once;</li>
@@ -31,6 +34,13 @@ public final class GateWebApp {
     }
 
     public static void main(String[] args) {
+        // Native deployment: the same executable is the MCP child ("ow mcp --config ...").
+        // On a regular JVM the legacy java -cp path below still applies, so this dispatch is
+        // unobservable there unless someone passes "mcp" explicitly.
+        if (args.length > 0 && "mcp".equals(args[0])) {
+            gate.bootstrap.McpServeApp.main(java.util.Arrays.copyOfRange(args, 1, args.length));
+            return;
+        }
         String configPath = null;
         String gitExecutable = "git";
         for (int i = 0; i < args.length; i++) {

@@ -50,3 +50,7 @@ release/OpenWorktree/config/
 release/OpenWorktree/data/
 release/OpenWorktree/__test_start.bat
 release/*.zip
+
+# native-image PoC build outputs (binary, staging; agent-config IS committed)
+native-poc/ow-linux
+native-poc/run/

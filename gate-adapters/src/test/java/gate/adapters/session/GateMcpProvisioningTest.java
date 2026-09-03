@@ -36,6 +36,29 @@ class GateMcpProvisioningTest {
                 "classpath must be inherited and re-anchored to absolute: " + argv.get(2));
     }
 
+    /**
+     * Native-image deployment: the binary re-invokes ITSELF with the {@code mcp} subcommand — no
+     * java executable, no classpath inheritance. A blank executable path must fail loudly: a
+     * written-but-unstartable child config once cost every session its presubmit_create.
+     */
+    @Test
+    void nativeServeArgvReinvokesSelfWithMcpSubcommand() {
+        List<String> argv = GateMcpProvisioning.nativeServeArgv(Path.of("conf/gate.toml"),
+                "/opt/ow/bin/ow-native");
+        assertEquals("/opt/ow/bin/ow-native", argv.get(0));
+        assertEquals("mcp", argv.get(1));
+        assertEquals("--config", argv.get(2));
+        assertTrue(Path.of(argv.get(3)).isAbsolute() && argv.get(3).endsWith("gate.toml"),
+                "toml must be re-anchored to absolute for the child's cwd: " + argv.get(3));
+    }
+
+    @Test
+    void nativeServeArgvFailsLoudlyWithoutExecutablePath() {
+        GateException e = assertThrows(GateException.class,
+                () -> GateMcpProvisioning.nativeServeArgv(Path.of("conf/gate.toml"), " "));
+        assertTrue(e.getMessage().contains("ProcessHandle"));
+    }
+
     @Test
     void serveArgvFallsBackToGateAppWhenOnlyItIsResolvable() {
         List<String> argv = GateMcpProvisioning.serveArgv(Path.of("conf/gate.toml"), "cp",

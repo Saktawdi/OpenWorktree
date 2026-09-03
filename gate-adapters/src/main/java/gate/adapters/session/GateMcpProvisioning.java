@@ -14,7 +14,9 @@ import java.util.List;
  * {@code gate} executable on PATH: the backend itself runs from {@code target/classes} via
  * {@code java -cp} (see {@code start-local.bat}). A config pointing at {@code command: "gate"} can
  * therefore never spawn; the child command is rebuilt from the RUNNING JVM's own java home and
- * classpath. The entrypoint is chosen by resolvability on that classpath: {@code
+ * classpath. On a GraalVM native-image build there is no JVM to rebuild from — there the binary
+ * re-invokes ITSELF with an {@code mcp} subcommand (see {@link #nativeServeArgv}). The entrypoint
+ * is chosen by resolvability on that classpath: {@code
  * gate.bootstrap.McpServeApp} first (gate-bootstrap rides every backend classpath — gate-web and
  * gate-cli both depend on it), then the legacy {@code gate.cli.GateApp mcp serve}. When neither is
  * loadable the provisioning REFUSES loudly: a written-but-unstartable config once cost every
@@ -53,8 +55,44 @@ public final class GateMcpProvisioning {
      *                       the session loudly beats starting it without the gate tools
      */
     public static List<String> serveArgv(Path gateToml) {
+        if (runningInNativeImage()) {
+            return nativeServeArgv(gateToml, currentExecutable());
+        }
         return serveArgv(gateToml, System.getProperty("java.class.path", ""),
                 GateMcpProvisioning::resolvable);
+    }
+
+    /**
+     * Native-image deployment: there is no {@code java} executable and no meaningful {@code
+     * java.class.path} inside a native binary, so the JVM rebuild strategy cannot work. Instead the
+     * native web binary itself serves as the MCP child — the same executable re-invoked with the
+     * {@code mcp} subcommand (see {@code gate.web.GateWebApp}, which dispatches to {@code
+     * McpServeApp}). One file, both roles.
+     */
+    static List<String> nativeServeArgv(Path gateToml, String executable) {
+        if (executable == null || executable.isBlank()) {
+            throw new GateException(GateErrorCode.GATE_ERROR_CONFIG,
+                    "cannot determine the running executable path (ProcessHandle gave no command), "
+                            + "so the native MCP child could not be addressed");
+        }
+        return List.of(executable, "mcp", "--config", gateToml.toAbsolutePath().toString());
+    }
+
+    /**
+     * True when this JVM is actually a GraalVM native image at RUNTIME (the property is absent on
+     * a regular JVM and set by Substrate VM when the image executes).
+     */
+    private static boolean runningInNativeImage() {
+        return System.getProperty("org.graalvm.nativeimage.imagecode") != null;
+    }
+
+    /**
+     * Path of the currently running executable. In a native image ProcessHandle resolves the real
+     * binary (procfs on Linux, the module path on Windows); a missing value fails loudly —
+     * silently emitting a config with an unusable child command once cost every session its tools.
+     */
+    private static String currentExecutable() {
+        return ProcessHandle.current().info().command().orElse(null);
     }
 
     /** Test seam: explicit classpath text and entrypoint resolvability probe. */

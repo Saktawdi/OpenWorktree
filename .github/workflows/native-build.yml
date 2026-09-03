@@ -1,0 +1,142 @@
+# OpenWorktree 原生二进制构建（方案2：GraalVM native-image 单文件分发）。
+#
+# 触发：push 到 master 且涉及后端/工作流文件（前端-only 改动不重编 native）。
+# 产物：双平台单文件二进制，作为 build artifact 保留 14 天；打 tag 时同时附到 Release。
+#
+# agent-config 目录是 tracing agent 采集的 reachability 元数据（reflect/jni/resource/proxy），
+# 提交在仓库里；新增依赖引入运行时反射错误时的修复流程：
+#   1. 本地 Docker 里跑 native-poc/run-agent.sh 复现触达路径；
+#   2. 把生成的配置合并回本目录（按 jar 前缀人工归并）；
+#   3. 重跑本工作流验证。
+name: native-build
+
+on:
+  push:
+    branches: [master, main]
+    paths:
+      - 'gate-domain/**'
+      - 'gate-ports/**'
+      - 'gate-application/**'
+      - 'gate-adapters/**'
+      - 'gate-bootstrap/**'
+      - 'gate-cli/**'
+      - 'gate-web/**'
+      - 'gate-web-ui/src/**'
+      - 'gate-web-ui/package.json'
+      - 'native-poc/agent-config/**'
+      - '.github/workflows/native-build.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  native:
+    name: native-image (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-2022]
+    steps:
+      - uses: actions/checkout@v4
+
+      # 前端产物。gate-web-ui/dist 在 .gitignore 里，CI 必须自己构建；
+      # 前端源码改动同样触发本工作流，保证 dist 总是与后端 HEAD 配套。
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Build SPA
+        working-directory: gate-web-ui
+        run: |
+          npm install --no-audit --no-fund --no-package-lock
+          npm run build
+
+      - uses: graalvm/setup-graalvm@v1
+        with:
+          java-version: '17'
+          distribution: 'graalvm-community'
+          native-image-job-reports: 'true'
+
+      - name: Maven install (skip tests; unit tests run on JVM in a separate job)
+        run: mvn -B -q -DskipTests install
+
+      # Flyway 在 native image 下无法扫描 classpath 资源（unsupported protocol: resource），
+      # 运行时走 NativeMigrations 的 manifest+filesystem 路径 —— manifest 必须在构建期生成。
+      - name: Generate migration manifest
+        shell: bash
+        run: |
+          cd gate-adapters/target/classes/db/migration
+          ls -1 V*.sql | sort > manifest.txt
+
+      - name: Native image compile (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          CP="gate-domain/target/classes:gate-ports/target/classes:gate-application/target/classes:gate-adapters/target/classes:gate-bootstrap/target/classes:gate-web/target/classes:gate-web-ui/dist:$(ls gate-web/target/dependency/*.jar | grep -vE 'junit|archunit|opentest4j|apiguardian' | tr '\n' ':')"
+          native-image --no-fallback \
+            -H:+ReportExceptionStackTraces \
+            -H:ConfigurationFileDirectories=native-poc/agent-config \
+            -H:IncludeResources='db/migration/.*' \
+            -H:IncludeResources='gate/hooks/.*' \
+            -H:IncludeResources='simplelogger\.properties' \
+            -H:IncludeResources='static/.*' \
+            -cp "$CP" \
+            -o ow-linux-x86_64 \
+            gate.web.GateWebApp
+
+      - name: Native image compile (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          CP="gate-domain/target/classes;gate-ports/target/classes;gate-application/target/classes;gate-adapters/target/classes;gate-bootstrap/target/classes;gate-web/target/classes;gate-web-ui/dist;$(ls gate-web/target/dependency/*.jar | grep -vE 'junit|archunit|opentest4j|apiguardian' | tr '\n' ';')"
+          native-image --no-fallback \
+            -H:+ReportExceptionStackTraces \
+            -H:ConfigurationFileDirectories=native-poc/agent-config \
+            -H:IncludeResources='db/migration/.*' \
+            -H:IncludeResources='gate/hooks/.*' \
+            -H:IncludeResources='simplelogger\.properties' \
+            -H:IncludeResources='static/.*' \
+            -cp "$CP" \
+            -o ow-windows-x86_64 \
+            gate.web.GateWebApp
+
+      # 冒烟：启动到监听 + 登录令牌落盘 + status API 应答。失败即红，不放行坏产物。
+      - name: Smoke (boot + token + status API)
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then BIN=./ow-windows-x86_64.exe; else BIN=./ow-linux-x86_64; fi
+          mkdir -p smoke-run && cd smoke-run
+          ../$(basename $BIN) > boot.log 2>&1 &
+          for i in $(seq 1 120); do
+            grep -q "listening on" boot.log 2>/dev/null && break
+            sleep 0.25
+          done
+          grep -q "listening on" boot.log || { echo "BOOT FAILED"; tail -30 boot.log; exit 1; }
+          TOKEN=$(sed -n 's/.*GATE_WEB_TOKEN=\([^ ]*\).*/\1/p' boot.log | head -1)
+          curl -sf -H "Authorization: Bearer $TOKEN" http://127.0.0.1:18080/api/status > /dev/null
+          echo "smoke OK"
+
+      - name: Rename Windows binary
+        if: runner.os == 'Windows'
+        shell: bash
+        run: mv ow-windows-x86_64.exe ow-windows-x86_64
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ow-native-${{ matrix.os }}
+          path: |
+            ow-linux-x86_64
+            ow-windows-x86_64
+          retention-days: 14
+          if-no-files-found: error
+
+      # 打 tag（v*）时把二进制附到 GitHub Release —— 私有仓库的 Release 同样仅协作者可见。
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then F=ow-windows-x86_64; else F=ow-linux-x86_64; fi
+          gh release upload "${GITHUB_REF_NAME}" "$F" --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}
