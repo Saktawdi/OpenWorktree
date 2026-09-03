@@ -73,11 +73,18 @@ jobs:
           cd gate-adapters/target/classes/db/migration
           ls -1 V*.sql | sort > manifest.txt
 
+      # WebServer.ROOT=/static：classpath 根下必须有 static/ 子目录才能命中 SPA 资源
+      - name: Stage SPA under /static
+        shell: bash
+        run: |
+          mkdir -p ui-root/static
+          cp -r gate-web-ui/dist/. ui-root/static/
+
       - name: Native image compile (Linux)
         if: runner.os == 'Linux'
         shell: bash
         run: |
-          CP="gate-domain/target/classes:gate-ports/target/classes:gate-application/target/classes:gate-adapters/target/classes:gate-bootstrap/target/classes:gate-web/target/classes:gate-web-ui/dist:$(ls gate-web/target/dependency/*.jar | grep -vE 'junit|archunit|opentest4j|apiguardian' | tr '\n' ':')"
+          CP="gate-domain/target/classes:gate-ports/target/classes:gate-application/target/classes:gate-adapters/target/classes:gate-bootstrap/target/classes:gate-web/target/classes:ui-root:$(ls gate-web/target/dependency/*.jar | grep -vE 'junit|archunit|opentest4j|apiguardian' | tr '\n' ':')"
           native-image --no-fallback \
             -H:+ReportExceptionStackTraces \
             -H:ConfigurationFileDirectories=native-poc/agent-config \
@@ -95,7 +102,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: bash
         run: |
-          CP="gate-domain/target/classes;gate-ports/target/classes;gate-application/target/classes;gate-adapters/target/classes;gate-bootstrap/target/classes;gate-web/target/classes;gate-web-ui/dist;$(ls gate-web/target/dependency/*.jar | grep -vE 'junit|archunit|opentest4j|apiguardian' | tr '\n' ';')"
+          CP="gate-domain/target/classes;gate-ports/target/classes;gate-application/target/classes;gate-adapters/target/classes;gate-bootstrap/target/classes;gate-web/target/classes;ui-root;$(ls gate-web/target/dependency/*.jar | grep -vE 'junit|archunit|opentest4j|apiguardian' | tr '\n' ';')"
           # git-bash 不做 PATHEXT 解析：裸 native-image 解析不到 native-image.cmd，必须带扩展名
           native-image.cmd --no-fallback \
             -H:+ReportExceptionStackTraces \
@@ -108,8 +115,9 @@ jobs:
             -o ow-windows-x86_64 \
             gate.web.GateWebApp
 
-      # 冒烟：启动到监听 + 登录令牌落盘 + status API 应答。失败即红，不放行坏产物。
-      - name: Smoke (boot + token + status API)
+      # 冒烟：启动到监听 + 登录令牌落盘 + status API + SPA（index 与首个 JS bundle）。
+      # SPA 断言不能省：资源嵌入错位时 API 照常、页面全 404（第三轮教训）。
+      - name: Smoke (boot + token + status API + SPA)
         shell: bash
         run: |
           if [ "$RUNNER_OS" = "Windows" ]; then BIN=./ow-windows-x86_64.exe; else BIN=./ow-linux-x86_64; fi
@@ -121,8 +129,14 @@ jobs:
           done
           grep -q "listening on" boot.log || { echo "BOOT FAILED"; tail -30 boot.log; exit 1; }
           TOKEN=$(sed -n 's/.*GATE_WEB_TOKEN=\([^ ]*\).*/\1/p' boot.log | head -1)
-          curl -sf -H "Authorization: Bearer $TOKEN" http://127.0.0.1:18080/api/status > /dev/null
-          echo "smoke OK"
+          AUTH="Authorization: Bearer $TOKEN"
+          curl -sf -H "$AUTH" http://127.0.0.1:18080/api/status > /dev/null
+          INDEX=$(curl -sf -H "$AUTH" http://127.0.0.1:18080/)
+          echo "$INDEX" | grep -q '<div id="root">' || { echo "SPA INDEX BAD"; exit 1; }
+          ASSET=$(echo "$INDEX" | grep -oE '/assets/[^"]+\.js' | head -1)
+          [ -n "$ASSET" ] || { echo "NO ASSET REF"; exit 1; }
+          curl -sf -H "$AUTH" "http://127.0.0.1:18080$ASSET" > /dev/null
+          echo "smoke OK (api + spa + asset)"
 
       - name: Rename Windows binary
         if: runner.os == 'Windows'
