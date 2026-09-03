@@ -5,7 +5,7 @@
 #
 # agent-config 目录是 tracing agent 采集的 reachability 元数据（reflect/jni/resource/proxy），
 # 提交在仓库里；新增依赖引入运行时反射错误时的修复流程：
-#   1. 本地 Docker 里跑 native-poc/run-agent.sh 复现触达路径；
+#   1. 本地 Docker 里跑 tracing agent 重新采集（本地 Docker GraalVM 镜像跑一遍 JVM 模式 + curl 触达 API）；
 #   2. 把生成的配置合并回本目录（按 jar 前缀人工归并）；
 #   3. 重跑本工作流验证。
 name: native-build
@@ -23,7 +23,7 @@ on:
       - 'gate-web/**'
       - 'gate-web-ui/src/**'
       - 'gate-web-ui/package.json'
-      - 'native-poc/agent-config/**'
+      - '.github/native-image/**'
       - '.github/workflows/native-build.yml'
   workflow_dispatch:
 
@@ -87,7 +87,7 @@ jobs:
           CP="gate-domain/target/classes:gate-ports/target/classes:gate-application/target/classes:gate-adapters/target/classes:gate-bootstrap/target/classes:gate-web/target/classes:ui-root:$(ls gate-web/target/dependency/*.jar | grep -vE 'junit|archunit|opentest4j|apiguardian' | tr '\n' ':')"
           native-image --no-fallback \
             -H:+ReportExceptionStackTraces \
-            -H:ConfigurationFileDirectories=native-poc/agent-config \
+            -H:ConfigurationFileDirectories=.github/native-image \
             -H:IncludeResources='db/migration/.*' \
             -H:IncludeResources='gate/hooks/.*' \
             -H:IncludeResources='simplelogger\.properties' \
@@ -106,7 +106,7 @@ jobs:
           # git-bash 不做 PATHEXT 解析：裸 native-image 解析不到 native-image.cmd，必须带扩展名
           native-image.cmd --no-fallback \
             -H:+ReportExceptionStackTraces \
-            -H:ConfigurationFileDirectories=native-poc/agent-config \
+            -H:ConfigurationFileDirectories=.github/native-image \
             -H:IncludeResources='db/migration/.*' \
             -H:IncludeResources='gate/hooks/.*' \
             -H:IncludeResources='simplelogger\.properties' \
