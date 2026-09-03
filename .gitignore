@@ -54,3 +54,9 @@ release/*.zip
 # native-image PoC build outputs (binary, staging; agent-config IS committed)
 native-poc/ow-linux
 native-poc/run/
+
+# MCP QA screenshots (local tooling output, never tracked)
+.openchamber/
+
+# native-image PoC scaffolding stays local; CI needs only agent-config (now .github/native-image/)
+native-poc/

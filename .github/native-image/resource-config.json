@@ -1,0 +1,79 @@
+{
+  "resources":{
+  "includes":[{
+    "pattern":"\\QMETA-INF/maven/io.javalin/javalin/pom.properties\\E"
+  }, {
+    "pattern":"\\QMETA-INF/maven/org.xerial/sqlite-jdbc/pom.properties\\E"
+  }, {
+    "pattern":"\\QMETA-INF/services/org.eclipse.jetty.http.HttpFieldPreEncoder\\E"
+  }, {
+    "pattern":"\\QMETA-INF/services/org.eclipse.jetty.websocket.core.Extension\\E"
+  }, {
+    "pattern":"\\QMETA-INF/services/org.flywaydb.core.extensibility.Plugin\\E"
+  }, {
+    "pattern":"\\QMETA-INF/services/org.slf4j.spi.SLF4JServiceProvider\\E"
+  }, {
+    "pattern":"\\Qdb/migration/V10__metrics_projection_expand.sql\\E"
+  }, {
+    "pattern":"\\Qdb/migration/V11__phase3_nonce_and_task_indexes.sql\\E"
+  }, {
+    "pattern":"\\Qdb/migration/V12__phase3_s3_kms.sql\\E"
+  }, {
+    "pattern":"\\Qdb/migration/V13__session_meta.sql\\E"
+  }, {
+    "pattern":"\\Qdb/migration/V14__session_model_override.sql\\E"
+  }, {
+    "pattern":"\\Qdb/migration/V15__agent_config_inject_context.sql\\E"
+  }, {
+    "pattern":"\\Qdb/migration/V16__session_permission_auto_accept.sql\\E"
+  }, {
+    "pattern":"\\Qdb/migration/V17__ticket_restart.sql\\E"
+  }, {
+    "pattern":"\\Qdb/migration/V18__project_star_sort.sql\\E"
+  }, {
+    "pattern":"\\Qdb/migration/V1__init.sql\\E"
+  }, {
+    "pattern":"\\Qdb/migration/V2__credentials.sql\\E"
+  }, {
+    "pattern":"\\Qdb/migration/V3__cost_metrics.sql\\E"
+  }, {
+    "pattern":"\\Qdb/migration/V4__agent_sessions.sql\\E"
+  }, {
+    "pattern":"\\Qdb/migration/V5__ticket_meta.sql\\E"
+  }, {
+    "pattern":"\\Qdb/migration/V6__project_meta.sql\\E"
+  }, {
+    "pattern":"\\Qdb/migration/V7__agent_cli_defaults.sql\\E"
+  }, {
+    "pattern":"\\Qdb/migration/V8__ticket_editable_content.sql\\E"
+  }, {
+    "pattern":"\\Qdb/migration/V9__task_event_outbox.sql\\E"
+  }, {
+    "pattern":"\\Qdb/migration\\E"
+  }, {
+    "pattern":"\\Qorg/eclipse/jetty/http/encoding.properties\\E"
+  }, {
+    "pattern":"\\Qorg/eclipse/jetty/http/mime.properties\\E"
+  }, {
+    "pattern":"\\Qorg/eclipse/jetty/version/build.properties\\E"
+  }, {
+    "pattern":"\\Qorg/flywaydb/core/internal/version.txt\\E"
+  }, {
+    "pattern":"\\Qorg/sqlite/native/Linux/x86_64/libsqlitejdbc.so\\E"
+  }, {
+    "pattern":"\\Qsimplelogger.properties\\E"
+  }, {
+    "pattern":"\\Qsqlite-jdbc.properties\\E"
+  }, {
+    "pattern":"\\Qstatic/assets/index-Ds5kTSjo.js\\E"
+  }, {
+    "pattern":"\\Qstatic/index.html\\E"
+  }]},
+  "bundles":[{
+    "name":"jakarta.servlet.LocalStrings",
+    "locales":[""]
+  }, {
+    "name":"jakarta.servlet.http.LocalStrings",
+    "locales":[""]
+  }]
+}
