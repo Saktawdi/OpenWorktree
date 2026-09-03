@@ -61,6 +61,10 @@ jobs:
       - name: Maven install (skip tests; unit tests run on JVM in a separate job)
         run: mvn -B -q -DskipTests install
 
+      # runtime-scope 依赖 jar：测试家族（junit/archunit）不进 native 类路径
+      - name: Copy runtime dependencies
+        run: mvn -B -q -pl gate-web dependency:copy-dependencies -DincludeScope=runtime
+
       # Flyway 在 native image 下无法扫描 classpath 资源（unsupported protocol: resource），
       # 运行时走 NativeMigrations 的 manifest+filesystem 路径 —— manifest 必须在构建期生成。
       - name: Generate migration manifest
