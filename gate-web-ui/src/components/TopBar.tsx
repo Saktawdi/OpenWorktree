@@ -3,15 +3,19 @@ import { motion } from "motion/react";
 import {
   CaretDown,
   Check,
+  CornersIn,
+  CornersOut,
   FolderOpen,
   GearSix,
   Kanban,
+  Minus,
   Plus,
   SquaresFour,
   Sparkle,
   FolderPlus,
   Sun,
   Moon,
+  X,
 } from "@phosphor-icons/react";
 import { appStore, openConnect, setView, switchProject, toggleTheme, useApp } from "../lib/store";
 import { RunMonitor } from "./RunMonitor";
@@ -195,9 +199,83 @@ function ThemeToggle() {
   );
 }
 
+/** 桌面壳窗口控制：最小化/最大化/关闭（紧挨日夜切换，同为 icon-btn 风格）。
+ *  仅桌面壳（Tauri 注入了 __TAURI__ 且授予窗口权限）渲染；浏览器里整组不出现。
+ *  关闭钮悬停红，对齐 Windows 标题栏惯例。 */
+function WindowControls() {
+  const [maximized, setMaximized] = useState(false);
+  const api = (window as unknown as { __TAURI__?: { window?: TauriWindowApi } }).__TAURI__?.window;
+  useEffect(() => {
+    if (!api) return;
+    const win = api.getCurrentWindow();
+    let unlisten: (() => void) | null = null;
+    void win.isMaximized().then(setMaximized).catch(() => {});
+    void win.onResized(async () => {
+      try {
+        setMaximized(await win.isMaximized());
+      } catch {
+        /* 窗口销毁后的回调，忽略 */
+      }
+    }).then((u) => {
+      unlisten = u;
+    });
+    return () => unlisten?.();
+  }, [api]);
+  if (!api) return null;
+  const win = api.getCurrentWindow();
+  return (
+    <>
+      <button className="icon-btn" onClick={() => void win.minimize()} title="最小化" aria-label="最小化">
+        <Minus size={16} />
+      </button>
+      <button
+        className="icon-btn"
+        onClick={() => void win.toggleMaximize()}
+        title={maximized ? "向下还原" : "最大化"}
+        aria-label={maximized ? "向下还原" : "最大化"}
+      >
+        {maximized ? <CornersIn size={16} /> : <CornersOut size={16} />}
+      </button>
+      <button
+        className="icon-btn hover:text-danger hover:bg-danger/10 active:scale-95"
+        onClick={() => void win.close()}
+        title="关闭"
+        aria-label="关闭"
+      >
+        <X size={16} />
+      </button>
+    </>
+  );
+}
+
+/** Tauri window API 的最小结构（桌面壳专用；浏览器里不存在）。 */
+interface TauriWindowApi {
+  getCurrentWindow(): {
+    minimize(): Promise<void>;
+    toggleMaximize(): Promise<void>;
+    close(): Promise<void>;
+    startDragging(): Promise<void>;
+    isMaximized(): Promise<boolean>;
+    onResized(cb: () => void): Promise<() => void>;
+  };
+}
+
 export function TopBar() {
   const conn = useApp((s) => s.conn);
   const mode = useApp((s) => s.mode);
+
+  // 无边框窗口：顶栏空白区拖拽移动 + 双击切换最大化；交互元素上不响应。
+  const tauriWin = (window as unknown as { __TAURI__?: { window?: TauriWindowApi } }).__TAURI__?.window;
+  const onFrameMouseDown = (e: React.MouseEvent) => {
+    if (e.button !== 0) return;
+    const target = e.target as HTMLElement;
+    if (target.closest("button, a, input, select, textarea, [role='menu']")) return;
+    void tauriWin?.getCurrentWindow().startDragging();
+  };
+  const onFrameDoubleClick = (e: React.MouseEvent) => {
+    if ((e.target as HTMLElement).closest("button, a, input, select, textarea, [role='menu']")) return;
+    void tauriWin?.getCurrentWindow().toggleMaximize();
+  };
 
   const connLabel =
     mode === "live"
@@ -215,7 +293,11 @@ export function TopBar() {
         : "text-dim border-edge-strong bg-raised";
 
   return (
-    <header className="relative h-13 shrink-0 flex items-center gap-4 px-4 border-b border-edge bg-surface">
+    <header
+      className="relative h-13 shrink-0 flex items-center gap-4 px-4 border-b border-edge bg-surface select-none"
+      onMouseDown={onFrameMouseDown}
+      onDoubleClick={onFrameDoubleClick}
+    >
       {/* 限宽 244px：顶栏 px-4 的左内边距 + 8px 间隙后，右缘恰好压在 268px 基准线内
           （ViewSwitch 绝对定位处，与 aside 对齐）；品牌簇越界会与之重叠，
           超出时由运行监控 chip 截断兜底。 */}
@@ -254,6 +336,7 @@ export function TopBar() {
         <GearSix size={16} />
       </button>
       <ThemeToggle />
+      <WindowControls />
     </header>
   );
 }

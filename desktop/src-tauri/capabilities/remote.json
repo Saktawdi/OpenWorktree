@@ -1,13 +1,16 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
-  "identifier": "default",
-  "description": "Capability for the main window (shell bootstrap page)",
+  "identifier": "remote-window",
+  "description": "Window ops for the SPA served by the backend sidecar (decorations:false)",
   "windows": [
     "main"
   ],
+  "remote": {
+    "urls": [
+      "http://127.0.0.1:18080"
+    ]
+  },
   "permissions": [
-    "core:default",
-    "opener:default",
     "core:window:allow-minimize",
     "core:window:allow-toggle-maximize",
     "core:window:allow-close",
