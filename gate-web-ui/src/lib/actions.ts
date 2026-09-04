@@ -482,21 +482,38 @@ export const actions = {
 };
 export async function boot() {
   seedDemo();
-  // 桌面壳免登录：Tauri 启动后端时经 stdout 拿到 GATE_WEB_TOKEN，以 ?ow-token= 跳转进来。
-  // 校验通过后立即从地址栏抹掉（令牌不留 URL 历史/书签），失败则回落常规连接弹窗。
-  // 令牌同时进 sessionStorage（壳内 iframe 刷新后仍可静默重连；浏览器会话级隔离不受影响）。
-  const shellToken = new URLSearchParams(window.location.search).get("ow-token");
-  const savedToken = shellToken ? null : sessionStorage.getItem("ow-desktop-token");
+  // 桌面壳免登录：壳内 iframe 以 ?ow-token= 跳入。仅在 iframe 环境（window.parent !== window）
+  // 消费 URL 令牌——浏览器直开的部署（含公网 Docker）永远忽略该参数，不接受 URL 凭据。
+  // 令牌存 sessionStorage 供壳内 F5 静默重连：标签页级隔离、关闭即焚、不随请求传输，
+  // 与既有快照机制（gate-ui-state-v3 同样含 token）同一作用域，访客侧始终需要输入令牌。
+  const inShell = window.parent !== window;
+  const shellToken = inShell
+    ? new URLSearchParams(window.location.search).get("ow-token")
+    : null;
+  let savedToken: string | null = null;
+  try {
+    savedToken = shellToken ? null : sessionStorage.getItem("ow-desktop-token");
+  } catch {
+    /* 隐私模式等存储不可用场景：静默降级为手动登录 */
+  }
   if (shellToken || savedToken) {
     if (shellToken) {
       window.history.replaceState(null, "", window.location.pathname);
-      sessionStorage.setItem("ow-desktop-token", shellToken);
+      try {
+        sessionStorage.setItem("ow-desktop-token", shellToken);
+      } catch {
+        /* 配额满等场景忽略——本会话退化为 F5 需重连，可接受 */
+      }
     }
     const token = shellToken ?? savedToken;
     if (token && (await actions.connectLive(token))) {
       return;
     }
-    sessionStorage.removeItem("ow-desktop-token");
+    try {
+      sessionStorage.removeItem("ow-desktop-token");
+    } catch {
+      /* ignore */
+    }
   }
   const conn = await live.detectBackend();
   appStore.setState({ conn });
