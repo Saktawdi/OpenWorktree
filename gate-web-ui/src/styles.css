@@ -702,3 +702,47 @@ body {
   background: color-mix(in srgb, var(--color-danger) 10%, transparent);
   border: 1px solid color-mix(in srgb, var(--color-danger) 30%, transparent);
 }
+
+/* ═══════════════════════════════════════════════════════════
+   8. APP SETTINGS · BETA AHEAD BADGE（应用设置「先行体验版」徽标）
+   本地版本领先于远程最新发行时的先行构建徽标：渐变描边 + 流光扫过 +
+   双色呼吸辉光（accent → 紫），reduced-motion 下由全局守门自动停帧。
+   ═══════════════════════════════════════════════════════════ */
+
+.beta-ahead-badge {
+  animation: beta-badge-glow 3.4s ease-in-out infinite;
+}
+
+/* 流光斜条在父 g（持 rotate）内做横扫：0→55% 扫过一遍，其余时间休眠 */
+.beta-badge-shine {
+  animation: beta-badge-sweep 3s ease-in-out infinite;
+}
+
+@keyframes beta-badge-sweep {
+  0% {
+    transform: translateX(0);
+    opacity: 0;
+  }
+  12% {
+    opacity: 1;
+  }
+  55% {
+    transform: translateX(196px);
+    opacity: 0;
+  }
+  100% {
+    transform: translateX(196px);
+    opacity: 0;
+  }
+}
+
+@keyframes beta-badge-glow {
+  0%, 100% {
+    filter: drop-shadow(0 0 7px color-mix(in srgb, #35d99e 24%, transparent))
+      drop-shadow(0 0 16px color-mix(in srgb, #7c5cff 12%, transparent));
+  }
+  50% {
+    filter: drop-shadow(0 0 11px color-mix(in srgb, #35d99e 42%, transparent))
+      drop-shadow(0 0 24px color-mix(in srgb, #7c5cff 22%, transparent));
+  }
+}

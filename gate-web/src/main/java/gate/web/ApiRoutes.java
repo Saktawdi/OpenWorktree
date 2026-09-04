@@ -1,5 +1,6 @@
 package gate.web;
 
+import gate.web.controller.AppInfoController;
 import gate.web.controller.AuthController;
 import gate.web.controller.MetricsController;
 import gate.web.controller.OpenCodeProviderController;
@@ -48,7 +49,8 @@ public final class ApiRoutes implements WebController {
                 new SessionController(c.agentConfigRepository(), c.sessionRepository(), c.agentSessionPort(),
                         c.ticketRepository(), c.clock(), new SessionModelCatalog(), c.credentials(),
                         c.providerRepository()),
-                new SettingsController(c.gateToml())
+                new SettingsController(c.gateToml()),
+                new AppInfoController()
         );
     }
 

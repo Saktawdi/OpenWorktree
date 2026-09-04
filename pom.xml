@@ -15,7 +15,7 @@
 
   <groupId>gate</groupId>
   <artifactId>gate-parent</artifactId>
-  <version>0.1.0-SNAPSHOT</version>
+  <version>${revision}</version>
   <packaging>pom</packaging>
   <name>gate-parent</name>
 
@@ -30,6 +30,10 @@
   </modules>
 
   <properties>
+    <!-- 软件版本唯一事实来源（CI-friendly 版本，Maven ≥3.5）：升版只改这一行，
+         所有子模块经 parent 引用 ${revision} 自动跟随；flatten 插件负责在
+         install/deploy 时把 ${revision} 解析成真实版本号，保证 .m2 里的 pom 合法。 -->
+    <revision>0.2.0-alpha.1</revision>
     <maven.compiler.release>17</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
@@ -115,7 +119,39 @@
           <artifactId>spring-boot-maven-plugin</artifactId>
           <version>${spring.boot.version}</version>
         </plugin>
+        <plugin>
+          <groupId>org.codehaus.mojo</groupId>
+          <artifactId>flatten-maven-plugin</artifactId>
+          <version>1.6.0</version>
+          <configuration>
+            <updatePomFile>true</updatePomFile>
+            <flattenMode>resolveCiFriendliesOnly</flattenMode>
+          </configuration>
+          <executions>
+            <execution>
+              <id>flatten</id>
+              <phase>process-resources</phase>
+              <goals>
+                <goal>flatten</goal>
+              </goals>
+            </execution>
+            <execution>
+              <id>flatten.clean</id>
+              <phase>clean</phase>
+              <goals>
+                <goal>clean</goal>
+              </goals>
+            </execution>
+          </executions>
+        </plugin>
       </plugins>
     </pluginManagement>
+    <!-- 激活点：写进父 <plugins> 让全部子模块继承，${revision} 在 install/deploy 前被解析。 -->
+    <plugins>
+      <plugin>
+        <groupId>org.codehaus.mojo</groupId>
+        <artifactId>flatten-maven-plugin</artifactId>
+      </plugin>
+    </plugins>
   </build>
 </project>

@@ -67,3 +67,6 @@ desktop/src-tauri/target/
 desktop/src-tauri/gen/
 desktop/src-tauri/binaries/*.exe
 desktop/src-tauri/binaries/*.native-backup
+
+# Maven CI-friendly 版本：flatten 插件生成（install/deploy 用），不进版本库
+.flattened-pom.xml

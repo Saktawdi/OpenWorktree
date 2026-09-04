@@ -503,3 +503,31 @@ export interface LlmProvider {
   model_count: number;
   models: string[];
 }
+
+export interface AppInfo {
+  name: string;
+  version: string;
+  repo_owner: string;
+  repo_name: string;
+  repo_url: string;
+  releases_url: string;
+  download_url: string;
+}
+
+/**
+ * up_to_date：远程 == 本地；update_available：远程 > 本地（跳下载页）；
+ * ahead_beta：远程 < 本地（本地是先行 beta 构建，徽标展示）；unknown：任一侧无法比对或检查失败。
+ */
+export type UpdateStatus = "up_to_date" | "update_available" | "ahead_beta" | "unknown";
+
+export interface UpdateCheck {
+  ok: boolean;
+  status: UpdateStatus;
+  current_version: string;
+  latest_version?: string | null;
+  tag_name?: string | null;
+  release_url?: string | null;
+  published_at?: string | null;
+  source?: "releases" | "tags" | null;
+  error?: string | null;
+}

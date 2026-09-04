@@ -1,13 +1,19 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import {
+  ArrowCircleUp,
   ArrowClockwise,
+  ArrowUpRight,
   Check,
+  Clock,
   Copy,
+  DownloadSimple,
   GearSix,
+  GithubLogo,
   Link,
   PencilSimple,
   Plus,
+  Rocket,
   Trash,
   WarningCircle,
   Wrench,
@@ -15,9 +21,9 @@ import {
   Robot,
   X,
 } from "@phosphor-icons/react";
-import { fetchGateToml, fetchMcpStatus, fetchProviders, updateGateToml, createProvider, updateProvider, deleteProvider, updateProviderModels, fetchUpstreamModels, setProviderCredential } from "../lib/api";
+import { fetchGateToml, fetchMcpStatus, fetchProviders, updateGateToml, createProvider, updateProvider, deleteProvider, updateProviderModels, fetchUpstreamModels, setProviderCredential, fetchAppInfo, checkAppUpdate } from "../lib/api";
 import { openConnect, showToast, useApp } from "../lib/store";
-import type { GateTomlResponse, GateTomlKey, GateTomlOption, McpStatus, LlmProvider } from "../lib/types";
+import type { GateTomlResponse, GateTomlKey, GateTomlOption, McpStatus, LlmProvider, AppInfo, UpdateCheck } from "../lib/types";
 import { CopyButton, Spinner, useBackdropClose } from "./ui";
 
 // 选项依赖运行期 LLM Provider 列表、后端无法静态下发的键：
@@ -879,15 +885,274 @@ function LlmBlock() {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
+// App info block（应用设置：版本 / 检查更新 / 仓库）
+// ──────────────────────────────────────────────────────────────────────────────
+
+function openExternal(url: string) {
+  window.open(url, "_blank", "noopener,noreferrer");
+}
+
+/** 发行日期展示（published_at 是 ISO 串；解析失败原样回显）。 */
+function releaseDate(iso?: string | null): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleDateString("zh-CN", { year: "numeric", month: "long", day: "numeric" });
+}
+
+/**
+ * 先行体验版徽标（内联 SVG，两种主题下都清晰）：近黑底 + 三色渐变描边（accent → 蓝 → 紫），
+ * 斜向流光循环扫过 + 双色呼吸辉光。仅当远程最新发行 < 当前版本（本地是先行 beta 构建）时展示。
+ */
+function BetaAheadBadge({ className = "" }: { className?: string }) {
+  return (
+    <svg
+      className={`beta-ahead-badge ${className}`}
+      width="150"
+      height="30"
+      viewBox="0 0 150 30"
+      role="img"
+      aria-label="先行体验版：本地版本领先于远程最新发行"
+    >
+      <defs>
+        <linearGradient id="owb-border" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stopColor="#35d99e" />
+          <stop offset="52%" stopColor="#4ea1ff" />
+          <stop offset="100%" stopColor="#b16cff" />
+        </linearGradient>
+        <linearGradient id="owb-shine" x1="0%" y1="0%" x2="100%" y2="0%">
+          <stop offset="0%" stopColor="#ffffff" stopOpacity="0" />
+          <stop offset="50%" stopColor="#ffffff" stopOpacity="0.3" />
+          <stop offset="100%" stopColor="#ffffff" stopOpacity="0" />
+        </linearGradient>
+        <clipPath id="owb-clip">
+          <rect x="1" y="1" width="148" height="28" rx="14" />
+        </clipPath>
+      </defs>
+      <rect x="1" y="1" width="148" height="28" rx="14" fill="#0c1116" stroke="url(#owb-border)" strokeWidth="1.5" />
+      <g clipPath="url(#owb-clip)">
+        <g transform="rotate(18 0 0)">
+          <rect className="beta-badge-shine" x="-26" y="-8" width="18" height="46" fill="url(#owb-shine)" />
+        </g>
+      </g>
+      <path d="M18.1 7.6 12.6 15.4h3.3l-1.3 7.2 5.9-8.9h-3.5z" fill="url(#owb-border)" />
+      <text x="25" y="19.5" fill="#e9fbf4" fontSize="12" fontWeight="600" letterSpacing="0.5">先行体验版</text>
+      <text x="88" y="19.5" fill="url(#owb-border)" fontSize="11" fontWeight="800" letterSpacing="2">BETA</text>
+    </svg>
+  );
+}
+
+/** 检查更新三态结果：有更新（跳下载页 + 在线更新预留位）/ 已最新 / 先行 beta / 无法比对或失败。 */
+function UpdateStatusArea({
+  check,
+  checking,
+  currentVersion,
+  onRetry,
+}: {
+  check: UpdateCheck | null;
+  checking: boolean;
+  currentVersion: string;
+  onRetry: () => void;
+}) {
+  if (checking && !check) {
+    return <div className="flex items-center gap-2 text-[12.5px] text-faint"><Spinner /> 正在检查更新 …</div>;
+  }
+  if (!check) {
+    return <div className="text-[12.5px] text-faint">尚未检查更新</div>;
+  }
+  if (!check.ok || (check.status === "unknown" && check.error)) {
+    return (
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-[12.5px] text-danger flex items-center gap-1.5">
+          <WarningCircle size={14} weight="fill" /> 检查失败：{check.error ?? "未知错误"}
+        </span>
+        <button className="btn btn-sm" onClick={onRetry}><ArrowClockwise size={12} /> 重试</button>
+      </div>
+    );
+  }
+  if (check.status === "update_available") {
+    const url = check.release_url || null;
+    return (
+      <motion.div
+        initial={{ opacity: 0, y: 6 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.2 }}
+        className="space-y-3"
+      >
+        <div className="flex flex-wrap items-center gap-2.5">
+          <span className="chip border border-info/30 bg-info/10 text-info"><ArrowCircleUp size={12} weight="fill" /> 发现新版本 v{check.latest_version}</span>
+          {/* tag 与展示版本仅差 v 前缀时不重复展示 */}
+          {check.tag_name && check.tag_name.replace(/^v/i, "") !== check.latest_version && (
+            <span className="chip border border-edge-strong bg-raised text-faint font-mono">{check.tag_name}</span>
+          )}
+          {check.published_at && <span className="text-[11.5px] text-faint">{releaseDate(check.published_at)} 发行</span>}
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {url && (
+            <button className="btn btn-primary btn-sm" onClick={() => openExternal(url)}>
+              <DownloadSimple size={13} weight="fill" /> 前往下载页
+            </button>
+          )}
+          <button className="btn btn-sm opacity-60 cursor-not-allowed" disabled title="在线自动更新将在后续版本提供">
+            <Clock size={13} /> 在线更新 · 即将上线
+          </button>
+        </div>
+        <div className="text-[11px] text-faint leading-relaxed">在线自动更新已预留接口，当前版本请通过下载页获取安装包。</div>
+      </motion.div>
+    );
+  }
+  if (check.status === "ahead_beta") {
+    return (
+      <motion.div
+        initial={{ opacity: 0, y: 6 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.2 }}
+        className="space-y-2.5"
+      >
+        <BetaAheadBadge />
+        <div className="text-[12.5px] text-dim leading-relaxed">
+          当前版本 <span className="font-mono text-ink">v{currentVersion}</span> 领先于最新发行 <span className="font-mono text-ink">v{check.latest_version}</span>
+          ——这是先行体验（beta）构建：新功能先于正式版本到达，无需更新，正式版本跟上后徽标会自动消失。
+        </div>
+      </motion.div>
+    );
+  }
+  if (check.status === "unknown") {
+    return (
+      <div className="text-[12.5px] text-faint leading-relaxed">
+        无法与远程版本比对{check.latest_version ? <>（当前 v{currentVersion} 与远程 v{check.latest_version} 缺少可比的数字版本号）</> : null}。
+      </div>
+    );
+  }
+  // up_to_date
+  return (
+    <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2 }}>
+      <span className="chip border border-accent/30 bg-accent/10 text-accent"><Check size={12} weight="bold" /> 已是最新版本</span>
+      {check.latest_version && (
+        <span className="ml-2 text-[12px] text-faint">与远程最新发行 v{check.latest_version} 一致</span>
+      )}
+    </motion.div>
+  );
+}
+
+function AppInfoBlock() {
+  const theme = useApp((s) => s.theme);
+  const [info, setInfo] = useState<AppInfo | null>(null);
+  const [infoError, setInfoError] = useState<string | null>(null);
+  const [check, setCheck] = useState<UpdateCheck | null>(null);
+  const [checking, setChecking] = useState(false);
+
+  const loadInfo = useCallback(async () => {
+    setInfoError(null);
+    try {
+      setInfo(await fetchAppInfo());
+    } catch (e) {
+      setInfoError((e as Error).message);
+    }
+  }, []);
+
+  /** force=true 绕过服务端缓存（手动按钮）；false 用于进页自动检查（命中服务端 TTL，不耗 GitHub 匿名配额）。 */
+  const runCheck = useCallback(async (force: boolean) => {
+    setChecking(true);
+    try {
+      setCheck(await checkAppUpdate(force));
+    } catch (e) {
+      setCheck({ ok: false, status: "unknown", current_version: "", error: (e as Error).message });
+    } finally {
+      setChecking(false);
+    }
+  }, []);
+
+  useEffect(() => { void loadInfo(); }, [loadInfo]);
+  // 进页自动检查一次；结果 5 分钟服务端缓存，反复切页不重复打 GitHub
+  useEffect(() => { void runCheck(false); }, [runCheck]);
+
+  if (infoError) {
+    return (
+      <div className="card p-6">
+        <div className="text-[13px] text-danger flex items-center gap-1.5"><WarningCircle size={14} weight="fill" /> 加载失败：{infoError}</div>
+        <button className="btn mt-3" onClick={() => void loadInfo()}>重试</button>
+      </div>
+    );
+  }
+  if (!info) {
+    return <div className="card p-8 flex items-center gap-2 text-[12.5px] text-faint"><Spinner /> 正在加载应用信息 …</div>;
+  }
+
+  const currentVersion = check?.current_version || info.version;
+
+  return (
+    <div className="space-y-4">
+      {/* 版本与更新检查 */}
+      <div className="card p-5">
+        <div className="flex items-start gap-4 flex-wrap">
+          <img
+            src={theme === "dark" ? "/brand/ow-dark-badge-64.png" : "/brand/ow-light-badge-64.png"}
+            alt=""
+            width={44}
+            height={44}
+            draggable={false}
+            className="select-none shrink-0 rounded-xl"
+          />
+          <div className="min-w-0">
+            <div className="flex items-center gap-2.5 flex-wrap">
+              <span className="text-[16px] font-bold tracking-tight">{info.name}</span>
+              <span className="chip border border-edge-strong bg-raised text-dim font-mono text-[11.5px]">v{info.version}</span>
+              <CopyButton text={info.version} label="复制版本号" />
+            </div>
+            <div className="mt-1 text-[12px] text-faint">工单驱动开发工作台 · 本地优先</div>
+          </div>
+          <span className="flex-1" />
+          <button className="btn btn-sm shrink-0" disabled={checking} onClick={() => void runCheck(true)} title="从 GitHub 读取最新发行版本并比对">
+            {checking ? <><Spinner /> 检查中…</> : <><ArrowClockwise size={13} /> 检查更新</>}
+          </button>
+        </div>
+        <div className="mt-4 pt-4 border-t border-edge">
+          <UpdateStatusArea
+            check={check}
+            checking={checking}
+            currentVersion={currentVersion}
+            onRetry={() => void runCheck(true)}
+          />
+        </div>
+      </div>
+
+      {/* GitHub 仓库 */}
+      <div className="card p-4 flex items-center gap-3.5 flex-wrap">
+        <button
+          className="w-10 h-10 rounded-lg border border-edge bg-sunken grid place-items-center text-dim hover:text-accent hover:border-accent/40 transition-colors cursor-pointer shrink-0"
+          onClick={() => openExternal(info.repo_url)}
+          title="打开 GitHub 仓库"
+          aria-label="打开 GitHub 仓库"
+        >
+          <GithubLogo size={19} weight="fill" />
+        </button>
+        <div className="min-w-0 flex-1">
+          <div className="text-[12.5px] font-semibold">GitHub 仓库</div>
+          <div className="mt-0.5 flex items-center gap-1.5 font-mono text-[11.5px] text-faint break-all">
+            <Link size={12} className="shrink-0" />{info.repo_url}
+            <CopyButton text={info.repo_url} label="复制仓库地址" />
+          </div>
+        </div>
+        <button className="btn btn-sm shrink-0" onClick={() => openExternal(info.repo_url)}>
+          打开仓库 <ArrowUpRight size={12} weight="bold" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
 // Page
 // ──────────────────────────────────────────────────────────────────────────────
 
-type SettingsTab = "toml" | "mcp" | "llm";
+type SettingsTab = "toml" | "mcp" | "llm" | "app";
 
 const NAV_ITEMS = [
   { key: "toml", label: "gate.toml 参数", desc: "运行键值与默认值", Icon: Wrench },
   { key: "mcp", label: "MCP 状态", desc: "服务与工具清单", Icon: PlugsConnected },
   { key: "llm", label: "LLM 设置", desc: "Provider 与模型", Icon: Robot },
+  { key: "app", label: "应用设置", desc: "版本 · 更新 · 仓库", Icon: Rocket },
 ] as const;
 
 function SettingsNav({ tab, onChange }: { tab: SettingsTab; onChange: (t: SettingsTab) => void }) {
@@ -945,7 +1210,7 @@ export function SettingsPage() {
               <GearSix size={22} className="text-faint" />
             </div>
             <div className="mt-4 text-[15px] font-semibold">设置中心需要连接后端</div>
-            <div className="mt-1.5 text-[12.5px] text-faint leading-relaxed">当前为演示模式，gate.toml / MCP / LLM 设置仅在连接后端后可用</div>
+            <div className="mt-1.5 text-[12.5px] text-faint leading-relaxed">当前为演示模式，gate.toml / MCP / LLM / 应用设置仅在连接后端后可用</div>
             <button className="btn btn-primary mt-5" onClick={openConnect}>连接后端</button>
           </div>
         </div>
@@ -970,6 +1235,7 @@ export function SettingsPage() {
                 {tab === "toml" && <GateTomlBlock />}
                 {tab === "mcp" && <McpBlock />}
                 {tab === "llm" && <LlmBlock />}
+                {tab === "app" && <AppInfoBlock />}
               </motion.div>
             </AnimatePresence>
           </div>

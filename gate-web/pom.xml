@@ -15,7 +15,7 @@
   <parent>
     <groupId>gate</groupId>
     <artifactId>gate-parent</artifactId>
-    <version>0.1.0-SNAPSHOT</version>
+    <version>${revision}</version>
   </parent>
   <artifactId>gate-web</artifactId>
   <name>gate-web</name>
@@ -28,6 +28,20 @@
     -->
     <jetty.version>11.0.20</jetty.version>
   </properties>
+
+  <build>
+    <resources>
+      <resource>
+        <directory>src/main/resources</directory>
+      </resource>
+      <!-- app.properties 内嵌 ${project.version}，构建期过滤替换为真实软件版本
+           （设置中心「应用设置」的当前版本来源；未过滤构建由 AppInfoService 检测并回退）。 -->
+      <resource>
+        <directory>src/main/resources-filtered</directory>
+        <filtering>true</filtering>
+      </resource>
+    </resources>
+  </build>
 
   <dependencies>
     <dependency>
