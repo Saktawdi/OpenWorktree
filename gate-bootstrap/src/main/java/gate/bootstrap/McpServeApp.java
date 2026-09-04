@@ -79,7 +79,8 @@ public final class McpServeApp {
         McpToolDispatcher dispatcher = new McpToolDispatcher(
                 runtime.gateService(), runtime.credentials(),
                 runtime.presubmitRepository(), runtime.reviewResultRepository(),
-                runtime.blobStore(), runtime.providerRepository(), runtime.config());
+                runtime.blobStore(), runtime.providerRepository(), runtime.config(),
+                runtime.ticketRepository());
         new McpServer(dispatcher, token).run(in, out, err);
     }
 

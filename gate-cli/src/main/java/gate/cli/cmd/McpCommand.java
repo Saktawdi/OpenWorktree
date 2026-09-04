@@ -53,7 +53,8 @@ public final class McpCommand implements Runnable {
             McpToolDispatcher dispatcher = new McpToolDispatcher(
                     c.gateService(), c.credentials(),
                     c.presubmitRepository(), c.reviewResultRepository(),
-                    c.blobStore(), c.providerRepository(), c.config());
+                    c.blobStore(), c.providerRepository(), c.config(),
+                    c.ticketRepository());
             McpServer server = new McpServer(dispatcher, domainToken);
             // 与 McpServeApp 同理：stdio 上的 MCP 客户端期望 UTF-8，Windows 控制台默认
             // 字符集（GBK）会把工具结果里的中文写成乱码；写入侧强制 UTF-8。

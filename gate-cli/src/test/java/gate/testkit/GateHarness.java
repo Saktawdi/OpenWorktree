@@ -99,6 +99,7 @@ public final class GateHarness implements AutoCloseable {
     private final String gitExe;
     private final JdbcCredentialRepository credentials;
     private final ProviderRepository providers;
+    private final gate.adapters.store.JdbcProjectRepository projects;
 
     public GateHarness() {
         this("git");
@@ -169,6 +170,7 @@ public final class GateHarness implements AutoCloseable {
         this.providers = providers;
         this.clock = new SystemClock();
         this.credentials = new JdbcCredentialRepository(jdbc);
+        this.projects = new gate.adapters.store.JdbcProjectRepository(jdbc);
 
         // Seed the manual provider so review_result.provider_id (NOT NULL) is satisfied.
         providers.upsert(new ProviderRepository.ProviderRow(
@@ -177,7 +179,7 @@ public final class GateHarness implements AutoCloseable {
         this.gateService = new GateServiceImpl(config, snapshotCapture, commitPublisher, refObserver,
                 approvalStore, reviewEngineFactory, gatePolicy, tickets, presubmits, reviewResults, intents,
                 blobStore, auditLog, lockManager, txRunner, clock,
-                gate.ports.engine.PublishProbe.NOOP, null, null, null, null, null,
+                gate.ports.engine.PublishProbe.NOOP, null, this.projects, null, null, null,
                 this.topologyInitializer);
 
         // Build the topology: bare auth repo + seeded base + installed hook.
@@ -195,9 +197,41 @@ public final class GateHarness implements AutoCloseable {
         return clone;
     }
 
+    /**
+     * Registers a project with its own provisioned bare auth repo (its tickets clone from there,
+     * not from the gate-level repo). Returns the project's auth repo.
+     */
+    public RepoRef createProject(String id, String name) {
+        Path authRepoPath = root.resolve("auth-" + id + ".git");
+        topologyInitializer.initAuthRepo(RepoRef.of(authRepoPath), config.primaryTargetRef(),
+                config.approvalsDir());
+        Instant now = clock.now();
+        projects.insert(new gate.domain.project.Project(id, name, root.resolve("ws-" + id).toString(),
+                config.primaryTargetRef(), authRepoPath.toString(),
+                null, null, List.of(), false, 0, now, now));
+        return RepoRef.of(authRepoPath);
+    }
+
+    /**
+     * Creates a project-bound ticket through the real creation path (branch + clone from the
+     * project's own auth repo). Returns the registered ticket row.
+     */
+    public Ticket createProjectTicket(String projectId, String title) {
+        return gateService.createTicket(new gate.application.ticket.CreateTicketCommand(
+                null, title, projectId, null, null, null, null, null, null, null));
+    }
+
     /** Current state of a registered ticket. */
     public Ticket ticket(String ticketNo) {
         return tickets.find(ticketNo).orElseThrow(() -> new IllegalStateException("no such ticket: " + ticketNo));
+    }
+
+    public TicketRepository tickets() {
+        return tickets;
+    }
+
+    public gate.adapters.store.JdbcProjectRepository projects() {
+        return projects;
     }
 
     /** Writes a file into a clone's worktree. */

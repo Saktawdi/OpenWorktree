@@ -14,7 +14,10 @@ import java.util.Set;
  *   <li><b>agent domain</b> (low privilege, bound to one ticket,下发 with the worktree):
  *       {@code presubmit_create}, {@code presubmit_get_diff}, {@code review_result_get} — plus
  *       {@code ticket_create}, which is agent-callable but not ticket-bound (its whole point is
- *       creating NEW tickets, e.g. follow-ups discovered mid-work).</li>
+ *       creating NEW tickets, e.g. follow-ups discovered mid-work). It is however
+ *       <b>project-bound</b>: the new ticket must live in the bound ticket's project
+ *       (McpToolDispatcher#projectScope — a cross-project or unprojected creation once sent one
+ *       project's dispatch to the gate-level repo, surfacing it under every project board).</li>
  *   <li><b>human/orchestrator domain</b> (high privilege):
  *       {@code review_run}, {@code commit_and_publish}, {@code config_show}, {@code provider_list}.</li>
  * </ul>
@@ -39,18 +42,21 @@ public final class McpToolRegistry {
         register(new ToolDef(
                 "ticket_create",
                 AGENT_DOMAIN,
-                "Create a new ticket in the gate: validates the request, cuts the ticket branch "
-                + "from the base tip and materializes its worktree clone. Use project_id to bind "
-                + "it to a registered project (clones from that project's own auth repo); omit it "
-                + "for the gate-level default repo. Returns the assigned ticket_no and clone_path.",
+                "Create a new follow-up ticket in the gate: validates the request, cuts the ticket "
+                + "branch from the base tip and materializes its worktree clone. Project-scoped for "
+                + "agents: the new ticket is always bound to the project of YOUR bound ticket — "
+                + "omit project_id to inherit it (recommended); any other project is denied. "
+                + "Returns the assigned ticket_no and clone_path.",
                 schema(Map.of(
                         "type", "object",
                         "properties", Map.of(
                                 "title", Map.of("type", "string", "description",
                                         "Short ticket title (required)"),
                                 "project_id", Map.of("type", "string", "description",
-                                        "Registered project id to bind the ticket to; omit for the "
-                                                + "gate-level default repo"),
+                                        "Registered project id to bind the ticket to. Agents: omit "
+                                                + "to inherit your bound ticket's project; a "
+                                                + "different project is denied. Humans may pass "
+                                                + "any project; omit for the gate-level default repo"),
                                 "ticket_no", Map.of("type", "string", "description",
                                         "Optional explicit ticket number; auto-generated (next T-nnn) "
                                                 + "when omitted"),

@@ -19,6 +19,7 @@ import gate.ports.store.ProviderRepository;
 import gate.ports.store.ReviewResultRepository;
 import gate.application.GateService;
 import gate.domain.blob.BlobRef;
+import gate.ports.store.TicketRepository;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -46,10 +47,12 @@ public final class McpToolDispatcher {
     private final BlobStore blobStore;
     private final ProviderRepository providers;
     private final GateConfig config;
+    private final TicketRepository tickets;
 
     public McpToolDispatcher(GateService gateService, CredentialRepository credentials,
                              PresubmitRepository presubmits, ReviewResultRepository reviewResults,
-                             BlobStore blobStore, ProviderRepository providers, GateConfig config) {
+                             BlobStore blobStore, ProviderRepository providers, GateConfig config,
+                             TicketRepository tickets) {
         this.gateService = gateService;
         this.credentials = credentials;
         this.presubmits = presubmits;
@@ -57,6 +60,7 @@ public final class McpToolDispatcher {
         this.blobStore = blobStore;
         this.providers = providers;
         this.config = config;
+        this.tickets = tickets;
     }
 
     /**
@@ -92,7 +96,7 @@ public final class McpToolDispatcher {
         }
 
         return switch (tool.name()) {
-            case "ticket_create" -> ticketCreate(arguments);
+            case "ticket_create" -> ticketCreate(arguments, domain);
             case "presubmit_create" -> presubmitCreate(arguments);
             case "presubmit_get_diff" -> presubmitGetDiff(arguments);
             case "review_result_get" -> reviewResultGet(arguments);
@@ -127,7 +131,7 @@ public final class McpToolDispatcher {
 
     // --- tool implementations ---
 
-    private Map<String, Object> ticketCreate(Map<String, Object> args) {
+    private Map<String, Object> ticketCreate(Map<String, Object> args, Domain domain) {
         List<String> labels = null;
         Object rawLabels = args.get("labels");
         if (rawLabels instanceof List<?> list) {
@@ -135,10 +139,11 @@ public final class McpToolDispatcher {
         } else if (rawLabels != null) {
             throw new ToolException(McpJsonRpc.INVALID_PARAMS, "labels must be an array of strings");
         }
+        String projectId = projectScope(domain, strArg(args, "project_id"));
         gate.domain.ticket.Ticket t = gateService.createTicket(new gate.application.ticket.CreateTicketCommand(
                 strArg(args, "ticket_no"),
                 requiredStr(args, "title"),
-                strArg(args, "project_id"),
+                projectId,
                 strArg(args, "target_branch"),
                 null,
                 strArg(args, "priority"),
@@ -156,6 +161,53 @@ public final class McpToolDispatcher {
         result.put("priority", t.priority());
         result.put("labels", t.labels());
         return result;
+    }
+
+    /**
+     * The project a {@code ticket_create} call may bind its new ticket to.
+     *
+     * <p>Agent-domain tokens are bound to one ticket (the session's ticket). The new ticket must
+     * stay inside that ticket's project — the T-130 dispatch incident: an agent of the 姬姬云村
+     * project called {@code ticket_create} without {@code project_id} and every follow-up ticket
+     * fell to the gate-level default repo, surfacing under all project boards (unaffiliated
+     * tickets render in every board). Scoping is therefore authoritative on the server side, like
+     * the ticket_no check: an explicit {@code project_id} that differs from the bound ticket's
+     * project is denied, and an omitted one inherits the bound ticket's project (an agent cannot
+     * be asked to guess its own project id). An agent whose bound ticket is unaffiliated may only
+     * create unaffiliated tickets. Human/orchestrator tokens stay unrestricted.
+     *
+     * @param requestedProjectId raw {@code project_id} argument (blank treated as omitted, same
+     *                           normalization as the web controller)
+     * @return the effective project id (never a cross-project value)
+     */
+    private String projectScope(Domain domain, String requestedProjectId) {
+        String requested = requestedProjectId == null || requestedProjectId.isBlank()
+                ? null : requestedProjectId.trim();
+        if (!domain.isAgent()) {
+            return requested;
+        }
+        String boundTicketNo = domain.ticketNo();
+        if (boundTicketNo == null || boundTicketNo.isBlank()) {
+            throw new PermissionDeniedException("ticket_create", "agent project scope",
+                    "agent domain token carries no ticket binding; the allowed project for "
+                            + "ticket_create cannot be determined");
+        }
+        gate.domain.ticket.Ticket bound = tickets.find(boundTicketNo).orElse(null);
+        if (bound == null) {
+            // Fail closed: without the bound ticket the project scope is unresolvable.
+            throw new PermissionDeniedException("ticket_create", "agent project scope",
+                    "agent domain token is bound to ticket " + boundTicketNo
+                            + " which no longer exists; the allowed project for ticket_create "
+                            + "cannot be determined");
+        }
+        String scoped = bound.projectId();
+        if (requested != null && !requested.equals(scoped)) {
+            throw new PermissionDeniedException("ticket_create", "agent project scope",
+                    "agent domain token bound to ticket " + boundTicketNo + " (project "
+                            + (scoped == null ? "<none>" : scoped) + ") cannot create a ticket "
+                            + "in project " + requested);
+        }
+        return scoped;
     }
 
     private Map<String, Object> presubmitCreate(Map<String, Object> args) {
