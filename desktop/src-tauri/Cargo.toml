@@ -12,6 +12,12 @@ edition = "2021"
 name = "desktop_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+# 裸构建（--no-bundle）的入口名即此；NSIS 打包时仍按 tauri.conf 的 productName
+# 安装为 OpenWorktree.exe。与包名解耦，避免任务管理器里出现 desktop.exe。
+[[bin]]
+name = "openworktree"
+path = "src/main.rs"
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
