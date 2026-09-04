@@ -37,7 +37,9 @@
   <body>
     <!-- 无边框窗口：SPA 经 iframe 承载（保持远端同源，WS/SSE 不受影响）；
          窗口操作（拖拽/最小化/最大化/关闭）由本页（tauri:// 域）经 postMessage 桥执行。 -->
-    <div data-tauri-drag-region style="position:fixed; inset:0 0 auto 0; height:36px; z-index:10"></div>
+    <!-- 启动页阶段的拖拽条：只服务 splash 期（SPA 顶栏有自己的 postMessage 拖拽桥）。
+         SPA 加载完成后必须隐藏，否则这条 36px、z-index:10 的遮罩会挡死 iframe 顶栏的所有按钮。 -->
+    <div id="splash-drag" data-tauri-drag-region style="position:fixed; inset:0 0 auto 0; height:36px; z-index:10"></div>
     <button id="splash-close" class="winbtn close" title="关闭" style="position:fixed; top:4px; right:10px; z-index:11">✕</button>
     <iframe id="ow-spa" title="OpenWorktree"></iframe>
     <div id="splash">
@@ -71,7 +73,10 @@
       window.__TAURI__.event.listen("backend-ready", (e) => {
         iframe.src = `http://127.0.0.1:${e.payload.port}/?ow-token=${e.payload.token}`;
         iframe.addEventListener("load", () => {
-          // #ow-spa 初始 display:none，承载 SPA 后必须显式放开，否则只剩壳的背景色
+          // #ow-spa 初始 display:none，承载 SPA 后必须显式放开，否则只剩壳的背景色；
+          // 同时撤掉启动期的拖拽条与悬浮关闭钮，把顶栏（含 SPA 自己的窗口按钮）完整还给 SPA
+          document.getElementById("splash-drag").style.display = "none";
+          splashClose.style.display = "none";
           iframe.style.display = "block";
           splash.style.display = "none";
         }, { once: true });

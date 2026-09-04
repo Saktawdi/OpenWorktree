@@ -66,3 +66,4 @@ desktop/node_modules/
 desktop/src-tauri/target/
 desktop/src-tauri/gen/
 desktop/src-tauri/binaries/*.exe
+desktop/src-tauri/binaries/*.native-backup

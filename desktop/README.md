@@ -25,6 +25,32 @@ npx tauri build        # 安装包在 src-tauri/target/release/bundle/nsis/
 `VC/Tools/MSVC/<ver>/bin/Hostx64/x64` 前置到 PATH，并设置 `LIB`/`INCLUDE`
 指向 MSVC 与 Windows SDK（CI 上无需处理）。
 
+## 本地 dev：无 GraalVM 时的 JVM 垫片侧车（dev-shim-ow）
+
+native 单文件只能由 CI 的 GraalVM 产出；本机只有普通 JDK 时，用 `dev-shim-ow/`
+的 Rust 垫片顶替 sidecar 跑 `tauri dev`：
+
+```bash
+cd dev-shim-ow && cargo build --release        # 需 MSVC link 环境（同上）
+cp target/release/ow-dev-shim.exe src-tauri/binaries/ow-x86_64-pc-windows-msvc.exe
+cd .. && npm run tauri dev
+```
+
+垫片行为：按 `OW_DEV_REPO`（缺省向上找带 `gate-web/target/dependency` 的祖先）定位
+仓库根，spawn `java -cp <模块 classes + 非 gate-* 依赖 jar + local-run/ui-dev-root>
+gate.web.GateWebApp --config local-run/gate.toml`，并把 JVM 的 stdout/stderr 泵给壳
+（壳按行解析令牌与端口）。要点：
+
+- **显式管道转发，不做句柄继承**：tauri 以管道作垫片 stdio 时，继承路径下 JVM 的
+  输出到不了壳（java 在写、壳收不到）；
+- **Job Object（kill-on-close）**：垫片进程被壳收割（含 TerminateProcess）时，
+  java 子进程随之被系统回收，不留孤儿；
+- SPA 用 `local-run/ui-dev-root/static/`（`gate-web-ui/dist` 的拷贝）伺服，改前端后
+  需重新 build + 拷贝；
+- 测完还原：删掉垫片 exe，把 `ow-x86_64-pc-windows-msvc.exe.native-backup`（若留有）
+  改回原名即可换回 native 侧车。
+
 ## 打包内容
 
 安装包 = 壳（~8MB）+ 后端单文件（~60MB）。数据仍在运行目录的 `local-run\`。
+
