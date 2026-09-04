@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { NotePencil, Trash } from "@phosphor-icons/react";
 import { actions } from "../lib/actions";
-import { openTicketEditor, setAgentId, useApp } from "../lib/store";
+import { openStageChangeConfirm, openTicketEditor, setAgentId, useApp } from "../lib/store";
 import type { Priority } from "../lib/types";
 import { LabelInput } from "./ui";
 
@@ -18,7 +18,6 @@ export function TicketEditDialog() {
   const [note, setNote] = useState("");
   const [labels, setLabels] = useState<string[]>([]);
   const [agentConfigId, setAgentConfigId] = useState<string>("");
-  const [confirmCancel, setConfirmCancel] = useState(false);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -29,7 +28,6 @@ export function TicketEditDialog() {
     setNote(ticket.note ?? "");
     setLabels([...ticket.labels]);
     setAgentConfigId(ticket.agentConfigId ?? "");
-    setConfirmCancel(false);
   }, [ticket, editingNo]);
 
   if (!editingNo || !ticket) return null;
@@ -153,31 +151,17 @@ export function TicketEditDialog() {
 
           {!terminal && (
             <div className="rounded-lg border border-danger/25 bg-danger/[0.04] p-3">
-              {confirmCancel ? (
-                <div className="flex items-center gap-2">
-                  <span className="text-[12.5px] text-danger flex-1">确认取消该工单？沙箱将停止协作。</span>
-                  <button
-                    className="btn btn-danger-ghost h-7 text-[12px]"
-                    onClick={async () => {
-                      await actions.cancelTicket(editingNo);
-                      openTicketEditor(null);
-                    }}
-                  >
-                    确认取消
-                  </button>
-                  <button className="btn h-7 text-[12px]" onClick={() => setConfirmCancel(false)}>
-                    返回
-                  </button>
-                </div>
-              ) : (
-                <button
-                  className="inline-flex items-center gap-1.5 text-[12.5px] text-danger/80 hover:text-danger cursor-pointer bg-transparent border-0 p-0"
-                  onClick={() => setConfirmCancel(true)}
-                >
-                  <Trash size={13} />
-                  取消工单（转入已取消状态）
-                </button>
-              )}
+              <button
+                className="inline-flex items-center gap-1.5 text-[12.5px] text-danger/80 hover:text-danger cursor-pointer bg-transparent border-0 p-0"
+                onClick={() => {
+                  // V19: 取消工单统一走共享的终态流转确认弹窗（状态变更理由必填）
+                  openTicketEditor(null);
+                  openStageChangeConfirm(editingNo, "CANCELLED");
+                }}
+              >
+                <Trash size={13} />
+                取消工单（转入已取消状态）
+              </button>
             </div>
           )}
         </div>

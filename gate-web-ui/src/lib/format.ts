@@ -68,6 +68,13 @@ export const STAGE_LABEL: Record<Stage, string> = {
   CANCELLED: "已取消",
 };
 
+/** 状态变更记录（V19）的动作标签：重启 / 强制已完成 / 取消。 */
+export const STAGE_CHANGE_KIND_LABEL: Record<import("./types").StageChangeRecord["kind"], string> = {
+  restart: "重启",
+  force_complete: "强制已完成",
+  cancel: "取消工单",
+};
+
 export const SEVERITY_LABEL: Record<string, string> = {
   BLOCKER: "阻断",
   WARNING: "警告",

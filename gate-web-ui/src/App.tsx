@@ -10,6 +10,7 @@ import { TerminalWorkbench } from "./components/ProjectTerminal";
 import { AgentsPage } from "./components/AgentsPage";
 import { SettingsPage } from "./components/SettingsPage";
 import { ConnectionDialog } from "./components/ConnectionDialog";
+import { StageChangeConfirmDialog } from "./components/StageChangeConfirmDialog";
 import { Toast } from "./components/Toast";
 
 export default function App() {
@@ -42,6 +43,7 @@ export default function App() {
       {view === "agents" && <AgentsPage />}
       {view === "settings" && <SettingsPage />}
       <ConnectionDialog />
+      <StageChangeConfirmDialog />
       <TerminalWorkbench />
       <Toast />
     </div>

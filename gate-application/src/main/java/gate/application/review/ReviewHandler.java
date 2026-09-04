@@ -92,6 +92,10 @@ public final class ReviewHandler {
     public ReviewResult handle(ReviewCommand command) {
         Ticket ticket = tickets.find(command.ticketNo()).orElseThrow(
                 () -> new GateException(GateErrorCode.USAGE, "no such ticket: " + command.ticketNo()));
+        if (ticket.isSuper()) {
+            throw new GateException(GateErrorCode.USAGE,
+                    "quick-mode super ticket " + ticket.ticketNo() + " works directly on the project workspace and never enters the gate pipeline (review)");
+        }
         RepoRef clone = RepoRef.of(java.nio.file.Path.of(ticket.clonePath()));
 
         var presubmit = command.round() == null

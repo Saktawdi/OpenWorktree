@@ -122,7 +122,8 @@ class BaseSyncApiTest {
     @Test
     void terminal_ticket_is_refused() throws Exception {
         post("/api/tickets", "{\"ticket_no\":\"SYNC-4\",\"title\":\"t\"}");
-        assertEquals(200, patch("/api/tickets/SYNC-4", "{\"stage\":\"CANCELLED\"}").statusCode());
+        assertEquals(200, patch("/api/tickets/SYNC-4",
+                "{\"stage\":\"CANCELLED\",\"reason\":\"不再需要\"}").statusCode());
 
         HttpResponse<String> res = post("/api/tickets/SYNC-4/sync-base", "{}");
         assertTrue(res.statusCode() >= 400, "terminal tickets have no live clone semantics: " + res.body());

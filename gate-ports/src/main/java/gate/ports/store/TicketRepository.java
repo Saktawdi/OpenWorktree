@@ -60,4 +60,16 @@ public interface TicketRepository {
     default void clearProject(String projectId, Instant now) {
         throw new UnsupportedOperationException("project detach is not supported");
     }
+
+    /**
+     * The project's permanent quick-mode super ticket (V19), or empty when none exists yet.
+     * At most one row matches per project (partial unique index on the ticket table).
+     */
+    Optional<Ticket> findSuperByProject(String projectId);
+
+    /**
+     * Re-points the super ticket at its project's current workspace path and target branch
+     * (project re-registration / base switch). Only super tickets may be moved this way.
+     */
+    void updateSuperLocation(String ticketNo, String clonePath, String targetRef, Instant now);
 }

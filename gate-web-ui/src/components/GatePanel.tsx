@@ -27,9 +27,9 @@ import {
   X,
 } from "@phosphor-icons/react";
 import { actions } from "../lib/actions";
-import { formatBytes, hhmmss, shortHash, STAGE_LABEL } from "../lib/format";
-import { NO_SESSIONS, collapseGateSectionsForPresubmit, openRestartDialog, openRestartsView, setGateSection, useApp } from "../lib/store";
-import { loadRestarts } from "../lib/api";
+import { formatBytes, hhmmss, shortHash, STAGE_CHANGE_KIND_LABEL, STAGE_LABEL } from "../lib/format";
+import { NO_SESSIONS, collapseGateSectionsForPresubmit, openRestartDialog, openStageChangeConfirm, openStageChangesView, setGateSection, useApp } from "../lib/store";
+import { loadStageChanges } from "../lib/api";
 import type { ChatSession, Snapshot } from "../lib/types";
 import { CopyButton, HashReveal, Spinner } from "./ui";
 
@@ -348,30 +348,30 @@ function TicketInfo({ ticketNo }: { ticketNo: string }) {
       >
         <FileText size={14} className="text-faint shrink-0" />
         <span className="text-[12px] font-medium text-dim">工单信息</span>
-        {/* 重启历史入口（T-117）：只在确有重启记录时出现，弹窗展示、不占原信息位 */}
-        {(ticket.restartCount ?? 0) > 0 && (
+        {/* 状态记录入口（V19）：重启/强制已完成/取消的完整历史，弹窗展示、不占原信息位 */}
+        {(ticket.stageChangeCount ?? 0) > 0 && (
           <span
             role="button"
             tabIndex={0}
             className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-dim hover:text-accent hover:bg-raised transition-colors cursor-pointer shrink-0"
-            title="查看重启历史"
-            aria-label="查看重启历史"
+            title="查看状态变更记录（重启 / 强制已完成 / 取消的理由）"
+            aria-label="查看状态变更记录"
             onClick={(e) => {
               e.stopPropagation();
-              void loadRestarts(ticketNo);
-              openRestartsView(ticketNo);
+              void loadStageChanges(ticketNo);
+              openStageChangesView(ticketNo);
             }}
             onKeyDown={(e) => {
               if (e.key === "Enter" || e.key === " ") {
                 e.stopPropagation();
-                void loadRestarts(ticketNo);
-                openRestartsView(ticketNo);
+                void loadStageChanges(ticketNo);
+                openStageChangesView(ticketNo);
               }
             }}
           >
             <ClockCounterClockwise size={12} />
-            重启历史
-            <span className="font-mono text-[10px] text-faint">{ticket.restartCount}</span>
+            状态记录
+            <span className="font-mono text-[10px] text-faint">{ticket.stageChangeCount}</span>
           </span>
         )}
         <span className="flex-1" />
@@ -875,10 +875,52 @@ function ReviewActions({ ticketNo, gateBusy, round }: { ticketNo: string; gateBu
   );
 }
 
+/* ─── Quick Mode Card (V19 超级工单：替代门禁流水线) ─── */
+
+function QuickModeCard() {
+  const expanded = useApp((s) => s.gateSections.pipeline);
+
+  return (
+    <div className="border-b border-edge">
+      <button
+        className="w-full sticky top-0 z-10 bg-canvas flex items-center gap-2 px-4 py-2.5 text-left hover:bg-raised transition-colors cursor-pointer"
+        onClick={() => setGateSection("pipeline", !expanded)}
+      >
+        <Sparkle size={14} className="text-violet shrink-0" weight="fill" />
+        <span className="text-[12px] font-medium text-dim">快速模式</span>
+        <span className="chip border border-violet/30 bg-violet/10 text-violet">超级工单</span>
+        <span className="flex-1" />
+        <span
+          className={`text-[11px] text-faint transition-transform duration-150 ${expanded ? "rotate-0" : "-rotate-90"}`}
+        >
+          ▾
+        </span>
+      </button>
+      <AnimatePresence>
+        {expanded && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+            className="overflow-hidden"
+          >
+            <div className="px-4 pb-3 space-y-2 text-[12px] text-dim leading-relaxed">
+              <div>直连项目原工作区（不经沙箱克隆），提交用普通 git 直达主分支。</div>
+              <div>永不关闭、不参与门禁流转；在会话里随时与 Agent 协作，像原生 opencode 一样直接。</div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
 /* ─── Main Panel ─── */
 
 export function GatePanel({ ticketNo }: { ticketNo: string }) {
   const stage = useApp((s) => s.tickets.find((t) => t.ticketNo === ticketNo)?.stage);
+  const isSuperTicket = useApp((s) => s.tickets.find((t) => t.ticketNo === ticketNo)?.isSuper) ?? false;
   const snaps = useApp((s) => s.snapshots[ticketNo]);
   const task = useApp((s) => s.tasks[ticketNo]);
   const verdict = useApp((s) => s.verdicts[ticketNo]);
@@ -949,6 +991,10 @@ export function GatePanel({ ticketNo }: { ticketNo: string }) {
   } else if (stage === "NEEDS_HUMAN") {
     action = null;
   }
+  // V19 快速模式超级工单：没有门禁动作位，底部只保留会话入口
+  if (isSuperTicket) {
+    action = null;
+  }
 
   return (
     <aside className="w-[400px] shrink-0 border-l border-edge flex flex-col bg-canvas">
@@ -966,18 +1012,22 @@ export function GatePanel({ ticketNo }: { ticketNo: string }) {
           {/* Ticket Info */}
           <TicketInfo ticketNo={ticketNo} />
 
-          {/* Gate Pipeline (collapsible) */}
-          <GatePipeline
-            ticketNo={ticketNo}
-            stage={stage ?? "PENDING"}
-            round={round}
-            snap={snap}
-            task={task}
-            verdict={verdict}
-            findingsCount={findingsCount}
-            gateBusy={gateBusy}
-            outcome={outcome}
-          />
+          {/* Gate Pipeline (collapsible) / V19 超级工单的快速模式说明 */}
+          {isSuperTicket ? (
+            <QuickModeCard />
+          ) : (
+            <GatePipeline
+              ticketNo={ticketNo}
+              stage={stage ?? "PENDING"}
+              round={round}
+              snap={snap}
+              task={task}
+              verdict={verdict}
+              findingsCount={findingsCount}
+              gateBusy={gateBusy}
+              outcome={outcome}
+            />
+          )}
         </div>
 
         {/* Session List (collapsible, fills the rest when expanded) */}
@@ -1007,6 +1057,18 @@ export function GatePanel({ ticketNo }: { ticketNo: string }) {
             {action.icon}
             {action.label}
           </button>
+          {/* V19: 取消工单的常驻入口（拖拽之外的第二条路），理由必填 */}
+          {!isSuperTicket && (stage === "IN_PROGRESS" || stage === "REJECTED" || stage === "PENDING") && (
+            <button
+              className="btn w-full mt-2"
+              disabled={gateBusy}
+              onClick={() => openStageChangeConfirm(ticketNo, "CANCELLED")}
+              title="取消工单（理由必填，记入状态变更记录，可在工单信息里回看）"
+            >
+              <LockKey size={15} weight="fill" />
+              取消工单…
+            </button>
+          )}
           {action.hint && <div className="mt-2 text-center text-[11.5px] text-faint">{action.hint}</div>}
         </div>
       )}
@@ -1030,9 +1092,9 @@ export function GatePanel({ ticketNo }: { ticketNo: string }) {
           <div className="mt-2 text-center text-[11.5px] text-faint">会话与门禁操作均已停用</div>
         </div>
       )}
-      {/* ─── T-117: 重启理由弹窗 / 重启历史弹窗 ─── */}
+      {/* ─── T-117 重启理由弹窗 / V19 状态变更记录弹窗 ─── */}
       <RestartDialog ticketNo={ticketNo} />
-      <RestartsHistoryDialog ticketNo={ticketNo} />
+      <StageChangesHistoryDialog ticketNo={ticketNo} />
     </aside>
   );
 }
@@ -1143,18 +1205,18 @@ function RestartDialog({ ticketNo }: { ticketNo: string }) {
   );
 }
 
-/* ─── Restart History Dialog (T-117) ─── */
+/* ─── Stage Changes History Dialog (V19 状态变更记录；重启行同表展示) ─── */
 
-function RestartsHistoryDialog({ ticketNo }: { ticketNo: string }) {
-  const open = useApp((s) => s.restartsViewFor === ticketNo);
-  const rows = useApp((s) => s.restarts[ticketNo]);
+function StageChangesHistoryDialog({ ticketNo }: { ticketNo: string }) {
+  const open = useApp((s) => s.stageChangesViewFor === ticketNo);
+  const rows = useApp((s) => s.stageChanges[ticketNo]);
 
   if (!open) return null;
 
   return (
     <div
       className="fixed inset-0 z-50 grid place-items-center bg-black/55 backdrop-blur-[2px]"
-      onClick={() => openRestartsView(null)}
+      onClick={() => openStageChangesView(null)}
     >
       <div
         className="w-[520px] card shadow-2xl shadow-black/60 animate-rise"
@@ -1163,9 +1225,9 @@ function RestartsHistoryDialog({ ticketNo }: { ticketNo: string }) {
         <div className="flex items-center gap-2.5 px-5 h-12 border-b border-edge">
           <ClockCounterClockwise size={15} className="text-dim" />
           <span className="font-mono text-[12.5px] text-accent">{ticketNo}</span>
-          <span className="text-[13.5px] font-semibold">重启历史</span>
+          <span className="text-[13.5px] font-semibold">状态变更记录</span>
           <span className="flex-1" />
-          <button className="icon-btn" onClick={() => openRestartsView(null)} aria-label="关闭">
+          <button className="icon-btn" onClick={() => openStageChangesView(null)} aria-label="关闭">
             ✕
           </button>
         </div>
@@ -1173,21 +1235,22 @@ function RestartsHistoryDialog({ ticketNo }: { ticketNo: string }) {
         <div className="p-5 max-h-[60vh] overflow-y-auto">
           {!rows || rows.length === 0 ? (
             <div className="py-8 text-center text-[12.5px] text-faint">
-              该工单还没有重启记录
+              该工单还没有状态变更记录
             </div>
           ) : (
             <div className="space-y-3">
               {[...rows].reverse().map((r, i) => (
                 <div key={i} className="rounded-lg border border-edge bg-sunken/40 p-3.5">
                   <div className="flex items-center gap-2 text-[12px]">
+                    <span className="chip border border-edge-strong bg-raised text-dim">
+                      {STAGE_CHANGE_KIND_LABEL[r.kind] ?? r.kind}
+                    </span>
                     <span className="chip border border-accent/30 bg-accent/10 text-accent font-mono">
                       第 {r.round} 轮
                     </span>
-                    <span className="text-dim">
-                      {STAGE_LABEL[r.fromStage] ?? r.fromStage}
-                    </span>
+                    <span className="text-dim">{STAGE_LABEL[r.fromStage] ?? r.fromStage}</span>
                     <ArrowRight size={11} className="text-faint" />
-                    <span className="text-ink font-medium">进行中</span>
+                    <span className="text-ink font-medium">{STAGE_LABEL[r.toStage] ?? r.toStage}</span>
                     <span className="flex-1" />
                     <span className="font-mono text-[10.5px] text-faint">
                       {r.createdAt ? new Date(r.createdAt).toLocaleString("zh-CN") : "—"}
@@ -1203,7 +1266,7 @@ function RestartsHistoryDialog({ ticketNo }: { ticketNo: string }) {
         </div>
 
         <div className="flex justify-end gap-2 px-5 py-4 border-t border-edge">
-          <button className="btn" onClick={() => openRestartsView(null)}>
+          <button className="btn" onClick={() => openStageChangesView(null)}>
             关闭
           </button>
         </div>

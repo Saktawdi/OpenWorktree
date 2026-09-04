@@ -109,14 +109,20 @@ class TicketMetaApiTest {
     void stage_moves_are_limited_to_queue_transitions() throws Exception {
         post("/api/tickets", "{\"ticket_no\":\"META-5\",\"title\":\"t\"}");
 
-        HttpResponse<String> cancel = patch("/api/tickets/META-5", "{\"stage\":\"CANCELLED\"}");
+        // V19: cancelling is operator-driven and must carry a reason — no silent cancels.
+        HttpResponse<String> silentCancel = patch("/api/tickets/META-5", "{\"stage\":\"CANCELLED\"}");
+        assertEquals(400, silentCancel.statusCode(), silentCancel.body());
+        assertTrue(silentCancel.body().contains("reason"), silentCancel.body());
+
+        HttpResponse<String> cancel = patch("/api/tickets/META-5",
+                "{\"stage\":\"CANCELLED\",\"reason\":\"需求取消，不再投入\"}");
         assertEquals(200, cancel.statusCode(), cancel.body());
         assertTrue(cancel.body().contains("\"stage\":\"CANCELLED\""), cancel.body());
 
         // T-117: reviving a terminal ticket without a reason is refused — no silent revives.
         HttpResponse<String> silent = patch("/api/tickets/META-5", "{\"stage\":\"IN_PROGRESS\"}");
         assertEquals(400, silent.statusCode(), silent.body());
-        assertTrue(silent.body().contains("restart_reason"), silent.body());
+        assertTrue(silent.body().contains("requires a non-blank reason"), silent.body());
 
         HttpResponse<String> reopen = patch("/api/tickets/META-5",
                 "{\"stage\":\"IN_PROGRESS\",\"restart_reason\":\"需求变更，重新开启\"}");
@@ -134,6 +140,30 @@ class TicketMetaApiTest {
         HttpResponse<String> gated = patch("/api/tickets/META-5", "{\"stage\":\"IN_REVIEW\"}");
         assertTrue(gated.statusCode() >= 400, "IN_REVIEW is review-gated: " + gated.body());
         assertTrue(gated.body().contains("review-gated"), gated.body());
+    }
+
+    @Test
+    void force_complete_carries_reason_and_records_history() throws Exception {
+        post("/api/tickets", "{\"ticket_no\":\"META-7\",\"title\":\"t\"}");
+
+        // V19: force-drag to DONE bypasses the gate but must carry a reason.
+        HttpResponse<String> silent = patch("/api/tickets/META-7", "{\"stage\":\"DONE\"}");
+        assertEquals(400, silent.statusCode(), silent.body());
+
+        HttpResponse<String> done = patch("/api/tickets/META-7",
+                "{\"stage\":\"DONE\",\"reason\":\"人工验证效果已达成，跳过门禁收尾\"}");
+        assertEquals(200, done.statusCode(), done.body());
+        assertTrue(done.body().contains("\"stage\":\"DONE\""), done.body());
+        assertTrue(done.body().contains("\"stage_change_count\":1"), done.body());
+        // The unified history records the force-complete row; the legacy badge counts revives only.
+        assertTrue(done.body().contains("\"restart_count\":0"), done.body());
+
+        HttpResponse<String> changes = get("/api/tickets/META-7/stage-changes");
+        assertEquals(200, changes.statusCode(), changes.body());
+        assertTrue(changes.body().contains("\"kind\":\"force_complete\""), changes.body());
+        assertTrue(changes.body().contains("\"to_stage\":\"DONE\""), changes.body());
+        assertTrue(changes.body().contains("\"from_stage\":\"IN_PROGRESS\""), changes.body());
+        assertTrue(changes.body().contains("人工验证效果已达成"), changes.body());
     }
 
     @Test
@@ -209,12 +239,13 @@ class TicketMetaApiTest {
         assertEquals(201, after.statusCode(), after.body());
         assertEquals("T-111", extractStringField(after.body(), "ticket_no"), after.body());
 
-        // Same behaviour on the project-scoped board entry point.
+        // Same behaviour on the project-scoped board entry point. The project's quick-mode super
+        // ticket (V19) is provisioned on create and shares the numbering pool, taking T-112 first.
         String projectId = createProject("Scoped", "scoped-ws");
         HttpResponse<String> scoped = post("/api/projects/" + projectId + "/tickets",
                 "{\"title\":\"scoped auto\"}");
         assertEquals(201, scoped.statusCode(), scoped.body());
-        assertEquals("T-112", extractStringField(scoped.body(), "ticket_no"), scoped.body());
+        assertEquals("T-113", extractStringField(scoped.body(), "ticket_no"), scoped.body());
         assertTrue(scoped.body().contains("\"project_id\":\"" + projectId + "\""), scoped.body());
     }
 
@@ -270,10 +301,11 @@ class TicketMetaApiTest {
         assertTrue(created.body().contains("\"ticket_count\":0"), created.body());
         assertTrue(created.body().contains("\"active_ticket_count\":0"), created.body());
 
-        // Two tickets on the board: one active, one terminal via a queue cancel.
+        // Two tickets on the board: one active, one terminal via a reason-carrying cancel (V19).
         post("/api/tickets", "{\"ticket_no\":\"CNT-1\",\"title\":\"a\",\"project_id\":\"" + projectId + "\"}");
         post("/api/tickets", "{\"ticket_no\":\"CNT-2\",\"title\":\"b\",\"project_id\":\"" + projectId + "\"}");
-        assertEquals(200, patch("/api/tickets/CNT-2", "{\"stage\":\"CANCELLED\"}").statusCode());
+        assertEquals(200, patch("/api/tickets/CNT-2",
+                "{\"stage\":\"CANCELLED\",\"reason\":\"不再需要\"}").statusCode());
 
         // projectUpdate shares projectJson: counts must now be 2 total / 1 active.
         HttpResponse<String> updated = put("/api/projects/" + projectId, "{\"name\":\"Renamed\"}");

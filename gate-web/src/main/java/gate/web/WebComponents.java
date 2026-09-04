@@ -75,7 +75,7 @@ public final class WebComponents {
     private final gate.ports.infra.KmsService kmsService;
     private final ProviderModelFetcher modelFetcher;
     private final RuntimeInfoService runtimeInfo;
-    private final gate.ports.store.TicketRestartRepository ticketRestartRepository;
+    private final gate.ports.store.TicketStageChangeRepository ticketStageChangeRepository;
     private final gate.ports.store.AuditLog auditLog;
 
     public WebComponents(GateConfig config, String gitExecutable) {
@@ -105,7 +105,7 @@ public final class WebComponents {
         this.providerRepository = runtime.providerRepository();
         this.ticketRepository = runtime.ticketRepository();
         this.presubmitRepository = runtime.presubmitRepository();
-        this.ticketRestartRepository = runtime.ticketRestartRepository();
+        this.ticketStageChangeRepository = runtime.ticketStageChangeRepository();
         this.auditLog = runtime.auditLog();
         this.reviewResultRepository = runtime.reviewResultRepository();
         this.publishIntentRepository = runtime.publishIntentRepository();
@@ -153,14 +153,14 @@ public final class WebComponents {
                     (no, allowDirty) -> this.gateService.syncBase(
                             new gate.application.basesync.SyncBaseCommand(no, allowDirty, "auto"));
             this.claudeAdapter = new ClaudeHeadlessAdapter(processRunner, this.agentConfigRepository, sessionRepo,
-                    tickets, this.projectRepository, this.ticketRestartRepository, taskRegistry, ticketLockManager,
+                    tickets, this.projectRepository, this.ticketStageChangeRepository, taskRegistry, ticketLockManager,
                     clock, claudeCmd, List.of(), gateToml, baseSynchronizer);
             int startTimeout = config.session() == null ? 60 : config.session().startTimeoutSeconds();
             AdapterLog adapterLog = AdapterLog.at(config.gateHome().resolve("adapters.log"));
             gate.adapters.io.ServePidRegistry pidRegistry =
                     new gate.adapters.io.ServePidRegistry(config.gateHome().resolve("opencode-serve.pids"));
             this.opencodeAdapter = new OpenCodeServeAdapter(processRunner, this.agentConfigRepository, sessionRepo,
-                    tickets, this.projectRepository, this.ticketRestartRepository, taskRegistry, ticketLockManager,
+                    tickets, this.projectRepository, this.ticketStageChangeRepository, taskRegistry, ticketLockManager,
                     clock, portAllocator, opencodeCmd, startTimeout, adapterLog, pidRegistry, gateToml,
                     this.credentials, baseSynchronizer);
             this.agentSessionPort = new DispatchAgentSessionPort(this.agentConfigRepository, sessionRepo,
@@ -246,7 +246,7 @@ public final class WebComponents {
     public Instant startedAt() { return startedAt; }
     public Path gateToml() { return gateToml; }
 
-    public gate.ports.store.TicketRestartRepository ticketRestartRepository() { return ticketRestartRepository; }
+    public gate.ports.store.TicketStageChangeRepository ticketStageChangeRepository() { return ticketStageChangeRepository; }
     public gate.ports.store.AuditLog auditLog() { return auditLog; }
 
     public synchronized void close() {

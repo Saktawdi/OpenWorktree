@@ -43,6 +43,7 @@ public final class ProjectController implements WebController {
     private final gate.ports.git.CloneBaseSyncer cloneBaseSyncer;
     private final GitCli git;
     private final gate.ports.infra.Clock clock;
+    private final gate.application.ticket.SuperTicketHandler superTickets;
 
     public ProjectController(ProjectRepository projects, TicketRepository tickets,
                              TopologyInitializer topologyInitializer, GateConfig config,
@@ -56,6 +57,7 @@ public final class ProjectController implements WebController {
         this.cloneBaseSyncer = cloneBaseSyncer;
         this.git = git;
         this.clock = clock;
+        this.superTickets = new gate.application.ticket.SuperTicketHandler(tickets, clock);
     }
 
     @Override
@@ -120,6 +122,9 @@ public final class ProjectController implements WebController {
     public void listProjects(Context ctx) {
         List<Map<String, Object>> rows = new ArrayList<>();
         for (Project p : projects.findAll()) {
+            // V19 快速模式: every project always has its super ticket — create-on-list also
+            // backfills projects registered before V19. Idempotent, one indexed SELECT when set.
+            superTickets.ensure(p, effectiveTargetRef(p.targetRef()));
             rows.add(projectJson(p));
         }
         Map<String, Object> body = new LinkedHashMap<>();
@@ -193,6 +198,8 @@ public final class ProjectController implements WebController {
                 effectiveTargetRef, projectAuthRepo.toString(), priority, size, tags,
                 false, nextSortOrder(), now, now);
         projects.insert(p);
+        // V19 快速模式: provision the project's permanent super ticket right away.
+        superTickets.ensure(p, effectiveTargetRef);
         ctx.status(HttpStatus.CREATED);
         ctx.json(projectJson(p));
     }
@@ -241,6 +248,8 @@ public final class ProjectController implements WebController {
         Project updated = new Project(id, name, workspace, targetRef, existing.authRepo(),
                 priority, size, tags, starred, sortOrder, existing.createdAt(), clock.now());
         projects.update(updated);
+        // V19 快速模式: workspace/base moved — the super ticket follows the project.
+        superTickets.ensure(updated, effectiveTargetRef(targetRef));
         ctx.status(HttpStatus.OK);
         ctx.json(projectJson(updated));
     }
@@ -394,9 +403,13 @@ public final class ProjectController implements WebController {
         m.put("starred", p.starred());
         m.put("sort_order", p.sortOrder());
         List<Ticket> projectTickets = tickets.findAllByProject(p.id());
-        m.put("ticket_count", projectTickets.size());
+        // 超级工单（V19）是常驻基础设施而非工作项：不计入工单/活跃数。
+        String superTicketNo = tickets.findSuperByProject(p.id())
+                .map(Ticket::ticketNo).orElse(null);
+        m.put("super_ticket_no", superTicketNo);
+        m.put("ticket_count", (int) projectTickets.stream().filter(t -> !t.isSuper()).count());
         m.put("active_ticket_count", (int) projectTickets.stream()
-                .filter(t -> t.stage() != null && !t.stage().isTerminal()).count());
+                .filter(t -> !t.isSuper() && t.stage() != null && !t.stage().isTerminal()).count());
         m.put("created_at", p.createdAt().toString());
         m.put("updated_at", p.updatedAt().toString());
         return m;

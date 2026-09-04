@@ -39,7 +39,8 @@ public final class JdbcTicketRepository implements TicketRepository {
             rs.getString("project_id"),
             rs.getString("description"),
             rs.getString("note"),
-            decodeLabels(rs.getString("labels")));
+            decodeLabels(rs.getString("labels")),
+            rs.getInt("is_super") != 0);
 
     @Override
     public void insert(Ticket ticket) {
@@ -50,8 +51,8 @@ public final class JdbcTicketRepository implements TicketRepository {
                                    stage, created_at, updated_at,
                                    exec_token_total, exec_token_source,
                                    agent_config_id, priority, project_id,
-                                   description, note, labels)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                                   description, note, labels, is_super)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 ticket.ticketNo(), ticket.title(), ticket.targetRef(), ticket.clonePath(),
                 ticket.executorProviderId(), ticket.executorModel(),
@@ -59,7 +60,8 @@ public final class JdbcTicketRepository implements TicketRepository {
                 ticket.stage().name(), ticket.createdAt().toString(), ticket.updatedAt().toString(),
                 ticket.execTokenTotal(), ticket.execTokenSource(),
                 ticket.agentConfigId(), ticket.priority(), ticket.projectId(),
-                ticket.description(), ticket.note(), encodeLabels(ticket.labels()));
+                ticket.description(), ticket.note(), encodeLabels(ticket.labels()),
+                ticket.isSuper() ? 1 : 0);
     }
 
     @Override
@@ -127,6 +129,25 @@ public final class JdbcTicketRepository implements TicketRepository {
     public void clearProject(String projectId, Instant now) {
         jdbc.update("UPDATE ticket SET project_id = NULL, updated_at = ? WHERE project_id = ?",
                 now.toString(), projectId);
+    }
+
+    @Override
+    public Optional<Ticket> findSuperByProject(String projectId) {
+        List<Ticket> rows = jdbc.query(
+                "SELECT * FROM ticket WHERE is_super = 1 AND project_id = ? ORDER BY ticket_no",
+                MAPPER, projectId);
+        return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
+    }
+
+    @Override
+    public void updateSuperLocation(String ticketNo, String clonePath, String targetRef, Instant now) {
+        int updated = jdbc.update("""
+                UPDATE ticket SET clone_path = ?, target_ref = ?, updated_at = ?
+                WHERE ticket_no = ? AND is_super = 1
+                """, clonePath, targetRef, now.toString(), ticketNo);
+        if (updated != 1) {
+            throw new IllegalStateException("no quick-mode super ticket: " + ticketNo);
+        }
     }
 
     @Override

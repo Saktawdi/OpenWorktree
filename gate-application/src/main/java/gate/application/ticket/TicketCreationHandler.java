@@ -114,6 +114,11 @@ public final class TicketCreationHandler {
 
     /** Next free {@code T-nnn}: one past the highest existing number, never below 101. */
     private String generateTicketNo() {
+        return nextTicketNo(tickets);
+    }
+
+    /** Shared numbering pool for regular tickets and the quick-mode super ticket (V19). */
+    public static String nextTicketNo(TicketRepository tickets) {
         Pattern numbered = Pattern.compile("T-(\\d+)");
         int next = 101;
         for (Ticket t : tickets.findAll()) {

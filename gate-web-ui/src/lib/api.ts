@@ -125,6 +125,8 @@ interface RawTicket {
   agent_config_id?: string | null;
   exec_token_total?: number | null;
   restart_count?: number | null;
+  stage_change_count?: number | null;
+  is_super?: boolean | null;
   created_at: string;
   updated_at: string;
 }
@@ -144,6 +146,8 @@ function mapTicket(t: RawTicket) {
     agentConfigId: t.agent_config_id ?? null,
     execTokenTotal: t.exec_token_total ?? 0,
     restartCount: t.restart_count ?? 0,
+    stageChangeCount: t.stage_change_count ?? 0,
+    isSuper: t.is_super ?? false,
     createdAt: t.created_at,
     updatedAt: t.updated_at,
   };
@@ -1456,6 +1460,7 @@ interface RawProject {
   sort_order?: number | null;
   ticket_count?: number;
   active_ticket_count?: number;
+  super_ticket_no?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -1474,6 +1479,7 @@ function mapProject(p: RawProject): import("./types").Project {
     sortOrder: p.sort_order ?? 0,
     ticketCount: p.ticket_count ?? 0,
     activeTicketCount: p.active_ticket_count ?? 0,
+    superTicketNo: p.super_ticket_no ?? null,
     createdAt: p.created_at,
     updatedAt: p.updated_at,
   };
@@ -1814,24 +1820,28 @@ export async function updateTicketLive(
   }
 }
 
-/** 拉取工单重启历史（T-117），落盘到 store；失败静默（旧后端无此接口）。 */
-export async function loadRestarts(no: string) {
+/** 拉取工单状态变更记录（V19：重启/强制已完成/取消），落盘到 store；失败静默（旧后端无此接口）。 */
+export async function loadStageChanges(no: string) {
   try {
     const data = await api<{
-      restarts: Array<{
+      stage_changes: Array<{
         round: number;
         from_stage: string;
+        to_stage: string;
+        kind: import("./types").StageChangeRecord["kind"];
         reason: string;
         created_at: string | null;
       }>;
-    }>(`/api/tickets/${no}/restarts`);
-    const list: import("./types").RestartRecord[] = (data.restarts ?? []).map((r) => ({
+    }>(`/api/tickets/${no}/stage-changes`);
+    const list: import("./types").StageChangeRecord[] = (data.stage_changes ?? []).map((r) => ({
       round: r.round,
       fromStage: r.from_stage as import("./types").Stage,
+      toStage: r.to_stage as import("./types").Stage,
+      kind: r.kind,
       reason: r.reason,
       createdAt: r.created_at,
     }));
-    appStore.setState((st) => ({ restarts: { ...st.restarts, [no]: list } }));
+    appStore.setState((st) => ({ stageChanges: { ...st.stageChanges, [no]: list } }));
   } catch {
     /* 后端不支持或尚无记录时静默 */
   }
@@ -1844,7 +1854,25 @@ export async function restartTicketLive(no: string, reason: string): Promise<boo
     restart_reason: reason,
   });
   if (ok) {
-    await loadRestarts(no).catch(() => {});
+    await loadStageChanges(no).catch(() => {});
+  }
+  return ok;
+}
+
+/** 强制已完成（V19）：任意非终态拖到已完成，理由必填，跳过门禁收尾。 */
+export async function completeTicketLive(no: string, reason: string): Promise<boolean> {
+  const ok = await updateTicketLive(no, { stage: "DONE", reason });
+  if (ok) {
+    await loadStageChanges(no).catch(() => {});
+  }
+  return ok;
+}
+
+/** 取消工单（V19）：任意非终态取消，理由必填。 */
+export async function cancelTicketLive(no: string, reason: string): Promise<boolean> {
+  const ok = await updateTicketLive(no, { stage: "CANCELLED", reason });
+  if (ok) {
+    await loadStageChanges(no).catch(() => {});
   }
   return ok;
 }

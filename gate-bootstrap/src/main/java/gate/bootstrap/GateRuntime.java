@@ -30,7 +30,7 @@ import gate.adapters.store.JdbcPublishIntentRepository;
 import gate.adapters.store.JdbcReviewResultRepository;
 import gate.adapters.store.JdbcSessionRepository;
 import gate.adapters.store.JdbcTicketRepository;
-import gate.adapters.store.JdbcTicketRestartRepository;
+import gate.adapters.store.JdbcTicketStageChangeRepository;
 import gate.adapters.store.SpringDbTransactionRunner;
 import gate.adapters.store.SqliteDataSourceFactory;
 import gate.adapters.workspace.FsEphemeralWorkspaceManager;
@@ -110,7 +110,7 @@ public final class GateRuntime {
     private final WorkspaceSyncer workspaceSyncer;
     private final gate.ports.git.CloneBaseSyncer cloneBaseSyncer;
     private final AuditLog auditLog;
-    private final gate.ports.store.TicketRestartRepository ticketRestartRepository;
+    private final gate.ports.store.TicketStageChangeRepository ticketStageChangeRepository;
 
     public GateRuntime(GateConfig config, String gitExecutable) {
         this.config = config;
@@ -140,7 +140,7 @@ public final class GateRuntime {
 
         this.ticketRepository = new JdbcTicketRepository(jdbc);
         this.presubmitRepository = new JdbcPresubmitRepository(jdbc);
-        this.ticketRestartRepository = new JdbcTicketRestartRepository(jdbc);
+        this.ticketStageChangeRepository = new JdbcTicketStageChangeRepository(jdbc);
         this.reviewResultRepository = new JdbcReviewResultRepository(jdbc);
         this.publishIntentRepository = new JdbcPublishIntentRepository(jdbc, config.authRepo());
         this.providerRepository = new JdbcProviderRepository(jdbc);
@@ -188,7 +188,7 @@ public final class GateRuntime {
     public TicketRepository ticketRepository() { return ticketRepository; }
     public PresubmitRepository presubmitRepository() { return presubmitRepository; }
     public AuditLog auditLog() { return auditLog; }
-    public gate.ports.store.TicketRestartRepository ticketRestartRepository() { return ticketRestartRepository; }
+    public gate.ports.store.TicketStageChangeRepository ticketStageChangeRepository() { return ticketStageChangeRepository; }
     public ReviewResultRepository reviewResultRepository() { return reviewResultRepository; }
     public PublishIntentRepository publishIntentRepository() { return publishIntentRepository; }
     public BlobStore blobStore() { return blobStore; }

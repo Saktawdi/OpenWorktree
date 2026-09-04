@@ -15,7 +15,7 @@ import type {
   PublishOutcome,
   PermissionRequestView,
   QuestionRequestView,
-  RestartRecord,
+  StageChangeRecord,
   SessionModelSel,
   TerminalSessionMeta,
   Snapshot,
@@ -133,11 +133,14 @@ export interface AppState {
   /** 看板甬道筛选：勾选显示的甬道状态集合（默认流水线六甬道，上限 6）。 */
   kanbanStages: Stage[];
   /** 重启历史（T-117）：每工单的重启记录列表 */
-  restarts: Record<string, RestartRecord[]>;
+  /** 工单状态变更记录（V19）：每工单的重启/强制已完成/取消记录列表 */
+  stageChanges: Record<string, StageChangeRecord[]>;
   /** 重启理由弹窗目标工单（null = 关闭） */
   restartDialogFor: string | null;
-  /** 重启历史弹窗目标工单（null = 关闭） */
-  restartsViewFor: string | null;
+  /** 状态变更记录弹窗目标工单（null = 关闭） */
+  stageChangesViewFor: string | null;
+  /** 拖拽/按钮触发的终态流转确认弹窗（理由必填）；null = 关闭 */
+  stageChangeConfirm: { ticketNo: string; to: Stage } | null;
   /** 右侧工单面板整栏折叠（会话工具条最右侧按钮切换；localStorage 持久化）。 */
   gatePanelCollapsed: boolean;
   /** 右侧面板三段的展开状态（localStorage 持久化）。 */
@@ -265,9 +268,10 @@ export const appStore = create<AppState>(() => ({
   runningAgents: { count: 0, sessions: [] },
   visibleStages: loadVisibleStages(),
   kanbanStages: loadKanbanStages(),
-  restarts: {},
+  stageChanges: {},
   restartDialogFor: null,
-  restartsViewFor: null,
+  stageChangesViewFor: null,
+  stageChangeConfirm: null,
   gatePanelCollapsed: loadGatePanelCollapsed(),
   gateSections: loadGateSections(),
 }));
@@ -356,9 +360,10 @@ export function seedDemo(force = false) {
     gitViews: { "acme-checkout": GIT_ACME, "nexus-docs": GIT_NEXUS },
     treeViews: { "acme-checkout": TREE_ACME, "nexus-docs": TREE_NEXUS },
     editingTicketNo: null,
-    restarts: {},
+    stageChanges: {},
     restartDialogFor: null,
-    restartsViewFor: null,
+    stageChangesViewFor: null,
+    stageChangeConfirm: null,
   agentId:
     (typeof window !== "undefined" && localStorage.getItem("gate-agent-id")) ||
     DEMO_AGENTS[0].id,
@@ -399,7 +404,8 @@ function tryRestore(): boolean {
       liveTurns: {},
       runningAgents: { count: 0, sessions: [] },
       restartDialogFor: null,
-      restartsViewFor: null,
+      stageChangesViewFor: null,
+      stageChangeConfirm: null,
       busySince: {},
     };
     // 旧版本快照没有 engine 字段：demo 模式视为已配置，live 交给 loadEngineConfig 回填。
@@ -1145,10 +1151,6 @@ export function updateTicket(no: string, p: Partial<Ticket>) {
   }));
 }
 
-export function cancelTicket(no: string) {
-  setStage(no, "CANCELLED");
-}
-
 export function switchProject(id: string) {
   patch({ activeProjectId: id });
   const first = s().tickets.find((t) => t.projectId === id && !isTerminalStage(t.stage));
@@ -1217,9 +1219,35 @@ export function openRestartDialog(no: string | null) {
   patch({ restartDialogFor: no });
 }
 
-/** 重启历史弹窗（T-117）：no 为 null 时关闭。 */
-export function openRestartsView(no: string | null) {
-  patch({ restartsViewFor: no });
+/** 统一的状态变更记录弹窗（V19）：展示重启/强制已完成/取消历史；no 为 null 时关闭。 */
+export function openStageChangesView(no: string | null) {
+  patch({ stageChangesViewFor: no });
+}
+
+/** 拖拽/按钮触发「强制已完成 / 取消工单」确认弹窗（理由必填）。 */
+export function openStageChangeConfirm(ticketNo: string, to: Stage) {
+  patch({ stageChangeConfirm: { ticketNo, to } });
+}
+
+export function closeStageChangeConfirm() {
+  patch({ stageChangeConfirm: null });
+}
+
+/** demo 模式下本地追加一条状态变更记录，弹窗口径与 live 后端一致。 */
+export function appendStageChange(no: string, from: Stage, to: Stage, reason: string) {
+  const kind: StageChangeRecord["kind"] =
+    to === "DONE" ? "force_complete" : to === "CANCELLED" ? "cancel" : "restart";
+  const record: StageChangeRecord = {
+    round: (s().stageChanges[no]?.length ?? 0) + 1,
+    fromStage: from,
+    toStage: to,
+    kind,
+    reason,
+    createdAt: new Date().toISOString(),
+  };
+  set((st) => ({ stageChanges: { ...st.stageChanges, [no]: [...(st.stageChanges[no] ?? []), record] } }));
+  const t = s().tickets.find((x) => x.ticketNo === no);
+  if (t) updateTicket(no, { stageChangeCount: (t.stageChangeCount ?? 0) + 1 });
 }
 
 /** 右侧面板整栏收起/展开（持久化，跨会话保留）。 */

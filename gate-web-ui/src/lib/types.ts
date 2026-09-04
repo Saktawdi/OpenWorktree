@@ -30,6 +30,8 @@ export interface Project {
   sortOrder: number;
   ticketCount: number;
   activeTicketCount: number;
+  /** 该项目的快速模式超级工单号（V19；后端确保存在） */
+  superTicketNo?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -49,14 +51,20 @@ export interface Ticket {
   execTokenTotal: number;
   /** 重启次数（T-117）——demo 工单无此字段 */
   restartCount?: number;
+  /** 状态变更记录总数（V19）：重启 + 强制已完成 + 取消 */
+  stageChangeCount?: number;
+  /** 快速模式超级工单（V19）：直连项目原工作区、永不关闭、不走门禁 */
+  isSuper?: boolean;
   createdAt: string;
   updatedAt: string;
 }
 
-/** 一次重启记录（T-117）：终态工单带回 IN_PROGRESS 的历史 */
-export interface RestartRecord {
+/** 一次工单状态变更记录（V19）：重启 / 强制已完成 / 取消，理由必填 */
+export interface StageChangeRecord {
   round: number;
   fromStage: Stage;
+  toStage: Stage;
+  kind: "restart" | "force_complete" | "cancel";
   reason: string;
   createdAt: string | null;
 }

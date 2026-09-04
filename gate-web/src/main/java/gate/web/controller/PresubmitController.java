@@ -106,16 +106,19 @@ public final class PresubmitController implements WebController {
         if (latestPresubmit.isPresent()) {
             baseCommit = latestPresubmit.get().baseCommit().hex();
         }
-        gate.ports.infra.ProcessRunner.ProcRun tracked = baseCommit == null
-                ? git.run(clone, Map.of(), "diff")
-                : git.run(clone, Map.of(), "diff", "HEAD");
+        // V19 快速模式: no presubmit round ever exists, and the diff is the user's real workspace —
+        // diff against HEAD so staged work is not silently dropped from the view.
+        boolean diffHead = baseCommit != null || t.isSuper();
+        gate.ports.infra.ProcessRunner.ProcRun tracked = diffHead
+                ? git.run(clone, Map.of(), "diff", "HEAD")
+                : git.run(clone, Map.of(), "diff");
         String trackedDiff = tracked.ok() ? tracked.stdout() : "";
 
         String eolWarning = null;
         if (trackedDiff.length() > EOL_NOISE_THRESHOLD_CHARS) {
-            gate.ports.infra.ProcessRunner.ProcRun normalized = baseCommit == null
-                    ? git.run(clone, Map.of(), "diff", "--ignore-cr-at-eol")
-                    : git.run(clone, Map.of(), "diff", "HEAD", "--ignore-cr-at-eol");
+            gate.ports.infra.ProcessRunner.ProcRun normalized = diffHead
+                    ? git.run(clone, Map.of(), "diff", "HEAD", "--ignore-cr-at-eol")
+                    : git.run(clone, Map.of(), "diff", "--ignore-cr-at-eol");
             if (normalized.ok() && normalized.stdout().length() * 10 < trackedDiff.length()) {
                 eolWarning = "已忽略大量仅换行符（CRLF/LF）差异：该 clone 的检出未在 core.autocrlf=false 下进行，"
                         + "建议重建工作区；以下仅显示真实的内容变更。";

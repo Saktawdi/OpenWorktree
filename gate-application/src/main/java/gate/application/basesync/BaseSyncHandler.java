@@ -56,6 +56,10 @@ public final class BaseSyncHandler implements BaseSynchronizer {
     public CloneBaseSyncer.Report handle(SyncBaseCommand command) {
         Ticket ticket = tickets.find(command.ticketNo()).orElseThrow(
                 () -> new GateException(GateErrorCode.USAGE, "no such ticket: " + command.ticketNo()));
+        if (ticket.isSuper()) {
+            throw new GateException(GateErrorCode.USAGE,
+                    "quick-mode super ticket " + ticket.ticketNo() + " operates on the project workspace itself; base sync does not apply");
+        }
         if (ticket.stage().isTerminal()) {
             throw new GateException(GateErrorCode.USAGE, "ticket is " + ticket.stage()
                     + "; restart it before syncing the base (T-117)");

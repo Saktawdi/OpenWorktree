@@ -22,7 +22,7 @@ import gate.ports.infra.Clock;
 import gate.ports.infra.ProcessRunner;
 import gate.ports.store.ProjectRepository;
 import gate.ports.store.SessionRepository;
-import gate.ports.store.TicketRestartRepository;
+import gate.ports.store.TicketStageChangeRepository;
 import gate.ports.task.TaskRegistry;
 import gate.ports.infra.TicketLockManager;
 import gate.ports.store.TicketRepository;
@@ -62,7 +62,7 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
     private final SessionRepository sessions;
     private final TicketRepository tickets;
     private final ProjectRepository projects;
-    private final TicketRestartRepository restarts;
+    private final TicketStageChangeRepository restarts;
     private final TaskRegistry tasks;
     private final TicketLockManager ticketLocks;
     private final Clock clock;
@@ -115,7 +115,7 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
                                  SessionRepository sessions,
                                  TicketRepository tickets,
                                  ProjectRepository projects,
-                                 TicketRestartRepository restarts,
+                                 TicketStageChangeRepository restarts,
                                  TaskRegistry tasks,
                                  TicketLockManager ticketLocks,
                                  Clock clock,
@@ -132,7 +132,7 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
                                  SessionRepository sessions,
                                  TicketRepository tickets,
                                  ProjectRepository projects,
-                                 TicketRestartRepository restarts,
+                                 TicketStageChangeRepository restarts,
                                  TaskRegistry tasks,
                                  TicketLockManager ticketLocks,
                                  Clock clock,
@@ -186,7 +186,10 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
     @Override
     public Session start(StartRequest request) {
         try (AutoCloseable ignored = ticketLocks.acquire(request.ticketNo())) {
-            syncBaseQuietly(request.ticketNo());
+            // V19 快速模式: never git-touch the project workspace behind a super ticket (see opencode).
+            if (!isSuperTicket(request.ticketNo())) {
+                syncBaseQuietly(request.ticketNo());
+            }
             return startLocked(request);
         } catch (Exception e) {
             if (e instanceof RuntimeException re) {
@@ -203,6 +206,11 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
      * presubmit (BASE_STALE), and the manual sync endpoint can replay a dirty worktree, which the
      * auto path (allowDirty=false) deliberately refuses to touch.
      */
+    /** V19: true when the ticket is the project's quick-mode super ticket (clone_path = workspace). */
+    private boolean isSuperTicket(String ticketNo) {
+        return tickets.find(ticketNo).map(gate.domain.ticket.Ticket::isSuper).orElse(false);
+    }
+
     private void syncBaseQuietly(String ticketNo) {
         if (baseSynchronizer == null) {
             return;
@@ -615,9 +623,9 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
             if (projects != null && ticket != null && ticket.projectId() != null) {
                 project = projects.find(ticket.projectId()).orElse(null);
             }
-            TicketRestartRepository.RestartRow latestRestart =
-                    restarts == null ? null : restarts.latest(ticketNo).orElse(null);
-            String content = AgentContextPrompt.compose(config, ticketNo, targetRef, ticket, project, latestRestart);
+            TicketStageChangeRepository.StageChangeRow latestRevive =
+                    restarts == null ? null : restarts.latestRevive(ticketNo).orElse(null);
+            String content = AgentContextPrompt.compose(config, ticketNo, targetRef, ticket, project, latestRevive);
             Files.createDirectories(file.getParent());
             if (content.isBlank()) {
                 Files.deleteIfExists(file);

@@ -32,7 +32,10 @@ public record Ticket(
         // V8: editable work item content (nullable text + normalized labels)
         String description,
         String note,
-        List<String> labels) {
+        List<String> labels,
+        // V19 快速模式: the project's permanent super ticket (clone_path IS the workspace,
+        // never closes, bypasses the gate pipeline). Existing rows default to false.
+        boolean isSuper) {
 
     /** Valid priority levels, ordered most urgent first. */
     public static final List<String> PRIORITIES = List.of("P0", "P1", "P2", "P3");
@@ -89,8 +92,24 @@ public record Ticket(
                   String priority, String projectId) {
         this(ticketNo, title, targetRef, clonePath, executorProviderId, executorModel,
                 reviewerProviderId, reviewerModel, stage, createdAt, updatedAt,
+                execTokenTotal, execTokenSource, agentConfigId, null, null, null, null, List.of());
+    }
+
+    /**
+     * Backward-compatible constructor for the pre-V19 shape (no super-ticket flag): every
+     * ticket materialized before V19 is a regular gate-pipeline work item.
+     */
+    public Ticket(String ticketNo, String title, String targetRef, String clonePath,
+                  String executorProviderId, String executorModel,
+                  String reviewerProviderId, String reviewerModel,
+                  TicketStage stage, Instant createdAt, Instant updatedAt,
+                  Long execTokenTotal, String execTokenSource, String agentConfigId,
+                  String priority, String projectId,
+                  String description, String note, List<String> labels) {
+        this(ticketNo, title, targetRef, clonePath, executorProviderId, executorModel,
+                reviewerProviderId, reviewerModel, stage, createdAt, updatedAt,
                 execTokenTotal, execTokenSource, agentConfigId, priority, projectId,
-                null, null, List.of());
+                description, note, labels, false);
     }
 
     public Ticket {
@@ -125,6 +144,6 @@ public record Ticket(
         return new Ticket(ticketNo, title, targetRef, clonePath, executorProviderId, executorModel,
                 reviewerProviderId, reviewerModel, newStage, createdAt, now,
                 execTokenTotal, execTokenSource, agentConfigId, priority, projectId,
-                description, note, labels);
+                description, note, labels, isSuper);
     }
 }

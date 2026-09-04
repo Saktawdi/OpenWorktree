@@ -32,6 +32,7 @@ import {
 } from "../lib/format";
 import {
   appStore,
+  openStageChangeConfirm,
   openTicketCreator,
   setKanbanStages,
   setTicketOrder,
@@ -466,8 +467,12 @@ export function KanbanBoard() {
   const agentNameOf = (t: Ticket) =>
     agents.find((a) => a.id === t.agentConfigId)?.name;
 
+  // 快速模式超级工单（V19）是常驻基础设施：不占看板甬道、不可流转
   const tickets = useMemo(
-    () => ticketsAll.filter((t) => t.projectId === activeProjectId || t.projectId === ""),
+    () =>
+      ticketsAll.filter(
+        (t) => !t.isSuper && (t.projectId === activeProjectId || t.projectId === ""),
+      ),
     [ticketsAll, activeProjectId],
   );
 
@@ -539,6 +544,28 @@ export function KanbanBoard() {
       return;
     }
 
+    // 快速模式超级工单（V19）永远进行中：不参与任何流转
+    if (t.isSuper) {
+      bounce(no, "快速模式超级工单永不关闭，状态不可变更");
+      return;
+    }
+
+    // V19 强制流转：任意非终态可拖到「已完成 / 已取消」，弹出理由确认（与重启理由同口径）。
+    // 「可发布 → 已完成」保留安全发布通道——那是门禁的正常收尾，无需绕行。
+    if (to === "DONE" && from !== "DONE") {
+      if (from === "READY_TO_PUBLISH") {
+        showToast("正在发布至权威库主分支…");
+        void actions.publish(no);
+        return;
+      }
+      openStageChangeConfirm(no, "DONE");
+      return;
+    }
+    if (to === "CANCELLED" && from !== "CANCELLED") {
+      openStageChangeConfirm(no, "CANCELLED");
+      return;
+    }
+
     const allowed: Partial<Record<Stage, Stage[]>> = {
       PENDING: ["IN_PROGRESS"],
       IN_PROGRESS: ["PRESUBMITTED"],
@@ -572,11 +599,6 @@ export function KanbanBoard() {
     if (to === "IN_REVIEW") {
       showToast("门禁审查已触发…");
       void actions.review(no);
-      return;
-    }
-    if (to === "DONE") {
-      showToast("正在发布至权威库主分支…");
-      void actions.publish(no);
     }
   };
 

@@ -39,6 +39,14 @@ function ContextStrip({ ticketNo }: { ticketNo: string }) {
           title={[ticket.description, ticket.note].filter(Boolean).join("\n——\n")}
         />
       )}
+      {ticket.isSuper && (
+        <span
+          className="chip shrink-0 border border-violet/30 bg-violet/10 text-violet"
+          title="快速模式（超级工单）：直连项目原工作区，提交直达主分支，永不关闭"
+        >
+          快速模式
+        </span>
+      )}
       {/* 标题是唯一的可收缩项（truncate 吸收挤压）；其余原子元素一律 shrink-0，
           避免“进行中”徽标被压缩成一字一行 */}
       <span className="shrink-0">

@@ -178,6 +178,10 @@ public final class PublishHandler {
     public PublishResult handle(PublishCommand command) {
         Ticket ticket = tickets.find(command.ticketNo()).orElseThrow(
                 () -> new GateException(GateErrorCode.USAGE, "no such ticket: " + command.ticketNo()));
+        if (ticket.isSuper()) {
+            throw new GateException(GateErrorCode.USAGE,
+                    "quick-mode super ticket " + ticket.ticketNo() + " works directly on the project workspace and never enters the gate pipeline (publish)");
+        }
         RepoRef clone = RepoRef.of(java.nio.file.Path.of(ticket.clonePath()));
         RepoRef auth = authFor(ticket);
         String targetRef = ticket.targetRef();

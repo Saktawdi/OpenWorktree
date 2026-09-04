@@ -363,15 +363,19 @@ export function TicketList() {
     () =>
       ticketsAll
         // Unassigned tickets stay visible under any project context; otherwise a ticket
-        // with no project would disappear from every list/board.
+        // with no project would disappear from every list/board. 快速模式超级工单（V19）
+        // 只挂在所属项目下展示（项目删除后成为无主遗留，不再示人）。
         .filter(
           (t) =>
-            (t.projectId === activeProjectId || t.projectId === "") &&
+            (t.isSuper
+              ? t.projectId === activeProjectId
+              : t.projectId === activeProjectId || t.projectId === "") &&
             visibleStages.includes(t.stage),
         )
         .sort((a, b) => {
-          // 列表序：越接近发布的活跃工单越靠上，待处理其后，终态沉底（已取消最末）；
-          // 同状态内按优先级 P0→P3，再保持手动拖拽顺序。
+          // 超级工单恒置顶（快速模式常驻入口）；其余：越接近发布的活跃工单越靠上，
+          // 待处理随后，终态沉底（已取消最末）；同状态内按优先级 P0→P3，再保持手动拖拽顺序。
+          if (a.isSuper !== b.isSuper) return a.isSuper ? -1 : 1;
           const lane = STAGE_SORT_RANK[a.stage] - STAGE_SORT_RANK[b.stage];
           if (lane !== 0) return lane;
           const prio = PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority];
@@ -462,6 +466,14 @@ export function TicketList() {
               <div className="mt-1.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] text-faint">
                 <StageDot stage={t.stage} />
                 <span className="shrink-0">{STAGE_LABEL[t.stage]}</span>
+                {t.isSuper && (
+                  <span
+                    className="chip border border-violet/30 bg-violet/10 text-violet"
+                    title="快速模式：直连项目原工作区，提交直达主分支，永不关闭"
+                  >
+                    快速模式
+                  </span>
+                )}
                 {hasDiff && !running && !ended && !asks && (
                   <>
                     <span className="text-edge-strong">·</span>

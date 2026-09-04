@@ -2,8 +2,8 @@ import * as demo from "./engine";
 import * as live from "./api";
 import {
   appStore,
+  appendStageChange,
   archiveSession as archiveSessionLocal,
-  cancelTicket,
   createSession as createSessionLocal,
   createTicket,
   deleteSession as deleteSessionLocal,
@@ -142,12 +142,26 @@ export const actions = {
     updateTicket(no, patch);
     return Promise.resolve(true);
   },
-  cancelTicket(no: string) {
+  /** 取消工单（V19）：任意非终态可取消，理由必填并记入状态变更历史。 */
+  cancelTicket(no: string, reason: string, from?: Ticket["stage"]) {
     if (appStore.getState().mode === "live") {
-      return live.updateTicketLive(no, { stage: "CANCELLED" });
+      return live.cancelTicketLive(no, reason);
     }
-    cancelTicket(no);
-    pushSystemMessage(no, "工单已取消 · 沙箱克隆保留，可随时归档", "warn");
+    const t = appStore.getState().tickets.find((x) => x.ticketNo === no);
+    setStage(no, "CANCELLED");
+    appendStageChange(no, from ?? t?.stage ?? "PENDING", "CANCELLED", reason);
+    pushSystemMessage(no, `工单已取消 · 理由：${reason}`, "warn");
+    return Promise.resolve(true);
+  },
+  /** 强制已完成（V19）：任意非终态可强制收尾，理由必填并记入状态变更历史。 */
+  completeTicket(no: string, reason: string, from?: Ticket["stage"]) {
+    if (appStore.getState().mode === "live") {
+      return live.completeTicketLive(no, reason);
+    }
+    const t = appStore.getState().tickets.find((x) => x.ticketNo === no);
+    setStage(no, "DONE");
+    appendStageChange(no, from ?? t?.stage ?? "PENDING", "DONE", reason);
+    pushSystemMessage(no, `工单已强制完成 · 理由：${reason}`, "success");
     return Promise.resolve(true);
   },
   createProject(body: {

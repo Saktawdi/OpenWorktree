@@ -31,6 +31,8 @@
   }, {
     "pattern":"\\Qdb/migration/V18__project_star_sort.sql\\E"
   }, {
+    "pattern":"\\Qdb/migration/V19__quick_mode_super_ticket.sql\\E"
+  }, {
     "pattern":"\\Qdb/migration/V1__init.sql\\E"
   }, {
     "pattern":"\\Qdb/migration/V2__credentials.sql\\E"

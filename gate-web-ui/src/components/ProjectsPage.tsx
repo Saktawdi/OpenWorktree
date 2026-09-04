@@ -635,7 +635,13 @@ export function ProjectsPage() {
                             onClick={() => {
                               switchProject(p.id);
                               setView("workbench");
+                              // V19 快速模式：直达项目的超级工单——原工作区直连 opencode，
+                              // 提交直达主分支；无超级工单时退回普通工单列表。
+                              if (p.superTicketNo) {
+                                actions.openTicket(p.superTicketNo);
+                              }
                             }}
+                            title="打开工作台 · 直达快速模式（原工作区直连，提交直达主分支）"
                           >
                             <Play size={11} weight="fill" />
                             打开工作台
