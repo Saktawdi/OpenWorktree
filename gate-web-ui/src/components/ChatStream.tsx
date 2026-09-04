@@ -1,4 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { RefObject } from "react";
+import { AnimatePresence, motion } from "motion/react";
 import {
   Brain,
   CaretDown,
@@ -222,6 +224,200 @@ function SystemMessage({ item }: { item: Extract<ChatItem, { kind: "system" }> }
   );
 }
 
+const RAIL_MIN_MESSAGES = 3; // 用户消息达到该数量才出现导航刻度（短会话用不上）
+const RAIL_MIN_OVERFLOW = 120; // 内容超出视口该像素才需要跳转
+const RAIL_HOVER_DELAY_MS = 180; // 悬浮该时长后才弹预览，避免扫过刻度时闪现
+const RAIL_HIDE_GRACE_MS = 150; // 移出刻度后的宽限期：在刻度间移动时预览不闪烁
+
+/**
+ * 会话流右缘的消息刻度导航（openchamber 式）：
+ * 每条用户消息一根横杠，贴着消息列（max-w-760）右缘垂直居中；
+ * 当前视口所在的消息横杠加宽提亮；悬浮片刻弹出消息预览，点击平滑跳转到该消息。
+ * 会话不够长（消息少或内容不溢出）时整条隐藏。
+ */
+function ChatRail({
+  chat,
+  scrollRef,
+}: {
+  chat: ChatItem[];
+  scrollRef: RefObject<HTMLDivElement | null>;
+}) {
+  const userMsgs = useMemo(() => chat.filter((i) => i.kind === "user"), [chat]);
+  const [tops, setTops] = useState<number[]>([]);
+  const [overflowPx, setOverflowPx] = useState(0);
+  const [viewportH, setViewportH] = useState(0);
+  const [containerW, setContainerW] = useState(0);
+  const [activeIdx, setActiveIdx] = useState(-1);
+  const [hoverIdx, setHoverIdx] = useState<number | null>(null);
+  const showTimer = useRef<number | null>(null);
+  const hideTimer = useRef<number | null>(null);
+  const mountedRef = useRef(false);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      if (showTimer.current) window.clearTimeout(showTimer.current);
+      if (hideTimer.current) window.clearTimeout(hideTimer.current);
+    };
+  }, []);
+
+  const show = userMsgs.length >= RAIL_MIN_MESSAGES && overflowPx > RAIL_MIN_OVERFLOW;
+
+  // 测量每条用户消息相对滚动容器顶部的偏移；内容或容器尺寸变化都会重算
+  const measure = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const base = el.getBoundingClientRect().top + el.scrollTop;
+    const next: number[] = [];
+    el.querySelectorAll<HTMLElement>("[data-chat-msg]").forEach((n) => {
+      next.push(n.getBoundingClientRect().top - base);
+    });
+    setTops((prev) =>
+      prev.length === next.length && prev.every((v, i) => Math.abs(v - next[i]) < 0.5) ? prev : next,
+    );
+    setOverflowPx(el.scrollHeight - el.clientHeight);
+    setViewportH(el.clientHeight);
+    setContainerW(el.clientWidth);
+  }, [scrollRef]);
+
+  useEffect(() => {
+    measure();
+  }, [measure, chat]);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    if (el.firstElementChild) ro.observe(el.firstElementChild);
+    return () => ro.disconnect();
+  }, [measure, scrollRef]);
+
+  // 滚动位置 → 视口顶部附近所在的消息刻度
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    let raf = 0;
+    const onScroll = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        const probe = el.scrollTop + Math.min(72, el.clientHeight * 0.12);
+        let idx = -1;
+        for (let i = 0; i < tops.length; i++) {
+          if (tops[i] <= probe) idx = i;
+          else break;
+        }
+        setActiveIdx(idx);
+      });
+    };
+    el.addEventListener("scroll", onScroll, { passive: true });
+    onScroll();
+    return () => {
+      cancelAnimationFrame(raf);
+      el.removeEventListener("scroll", onScroll);
+    };
+  }, [tops, scrollRef]);
+
+  const onTickEnter = (i: number) => {
+    if (hideTimer.current) {
+      window.clearTimeout(hideTimer.current);
+      hideTimer.current = null;
+    }
+    if (hoverIdx === i) return;
+    if (showTimer.current) window.clearTimeout(showTimer.current);
+    showTimer.current = window.setTimeout(() => setHoverIdx(i), RAIL_HOVER_DELAY_MS);
+  };
+  const onTickLeave = () => {
+    if (showTimer.current) {
+      window.clearTimeout(showTimer.current);
+      showTimer.current = null;
+    }
+    if (hideTimer.current) window.clearTimeout(hideTimer.current);
+    hideTimer.current = window.setTimeout(() => setHoverIdx(null), RAIL_HIDE_GRACE_MS);
+  };
+
+  const jumpTo = (i: number) => {
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTo({ top: Math.max(0, tops[i] - 16), behavior: "smooth" });
+  };
+
+  // 刻度条锚定滚动区右缘（滚动条内侧）；消息列已预留右内边距，气泡不再被压住
+  const railLeft = Math.max(6, containerW - 34);
+  const bubbleW = Math.max(180, Math.min(300, railLeft - 12));
+  const railHeight = Math.min(userMsgs.length * 13, Math.max(90, viewportH * 0.5));
+
+  return (
+    <AnimatePresence>
+      {show && (
+        <motion.div
+          key="chat-rail"
+          initial={{ opacity: 0, x: 10, y: "-50%" }}
+          animate={{ opacity: 1, x: 0, y: "-50%" }}
+          exit={{ opacity: 0, x: 10, y: "-50%" }}
+          transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
+          className="absolute top-1/2 z-20"
+          style={{ left: railLeft, height: railHeight }}
+        >
+          <div className="flex h-full flex-col">
+            {userMsgs.map((m, i) => {
+              const active = i === activeIdx;
+              return (
+                <motion.button
+                  key={m.id}
+                  initial={{ opacity: 0, x: 8 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{
+                    duration: 0.2,
+                    // 仅首次出现的整批刻度做级联入场；流式新增的单根刻度即时出现
+                    delay: mountedRef.current ? 0 : Math.min(i * 0.02, 0.24),
+                  }}
+                  className="group/tick relative min-h-[6px] flex-1 w-7 cursor-pointer"
+                  aria-label={`跳转到第 ${i + 1} 条消息`}
+                  onMouseEnter={() => onTickEnter(i)}
+                  onMouseLeave={onTickLeave}
+                  onClick={() => jumpTo(i)}
+                >
+                  <motion.span
+                    animate={{ width: active ? 16 : 10 }}
+                    transition={{ duration: 0.18, ease: "easeOut" }}
+                    className={`absolute left-1/2 top-1/2 h-[2px] -translate-x-1/2 -translate-y-1/2 rounded-full transition-colors duration-150 ${
+                      active ? "bg-ink" : "bg-ink/25 group-hover/tick:bg-ink/55"
+                    }`}
+                  />
+                  <AnimatePresence>
+                    {hoverIdx === i && (
+                      <motion.div
+                        initial={{ opacity: 0, x: -10, y: "-42%", scale: 0.9 }}
+                        animate={{ opacity: 1, x: 0, y: "-50%", scale: 1 }}
+                        exit={{
+                          opacity: 0,
+                          x: -6,
+                          y: "-53%",
+                          scale: 0.96,
+                          transition: { duration: 0.12, ease: "easeOut" },
+                        }}
+                        transition={{ type: "spring", stiffness: 380, damping: 24, mass: 0.7 }}
+                        className="pointer-events-none absolute top-1/2 right-[calc(100%+10px)] z-30 rounded-xl border border-edge bg-overlay px-3.5 py-2.5 shadow-xl"
+                        style={{ width: bubbleW }}
+                      >
+                        <div className="line-clamp-4 text-[12px] leading-relaxed text-ink whitespace-pre-wrap break-words">
+                          {m.text}
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </motion.button>
+              );
+            })}
+          </div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+}
+
 export function ChatStream({ ticketNo }: { ticketNo: string }) {
   const chat = useApp((s) => s.chats[ticketNo] ?? NO_CHAT);
   const sessionId = useApp((s) => s.activeSessionId[ticketNo] ?? "");
@@ -245,31 +441,34 @@ export function ChatStream({ ticketNo }: { ticketNo: string }) {
   }, [chat]);
 
   return (
-    <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto px-5 py-4">
-      <div className="max-w-[760px] mx-auto space-y-4">
-        {chat.map((item) =>
-          item.kind === "user" ? (
-            <div key={item.id} className="flex justify-end animate-rise">
-              <div className="max-w-[82%] rounded-xl rounded-tr-sm border border-edge bg-raised px-3.5 py-2 text-[13.5px] leading-relaxed">
-                <Markdown className="md-body">{item.text}</Markdown>
+    <div className="relative flex-1 min-h-0">
+      <div ref={scrollRef} className="absolute inset-0 overflow-y-auto pl-5 pr-[42px] py-4">
+        <div className="max-w-[760px] mx-auto space-y-4">
+          {chat.map((item) =>
+            item.kind === "user" ? (
+              <div key={item.id} data-chat-msg={item.id} className="flex justify-end animate-rise">
+                <div className="max-w-[82%] rounded-xl rounded-tr-sm border border-edge bg-raised px-3.5 py-2 text-[13.5px] leading-relaxed">
+                  <Markdown className="md-body">{item.text}</Markdown>
+                </div>
               </div>
-            </div>
-          ) : item.kind === "assistant" ? (
-            <AssistantMessage key={item.id} item={item} />
-          ) : item.kind === "permission" ? (
-            <div key={item.id} className="animate-rise">
-              <PermissionCard ticketNo={ticketNo} sessionId={sessionId} item={item} locked={cancelled} />
-            </div>
-          ) : item.kind === "question" ? (
-            <div key={item.id} className="animate-rise">
-              <QuestionCard ticketNo={ticketNo} sessionId={sessionId} item={item} locked={cancelled} />
-            </div>
-          ) : (
-            <SystemMessage key={item.id} item={item} />
-          ),
-        )}
-        <div ref={bottomRef} />
+            ) : item.kind === "assistant" ? (
+              <AssistantMessage key={item.id} item={item} />
+            ) : item.kind === "permission" ? (
+              <div key={item.id} className="animate-rise">
+                <PermissionCard ticketNo={ticketNo} sessionId={sessionId} item={item} locked={cancelled} />
+              </div>
+            ) : item.kind === "question" ? (
+              <div key={item.id} className="animate-rise">
+                <QuestionCard ticketNo={ticketNo} sessionId={sessionId} item={item} locked={cancelled} />
+              </div>
+            ) : (
+              <SystemMessage key={item.id} item={item} />
+            ),
+          )}
+          <div ref={bottomRef} />
+        </div>
       </div>
+      <ChatRail chat={chat} scrollRef={scrollRef} />
     </div>
   );
 }

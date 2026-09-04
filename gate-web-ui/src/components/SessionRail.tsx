@@ -12,14 +12,14 @@ import {
 import { todoProgress } from "../lib/todoUtils";
 
 /**
- * 会话右侧竖排图标栏（openchamber 式）：
+ * 会话横条（CenterTabs）右侧的图标按钮组（openchamber 式）：
  * · 任务清单环 —— todowrite 进度（已完成/总数），点击弹出 todolist 面板；
  * · 上下文环 —— 会话窗口占用（绿→黄→红 60/85 分档），点击弹出角色占比面板。
- * 无数据的图标自动隐藏；弹层点击外部 / Esc 关闭。
+ * 无数据的图标自动隐藏；弹层从横条下方向下弹出，点击外部 / Esc 关闭。
  */
 
-const RING_SIZE = 30;
-const RING_STROKE = 2.5;
+const RING_SIZE = 26;
+const RING_STROKE = 2.25;
 
 function ProgressRing({
   percent,
@@ -92,7 +92,7 @@ function RailButton({
 }) {
   return (
     <button
-      className={`w-9 h-9 rounded-full grid place-items-center border backdrop-blur-sm transition-all duration-150 cursor-pointer ${
+      className={`w-8 h-8 rounded-full grid place-items-center border backdrop-blur-sm transition-all duration-150 cursor-pointer ${
         open
           ? "border-accent/45 bg-raised shadow-sm"
           : "border-edge bg-panel/90 shadow-xs hover:border-edge-strong hover:bg-raised hover:shadow-sm"
@@ -306,11 +306,12 @@ export function SessionRail({ ticketNo }: { ticketNo: string }) {
   const hasConversation =
     ctx?.tokens > 0 || chat.some((i) => i.kind === "user" || i.kind === "assistant");
   const showContext = usage !== null && hasConversation;
+  const ctxPct = usage ? Math.round(usage.percent) : 0;
 
   if (!progress && !showContext) return null;
 
   return (
-    <div ref={railRef} className="absolute right-3 top-3 z-20 flex flex-col gap-2 items-center">
+    <div ref={railRef} className="self-center flex items-center gap-1.5">
       {progress && (
         <div className="relative">
           <RailButton
@@ -323,11 +324,11 @@ export function SessionRail({ ticketNo }: { ticketNo: string }) {
               color="var(--color-accent)"
               title={`任务清单 ${progress.completed}/${progress.total}`}
             >
-              <ListChecks size={13} className="text-accent" weight="bold" />
+              <ListChecks size={12} className="text-accent" weight="bold" />
             </ProgressRing>
           </RailButton>
           {openPanel === "todo" && (
-            <div className="absolute right-[calc(100%+10px)] top-0 rounded-2xl border border-edge bg-overlay backdrop-blur-sm shadow-xl animate-scale-in overflow-hidden">
+            <div className="absolute right-0 top-[calc(100%+10px)] z-30 rounded-2xl border border-edge bg-overlay backdrop-blur-sm shadow-xl animate-scale-in overflow-hidden">
               <TodoPanel todos={todos ?? []} />
             </div>
           )}
@@ -338,23 +339,27 @@ export function SessionRail({ ticketNo }: { ticketNo: string }) {
           <RailButton
             open={openPanel === "context"}
             onClick={() => setOpenPanel(openPanel === "context" ? null : "context")}
-            label={`会话上下文 ${usage.percent.toFixed(0)}%`}
+            label={`会话上下文 ${ctxPct}%`}
           >
             <ProgressRing
               percent={usage.percent}
               color={toneColor(usageTone(usage.percent))}
-              title={`会话上下文 ${usage.percent.toFixed(0)}%`}
+              title={`会话上下文 ${ctxPct}%`}
             >
               <span
-                className="font-mono text-[10px] font-bold leading-none tabular-nums"
-                style={{ color: toneColor(usageTone(usage.percent)) }}
+                className="font-mono font-bold leading-none tabular-nums"
+                style={{
+                  color: toneColor(usageTone(usage.percent)),
+                  fontSize: ctxPct >= 100 ? 7 : ctxPct >= 10 ? 8.5 : 10,
+                }}
               >
-                {Math.round(usage.percent)}
+                {ctxPct}
+                <span style={{ fontSize: ctxPct >= 100 ? 5.5 : 6.5, fontWeight: 600 }}>%</span>
               </span>
             </ProgressRing>
           </RailButton>
           {openPanel === "context" && (
-            <div className="absolute right-[calc(100%+10px)] top-0 rounded-2xl border border-edge bg-overlay backdrop-blur-sm shadow-xl animate-scale-in overflow-hidden">
+            <div className="absolute right-0 top-[calc(100%+10px)] z-30 rounded-2xl border border-edge bg-overlay backdrop-blur-sm shadow-xl animate-scale-in overflow-hidden">
               <ContextPanel items={chat} ctx={ctx} />
             </div>
           )}

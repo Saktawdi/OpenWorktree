@@ -153,6 +153,7 @@ function CenterTabs({ ticketNo }: { ticketNo: string }) {
       {item("diff", "变更对比", diffCount)}
       {item("findings", "审查发现", findingsCount)}
       <span className="flex-1" />
+      <SessionRail ticketNo={ticketNo} />
       <button
         className="self-center icon-btn"
         title="在此工单克隆目录中打开终端"
@@ -200,7 +201,6 @@ export function Workbench() {
         <CenterTabs ticketNo={selectedNo} />
         {tab === "chat" && (
           <div className="relative flex-1 min-h-0 flex flex-col">
-            <SessionRail ticketNo={selectedNo} />
             <ChatStream ticketNo={selectedNo} />
             <Composer ticketNo={selectedNo} />
           </div>
