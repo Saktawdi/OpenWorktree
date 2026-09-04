@@ -484,12 +484,19 @@ export async function boot() {
   seedDemo();
   // 桌面壳免登录：Tauri 启动后端时经 stdout 拿到 GATE_WEB_TOKEN，以 ?ow-token= 跳转进来。
   // 校验通过后立即从地址栏抹掉（令牌不留 URL 历史/书签），失败则回落常规连接弹窗。
+  // 令牌同时进 sessionStorage（壳内 iframe 刷新后仍可静默重连；浏览器会话级隔离不受影响）。
   const shellToken = new URLSearchParams(window.location.search).get("ow-token");
-  if (shellToken) {
-    window.history.replaceState(null, "", window.location.pathname);
-    if (await actions.connectLive(shellToken)) {
+  const savedToken = shellToken ? null : sessionStorage.getItem("ow-desktop-token");
+  if (shellToken || savedToken) {
+    if (shellToken) {
+      window.history.replaceState(null, "", window.location.pathname);
+      sessionStorage.setItem("ow-desktop-token", shellToken);
+    }
+    const token = shellToken ?? savedToken;
+    if (token && (await actions.connectLive(token))) {
       return;
     }
+    sessionStorage.removeItem("ow-desktop-token");
   }
   const conn = await live.detectBackend();
   appStore.setState({ conn });

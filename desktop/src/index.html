@@ -6,12 +6,14 @@
     <style>
       :root { color-scheme: light dark; }
       body {
-        margin: 0; height: 100vh; display: flex; flex-direction: column;
-        align-items: center; justify-content: center; gap: 16px;
+        margin: 0; height: 100vh; overflow: hidden;
         font-family: "Geist", "Segoe UI", system-ui, sans-serif;
         background: #0d1117; color: #e6edf3;
       }
       body.light { background: #ffffff; color: #1f2328; }
+      #ow-spa { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; display: none; }
+      #splash { position: fixed; inset: 0; z-index: 5;
+        display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; }
       .badge { width: 72px; height: 72px; }
       .title { font-size: 18px; font-weight: 600; letter-spacing: 0.02em; }
       .status { font-size: 13px; opacity: 0.7; }
@@ -25,51 +27,88 @@
         padding: 12px 16px; border-radius: 10px;
         background: rgba(207,34,46,0.12); border: 1px solid rgba(207,34,46,0.4);
         color: #f85149; font-size: 13px; white-space: pre-wrap; }
+      .winbtn { width: 28px; height: 28px; border: none; border-radius: 6px; background: transparent;
+        color: inherit; font-size: 13px; cursor: pointer; display: none;
+        align-items: center; justify-content: center; }
+      .winbtn:hover { background: rgba(127,127,127,0.15); }
+      .winbtn.close:hover { background: rgba(207,34,46,0.18); color: #f85149; }
     </style>
   </head>
   <body>
+    <!-- 无边框窗口：SPA 经 iframe 承载（保持远端同源，WS/SSE 不受影响）；
+         窗口操作（拖拽/最小化/最大化/关闭）由本页（tauri:// 域）经 postMessage 桥执行。 -->
     <div data-tauri-drag-region style="position:fixed; inset:0 0 auto 0; height:36px; z-index:10"></div>
-    <button id="splash-close" title="关闭" style="position:fixed; top:6px; right:10px; z-index:11;
-      width:28px; height:28px; border:none; border-radius:6px; background:transparent; color:inherit;
-      font-size:14px; cursor:pointer; display:none; align-items:center; justify-content:center;">✕</button>
-    <img class="badge" src="assets/ow-light-badge-64.png" alt="OpenWorktree" />
-    <div class="title">OpenWorktree</div>
-    <div class="spinner"></div>
-    <div class="status">正在启动本地服务…</div>
-    <div class="error" id="err"></div>
+    <button id="splash-close" class="winbtn close" title="关闭" style="position:fixed; top:4px; right:10px; z-index:11">✕</button>
+    <iframe id="ow-spa" title="OpenWorktree"></iframe>
+    <div id="splash">
+      <img class="badge" id="splash-badge" src="assets/ow-light-badge-64.png" alt="OpenWorktree" />
+      <div class="title">OpenWorktree</div>
+      <div class="spinner"></div>
+      <div class="status">正在启动本地服务…</div>
+      <div class="error" id="err"></div>
+    </div>
     <script>
+      // 跟随 SPA 主题偏好，仅影响启动页观感。
       try {
         if (localStorage.getItem("ow-theme") === "light") {
           document.body.classList.add("light");
-          document.querySelector(".badge").src = "assets/ow-dark-badge-64.png";
+          document.getElementById("splash-badge").src = "assets/ow-dark-badge-64.png";
         }
       } catch (_) {}
 
-      const { listen } = window.__TAURI__.event;
+      const splash = document.getElementById("splash");
+      const splashClose = document.getElementById("splash-close");
+      const iframe = document.getElementById("ow-spa");
+      const tauriWindow = () => window.__TAURI__?.window?.getCurrentWindow?.();
 
-      function enter(token, port) {
-        // 令牌交给真 SPA：Web 控制台从 sessionStorage 读 OW_WEB_TOKEN，
-        // fetch 层 401 兜底逻辑照常生效。
-        sessionStorage.setItem("OW_WEB_TOKEN", token);
-        location.replace(`http://127.0.0.1:${port}/`);
+      // 启动页右上角关闭（tauri:// 域直接可用）
+      if (tauriWindow()) {
+        splashClose.style.display = "flex";
+        splashClose.onclick = () => void tauriWindow().close();
       }
 
-      listen("backend-ready", (e) => enter(e.payload.token, e.payload.port));
+      // backend-ready：壳 Rust 侧从后端 stdout/stderr 抓到令牌后发出（src-tauri/lib.rs）
+      window.__TAURI__.event.listen("backend-ready", (e) => {
+        iframe.src = `http://127.0.0.1:${e.payload.port}/?ow-token=${e.payload.token}`;
+        iframe.addEventListener("load", () => { splash.style.display = "none"; }, { once: true });
+      });
 
-      listen("backend-error", (e) => {
+      window.__TAURI__.event.listen("backend-error", (e) => {
         document.querySelector(".spinner").style.display = "none";
         document.querySelector(".status").textContent = "启动失败";
         const err = document.getElementById("err");
         err.textContent = typeof e.payload === "string" ? e.payload : String(e.payload);
         err.style.display = "block";
       });
-      // 启动页窗口控制：拖拽已由 data-tauri-drag-region 接管；这里补右上角关闭。
-      if (window.__TAURI__?.window) {
-        const btn = document.getElementById("splash-close");
-        btn.style.display = "flex";
-        btn.onclick = () => window.__TAURI__.window.getCurrentWindow().close();
-        btn.onmouseenter = () => { btn.style.background = "rgba(207,34,46,0.15)"; btn.style.color = "#f85149"; };
-        btn.onmouseleave = () => { btn.style.background = "transparent"; btn.style.color = "inherit"; };
+
+      // —— postMessage 桥：SPA（远端 origin）→ 本页执行窗口操作 ——
+      window.addEventListener("message", async (e) => {
+        const d = e.data || {};
+        if (!d.__ow) return;
+        const w = tauriWindow();
+        if (!w) return;
+        switch (d.action) {
+          case "minimize": void w.minimize(); break;
+          case "toggle-maximize": void w.toggleMaximize(); break;
+          case "close": void w.close(); break;
+          // startDragging 需在鼠标按住期间发起；iframe mousedown → postMessage 的延迟
+          // 在一帧内，可正常拖动。若个别环境失效，退路是回到系统标题栏。
+          case "start-drag": void w.startDragging(); break;
+          case "query-maximized":
+            if (e.source) {
+              const m = await w.isMaximized();
+              e.source.postMessage({ __ow: true, action: "maximized", value: m }, "*");
+            }
+            break;
+        }
+      });
+
+      // 窗口尺寸变化（含最大化/还原）推送给 SPA，同步最大化图标
+      if (tauriWindow()) {
+        tauriWindow().onResized(async () => {
+          const m = await tauriWindow().isMaximized();
+          iframe.contentWindow?.postMessage({ __ow: true, action: "maximized", value: m }, "*");
+        });
       }
     </script>
   </body>

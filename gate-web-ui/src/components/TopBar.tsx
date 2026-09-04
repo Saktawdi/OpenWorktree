@@ -199,38 +199,45 @@ function ThemeToggle() {
   );
 }
 
+/** 桌面壳判定：仅当以壳内 iframe 身份运行（boot 时消费过 ow-token）。浏览器直开为 false。 */
+function isDesktopShell(): boolean {
+  try {
+    return window.parent !== window && sessionStorage.getItem("ow-desktop-token") !== null;
+  } catch {
+    return false;
+  }
+}
+
+/** 桌面壳窗口操作桥：SPA 在远端 origin 拿不到 Tauri API，经 postMessage 交给
+ *  tauri:// 父窗口（启动页）执行。消息不带敏感数据，targetOrigin 用 *。 */
+function shellPost(action: string) {
+  window.parent.postMessage({ __ow: true, action }, "*");
+}
+
 /** 桌面壳窗口控制：最小化/最大化/关闭（紧挨日夜切换，同为 icon-btn 风格）。
- *  仅桌面壳（Tauri 注入了 __TAURI__ 且授予窗口权限）渲染；浏览器里整组不出现。
- *  关闭钮悬停红，对齐 Windows 标题栏惯例。 */
+ *  关闭钮悬停红，对齐 Windows 标题栏惯例；浏览器/非壳环境整组不渲染。 */
 function WindowControls() {
   const [maximized, setMaximized] = useState(false);
-  const api = (window as unknown as { __TAURI__?: { window?: TauriWindowApi } }).__TAURI__?.window;
+  const desktop = isDesktopShell();
   useEffect(() => {
-    if (!api) return;
-    const win = api.getCurrentWindow();
-    let unlisten: (() => void) | null = null;
-    void win.isMaximized().then(setMaximized).catch(() => {});
-    void win.onResized(async () => {
-      try {
-        setMaximized(await win.isMaximized());
-      } catch {
-        /* 窗口销毁后的回调，忽略 */
-      }
-    }).then((u) => {
-      unlisten = u;
-    });
-    return () => unlisten?.();
-  }, [api]);
-  if (!api) return null;
-  const win = api.getCurrentWindow();
+    if (!desktop) return;
+    shellPost("query-maximized");
+    const onMessage = (e: MessageEvent) => {
+      const d = e.data as { __ow?: boolean; action?: string; value?: boolean };
+      if (d?.__ow && d.action === "maximized") setMaximized(!!d.value);
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [desktop]);
+  if (!desktop) return null;
   return (
     <>
-      <button className="icon-btn" onClick={() => void win.minimize()} title="最小化" aria-label="最小化">
+      <button className="icon-btn" onClick={() => shellPost("minimize")} title="最小化" aria-label="最小化">
         <Minus size={16} />
       </button>
       <button
         className="icon-btn"
-        onClick={() => void win.toggleMaximize()}
+        onClick={() => shellPost("toggle-maximize")}
         title={maximized ? "向下还原" : "最大化"}
         aria-label={maximized ? "向下还原" : "最大化"}
       >
@@ -238,7 +245,7 @@ function WindowControls() {
       </button>
       <button
         className="icon-btn hover:text-danger hover:bg-danger/10 active:scale-95"
-        onClick={() => void win.close()}
+        onClick={() => shellPost("close")}
         title="关闭"
         aria-label="关闭"
       >
@@ -248,33 +255,22 @@ function WindowControls() {
   );
 }
 
-/** Tauri window API 的最小结构（桌面壳专用；浏览器里不存在）。 */
-interface TauriWindowApi {
-  getCurrentWindow(): {
-    minimize(): Promise<void>;
-    toggleMaximize(): Promise<void>;
-    close(): Promise<void>;
-    startDragging(): Promise<void>;
-    isMaximized(): Promise<boolean>;
-    onResized(cb: () => void): Promise<() => void>;
-  };
-}
-
 export function TopBar() {
   const conn = useApp((s) => s.conn);
   const mode = useApp((s) => s.mode);
 
-  // 无边框窗口：顶栏空白区拖拽移动 + 双击切换最大化；交互元素上不响应。
-  const tauriWin = (window as unknown as { __TAURI__?: { window?: TauriWindowApi } }).__TAURI__?.window;
+  // 无边框窗口：顶栏空白区拖拽移动 + 双击切换最大化（经 postMessage 桥交给壳执行）；
+  // 交互元素上不响应；非壳环境（浏览器直开）不做任何事。
   const onFrameMouseDown = (e: React.MouseEvent) => {
-    if (e.button !== 0) return;
+    if (e.button !== 0 || !isDesktopShell()) return;
     const target = e.target as HTMLElement;
     if (target.closest("button, a, input, select, textarea, [role='menu']")) return;
-    void tauriWin?.getCurrentWindow().startDragging();
+    shellPost("start-drag");
   };
   const onFrameDoubleClick = (e: React.MouseEvent) => {
+    if (!isDesktopShell()) return;
     if ((e.target as HTMLElement).closest("button, a, input, select, textarea, [role='menu']")) return;
-    void tauriWin?.getCurrentWindow().toggleMaximize();
+    shellPost("toggle-maximize");
   };
 
   const connLabel =

@@ -100,11 +100,12 @@ pub fn run() {
                             }
                             if let (Some(t), false) = (token.clone(), navigated) {
                                 navigated = true;
-                                let url = format!("http://127.0.0.1:{port}/?ow-token={t}");
-                                append_log(&boot_log, &format!("navigate to port {port}"));
-                                if let Some(w) = handle.get_webview_window("main") {
-                                    let _ = w.eval(&format!("location.replace({url:?})"));
-                                }
+                                append_log(&boot_log, &format!("backend ready on port {port}"));
+                                // 启动页（tauri:// 域）监听此事件后以 iframe 承载 SPA 并桥接窗口操作
+                                let _ = handle.emit(
+                                    "backend-ready",
+                                    serde_json::json!({ "token": t, "port": port }),
+                                );
                             }
                         }
                         CommandEvent::Terminated(status) => {
