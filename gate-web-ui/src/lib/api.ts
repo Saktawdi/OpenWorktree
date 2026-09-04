@@ -1030,8 +1030,22 @@ async function consumeSessionStream(no: string, sessionId: string) {
       const todo = isTodoTool(toolName);
       const entry = argsBuf.get(callId) ?? { name: toolName, args: "" };
       entry.name = toolName || entry.name;
-      if (d.argument_delta) entry.args += d.argument_delta;
+      if (d.argument_delta) {
+        // opencode 的 part 更新每次都重发完整 input JSON（字段名叫 delta，实际是快照），
+        // Claude headless 才是真分片——能解析成完整 JSON 的按快照替换，残片才累积拼接。
+        let snapshot = false;
+        try {
+          const parsed = JSON.parse(d.argument_delta);
+          snapshot = parsed !== null && typeof parsed === "object";
+        } catch {
+          /* 解析失败即残片，走累积 */
+        }
+        entry.args = snapshot ? d.argument_delta : entry.args + d.argument_delta;
+      }
       argsBuf.set(callId, entry);
+      // 工具输出随终态事件携带（opencode 侧 RUNNING 时 result 为 null）。此前被丢弃，
+      // 流式回合的工具行没有 resultDetail，最新一轮无法展开查看，只能等重拉历史。
+      const resultText = typeof d.result === "string" && d.result ? d.result : "";
       // todo 类工具在终态时把累积的完整参数解析进侧栏任务清单。
       if (todo && (d.status === "SUCCESS" || d.status === "FAILED")) {
         const todos = parseTodos(entry.args);
@@ -1051,6 +1065,8 @@ async function consumeSessionStream(no: string, sessionId: string) {
                     icon: todo ? ("todo" as const) : t.icon,
                     args: entry.args,
                     argsSummary,
+                    resultSummary: resultText ? resultText.slice(0, 80) : t.resultSummary,
+                    resultDetail: resultText || t.resultDetail,
                     status: d.status === "SUCCESS" ? "ok" : d.status === "FAILED" ? "error" : "running",
                   }
                 : t,
@@ -1068,6 +1084,8 @@ async function consumeSessionStream(no: string, sessionId: string) {
               args: entry.args,
               icon: todo ? ("todo" as const) : resolveToolIcon(toolName),
               argsSummary,
+              resultSummary: resultText ? resultText.slice(0, 80) : undefined,
+              resultDetail: resultText || undefined,
               status: "running" as const,
             },
           ],

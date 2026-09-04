@@ -105,12 +105,17 @@ function ToolRow({ tool }: { tool: ToolCallView }) {
   const [open, setOpen] = useState(false);
   const Icon = TOOL_ICONS[tool.icon] ?? TerminalWindow;
   const { toolName, argsPart } = splitToolArgs(tool);
+  // IN 优先完整参数（live 行随 SSE 快照/分片累积，历史行为落库的 arguments_json），
+  // 缺省时退回紧凑摘要；OUT 为工具输出（终态事件或历史 result_json）。
+  const inText = tool.args !== undefined && tool.args !== "" ? tool.args : tool.argsSummary;
+  const outText = tool.resultDetail;
+  const expandable = inText.trim().length > 0 || !!outText;
 
   return (
     <div>
       <button
         className="w-full flex items-center gap-2.5 px-3 h-9 text-left hover:bg-raised/60 transition-colors cursor-pointer"
-        onClick={() => tool.resultDetail && setOpen(!open)}
+        onClick={() => expandable && setOpen(!open)}
       >
         {tool.status === "running" ? (
           <CircleNotch size={14} className="text-accent animate-[spin_0.9s_linear_infinite]" />
@@ -127,13 +132,38 @@ function ToolRow({ tool }: { tool: ToolCallView }) {
         {tool.resultSummary && (
           <span className="font-mono text-[11px] text-faint shrink-0 hidden sm:inline">{tool.resultSummary}</span>
         )}
-        {tool.resultDetail &&
+        {expandable &&
           (open ? <CaretDown size={11} className="text-faint" /> : <CaretRight size={11} className="text-faint" />)}
       </button>
-      {open && tool.resultDetail && (
-        <pre className="mx-3 mb-2 p-2.5 rounded-md bg-sunken border border-edge font-mono text-[11px] leading-relaxed text-dim overflow-x-auto max-h-44">
-          {tool.resultDetail}
-        </pre>
+      {open && expandable && (
+        <div className="mx-3 mb-2 overflow-hidden rounded-md border border-edge bg-sunken text-[11px]">
+          {inText.trim() && (
+            <div className={outText ? "border-b border-edge" : undefined}>
+              <div className="flex items-center gap-2 px-2.5 h-8">
+                <span className="font-mono text-[10px] font-semibold tracking-wide text-info">IN</span>
+                <span className="flex-1" />
+                <CopyButton text={inText} label="复制输入参数" />
+              </div>
+              <pre className="max-h-44 overflow-auto px-2.5 pb-2 font-mono leading-relaxed text-dim whitespace-pre-wrap break-all">
+                {inText}
+              </pre>
+            </div>
+          )}
+          {outText ? (
+            <div>
+              <div className="flex items-center gap-2 px-2.5 h-8">
+                <span className="font-mono text-[10px] font-semibold tracking-wide text-accent">OUT</span>
+                <span className="flex-1" />
+                <CopyButton text={outText} label="复制输出结果" />
+              </div>
+              <pre className="max-h-44 overflow-auto px-2.5 pb-2 font-mono leading-relaxed text-dim whitespace-pre-wrap break-all">
+                {outText}
+              </pre>
+            </div>
+          ) : (
+            tool.status === "running" && <div className="px-2.5 pb-2 text-faint">执行中，暂无输出…</div>
+          )}
+        </div>
       )}
     </div>
   );
