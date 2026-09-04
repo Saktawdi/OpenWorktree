@@ -27,7 +27,7 @@ import {
   NO_DIFF,
 } from "../lib/store";
 import type { Priority, Stage } from "../lib/types";
-import { LabelInput, PriorityChip, StageDot } from "./ui";
+import { LabelInput, PriorityChip, StageDot, useBackdropClose } from "./ui";
 
 const PRIORITIES: Priority[] = ["P0", "P1", "P2", "P3"];
 
@@ -40,6 +40,7 @@ function NewTicketButton() {
   const [targetBranch, setTargetBranch] = useState("");
   const agents = useApp((s) => s.agents);
   const agentId = useApp((s) => s.agentId);
+  const backdrop = useBackdropClose(() => closeTicketCreator());
 
   const submit = () => {
     if (!title.trim()) return;
@@ -65,7 +66,7 @@ function NewTicketButton() {
       {open && (
         <div
           className="fixed inset-0 z-50 grid place-items-center bg-black/55 backdrop-blur-[2px]"
-          onClick={() => closeTicketCreator()}
+          {...backdrop}
         >
           <div
             className="w-[420px] card shadow-2xl shadow-black/60 animate-rise"

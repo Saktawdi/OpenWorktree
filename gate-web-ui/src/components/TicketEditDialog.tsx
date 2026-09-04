@@ -3,7 +3,7 @@ import { NotePencil, Trash } from "@phosphor-icons/react";
 import { actions } from "../lib/actions";
 import { openStageChangeConfirm, openTicketEditor, setAgentId, useApp } from "../lib/store";
 import type { Priority } from "../lib/types";
-import { LabelInput } from "./ui";
+import { LabelInput, useBackdropClose } from "./ui";
 
 const PRIORITIES: Priority[] = ["P0", "P1", "P2", "P3"];
 
@@ -30,6 +30,8 @@ export function TicketEditDialog() {
     setAgentConfigId(ticket.agentConfigId ?? "");
   }, [ticket, editingNo]);
 
+  const backdrop = useBackdropClose(() => openTicketEditor(null));
+
   if (!editingNo || !ticket) return null;
 
   const save = async () => {
@@ -54,7 +56,7 @@ export function TicketEditDialog() {
   return (
     <div
       className="fixed inset-0 z-50 grid place-items-center bg-black/55 backdrop-blur-[2px]"
-      onClick={() => openTicketEditor(null)}
+      {...backdrop}
     >
       <div
         className="w-[480px] card shadow-2xl shadow-black/60 animate-rise"

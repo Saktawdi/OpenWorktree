@@ -2,10 +2,12 @@ import { useState } from "react";
 import { X } from "@phosphor-icons/react";
 import { actions } from "../lib/actions";
 import { appStore, closeConnect, useApp } from "../lib/store";
+import { useBackdropClose } from "./ui";
 
 export function ConnectionDialog() {
   const open = useApp((s) => s.connectOpen);
   const mode = useApp((s) => s.mode);
+  const backdrop = useBackdropClose(closeConnect);
   const [tab, setTab] = useState<"demo" | "live">(mode === "live" ? "live" : "demo");
   const [token, setToken] = useState(appStore.getState().token);
   const [testing, setTesting] = useState(false);
@@ -31,7 +33,7 @@ export function ConnectionDialog() {
   };
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/55 backdrop-blur-[2px]" onClick={closeConnect}>
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/55 backdrop-blur-[2px]" {...backdrop}>
       <div
         className="w-[440px] card shadow-2xl shadow-black/60 animate-rise"
         onClick={(e) => e.stopPropagation()}

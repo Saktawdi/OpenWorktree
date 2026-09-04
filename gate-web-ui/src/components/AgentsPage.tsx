@@ -18,6 +18,7 @@ import { actions } from "../lib/actions";
 import * as live from "../lib/api";
 import { appStore, useApp } from "../lib/store";
 import type { AgentConfig, OpenCodeModelEntry, OpenCodeProvider } from "../lib/types";
+import { useBackdropClose } from "./ui";
 
 const CLI_LABEL: Record<string, string> = { claude: "Claude Code", opencode: "OpenCode" };
 
@@ -710,6 +711,7 @@ function OpenCodeProvidersModal({ onClose }: { onClose: () => void }) {
   const ocProviders = useApp((s) => s.ocProviders);
   const ocConfigPath = useApp((s) => s.ocConfigPath);
   const mode = useApp((s) => s.mode);
+  const backdrop = useBackdropClose(onClose);
   const [dialog, setDialog] = useState<{ open: boolean; provider: OpenCodeProvider | null }>({
     open: false,
     provider: null,
@@ -745,7 +747,7 @@ function OpenCodeProvidersModal({ onClose }: { onClose: () => void }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/55 backdrop-blur-[2px]" onClick={onClose}>
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/55 backdrop-blur-[2px]" {...backdrop}>
       {/* 编辑面板打开时整个弹窗加宽：因居中布局，列表自然左移，面板在右侧拼接。
           宽度用 CSS transition（motion 对 auto→px 的宽度插值不可靠），滑入用 motion。 */}
       <div
@@ -880,6 +882,7 @@ function OpenCodeProvidersModal({ onClose }: { onClose: () => void }) {
 
 function AgentDialog({ initial, onClose }: { initial: AgentConfig | null; onClose: () => void }) {
   const runtimes = useApp((s) => s.runtimes);
+  const backdrop = useBackdropClose(onClose);
   const [name, setName] = useState(initial?.name ?? "");
   const [cli, setCli] = useState<"claude" | "opencode">(initial?.cli ?? "opencode");
   const [model, setModel] = useState(initial?.model ?? "");
@@ -943,7 +946,7 @@ function AgentDialog({ initial, onClose }: { initial: AgentConfig | null; onClos
   };
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/55 backdrop-blur-[2px]" onClick={onClose}>
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/55 backdrop-blur-[2px]" {...backdrop}>
       <div className="w-[500px] card shadow-2xl shadow-black/60 animate-rise" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-2 px-5 h-12 border-b border-edge">
           <Sparkle size={15} className="text-accent" weight="fill" />

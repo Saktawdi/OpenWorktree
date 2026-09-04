@@ -15,7 +15,7 @@ import { loadProjectRepoView, loadProjectTree, syncProjectWorkspace } from "../l
 import { relativeTime, shortHash } from "../lib/format";
 import { closeRepoView, openRepoView, showToast, useApp } from "../lib/store";
 import type { GitCommit, GitRepoView, GitTreeEntry, Project } from "../lib/types";
-import { CopyButton } from "./ui";
+import { CopyButton, useBackdropClose } from "./ui";
 
 const LANE_COLORS = ["var(--color-accent)", "#7cc7f7", "#c79bf5", "#f5b84f"];
 const ROW_H = 40;
@@ -363,9 +363,10 @@ function RepoViewBody({
 /** 仓库视图弹窗：live 模式打开即拉取分支图与文件树根目录，失败可重试；放大按钮跳转整页。 */
 export function RepoViewDialog({ project, onClose }: { project: Project; onClose: () => void }) {
   const { git, treeRoot, tab, setTab, loading, error, reload } = useRepoViewData(project);
+  const backdrop = useBackdropClose(onClose);
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/55 backdrop-blur-[2px]" onClick={onClose}>
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/55 backdrop-blur-[2px]" {...backdrop}>
       <div
         className="w-[880px] max-h-[85vh] card shadow-2xl shadow-black/60 animate-rise overflow-hidden flex flex-col"
         onClick={(e) => e.stopPropagation()}

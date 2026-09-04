@@ -10,7 +10,7 @@ import {
 } from "@phosphor-icons/react";
 import { actions } from "../lib/actions";
 import type { WorkspaceListing } from "../lib/types";
-import { Spinner } from "./ui";
+import { Spinner, useBackdropClose } from "./ui";
 
 /**
  * 本地目录浏览器（后端 /api/workspaces 驱动）— 为「接入新项目」表单选择工作区绝对路径。
@@ -33,6 +33,7 @@ export function WorkspaceBrowserDialog({
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState("");
   const [creatingDir, setCreatingDir] = useState(false);
+  const backdrop = useBackdropClose(onClose);
 
   const load = async (path: string) => {
     setLoading(true);
@@ -79,7 +80,7 @@ export function WorkspaceBrowserDialog({
   return (
     <div
       className="fixed inset-0 z-[60] grid place-items-center bg-black/60 backdrop-blur-[2px]"
-      onClick={onClose}
+      {...backdrop}
     >
       <div
         className="w-[540px] max-h-[72vh] card shadow-2xl shadow-black/60 animate-rise flex flex-col"

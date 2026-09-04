@@ -31,7 +31,7 @@ import { formatBytes, hhmmss, shortHash, STAGE_CHANGE_KIND_LABEL, STAGE_LABEL } 
 import { NO_SESSIONS, collapseGateSectionsForPresubmit, openRestartDialog, openStageChangeConfirm, openStageChangesView, setGateSection, useApp } from "../lib/store";
 import { loadStageChanges } from "../lib/api";
 import type { ChatSession, Snapshot } from "../lib/types";
-import { CopyButton, HashReveal, Spinner } from "./ui";
+import { CopyButton, HashReveal, Spinner, useBackdropClose } from "./ui";
 
 /* ─── Stepper (horizontal pipeline) ─── */
 
@@ -763,10 +763,11 @@ export function ManualReviewDialog({
   busy: boolean;
   onClose: () => void;
 }) {
+  const backdrop = useBackdropClose(busy ? undefined : onClose);
   return (
     <div
       className="fixed inset-0 z-50 grid place-items-center bg-black/55 backdrop-blur-[2px]"
-      onClick={busy ? undefined : onClose}
+      {...backdrop}
     >
       <div
         className="w-[420px] card shadow-2xl shadow-black/60 animate-rise"
@@ -1109,6 +1110,7 @@ function RestartDialog({ ticketNo }: { ticketNo: string }) {
   const round = useApp((s) => s.snapshots[ticketNo]?.length ?? 0);
   const [reason, setReason] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const backdrop = useBackdropClose(() => close());
 
   if (!open) return null;
 
@@ -1132,7 +1134,7 @@ function RestartDialog({ ticketNo }: { ticketNo: string }) {
   return (
     <div
       className="fixed inset-0 z-50 grid place-items-center bg-black/55 backdrop-blur-[2px]"
-      onClick={close}
+      {...backdrop}
     >
       <div
         className="w-[480px] card shadow-2xl shadow-black/60 animate-rise"
@@ -1210,13 +1212,14 @@ function RestartDialog({ ticketNo }: { ticketNo: string }) {
 function StageChangesHistoryDialog({ ticketNo }: { ticketNo: string }) {
   const open = useApp((s) => s.stageChangesViewFor === ticketNo);
   const rows = useApp((s) => s.stageChanges[ticketNo]);
+  const backdrop = useBackdropClose(() => openStageChangesView(null));
 
   if (!open) return null;
 
   return (
     <div
       className="fixed inset-0 z-50 grid place-items-center bg-black/55 backdrop-blur-[2px]"
-      onClick={() => openStageChangesView(null)}
+      {...backdrop}
     >
       <div
         className="w-[520px] card shadow-2xl shadow-black/60 animate-rise"

@@ -18,7 +18,7 @@ import {
 import { fetchGateToml, fetchMcpStatus, fetchProviders, updateGateToml, createProvider, updateProvider, deleteProvider, updateProviderModels, fetchUpstreamModels, setProviderCredential } from "../lib/api";
 import { openConnect, showToast, useApp } from "../lib/store";
 import type { GateTomlResponse, GateTomlKey, GateTomlOption, McpStatus, LlmProvider } from "../lib/types";
-import { CopyButton, Spinner } from "./ui";
+import { CopyButton, Spinner, useBackdropClose } from "./ui";
 
 // 选项依赖运行期 LLM Provider 列表、后端无法静态下发的键：
 // provider 类直接列 Providers；model 类的选项跟随各自的 provider 键当前值。
@@ -610,6 +610,7 @@ function ProviderDialog({ initial, onClose, onSaved }: { initial: LlmProvider | 
   const [apiKey, setApiKey] = useState("");
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const backdrop = useBackdropClose(onClose);
 
   const valid = id.trim() && name.trim() && baseUrl.trim() && type.trim();
 
@@ -640,7 +641,7 @@ function ProviderDialog({ initial, onClose, onSaved }: { initial: LlmProvider | 
   };
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/55 backdrop-blur-[2px]" onClick={onClose}>
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/55 backdrop-blur-[2px]" {...backdrop}>
       <div className="w-[480px] card shadow-2xl shadow-black/60 animate-rise" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-2 px-5 h-12 border-b border-edge">
           <Robot size={15} className="text-accent" />

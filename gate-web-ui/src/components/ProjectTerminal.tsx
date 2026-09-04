@@ -16,6 +16,7 @@ import {
   useApp,
 } from "../lib/store";
 import type { Project, TerminalEntry, TerminalSessionMeta } from "../lib/types";
+import { useBackdropClose } from "./ui";
 
 /**
  * 项目终端：入口（项目卡片/工作台"+"）先列出项目所属目录（工作区 + 各工单克隆），
@@ -34,6 +35,7 @@ export function TerminalPickerDialog({ project, onClose }: { project?: Project |
     project?.id ?? activeId ?? projects[0]?.id ?? "",
   );
   const selected = projects.find((p) => p.id === projectId) ?? null;
+  const backdrop = useBackdropClose(onClose);
 
   const launch = (entry: TerminalEntry) => {
     if (!selected || !entry.exists) return;
@@ -47,7 +49,7 @@ export function TerminalPickerDialog({ project, onClose }: { project?: Project |
   };
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/55 backdrop-blur-[2px]" onClick={onClose}>
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/55 backdrop-blur-[2px]" {...backdrop}>
       <div
         className="w-[640px] max-w-[92vw] card shadow-2xl shadow-black/60 animate-rise overflow-hidden flex flex-col"
         onClick={(e) => e.stopPropagation()}
@@ -190,6 +192,7 @@ export function TerminalWorkbench() {
   const view = useApp((s) => s.terminalView);
   const mode = useApp((s) => s.mode);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const backdrop = useBackdropClose(minimizeTerminal);
 
   if (sessions.length === 0) return null;
   const active = sessions.find((t) => t.id === activeId) ?? sessions[sessions.length - 1];
@@ -198,7 +201,7 @@ export function TerminalWorkbench() {
     <>
       <div
         className={view === "open" ? "fixed inset-0 z-50 grid place-items-center bg-black/55 backdrop-blur-[2px]" : "hidden"}
-        onClick={minimizeTerminal}
+        {...backdrop}
       >
         <div
           className="w-[960px] max-w-[96vw] card shadow-2xl shadow-black/60 animate-rise overflow-hidden flex flex-col"

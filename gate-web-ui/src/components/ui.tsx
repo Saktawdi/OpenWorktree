@@ -1,8 +1,27 @@
 import type { Priority, Severity, Stage } from "../lib/types";
 import { PRIORITY_COLOR, SEVERITY_LABEL, STAGE_LABEL } from "../lib/format";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { Copy, X } from "@phosphor-icons/react";
 import { useApp } from "../lib/store";
+
+/**
+ * 弹窗遮罩的关闭判定。
+ * 浏览器把 click 派发到「按下目标与释放目标的公共祖先」——在面板内按下、按住拖到面板外释放时，
+ * click 会落在遮罩上，遮罩若直接 onClick={onClose} 就会误关面板。
+ * 这里记录按下位置：只有按下与释放都发生在遮罩自身（e.target 是遮罩元素）时才执行 onClose。
+ */
+export function useBackdropClose(onClose?: () => void) {
+  const downOnBackdrop = useRef(false);
+  return {
+    onMouseDown: (e: ReactMouseEvent<HTMLDivElement>) => {
+      downOnBackdrop.current = e.target === e.currentTarget;
+    },
+    onClick: (e: ReactMouseEvent<HTMLDivElement>) => {
+      if (e.target === e.currentTarget && downOnBackdrop.current) onClose?.();
+      downOnBackdrop.current = false;
+    },
+  };
+}
 
 /** 品牌 OW 徽章：跟随主题切换静态图（不播动画，动画版见 TopBar 的 BrandMark）。 */
 export function LogoMark({ size = 22 }: { size?: number }) {

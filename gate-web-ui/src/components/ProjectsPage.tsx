@@ -33,7 +33,7 @@ import { actions } from "../lib/actions";
 import { relativeTime } from "../lib/format";
 import { setView, showToast, switchProject, useApp } from "../lib/store";
 import type { Project } from "../lib/types";
-import { LabelInput } from "./ui";
+import { LabelInput, useBackdropClose } from "./ui";
 import { RepoViewDialog } from "./RepoView";
 import { TerminalPickerDialog } from "./ProjectTerminal";
 import { WorkspaceBrowserDialog } from "./WorkspaceBrowserDialog";
@@ -54,6 +54,14 @@ function projectCmp(a: Project, b: Project): number {
   return a.name.localeCompare(b.name);
 }
 
+/** 取工作区路径末段作默认项目名：兼容 / 与 \ 分隔符并去掉结尾斜杠；盘符根（D:\）或裸根（/）没有可用目录名 */
+function folderNameOf(path: string): string {
+  const trimmed = path.trim().replace(/[\\/]+$/, "");
+  if (!trimmed) return "";
+  const seg = trimmed.split(/[\\/]/).pop() ?? "";
+  return /^[A-Za-z]:$/.test(seg) ? "" : seg;
+}
+
 function ProjectDialog({
   initial,
   onClose,
@@ -62,8 +70,11 @@ function ProjectDialog({
   onClose: () => void;
 }) {
   const mode = useApp((s) => s.mode);
+  const backdrop = useBackdropClose(onClose);
   const [name, setName] = useState(initial?.name ?? "");
   const [workspacePath, setWorkspacePath] = useState(initial?.workspacePath ?? "");
+  // 上次按路径自动填充的项目名：名称留空或仍是这个值（用户未手改）时，换目录后继续跟随
+  const [autoName, setAutoName] = useState("");
   const [targetBranch, setTargetBranch] = useState(
     initial?.targetRef ? initial.targetRef.replace("refs/heads/", "") : "",
   );
@@ -109,6 +120,16 @@ function ProjectDialog({
     };
   })();
 
+  // 路径变化（手动输入、粘贴或浏览选择）时同步刷新默认项目名
+  const applyWorkspacePath = (path: string) => {
+    setWorkspacePath(path);
+    const derived = folderNameOf(path);
+    if (!derived) return;
+    const cur = name.trim();
+    if (!cur || cur === autoName) setName(derived);
+    setAutoName(derived);
+  };
+
   const save = async () => {
     if (!name.trim() || (!initial && !workspacePath.trim())) return;
     setSaving(true);
@@ -144,7 +165,7 @@ function ProjectDialog({
   };
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/55 backdrop-blur-[2px]" onClick={onClose}>
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/55 backdrop-blur-[2px]" {...backdrop}>
       <div className="w-[460px] card shadow-2xl shadow-black/60 animate-rise" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-2 px-5 h-12 border-b border-edge">
           <FolderPlus size={15} className="text-accent" />
@@ -160,6 +181,9 @@ function ProjectDialog({
               value={name}
               onChange={(e) => setName(e.target.value)}
             />
+            {!initial && (
+              <div className="mt-1 text-[11px] text-faint">选择工作区后自动取目录名填充；手动输入过的名称不会被覆盖</div>
+            )}
           </div>
           {!initial && (
             <>
@@ -170,7 +194,7 @@ function ProjectDialog({
                     className="text-input font-mono text-[12px] pr-10"
                     placeholder={pathHint.placeholder}
                     value={workspacePath}
-                    onChange={(e) => setWorkspacePath(e.target.value)}
+                    onChange={(e) => applyWorkspacePath(e.target.value)}
                   />
                   <button
                     type="button"
@@ -270,7 +294,7 @@ function ProjectDialog({
         <WorkspaceBrowserDialog
           initialPath={workspacePath}
           onPick={(p) => {
-            setWorkspacePath(p);
+            applyWorkspacePath(p);
             setBrowserOpen(false);
           }}
           onClose={() => setBrowserOpen(false)}

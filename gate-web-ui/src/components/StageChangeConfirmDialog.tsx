@@ -3,7 +3,7 @@ import { ArrowRight, LockKey, SealCheck, X } from "@phosphor-icons/react";
 import { actions } from "../lib/actions";
 import { STAGE_LABEL, STAGE_CHANGE_KIND_LABEL } from "../lib/format";
 import { closeStageChangeConfirm, showToast, useApp } from "../lib/store";
-import { Spinner } from "./ui";
+import { Spinner, useBackdropClose } from "./ui";
 
 const REASON_MAX = 2000;
 
@@ -20,6 +20,7 @@ export function StageChangeConfirmDialog() {
   });
   const [reason, setReason] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const backdrop = useBackdropClose(() => close());
 
   const open = confirm !== null && ticket !== undefined;
 
@@ -57,7 +58,7 @@ export function StageChangeConfirmDialog() {
   return (
     <div
       className="fixed inset-0 z-50 grid place-items-center bg-black/55 backdrop-blur-[2px]"
-      onClick={close}
+      {...backdrop}
     >
       <div
         className="w-[480px] card shadow-2xl shadow-black/60 animate-rise"
