@@ -482,6 +482,15 @@ export const actions = {
 };
 export async function boot() {
   seedDemo();
+  // 桌面壳免登录：Tauri 启动后端时经 stdout 拿到 GATE_WEB_TOKEN，以 ?ow-token= 跳转进来。
+  // 校验通过后立即从地址栏抹掉（令牌不留 URL 历史/书签），失败则回落常规连接弹窗。
+  const shellToken = new URLSearchParams(window.location.search).get("ow-token");
+  if (shellToken) {
+    window.history.replaceState(null, "", window.location.pathname);
+    if (await actions.connectLive(shellToken)) {
+      return;
+    }
+  }
   const conn = await live.detectBackend();
   appStore.setState({ conn });
   // 已在 live 模式且后端连通时启动运行中智能体轮询

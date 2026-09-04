@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>OpenWorktree</title>
+    <style>
+      :root { color-scheme: light dark; }
+      body {
+        margin: 0; height: 100vh; display: flex; flex-direction: column;
+        align-items: center; justify-content: center; gap: 16px;
+        font-family: "Geist", "Segoe UI", system-ui, sans-serif;
+        background: #0d1117; color: #e6edf3;
+      }
+      body.light { background: #ffffff; color: #1f2328; }
+      .badge { width: 72px; height: 72px; }
+      .title { font-size: 18px; font-weight: 600; letter-spacing: 0.02em; }
+      .status { font-size: 13px; opacity: 0.7; }
+      .spinner {
+        width: 22px; height: 22px; border-radius: 50%;
+        border: 3px solid rgba(127,127,127,0.25); border-top-color: #7c5cff;
+        animation: spin 0.9s linear infinite;
+      }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      .error { display: none; max-width: 480px; text-align: center;
+        padding: 12px 16px; border-radius: 10px;
+        background: rgba(207,34,46,0.12); border: 1px solid rgba(207,34,46,0.4);
+        color: #f85149; font-size: 13px; white-space: pre-wrap; }
+    </style>
+  </head>
+  <body>
+    <img class="badge" src="assets/ow-light-badge-64.png" alt="OpenWorktree" />
+    <div class="title">OpenWorktree</div>
+    <div class="spinner"></div>
+    <div class="status">正在启动本地服务…</div>
+    <div class="error" id="err"></div>
+    <script>
+      try {
+        if (localStorage.getItem("ow-theme") === "light") {
+          document.body.classList.add("light");
+          document.querySelector(".badge").src = "assets/ow-dark-badge-64.png";
+        }
+      } catch (_) {}
+
+      const { listen } = window.__TAURI__.event;
+
+      function enter(token, port) {
+        // 令牌交给真 SPA：Web 控制台从 sessionStorage 读 OW_WEB_TOKEN，
+        // fetch 层 401 兜底逻辑照常生效。
+        sessionStorage.setItem("OW_WEB_TOKEN", token);
+        location.replace(`http://127.0.0.1:${port}/`);
+      }
+
+      listen("backend-ready", (e) => enter(e.payload.token, e.payload.port));
+
+      listen("backend-error", (e) => {
+        document.querySelector(".spinner").style.display = "none";
+        document.querySelector(".status").textContent = "启动失败";
+        const err = document.getElementById("err");
+        err.textContent = typeof e.payload === "string" ? e.payload : String(e.payload);
+        err.style.display = "block";
+      });
+    </script>
+  </body>
+</html>

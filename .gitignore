@@ -60,3 +60,9 @@ native-poc/run/
 
 # native-image PoC scaffolding stays local; CI needs only agent-config (now .github/native-image/)
 native-poc/
+
+# Tauri 桌面壳构建产物（sidecar 二进制按机器/CI 同步，不入库）
+desktop/node_modules/
+desktop/src-tauri/target/
+desktop/src-tauri/gen/
+desktop/src-tauri/binaries/*.exe

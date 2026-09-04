@@ -23,6 +23,7 @@ on:
       - 'gate-web/**'
       - 'gate-web-ui/src/**'
       - 'gate-web-ui/package.json'
+      - 'desktop/**'
       - '.github/native-image/**'
       - '.github/workflows/native-build.yml'
   workflow_dispatch:
@@ -166,5 +167,48 @@ jobs:
         run: |
           if [ "$RUNNER_OS" = "Windows" ]; then F=ow-windows-x86_64; else F=ow-linux-x86_64; fi
           gh release upload "${GITHUB_REF_NAME}" "$F" --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+  desktop:
+    name: desktop installer (windows)
+    needs: native
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      # 侧车 = 本轮 native 产物（含当次 SPA），保证桌面壳与后端同源同版本
+      - uses: actions/download-artifact@v4
+        with:
+          name: ow-native-Windows
+          path: sidecar
+      - name: Place sidecar binary
+        shell: bash
+        run: |
+          mkdir -p desktop/src-tauri/binaries
+          cp sidecar/ow-windows-x86_64 desktop/src-tauri/binaries/ow-x86_64-pc-windows-msvc.exe
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri
+      - name: Build installer
+        working-directory: desktop
+        run: npx tauri build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ow-desktop-installer-Windows
+          path: desktop/src-tauri/target/release/bundle/nsis/*.exe
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: gh release upload "${GITHUB_REF_NAME}" desktop/src-tauri/target/release/bundle/nsis/*.exe --clobber
         env:
           GH_TOKEN: ${{ github.token }}
