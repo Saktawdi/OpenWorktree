@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowClockwise,
   CaretDown,
@@ -135,6 +135,67 @@ const KNOWN_MODEL_KEYS = new Set([
 
 const MODALITY_PRESETS = ["text", "image", "pdf", "video", "audio"];
 
+/** 限制档位（模仿 ai-toolbox）：上下文给大档位，输出给小档位，也可手输任意值。 */
+const CONTEXT_LIMIT_PRESETS = ["16K", "32K", "64K", "128K", "200K", "256K", "1M", "2M"];
+const OUTPUT_LIMIT_PRESETS = ["2K", "4K", "8K", "16K", "32K", "64K"];
+
+/** 模型变体一键模板：低/高 + 顶档两档，顶档推理强度分别为 max / xhigh。 */
+const VARIANT_TEMPLATES = [
+  {
+    label: "max 模板",
+    title: "填入 low/high/max 三档变体，最高推理到 max",
+    json: `{
+  "low": {
+    "reasoningEffort": "low"
+  },
+  "high": {
+    "reasoningEffort": "high"
+  },
+  "max": {
+    "reasoningEffort": "max"
+  }
+}`,
+  },
+  {
+    label: "xhigh 模板",
+    title: "填入 low/high/xhigh 三档变体，最高推理到 xhigh",
+    json: `{
+  "low": {
+    "reasoningEffort": "low"
+  },
+  "high": {
+    "reasoningEffort": "high"
+  },
+  "xhigh": {
+    "reasoningEffort": "xhigh"
+  }
+}`,
+  },
+];
+
+/** 200000 → "200K"、1000000 → "1M"；非整除的值原样显示。 */
+function formatLimit(v: unknown): string {
+  const n = typeof v === "number" ? v : Number(v);
+  if (Number.isFinite(n) && n > 0) {
+    if (n % 1_000_000 === 0) return `${n / 1_000_000}M`;
+    if (n % 1000 === 0) return `${n / 1000}K`;
+  }
+  return String(v);
+}
+
+/** 解析限制输入：支持 "200K" / "1M" 简写与纯数字；非法返回 null。 */
+function parseLimit(raw: string): number | null {
+  const s = raw.trim().toUpperCase();
+  if (!s) return null;
+  const m = s.match(/^(\d+(?:\.\d+)?)([KM])$/);
+  if (m) {
+    const base = Number(m[1]);
+    if (!Number.isFinite(base)) return null;
+    return Math.round(base * (m[2] === "K" ? 1000 : 1_000_000));
+  }
+  return /^\d+$/.test(s) ? Number(s) : null;
+}
+
 /** 兼容旧持久化形状（string[]）：统一归一为 {id, config} 条目。 */
 function normalizeModelEntries(models: (OpenCodeModelEntry | string)[] | undefined): OpenCodeModelEntry[] {
   return (models ?? []).map((m) => (typeof m === "string" ? { id: m, config: {} } : m));
@@ -149,8 +210,8 @@ function parseModelConfig(cfg: Record<string, unknown>) {
   }
   return {
     name: typeof cfg.name === "string" ? cfg.name : "",
-    context: limit.context != null ? String(limit.context) : "",
-    output: limit.output != null ? String(limit.output) : "",
+    context: limit.context != null ? formatLimit(limit.context) : "",
+    output: limit.output != null ? formatLimit(limit.output) : "",
     input: Array.isArray(mods.input) ? (mods.input as string[]) : [],
     outputMods: Array.isArray(mods.output) ? (mods.output as string[]) : [],
     reasoning: cfg.reasoning === true,
@@ -160,6 +221,146 @@ function parseModelConfig(cfg: Record<string, unknown>) {
     variants: cfg.variants != null ? JSON.stringify(cfg.variants, null, 2) : "",
     extra: Object.keys(extra).length > 0 ? JSON.stringify(extra, null, 2) : "",
   };
+}
+
+/** ai-toolbox 式限制编辑框：聚焦展开档位下拉、点选即填，也可手输 16K / 200000 等任意值。 */
+function LimitCombo({
+  presets,
+  value,
+  onChange,
+  placeholder,
+  ariaLabel,
+}: {
+  presets: string[];
+  value: string;
+  onChange: (v: string) => void;
+  placeholder: string;
+  ariaLabel: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [up, setUp] = useState(false);
+  const [hi, setHi] = useState(-1);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    // 面板是 overflow-y-auto 滚动容器：贴近底部时下拉会被裁掉，空间不足改为向上弹出。
+    const box = rootRef.current?.getBoundingClientRect();
+    if (box) {
+      const scroller = rootRef.current?.closest(".overflow-y-auto");
+      const limit = scroller ? scroller.getBoundingClientRect().bottom : window.innerHeight;
+      setUp(limit - box.bottom < 190);
+    }
+    const onDown = (e: PointerEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", onDown);
+    return () => document.removeEventListener("pointerdown", onDown);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const list = rootRef.current?.querySelector("[data-combo-list]");
+    const el = list?.children[hi] as HTMLElement | undefined;
+    el?.scrollIntoView({ block: "nearest" });
+  }, [hi, open]);
+
+  const query = value.trim().toLowerCase();
+  const options = useMemo(() => {
+    if (!query) return presets;
+    return presets.filter((p) => {
+      if (p.toLowerCase().includes(query)) return true;
+      const n = parseLimit(p);
+      return n != null && String(n).includes(query);
+    });
+  }, [presets, query]);
+
+  const pick = (p: string) => {
+    onChange(p);
+    setOpen(false);
+    setHi(-1);
+  };
+
+  return (
+    <div ref={rootRef} className="relative">
+      <input
+        ref={inputRef}
+        className="text-input font-mono text-[12px] pr-8"
+        placeholder={placeholder}
+        aria-label={ariaLabel}
+        value={value}
+        onFocus={() => setOpen(true)}
+        onChange={(e) => {
+          onChange(e.target.value);
+          setOpen(true);
+          setHi(-1);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "ArrowDown") {
+            e.preventDefault();
+            setHi((i) => Math.min(i + 1, options.length - 1));
+            setOpen(true);
+          } else if (e.key === "ArrowUp" && open) {
+            e.preventDefault();
+            setHi((i) => Math.max(i - 1, -1));
+          } else if (e.key === "Enter") {
+            e.preventDefault();
+            if (open && (hi >= 0 ? options[hi] : options.length === 1)) pick(options[hi >= 0 ? hi : 0]);
+            else setOpen(false);
+          } else if (e.key === "Escape") {
+            setOpen(false);
+            setHi(-1);
+          } else if (e.key === "Tab") {
+            setOpen(false);
+          }
+        }}
+      />
+      <button
+        type="button"
+        className="absolute right-1 top-1/2 -translate-y-1/2 p-1.5 rounded-md text-faint hover:text-ink cursor-pointer bg-transparent border-0"
+        tabIndex={-1}
+        aria-label={open ? "收起档位列表" : "展开档位列表"}
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <CaretDown size={12} className={`transition-transform ${open ? "rotate-180" : ""}`} />
+      </button>
+      {open && (
+        <div
+          data-combo-list
+          className={`absolute z-30 left-0 right-0 rounded-lg border border-edge bg-canvas shadow-lg shadow-black/25 py-1 max-h-[176px] overflow-y-auto ${
+            up ? "bottom-[calc(100%+4px)]" : "top-[calc(100%+4px)]"
+          }`}
+        >
+          {options.length === 0 && (
+            <div className="px-3 py-1.5 text-[11.5px] text-faint">没有匹配的档位，可直接使用输入的值</div>
+          )}
+          {options.map((p, i) => {
+            const n = parseLimit(p);
+            const selected = parseLimit(value) != null && parseLimit(value) === n;
+            return (
+              <button
+                key={p}
+                type="button"
+                className={`w-full flex items-center gap-2 px-3 py-1.5 text-left font-mono text-[12px] cursor-pointer border-0 bg-transparent ${
+                  selected ? "text-accent bg-accent/10" : hi === i ? "bg-raised text-ink" : "text-dim"
+                }`}
+                onMouseEnter={() => setHi(i)}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => pick(p)}
+              >
+                {p}
+                {n != null && (
+                  <span className="ml-auto text-[10.5px] text-faint tracking-normal">{n.toLocaleString("en-US")}</span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
 }
 
 /** ai-toolbox 式模型编辑器：限制 / 模态 / 能力 / 变体 / 额外参数，内联展开在模型行下方。 */
@@ -176,8 +377,9 @@ function ModelEditor({
   const [name, setName] = useState(parsed.name);
   const [context, setContext] = useState(parsed.context);
   const [output, setOutput] = useState(parsed.output);
-  const [input, setInput] = useState<string[]>(parsed.input);
-  const [outputMods, setOutputMods] = useState<string[]>(parsed.outputMods);
+  // 所有模型都支持 text 输入输出：配置未写模态时默认勾上 text，显式配置（如仅 image）则原样展示。
+  const [input, setInput] = useState<string[]>(parsed.input.length > 0 ? parsed.input : ["text"]);
+  const [outputMods, setOutputMods] = useState<string[]>(parsed.outputMods.length > 0 ? parsed.outputMods : ["text"]);
   const [reasoning, setReasoning] = useState(parsed.reasoning);
   const [toolCall, setToolCall] = useState(parsed.toolCall);
   const [temperature, setTemperature] = useState(parsed.temperature);
@@ -205,16 +407,23 @@ function ModelEditor({
     try {
       if (variants.trim()) parsedVariants = JSON.parse(variants);
       if (extra.trim()) parsedExtra = JSON.parse(extra) as Record<string, unknown>;
-      setJsonError(null);
     } catch (e) {
       setJsonError(`JSON 解析失败：${(e as Error).message}`);
       return;
     }
+    const ctx = context.trim() ? parseLimit(context) : null;
+    const outNum = output.trim() ? parseLimit(output) : null;
+    const bad = [context.trim() && ctx == null ? "上下文限制" : "", output.trim() && outNum == null ? "输出限制" : ""].filter(Boolean);
+    if (bad.length > 0) {
+      setJsonError(`${bad.join("、")}需为数字或 16K / 1M 这类简写`);
+      return;
+    }
+    setJsonError(null);
     const cfg: Record<string, unknown> = { ...parsedExtra };
     if (name.trim()) cfg.name = name.trim();
     const limit: Record<string, number> = {};
-    if (context.trim()) limit.context = Number(context.trim());
-    if (output.trim()) limit.output = Number(output.trim());
+    if (ctx != null) limit.context = ctx;
+    if (outNum != null) limit.output = outNum;
     if (Object.keys(limit).length > 0) cfg.limit = limit;
     const mods: Record<string, string[]> = {};
     if (input.length > 0) mods.input = input;
@@ -254,22 +463,22 @@ function ModelEditor({
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="field-label">上下文限制</label>
-            <input
-              className="text-input font-mono text-[12px]"
-              inputMode="numeric"
-              placeholder="200000"
+            <LimitCombo
+              presets={CONTEXT_LIMIT_PRESETS}
               value={context}
-              onChange={(e) => setContext(e.target.value)}
+              onChange={setContext}
+              placeholder="200000 或 200K"
+              ariaLabel="上下文限制"
             />
           </div>
           <div>
             <label className="field-label">输出限制</label>
-            <input
-              className="text-input font-mono text-[12px]"
-              inputMode="numeric"
-              placeholder="16000"
+            <LimitCombo
+              presets={OUTPUT_LIMIT_PRESETS}
               value={output}
-              onChange={(e) => setOutput(e.target.value)}
+              onChange={setOutput}
+              placeholder="16000 或 16K"
+              ariaLabel="输出限制"
             />
           </div>
         </div>
@@ -336,9 +545,24 @@ function ModelEditor({
             <div className="mt-1 text-[11px] text-faint">模型是否具备相应能力</div>
           </div>
           <div>
-            <label className="field-label">模型变体（JSON）</label>
+            <div className="flex items-center gap-1.5 mb-1.5">
+              <label className="field-label !mb-0">模型变体（JSON）</label>
+              <span className="flex-1" />
+              <span className="text-[10.5px] text-faint">一键填入</span>
+              {VARIANT_TEMPLATES.map((t) => (
+                <button
+                  key={t.label}
+                  type="button"
+                  title={t.title}
+                  className="chip border border-edge-strong bg-canvas text-dim cursor-pointer hover:border-accent/40 hover:text-accent transition-colors"
+                  onClick={() => setVariants(t.json)}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
             <textarea
-              className="text-input font-mono text-[12px] h-28 resize-y"
+              className="text-input font-mono text-[12px] h-36 resize-y"
               placeholder={'{\n  "high": { "reasoningEffort": "high" }\n}'}
               value={variants}
               onChange={(e) => setVariants(e.target.value)}
@@ -354,10 +578,9 @@ function ModelEditor({
               onChange={(e) => setExtra(e.target.value)}
             />
           </div>
-          {jsonError && <div className="text-[11.5px] text-danger">{jsonError}</div>}
         </div>
       )}
-
+      {jsonError && <div className="text-[11.5px] text-danger">{jsonError}</div>}
       <div className="flex justify-end gap-2 pt-1">
         <button type="button" className="btn h-8" onClick={onCancel}>
           取消
