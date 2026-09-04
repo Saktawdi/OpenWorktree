@@ -517,7 +517,7 @@ function SessionSection({ ticketNo, locked = false }: { ticketNo: string; locked
   );
 
   return (
-    <div className={expanded ? "flex-1 min-h-0 flex flex-col" : "shrink-0 flex flex-col"}>
+    <>
       <button
         className="w-full shrink-0 flex items-center gap-2 px-4 py-2.5 text-left hover:bg-raised/50 transition-colors cursor-pointer"
         onClick={() => setGateSection("sessions", !expanded)}
@@ -534,12 +534,30 @@ function SessionSection({ ticketNo, locked = false }: { ticketNo: string; locked
           ▾
         </span>
       </button>
-      {expanded && (
-        <div className="flex-1 min-h-0 flex flex-col animate-slide-in">
-          <SessionList ticketNo={ticketNo} locked={locked} />
-        </div>
-      )}
-    </div>
+      {/* 收展过渡：flexGrow 在 0↔1 间与上方信息区反向重分配剩余空间（basis 0，无钳制、
+          单调平滑），列表内容随 AnimatePresence 淡入淡出，替代原先的瞬移 */}
+      <motion.div
+        className="flex min-h-0 flex-col overflow-hidden"
+        style={{ flexBasis: 0 }}
+        animate={{ flexGrow: expanded ? 1 : 0 }}
+        transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
+        aria-hidden={!expanded}
+      >
+        <AnimatePresence initial={false}>
+          {expanded && (
+            <motion.div
+              key="session-list"
+              className="flex flex-1 min-h-0 flex-col"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1, transition: { duration: 0.18 } }}
+              exit={{ opacity: 0, transition: { duration: 0.12 } }}
+            >
+              <SessionList ticketNo={ticketNo} locked={locked} />
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </motion.div>
+    </>
   );
 }
 
@@ -1002,13 +1020,13 @@ export function GatePanel({ ticketNo }: { ticketNo: string }) {
       {/* ─── Scrollable Content ─── */}
       <div className="flex-1 min-h-0 flex flex-col">
         {/* 工单信息 + 门禁流水线：会话列表收起时撑满整个上部（滚动视口用足空白，
-            段头被自然推到底部）；展开时退回自然高度 + 65% 滚动上限，让位给会话列表 */}
-        <div
-          className={
-            sessionsExpanded
-              ? "shrink-0 min-h-0 max-h-[65%] overflow-y-auto"
-              : "flex-1 min-h-0 overflow-y-auto"
-          }
+            段头被自然推到底部）；展开时退回自然高度 + 65% 滚动上限，让位给会话列表。
+            收展用 flexGrow/maxHeight 动画做空间重分配（basis auto、比例分配无钳制），
+            与 SessionSection 的同一过渡曲线同步，消除瞬移 */}
+        <motion.div
+          className="min-h-0 overflow-y-auto"
+          animate={{ flexGrow: sessionsExpanded ? 0 : 1, maxHeight: sessionsExpanded ? "65%" : "100%" }}
+          transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
         >
           {/* Ticket Info */}
           <TicketInfo ticketNo={ticketNo} />
@@ -1029,7 +1047,7 @@ export function GatePanel({ ticketNo }: { ticketNo: string }) {
               outcome={outcome}
             />
           )}
-        </div>
+        </motion.div>
 
         {/* Session List (collapsible, fills the rest when expanded) */}
         <SessionSection ticketNo={ticketNo} locked={stage === "CANCELLED"} />
