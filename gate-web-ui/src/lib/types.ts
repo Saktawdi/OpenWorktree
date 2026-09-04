@@ -516,9 +516,11 @@ export interface AppInfo {
 
 /**
  * up_to_date：远程 == 本地；update_available：远程 > 本地（跳下载页）；
- * ahead_beta：远程 < 本地（本地是先行 beta 构建，徽标展示）；unknown：任一侧无法比对或检查失败。
+ * ahead_beta：远程 < 本地（本地是先行 beta 构建，徽标展示）；
+ * unpublished：远程仓库还没有任何已发行版本（未公开或零 Release/tag）——当前构建就是先行者；
+ * unknown：任一侧无法比对或检查失败（网络不通等，error 带原因）。
  */
-export type UpdateStatus = "up_to_date" | "update_available" | "ahead_beta" | "unknown";
+export type UpdateStatus = "up_to_date" | "update_available" | "ahead_beta" | "unpublished" | "unknown";
 
 export interface UpdateCheck {
   ok: boolean;

@@ -942,7 +942,64 @@ function BetaAheadBadge({ className = "" }: { className?: string }) {
   );
 }
 
-/** 检查更新三态结果：有更新（跳下载页 + 在线更新预留位）/ 已最新 / 先行 beta / 无法比对或失败。 */
+/**
+ * 先行者徽标（远程仓库还没有任何已发行版本时的"终极先行"状态）：近黑底 + 流彩描边
+ * （四段渐变色随 SMIL 循环流动，绿→蓝→紫→粉）+ 斜向流光 + 闪烁星标 + 双色呼吸辉光，
+ * 比先行 beta 徽标更高一档——这个构建本身就是全网唯一版本。
+ */
+function PioneerBadge({ className = "" }: { className?: string }) {
+  return (
+    <svg
+      className={`pioneer-badge ${className}`}
+      width="206"
+      height="30"
+      viewBox="0 0 206 30"
+      role="img"
+      aria-label="先行者：远程仓库还没有任何已发行版本"
+    >
+      <defs>
+        <linearGradient id="owp-border" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stopColor="#35d99e">
+            <animate attributeName="stop-color" values="#35d99e;#4ea1ff;#b16cff;#ff6ec7;#35d99e" dur="7s" repeatCount="indefinite" />
+          </stop>
+          <stop offset="36%" stopColor="#4ea1ff">
+            <animate attributeName="stop-color" values="#4ea1ff;#b16cff;#ff6ec7;#35d99e;#4ea1ff" dur="7s" repeatCount="indefinite" />
+          </stop>
+          <stop offset="70%" stopColor="#b16cff">
+            <animate attributeName="stop-color" values="#b16cff;#ff6ec7;#35d99e;#4ea1ff;#b16cff" dur="7s" repeatCount="indefinite" />
+          </stop>
+          <stop offset="100%" stopColor="#ff6ec7">
+            <animate attributeName="stop-color" values="#ff6ec7;#35d99e;#4ea1ff;#b16cff;#ff6ec7" dur="7s" repeatCount="indefinite" />
+          </stop>
+        </linearGradient>
+        <linearGradient id="owp-shine" x1="0%" y1="0%" x2="100%" y2="0%">
+          <stop offset="0%" stopColor="#ffffff" stopOpacity="0" />
+          <stop offset="50%" stopColor="#ffffff" stopOpacity="0.35" />
+          <stop offset="100%" stopColor="#ffffff" stopOpacity="0" />
+        </linearGradient>
+        <clipPath id="owp-clip">
+          <rect x="1" y="1" width="204" height="28" rx="14" />
+        </clipPath>
+      </defs>
+      <rect x="1" y="1" width="204" height="28" rx="14" fill="#0c1116" stroke="url(#owp-border)" strokeWidth="1.5" />
+      <g clipPath="url(#owp-clip)">
+        <g transform="rotate(18 0 0)">
+          <rect className="pioneer-badge-shine" x="-26" y="-8" width="20" height="46" fill="url(#owp-shine)" />
+        </g>
+      </g>
+      <path
+        className="pioneer-star"
+        transform="translate(21 15)"
+        d="M0 -5 C0.8 -1.5 1.5 -0.8 5 0 C1.5 0.8 0.8 1.5 0 5 C-0.8 1.5 -1.5 0.8 -5 0 C-1.5 -0.8 -0.8 -1.5 0 -5 Z"
+        fill="url(#owp-border)"
+      />
+      <text x="32" y="19.5" fill="#eef0f6" fontSize="12" fontWeight="600" letterSpacing="0.5">先行者 · 未公开</text>
+      <text x="122" y="19.5" fill="url(#owp-border)" fontSize="10" fontWeight="800" letterSpacing="1.2">UNRELEASED</text>
+    </svg>
+  );
+}
+
+/** 检查更新三态结果：有更新（跳下载页 + 在线更新预留位）/ 已最新 / 先行 beta / 先行者 / 无法比对或失败。 */
 function UpdateStatusArea({
   check,
   checking,
@@ -967,6 +1024,11 @@ function UpdateStatusArea({
           <WarningCircle size={14} weight="fill" /> 检查失败：{check.error ?? "未知错误"}
         </span>
         <button className="btn btn-sm" onClick={onRetry}><ArrowClockwise size={12} /> 重试</button>
+        {check.error?.includes("无法连接") && (
+          <div className="w-full text-[11px] text-faint leading-relaxed">
+            通常是本机到 GitHub 的网络不通（被墙或代理未开），稍后再试即可，不影响应用本身的使用。
+          </div>
+        )}
       </div>
     );
   }
@@ -998,6 +1060,21 @@ function UpdateStatusArea({
           </button>
         </div>
         <div className="text-[11px] text-faint leading-relaxed">在线自动更新已预留接口，当前版本请通过下载页获取安装包。</div>
+      </motion.div>
+    );
+  }
+  if (check.status === "unpublished") {
+    return (
+      <motion.div
+        initial={{ opacity: 0, y: 6 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.2 }}
+        className="space-y-2.5"
+      >
+        <PioneerBadge />
+        <div className="text-[12.5px] text-dim leading-relaxed">
+          远程仓库还没有任何已发行版本（仓库未公开，或还没打第一个 Release/tag）——当前构建就是最超前的先行者版本，无可比较、无需更新。
+        </div>
       </motion.div>
     );
   }

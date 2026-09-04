@@ -1,0 +1,10 @@
+[package]
+name = "sidecar-jvm-shim"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+win32job = "2"
+
+[profile.release]
+opt-level = "s"

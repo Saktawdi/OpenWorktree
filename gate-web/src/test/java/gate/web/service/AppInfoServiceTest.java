@@ -143,31 +143,39 @@ class AppInfoServiceTest {
     }
 
     @Test
-    void noReleaseAndNoTagsIsADataError() {
+    void inaccessibleRepoReportsUnpublishedNotError() {
+        // 私有/未公开仓库：releases 与 repo 根探测都是 404——当前构建就是先行者，不是错误
+        FakeTransport transport = FakeTransport.of(
+                FakeResponse.json(404, "{}"),
+                FakeResponse.json(404, "{}"));
+        AppInfoService service = new AppInfoService("0.2.0-alpha.1", transport);
+        Map<String, Object> out = service.checkUpdate(false);
+        assertEquals(Boolean.TRUE, out.get("ok"));
+        assertEquals("unpublished", out.get("status"));
+        assertNull(out.get("latest_version"), "没有远程版本可比");
+    }
+
+    @Test
+    void publicRepoWithoutAnyReleaseOrTagAlsoReportsUnpublished() {
         FakeTransport transport = FakeTransport.of(
                 FakeResponse.json(404, "{}"),
                 FakeResponse.json(200, repoJson()),
                 FakeResponse.json(200, "[]"));
-        AppInfoService service = new AppInfoService("0.1.0-SNAPSHOT", transport);
+        AppInfoService service = new AppInfoService("0.2.0-alpha.1", transport);
         Map<String, Object> out = service.checkUpdate(false);
-        assertEquals(Boolean.FALSE, out.get("ok"));
-        assertEquals("unknown", out.get("status"));
-        assertTrue(String.valueOf(out.get("error")).contains("没有任何发布版本"),
-                String.valueOf(out.get("error")));
+        assertEquals(Boolean.TRUE, out.get("ok"));
+        assertEquals("unpublished", out.get("status"));
     }
 
     @Test
-    void inaccessibleRepoGetsExplicitMessage() {
-        // 私有/不存在的仓库：releases 与 repo 根探测都是 404，报错要说清"仓库不可访问"
-        FakeTransport transport = FakeTransport.of(
-                FakeResponse.json(404, "{}"),
-                FakeResponse.json(404, "{}"));
-        AppInfoService service = new AppInfoService("0.1.0-SNAPSHOT", transport);
+    void networkFailureReturnsOkFalseData() {
+        // 连不上 GitHub 是本机网络问题：提醒即可，与"未公开"（unpublished）严格分开
+        AppInfoService service = new AppInfoService("0.1.0-SNAPSHOT",
+                FakeTransport.failing(new IOException("connection reset")));
         Map<String, Object> out = service.checkUpdate(false);
         assertEquals(Boolean.FALSE, out.get("ok"));
         assertEquals("unknown", out.get("status"));
-        String err = String.valueOf(out.get("error"));
-        assertTrue(err.contains("Saktawdi/OpenWorktree") && err.contains("私有"), err);
+        assertTrue(String.valueOf(out.get("error")).contains("无法连接 GitHub"));
     }
 
     // ── 网络失败降级为数据 ──

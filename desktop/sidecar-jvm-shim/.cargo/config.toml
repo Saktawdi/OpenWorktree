@@ -1,0 +1,5 @@
+# 本仓库目录内的构建配置：rustc 的 MSVC 自动探测在这台机器上会退回 PATH 上的
+# Git Bash /usr/bin/link.exe（GNU link，参数不兼容），显式指到 BuildTools 的真 link.exe。
+# 若 MSVC 版本目录变化（VC/Tools/MSVC/<ver>），同步更新这里的路径。
+[target.x86_64-pc-windows-msvc]
+linker = "C:\\Program Files (x86)\\Microsoft Visual Studio\\2022\\BuildTools\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64\\link.exe"

@@ -32,10 +32,13 @@ import java.util.regex.Pattern;
  * 仓库从未发过正式 Release 时 404，退回 {@code /tags} 按版本号取最大 tag——先行开发期只有
  * tag 没有 Release 也能被检查到。比对规则取数字核心（{@code v0.2.0-beta.1 → 0.2.0}）：
  * 远程大于本地 → 有更新；远程小于本地 → 本地是先行 beta 构建；相等 → 已是最新。
- * GitHub 匿名配额只有 60 次/时/IP，成功结果在内存缓存 {@link #CHECK_TTL}，{@code force} 才强刷。
+ * 仓库本身不可见（私有 404）或连一个 Release/tag 都没有 → {@code unpublished}：当前构建
+ * 就是尚未发行的先行者，不是错误。GitHub 匿名配额只有 60 次/时/IP，成功结果在内存缓存
+ * {@link #CHECK_TTL}，{@code force} 才强刷。
  *
  * <p>网络失败不抛异常：以 {@code ok:false + error} 作为应答数据返回，由前端渲染重试提示——
- * 检查更新是个探测动作，不该把探测失败升级成接口错误。
+ * 检查更新是个探测动作，不该把探测失败升级成接口错误（连不上 GitHub 是本机网络问题，
+ * 与"仓库未公开"是两回事，前者提醒即可，后者是先行者状态）。
  */
 public final class AppInfoService {
 
@@ -153,11 +156,13 @@ public final class AppInfoService {
                         "releases");
             }
             if (code == 404) {
-                // 先探测仓库本身：私有/不存在的仓库对匿名 API 一律 404，报错文案必须分开
+                // 先探测仓库本身：私有/不存在的仓库对匿名 API 一律 404——这不是错误，
+                // 说明当前构建就是尚未公开的先行者版本（状态 unpublished，前端发专属徽标）
                 HttpResponse<String> repoProbe = githubGet(API_BASE);
                 if (repoProbe.statusCode() == 404) {
-                    return error(out, "无法访问远程仓库 " + REPO_OWNER + "/" + REPO_NAME
-                            + "（可能尚未公开、为私有仓库或地址有误）");
+                    out.put("ok", true);
+                    out.put("status", "unpublished");
+                    return out;
                 }
                 if (repoProbe.statusCode() != 200) {
                     return error(out, "GitHub API 返回 HTTP " + repoProbe.statusCode() + "（repo）");
@@ -169,7 +174,10 @@ public final class AppInfoService {
                     if (tag != null) {
                         return verdict(out, tag, tagPageUrl(tag), null, "tags");
                     }
-                    return error(out, "远程仓库还没有任何发布版本（无 Release 也无 tag）");
+                    // 仓库公开但一个 Release/tag 都没有：同样是无从比较的先行者
+                    out.put("ok", true);
+                    out.put("status", "unpublished");
+                    return out;
                 }
                 return error(out, "GitHub API 返回 HTTP " + tags.statusCode() + "（tags）");
             }

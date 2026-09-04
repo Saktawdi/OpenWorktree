@@ -746,3 +746,61 @@ body {
       drop-shadow(0 0 24px color-mix(in srgb, #7c5cff 22%, transparent));
   }
 }
+
+/* ═══════════════════════════════════════════════════════════
+   9. APP SETTINGS · PIONEER BADGE（应用设置「先行者·未公开」徽标）
+   远程仓库还没有任何已发行版本时的终极先行状态：流彩描边（SMIL 四段
+   渐变循环）+ 流光 + 星标闪烁 + 呼吸辉光，比先行 beta 徽标更高一档。
+   reduced-motion 下由全局守门自动停帧。
+   ═══════════════════════════════════════════════════════════ */
+
+.pioneer-badge {
+  animation: pioneer-glow 2.8s ease-in-out infinite;
+}
+
+/* 流光斜条（父 g 持 rotate），比 beta 徽标更宽更快一点 */
+.pioneer-badge-shine {
+  animation: pioneer-sweep 2.4s ease-in-out infinite;
+}
+
+.pioneer-star {
+  animation: pioneer-twinkle 1.4s ease-in-out infinite;
+}
+
+@keyframes pioneer-sweep {
+  0% {
+    transform: translateX(0);
+    opacity: 0;
+  }
+  10% {
+    opacity: 1;
+  }
+  55% {
+    transform: translateX(252px);
+    opacity: 0;
+  }
+  100% {
+    transform: translateX(252px);
+    opacity: 0;
+  }
+}
+
+@keyframes pioneer-glow {
+  0%, 100% {
+    filter: drop-shadow(0 0 8px color-mix(in srgb, #35d99e 30%, transparent))
+      drop-shadow(0 0 18px color-mix(in srgb, #b16cff 18%, transparent));
+  }
+  50% {
+    filter: drop-shadow(0 0 12px color-mix(in srgb, #4ea1ff 48%, transparent))
+      drop-shadow(0 0 26px color-mix(in srgb, #ff6ec7 28%, transparent));
+  }
+}
+
+@keyframes pioneer-twinkle {
+  0%, 100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
