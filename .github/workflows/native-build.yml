@@ -191,6 +191,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+      - name: Install shell deps (tauri-cli)
+        working-directory: desktop
+        run: npm install --no-audit --no-fund
       - uses: dtolnay/rust-toolchain@stable
       - uses: swatinem/rust-cache@v2
         with:
