@@ -70,7 +70,11 @@
       // backend-ready：壳 Rust 侧从后端 stdout/stderr 抓到令牌后发出（src-tauri/lib.rs）
       window.__TAURI__.event.listen("backend-ready", (e) => {
         iframe.src = `http://127.0.0.1:${e.payload.port}/?ow-token=${e.payload.token}`;
-        iframe.addEventListener("load", () => { splash.style.display = "none"; }, { once: true });
+        iframe.addEventListener("load", () => {
+          // #ow-spa 初始 display:none，承载 SPA 后必须显式放开，否则只剩壳的背景色
+          iframe.style.display = "block";
+          splash.style.display = "none";
+        }, { once: true });
       });
 
       window.__TAURI__.event.listen("backend-error", (e) => {
