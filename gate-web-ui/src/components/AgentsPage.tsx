@@ -110,8 +110,10 @@ function RuntimeCards({ onManageProviders }: { onManageProviders: () => void }) 
 
 const NPM_PRESETS = [
   "@ai-sdk/openai-compatible",
+  "@ai-sdk/openai",
   "@ai-sdk/anthropic",
   "@ai-sdk/google",
+  "@ai-sdk/xai",
 ];
 
 /** 保存前的上游探测结果（拉取模型 / 连通测试共用一个展示位）。 */
