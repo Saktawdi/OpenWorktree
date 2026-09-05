@@ -235,18 +235,27 @@ function WindowControls() {
         setView("workbench");
       }
     };
-    // 选中项目 → 壳 → Rust 托盘画绿点。仅值变化时推送，避免高频 store 变更刷爆 postMessage。
+    // 选中项目 → 壳 → Rust 托盘画绿点；主题 → 壳 → 托盘面板换肤。仅值变化时推送，
+    // 避免高频 store 变更刷爆 postMessage。
     let lastProjectId = appStore.getState().activeProjectId;
+    let lastTheme = appStore.getState().theme;
     const pushSelected = () =>
       window.parent.postMessage(
         { __ow: true, action: "tray-selected-project", projectId: lastProjectId },
         "*",
       );
+    const pushTheme = () =>
+      window.parent.postMessage({ __ow: true, action: "tray-theme", theme: lastTheme }, "*");
     pushSelected();
+    pushTheme();
     const unsub = appStore.subscribe((st) => {
       if (st.activeProjectId !== lastProjectId) {
         lastProjectId = st.activeProjectId;
         pushSelected();
+      }
+      if (st.theme !== lastTheme) {
+        lastTheme = st.theme;
+        pushTheme();
       }
     });
     window.addEventListener("message", onMessage);

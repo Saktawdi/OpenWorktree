@@ -4,32 +4,51 @@
   <meta charset="UTF-8" />
   <title>OpenWorktree Tray</title>
   <style>
+    /* 细长菜单风：紧凑行高、去页头大按钮；亮/暗双主题跟随 SPA（快照 theme 字段）。 */
     :root {
+      --radius: 10px;
+      --row-h: 32px;
+      --font: "Geist", "Segoe UI", system-ui, sans-serif;
+    }
+    :root[data-theme="dark"] {
       color-scheme: dark;
-      --bg: #0f141b;
-      --bg-raised: #161d26;
-      --edge: #262f3a;
-      --edge-strong: #303b47;
-      --ink: #e6edf3;
-      --dim: #9aa7b4;
-      --faint: #66727e;
-      --accent: #7c5cff;
+      --bg: rgba(18, 23, 31, .97);
+      --hover: #1d2632;
+      --active: #243040;
+      --edge: #2a3441;
+      --ink: #dfe7ee;
+      --dim: #93a1af;
+      --faint: #6b7887;
       --green: #3fb950;
       --orange: #f0883e;
-      --red: #f85149;
+      --shadow: 0 10px 32px rgba(0, 0, 0, .5);
+    }
+    :root[data-theme="light"] {
+      color-scheme: light;
+      --bg: rgba(252, 252, 253, .97);
+      --hover: #eef1f5;
+      --active: #e4e9ef;
+      --edge: #e3e7ec;
+      --ink: #1f2730;
+      --dim: #5b6672;
+      --faint: #98a2ad;
+      --green: #1a7f37;
+      --orange: #bc4c00;
+      --shadow: 0 10px 32px rgba(30, 40, 55, .22);
     }
     * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; cursor: default; }
     html, body { height: 100%; background: transparent; overflow: hidden;
-      font-family: "Geist", "Segoe UI", system-ui, sans-serif; font-size: 13px; color: var(--ink); }
+      font-family: var(--font); font-size: 12.5px; color: var(--ink); }
     .panel { height: 100%; display: flex; flex-direction: column; background: var(--bg);
-      border: 1px solid var(--edge); border-radius: 12px; overflow: hidden; }
+      border: 1px solid var(--edge); border-radius: var(--radius); box-shadow: var(--shadow);
+      overflow: hidden; backdrop-filter: blur(10px); }
 
-    header { display: flex; align-items: center; gap: 8px; padding: 12px 14px 10px; }
-    header img { width: 18px; height: 18px; }
-    header .name { font-size: 13.5px; font-weight: 600; letter-spacing: .02em; }
+    /* 页头一行：徽标 + 名称 + 状态，压缩到 24px 高 */
+    header { display: flex; align-items: center; gap: 7px; padding: 9px 12px 7px; }
+    header img { width: 14px; height: 14px; }
+    header .name { font-size: 12px; font-weight: 600; letter-spacing: .02em; color: var(--dim); }
     header .chip { margin-left: auto; display: inline-flex; align-items: center; gap: 5px;
-      font-size: 11px; color: var(--dim); background: var(--bg-raised);
-      border: 1px solid var(--edge); border-radius: 999px; padding: 3px 9px; }
+      font-size: 11px; color: var(--faint); }
     .chip .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--faint); }
     .chip.running .dot { background: var(--green); animation: pulse 1.6s ease-in-out infinite; }
     .chip.running { color: var(--green); }
@@ -37,51 +56,58 @@
     .chip.offline { color: var(--orange); }
     @keyframes pulse { 50% { opacity: .35; } }
 
-    .divider { height: 1px; background: var(--edge); margin: 0 14px; }
+    .divider { height: 1px; background: var(--edge); margin: 0 10px; }
 
-    .section { padding: 10px 14px 4px; font-size: 10.5px; font-weight: 600; letter-spacing: .08em;
-      color: var(--faint); }
-
-    .list { flex: 1; overflow-y: auto; padding: 2px 8px 8px; }
+    .list { flex: 1; overflow-y: auto; padding: 5px 6px; }
     .list::-webkit-scrollbar { width: 6px; }
-    .list::-webkit-scrollbar-thumb { background: var(--edge-strong); border-radius: 3px; }
-    .proj { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
-      background: transparent; border: 0; border-radius: 8px; padding: 9px 10px;
+    .list::-webkit-scrollbar-thumb { background: var(--edge); border-radius: 3px; }
+    /* 项目行 = 菜单条目：圆点 + 名称，细长（32px），左侧绿点承载选中态 */
+    .proj { display: flex; align-items: center; gap: 9px; width: 100%; text-align: left;
+      background: transparent; border: 0; border-radius: 7px; padding: 0 10px; height: var(--row-h);
       color: var(--ink); font: inherit; cursor: pointer; }
-    .proj:hover { background: var(--bg-raised); }
-    .proj:active { background: #1c242e; }
-    .proj .dot { width: 8px; height: 8px; border-radius: 50%; flex: none;
-      background: var(--green); box-shadow: 0 0 6px rgba(63, 185, 80, .55); }
-    .proj .dot.off { background: transparent; border: 1.5px solid var(--edge-strong); box-shadow: none; }
+    .proj:hover { background: var(--hover); }
+    .proj:active { background: var(--active); }
+    .proj .dot { width: 7px; height: 7px; border-radius: 50%; flex: none;
+      background: var(--green); box-shadow: 0 0 5px rgba(63, 185, 80, .45); }
+    .proj .dot.off { background: transparent; border: 1.5px solid var(--faint); box-shadow: none; opacity: .55; }
     .proj .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .proj .arrow { color: var(--faint); font-size: 12px; opacity: 0; transition: opacity .12s; }
-    .proj:hover .arrow { opacity: 1; }
     .proj.selected .name { font-weight: 600; }
-    .empty { padding: 18px 10px; text-align: center; color: var(--faint); font-size: 12px; }
+    .empty { padding: 14px 10px; text-align: center; color: var(--faint); font-size: 12px; }
 
-    footer { display: flex; gap: 8px; padding: 10px 12px 12px; border-top: 1px solid var(--edge); }
-    footer button { flex: 1; padding: 7px 0; border-radius: 8px; font: inherit; font-size: 12.5px;
-      cursor: pointer; background: var(--bg-raised); color: var(--dim);
-      border: 1px solid var(--edge); transition: background .12s, color .12s; }
-    footer button:hover { background: #1e2630; color: var(--ink); border-color: var(--edge-strong); }
-    footer button.primary { color: var(--ink); border-color: var(--edge-strong); }
-    footer button.primary:hover { border-color: var(--accent); color: #cabdff; }
-    footer button.danger:hover { color: var(--red); border-color: rgba(248, 81, 73, .45); }
+    /* 底部操作 = 两根细菜单行（不再是按钮组），与项目行同高同风格 */
+    footer { padding: 5px 6px 6px; border-top: 1px solid var(--edge); }
+    .act { display: flex; align-items: center; gap: 9px; width: 100%; text-align: left;
+      background: transparent; border: 0; border-radius: 7px; padding: 0 10px; height: var(--row-h);
+      color: var(--dim); font: inherit; cursor: pointer; }
+    .act:hover { background: var(--hover); color: var(--ink); }
+    .act svg { flex: none; }
+    .act.danger:hover { color: #e5534b; }
+    :root[data-theme="dark"] .act.danger:hover { color: #f85149; }
   </style>
 </head>
 <body>
   <div class="panel">
     <header>
-      <img src="assets/ow-light-badge-64.png" alt="" />
+      <img id="badge" src="assets/ow-light-badge-64.png" alt="" />
       <span class="name">OpenWorktree</span>
       <span class="chip" id="chip"><span class="dot"></span><span id="chipText">…</span></span>
     </header>
     <div class="divider"></div>
-    <div class="section">接入项目</div>
     <div class="list" id="projects"><div class="empty">加载中…</div></div>
+    <div class="divider"></div>
     <footer>
-      <button id="btnMain" class="primary">打开工作台</button>
-      <button id="btnQuit" class="danger">退出</button>
+      <button id="btnMain" class="act">
+        <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6">
+          <rect x="2" y="2" width="12" height="12" rx="2.5"/><path d="M2 6h12"/>
+        </svg>
+        打开工作台
+      </button>
+      <button id="btnQuit" class="act danger">
+        <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6">
+          <path d="M4.5 4.5l7 7M11.5 4.5l-7 7"/>
+        </svg>
+        退出 OpenWorktree
+      </button>
     </footer>
   </div>
 
@@ -94,12 +120,19 @@
 
     const STATUS_TEXT = {
       starting: "启动中",
-      idle: "智能体空闲",
-      running: "Agent 运行中 × {n}",
-      offline: "后端未就绪",
+      idle: "空闲",
+      running: "{n} 运行中",
+      offline: "未就绪",
     };
+    // 徽标随主题换（亮底用深色徽标，暗底用亮色徽标）
+    const BADGE = { dark: "assets/ow-light-badge-64.png", light: "assets/ow-dark-badge-64.png" };
 
     function render(s) {
+      const root = document.documentElement;
+      const theme = s.theme === "light" ? "light" : "dark";
+      root.dataset.theme = theme;
+      document.getElementById("badge").src = BADGE[theme];
+
       const chip = document.getElementById("chip");
       const chipText = document.getElementById("chipText");
       chip.classList.remove("running", "offline");
@@ -130,7 +163,7 @@
             '<button class="proj' + (p.selected ? " selected" : "") + '" data-id="' +
             encodeURIComponent(p.id) + '">' +
             '<span class="dot' + (p.selected ? "" : " off") + '"></span>' +
-            '<span class="name"></span><span class="arrow">→</span></button>'
+            '<span class="name"></span></button>'
           );
         })
         .join("");
@@ -155,9 +188,11 @@
     });
 
     if (MOCK) {
+      const params = new URLSearchParams(location.search);
       render({
-        status: "running",
-        busy: 2,
+        status: params.get("status") ?? "running",
+        busy: Number(params.get("busy") ?? 2),
+        theme: params.get("theme") ?? "dark",
         selected: "p1",
         projects: [
           { id: "p1", name: "BLOG", selected: true },

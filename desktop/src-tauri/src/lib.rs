@@ -34,6 +34,9 @@ struct TrayBackend(Mutex<Option<(u16, String)>>);
 /// 托盘面板里当前选中项目 id（SPA 回传），与轮询到的项目列表比对画绿点。
 struct TraySelectedProject(Mutex<Option<String>>);
 
+/// 托盘面板主题（"dark" / "light"）：SPA 顶栏日夜切换经启动页桥接回传，面板跟随。
+struct TrayTheme(Mutex<String>);
+
 /// 托盘面板的渲染数据快照（轮询线程每 5s 刷新 + 变化即推事件）。
 struct TraySnapshot(Mutex<serde_json::Value>);
 
@@ -210,9 +213,9 @@ fn read_configured_port(data_dir: &Path) -> Option<u16> {
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::Listener;
 
-const PANEL_W: f64 = 300.0;
-const PANEL_ROW_H: f64 = 38.0;
-const PANEL_MAX_ROWS: usize = 8;
+const PANEL_W: f64 = 216.0;
+const PANEL_ROW_H: f64 = 32.0;
+const PANEL_MAX_ROWS: usize = 10;
 
 /// GET /api/agents/busy → { count, running: [...] }。失败（后端未就绪/重启中）返回 None。
 fn fetch_busy(port: u16, token: &str) -> Option<u32> {
@@ -259,7 +262,7 @@ fn http_get(port: u16, token: &str, path: &str) -> Option<String> {
     res.ok()?.into_string().ok()
 }
 
-/// 依据快照估算面板高度（页头 + 状态行 + 项目行 + 分隔 + 操作行 + 内边距）。
+/// 依据快照估算面板高度（细长：紧凑页头 + 项目行 + 操作行）。
 fn panel_height(snap: &serde_json::Value) -> f64 {
     let projects = snap
         .get("projects")
@@ -267,7 +270,7 @@ fn panel_height(snap: &serde_json::Value) -> f64 {
         .map(|a| a.len())
         .unwrap_or(0);
     let rows = projects.clamp(0, PANEL_MAX_ROWS) as f64;
-    56.0 + 34.0 + 10.0 + rows * PANEL_ROW_H + if projects > 0 { 14.0 } else { 0.0 } + 46.0 + 16.0
+    42.0 + 8.0 + rows * PANEL_ROW_H + if projects > 0 { 10.0 } else { 0.0 } + 38.0 + 10.0
 }
 
 /// 在托盘图标上方弹出/隐藏自绘面板（已可见则收起）。
@@ -356,10 +359,17 @@ fn poll_backend_snapshot(handle: &tauri::AppHandle) {
         .lock()
         .expect("tray selected project lock poisoned")
         .clone();
+    let theme = handle
+        .state::<TrayTheme>()
+        .0
+        .lock()
+        .expect("tray theme lock poisoned")
+        .clone();
     let snap = serde_json::json!({
         "status": status,
         "busy": busy,
         "selected": selected,
+        "theme": theme,
         "projects": projects.iter().map(|(id, name)| serde_json::json!({
             "id": id,
             "name": name,
@@ -501,8 +511,9 @@ pub fn run() {
             // 轮询参数（port/token）由下方 boot 协程抓到后写入 TrayBackend。
             handle.manage(TrayBackend(Mutex::new(None)));
             handle.manage(TraySelectedProject(Mutex::new(None)));
+            handle.manage(TrayTheme(Mutex::new("dark".to_string())));
             handle.manage(TraySnapshot(Mutex::new(serde_json::json!({
-                "status": "starting", "busy": null, "selected": null, "projects": [],
+                "status": "starting", "busy": null, "selected": null, "theme": "dark", "projects": [],
             }))));
             setup_tray(&handle);
             spawn_tray_poller(handle.clone());
@@ -545,8 +556,8 @@ pub fn run() {
                 }
             });
 
-            // SPA 选中项目变化 → 启动页桥接转发 → 这里记录，托盘面板画绿点。
-            // payload 是 JSON 字符串（去引号后即 project id）；空串表示无选中。
+            // SPA 选中项目 / 主题变化 → 启动页桥接转发 → 这里记录，托盘面板画绿点/换肤。
+            // 选中 payload 是 JSON 字符串（去引号后即 project id）；空串表示无选中。
             let sel_handle = handle.clone();
             handle.listen("tray-selected-project", move |event| {
                 let id = event.payload().trim_matches('"').to_string();
@@ -557,6 +568,20 @@ pub fn run() {
                     .expect("tray selected project lock poisoned") =
                     if id.is_empty() { None } else { Some(id) };
                 poll_backend_snapshot(&sel_handle);
+            });
+            // 主题 payload 同为 JSON 字符串："dark" / "light"。
+            let theme_handle = handle.clone();
+            handle.listen("tray-theme", move |event| {
+                let theme = event.payload().trim_matches('"').to_string();
+                if theme != "light" && theme != "dark" {
+                    return;
+                }
+                *theme_handle
+                    .state::<TrayTheme>()
+                    .0
+                    .lock()
+                    .expect("tray theme lock poisoned") = theme;
+                poll_backend_snapshot(&theme_handle);
             });
             tauri::async_runtime::spawn(async move {
                 // 数据目录：安装目录 data\（默认）/ 保留数据 / 每用户兜底，见 resolve_data_dir。

@@ -108,10 +108,13 @@
           case "minimize": void w.minimize(); break;
           case "toggle-maximize": void w.toggleMaximize(); break;
           case "close": void w.close(); break;
-          // SPA 侧 activeProjectId 变化（含切换/清空）→ 通知 Rust 托盘画绿点。
+          // SPA 侧 activeProjectId / 主题变化（含切换/清空）→ 通知 Rust 托盘（绿点/换肤）。
           // emit 需经 Tauri API（本页 tauri:// 域可用），SPA 自身拿不到。
           case "tray-selected-project":
             void window.__TAURI__.event.emit("tray-selected-project", d.projectId ?? "");
+            break;
+          case "tray-theme":
+            void window.__TAURI__.event.emit("tray-theme", d.theme ?? "dark");
             break;
           // startDragging 需在鼠标按住期间发起；iframe mousedown → postMessage 的延迟
           // 在一帧内，可正常拖动。若个别环境失效，退路是回到系统标题栏。
