@@ -96,6 +96,11 @@ function FileBlock({
 export function DiffView({ ticketNo }: { ticketNo: string }) {
   const files = useApp((s) => s.diffs[ticketNo] ?? NO_DIFF);
   const eolWarning = useApp((s) => s.diffWarnings[ticketNo] ?? "");
+  // 与 Workbench 分支徽标同源：项目主分支（建单基线）优先，未挂项目的工单退回自身锁定的目标分支
+  const targetRef = useApp((s) => {
+    const t = s.tickets.find((x) => x.ticketNo === ticketNo);
+    return s.projects.find((p) => p.id === t?.projectId)?.targetRef ?? t?.targetRef;
+  });
   const highlight = useApp((s) => s.highlight);
   const totals = diffTotals(files);
   // 文件默认折叠：整仓级 diff（数万行）一次性铺开会把页面压死，点击文件头再渲染内容。
@@ -152,7 +157,7 @@ export function DiffView({ ticketNo }: { ticketNo: string }) {
           <span className="font-mono text-[12px] text-accent">+{totals.additions}</span>
           <span className="font-mono text-[12px] text-danger">−{totals.deletions}</span>
           <span className="flex-1" />
-          <span className="text-[11.5px] text-faint">相对基线 refs/heads/main</span>
+          {targetRef && <span className="text-[11.5px] text-faint">相对基线 {targetRef}</span>}
           <span className="text-[11.5px] text-faint">·</span>
           <button
             className="text-[11.5px] text-dim hover:text-ink cursor-pointer transition-colors"
