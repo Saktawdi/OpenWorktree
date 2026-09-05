@@ -119,26 +119,103 @@ jobs:
 
       # 冒烟：启动到监听 + 登录令牌落盘 + status API + SPA（index 与首个 JS bundle）。
       # SPA 断言不能省：资源嵌入错位时 API 照常、页面全 404（第三轮教训）。
-      - name: Smoke (boot + token + status API + SPA)
-        shell: bash
+      # WS 断言不能省：native 镜像缺 WebSocket 栈反射元数据时升级握手照常 101、
+      # 但应用层帧全哑（终端"永远空白"那次回归，HTTP 冒烟完全测不到）。
+      - name: Smoke (boot + token + status API + SPA + WS)
+        shell: python
         run: |
-          if [ "$RUNNER_OS" = "Windows" ]; then BIN=./ow-windows-x86_64.exe; else BIN=./ow-linux-x86_64; fi
-          mkdir -p smoke-run && cd smoke-run
-          ../$(basename $BIN) > boot.log 2>&1 &
-          for i in $(seq 1 120); do
-            grep -q "listening on" boot.log 2>/dev/null && break
-            sleep 0.25
-          done
-          grep -q "listening on" boot.log || { echo "BOOT FAILED"; tail -30 boot.log; exit 1; }
-          TOKEN=$(sed -n 's/.*GATE_WEB_TOKEN=\([^ ]*\).*/\1/p' boot.log | head -1)
-          AUTH="Authorization: Bearer $TOKEN"
-          curl -sf -H "$AUTH" http://127.0.0.1:18080/api/status > /dev/null
-          INDEX=$(curl -sf -H "$AUTH" http://127.0.0.1:18080/)
-          echo "$INDEX" | grep -q '<div id="root">' || { echo "SPA INDEX BAD"; exit 1; }
-          ASSET=$(echo "$INDEX" | grep -oE '/assets/[^"]+\.js' | head -1)
-          [ -n "$ASSET" ] || { echo "NO ASSET REF"; exit 1; }
-          curl -sf -H "$AUTH" "http://127.0.0.1:18080$ASSET" > /dev/null
-          echo "smoke OK (api + spa + asset)"
+          import base64, json, os, socket, struct, subprocess, time, urllib.request
+
+          if os.name == "nt":
+              bin_name, exe = "./ow-windows-x86_64.exe", "./ow-windows-x86_64.exe"
+          else:
+              bin_name, exe = "./ow-linux-x86_64", "./ow-linux-x86_64"
+          os.makedirs("smoke-run", exist_ok=True)
+          os.chdir("smoke-run")
+          with open("boot.log", "w") as log:
+              proc = subprocess.Popen([exe], stdout=log, stderr=log)
+          token = None
+          for _ in range(240):
+              try:
+                  with open("boot.log", encoding="utf-8", errors="replace") as f:
+                      boot = f.read()
+                  if "listening on" in boot and "GATE_WEB_TOKEN=" in boot:
+                      token = boot.split("GATE_WEB_TOKEN=")[1].split()[0]
+                      break
+              except FileNotFoundError:
+                  pass
+              time.sleep(0.25)
+          assert token, "BOOT FAILED:\n" + boot
+          auth = {"Authorization": f"Bearer {token}"}
+          req = urllib.request.Request("http://127.0.0.1:18080/api/status", headers=auth)
+          urllib.request.urlopen(req, timeout=10).read()
+
+          # --- WebSocket smoke: first frame auth + error reply + close (no shell spawned) ---
+          s = socket.create_connection(("127.0.0.1", 18080), timeout=10)
+          key = base64.b64encode(os.urandom(16)).decode()
+          s.sendall((
+              "GET /ws/terminal HTTP/1.1\r\nHost: 127.0.0.1:18080\r\nUpgrade: websocket\r\n"
+              f"Connection: Upgrade\r\nSec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n\r\n"
+          ).encode())
+          head = b""
+          while b"\r\n\r\n" not in head:
+              head += s.recv(4096)
+          assert b"101" in head.split(b"\r\n")[0], "WS upgrade failed: " + head.decode(errors="replace")
+
+          def ws_send_text(sock, text):
+              p = text.encode(); m = os.urandom(4)
+              mk = bytes(b ^ m[i % 4] for i, b in enumerate(p))
+              n = len(p)
+              hdr = struct.pack("!BB", 0x81, 0x80 | n) if n < 126 else struct.pack("!BBH", 0x81, 0x80 | 126, n)
+              sock.sendall(hdr + m + mk)
+
+          def ws_recv(sock, timeout=15.0):
+              sock.settimeout(timeout)
+              hdr = b""
+              while len(hdr) < 2:
+                  c = sock.recv(2 - len(hdr))
+                  assert c, "WS EOF while reading header"
+                  hdr += c
+              ln = hdr[1] & 0x7F
+              if ln == 126:
+                  ext = b""
+                  while len(ext) < 2:
+                      ext += sock.recv(2 - len(ext))
+                  ln = struct.unpack("!H", ext)[0]
+              data = b""
+              while len(data) < ln:
+                  c = sock.recv(ln - len(data))
+                  assert c, "WS EOF while reading payload"
+                  data += c
+              return hdr[0], data
+
+          # 无效 token 的 start：服务端必须回 error 帧（证明 WS 消息管线在 native 里活着）
+          ws_send_text(s, json.dumps({"op": "start", "token": "smoke-invalid", "project": "x", "dir": "/"}))
+          deadline = time.time() + 30
+          got_error = False
+          while time.time() < deadline:
+              op, data = ws_recv(s, timeout=deadline - time.time())
+              if op == 0x8:
+                  break
+              if op in (0x1, 0x2):
+                  msg = json.loads(data.decode("utf-8", "replace"))
+                  if msg.get("op") == "error":
+                      got_error = True
+                      break
+          s.close()
+          assert got_error, "native WS message pipeline dead (no error frame for invalid token)"
+          print("smoke OK (api + spa-asset-list + ws error frame)")
+
+          # SPA 资源断言（沿用旧检查：index 引用 asset 且可取回）
+          req = urllib.request.Request("http://127.0.0.1:18080/", headers=auth)
+          index = urllib.request.urlopen(req, timeout=10).read().decode("utf-8", "replace")
+          assert '<div id="root">' in index, "SPA INDEX BAD"
+          import re
+          m = re.search(r'/assets/[^"]+\.js', index)
+          assert m, "NO ASSET REF"
+          req = urllib.request.Request("http://127.0.0.1:18080" + m.group(0), headers=auth)
+          urllib.request.urlopen(req, timeout=10).read()
+          proc.terminate() if os.name != "nt" else proc.kill()
 
       - name: Rename Windows binary
         if: runner.os == 'Windows'

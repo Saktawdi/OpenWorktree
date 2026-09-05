@@ -6,6 +6,7 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { loadProjectTerminals, openTerminalSocket, activateTerminalSession, closeAllTerminalSessions, closeTerminalSession, minimizeTerminal, openTerminalSession, restoreTerminal } from "@/features/project";
 import { showToast, useApp } from "@/store";
+import { loadTerminalCloseAllConfirmed, saveTerminalCloseAllConfirmed } from "@/store/prefs";
 import type { Project, TerminalEntry, TerminalSessionMeta } from "@/shared/types";
 import { useBackdropClose } from "@/shared/components/ui";
 
@@ -183,7 +184,17 @@ export function TerminalWorkbench() {
   const view = useApp((s) => s.terminalView);
   const mode = useApp((s) => s.mode);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [closeAllAsk, setCloseAllAsk] = useState(false);
   const backdrop = useBackdropClose(minimizeTerminal);
+
+  // 关闭全部：多标签（>1）且用户未勾过"不再提醒"时先确认；单标签无破坏面，直接关。
+  const requestCloseAll = () => {
+    if (sessions.length > 1 && !loadTerminalCloseAllConfirmed()) {
+      setCloseAllAsk(true);
+      return;
+    }
+    closeAllTerminalSessions();
+  };
 
   if (sessions.length === 0) return null;
   const active = sessions.find((t) => t.id === activeId) ?? sessions[sessions.length - 1];
@@ -257,7 +268,7 @@ export function TerminalWorkbench() {
               className="icon-btn shrink-0"
               title="关闭全部终端并结束进程"
               aria-label="关闭全部终端"
-              onClick={closeAllTerminalSessions}
+              onClick={requestCloseAll}
             >
               <svg width="13" height="13" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
                 <path d="M2 2l8 8M10 2l-8 8" />
@@ -274,10 +285,59 @@ export function TerminalWorkbench() {
         </div>
       </div>
       {pickerOpen && <TerminalPickerDialog onClose={() => setPickerOpen(false)} />}
+      {closeAllAsk && <CloseAllConfirmDialog count={sessions.length} onClose={() => setCloseAllAsk(false)} />}
     </>
   );
 }
 
+/**
+ * 「关闭全部终端」确认弹窗：多标签时一次误点会同时杀掉所有正在跑的命令（dev server、
+ * 长任务），代价足够大，值得一次提醒；勾选"不再提醒"后记住偏好直接关。
+ * 单标签时杀掉的就是当前可见那个，无需提醒，直接走原有路径。
+ */
+function CloseAllConfirmDialog({ count, onClose }: { count: number; onClose: () => void }) {
+  const [neverAsk, setNeverAsk] = useState(false);
+  const backdrop = useBackdropClose(onClose);
+  return (
+    <div className="fixed inset-0 z-[60] grid place-items-center bg-black/55 backdrop-blur-[2px]" {...backdrop}>
+      <div
+        className="w-[400px] max-w-[90vw] card shadow-2xl shadow-black/60 animate-rise overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="px-5 pt-5 pb-1">
+          <div className="text-[13.5px] font-semibold">关闭全部 {count} 个终端？</div>
+          <div className="mt-1.5 text-[12.5px] text-dim leading-relaxed">
+            所有标签页中的进程（含正在运行的命令）都会被结束，此操作不可撤销。
+          </div>
+        </div>
+        <label className="flex items-center gap-2 px-5 py-2.5 text-[12px] text-dim cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={neverAsk}
+            onChange={(e) => setNeverAsk(e.target.checked)}
+            className="accent-[var(--accent,#35d99e)] cursor-pointer"
+          />
+          不再提醒（下次直接关闭全部终端）
+        </label>
+        <div className="flex justify-end gap-2 px-5 py-3.5 border-t border-edge">
+          <button className="btn" onClick={onClose}>
+            取消
+          </button>
+          <button
+            className="btn btn-danger-ghost"
+            onClick={() => {
+              if (neverAsk) saveTerminalCloseAllConfirmed(true);
+              closeAllTerminalSessions();
+              onClose();
+            }}
+          >
+            全部关闭
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 /** 单个终端会话：一条 WebSocket + 一个 xterm 实例，随会话存在而常驻。 */
 function TerminalSessionHost({ meta, visible }: { meta: TerminalSessionMeta; visible: boolean }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
@@ -322,6 +382,7 @@ function TerminalSessionHost({ meta, visible }: { meta: TerminalSessionMeta; vis
     const histIdxRef = { current: -1 };
     let disposed = false;
     let ws: WebSocket | null = null;
+    let startTimer: number | null = null;
 
     const replaceTyped = (next: string) => {
       term.write(`\x1b[${lineRef.current.length}D\x1b[K${next}`);
@@ -380,6 +441,10 @@ function TerminalSessionHost({ meta, visible }: { meta: TerminalSessionMeta; vis
 
     ws = openTerminalSocket(meta.projectId, meta.dir, {
       onStarted: () => {
+        if (startTimer) {
+          window.clearTimeout(startTimer);
+          startTimer = null;
+        }
         term.writeln(`${DIM}-- 终端已连接：${meta.dir}（Ctrl+C 中断当前命令）--${RESET}`);
       },
       onData: (text) => term.write(text),
@@ -390,6 +455,13 @@ function TerminalSessionHost({ meta, visible }: { meta: TerminalSessionMeta; vis
         term.writeln(`${RED}-- 错误：${message} --${RESET}`);
       },
     });
+    // started 帧长时间未到：升级握手成功但服务端应用层帧管线不通（历史回归为 native 镜像
+    // 缺 WS 反射元数据，帧全哑）。与其永远空白，8s 后写入诊断提示指引用户重启后端。
+    startTimer = window.setTimeout(() => {
+      term.writeln(
+        `${RED}-- 终端迟迟未响应（连接已建立但服务端无回帧）。请尝试重启应用；若反复出现请反馈 --${RESET}`,
+      );
+    }, 8000);
     ws.onclose = () => {
       if (!disposed) {
         term.writeln(`${DIM}-- 连接已断开 --${RESET}`);
@@ -408,6 +480,10 @@ function TerminalSessionHost({ meta, visible }: { meta: TerminalSessionMeta; vis
 
     return () => {
       disposed = true;
+      if (startTimer) {
+        window.clearTimeout(startTimer);
+        startTimer = null;
+      }
       window.removeEventListener("resize", onResize);
       try {
         ws?.close();

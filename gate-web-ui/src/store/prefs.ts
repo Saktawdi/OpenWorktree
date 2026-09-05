@@ -13,6 +13,7 @@ const KANBAN_STAGES_KEY = "gate-kanban-stages";
 const GATE_PANEL_KEY = "gate-panel-collapsed";
 const GATE_SECTIONS_KEY = "gate-sections";
 const COMPOSER_DRAFTS_KEY = "gate-composer-drafts";
+const TERMINAL_CLOSE_ALL_KEY = "gate-terminal-close-all-confirm";
 
 export const DEFAULT_GATE_SECTIONS: GateSections = { info: true, pipeline: true, sessions: true };
 
@@ -152,5 +153,22 @@ export function saveComposerDrafts(drafts: Record<string, string>) {
     localStorage.setItem(COMPOSER_DRAFTS_KEY, JSON.stringify(drafts));
   } catch {
     /* 配额满或隐私模式等存储不可用场景：草稿降级为仅本窗口内保留 */
+  }
+}
+
+/** 「关闭全部终端」确认弹窗是否已选"不再提醒"；缺省为仍需提醒。 */
+export function loadTerminalCloseAllConfirmed(): boolean {
+  try {
+    return typeof window !== "undefined" && localStorage.getItem(TERMINAL_CLOSE_ALL_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+export function saveTerminalCloseAllConfirmed(neverAsk: boolean) {
+  try {
+    localStorage.setItem(TERMINAL_CLOSE_ALL_KEY, neverAsk ? "1" : "0");
+  } catch {
+    /* ignore */
   }
 }

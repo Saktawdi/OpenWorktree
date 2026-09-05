@@ -34,6 +34,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.slf4j.Logger;
@@ -68,6 +70,17 @@ public final class TerminalController implements WebController {
 
     private static final ConcurrentHashMap<WsContext, TerminalSession> SESSIONS = new ConcurrentHashMap<>();
     private static final AtomicInteger LIVE_SESSIONS = new AtomicInteger();
+
+    /**
+     * 错误帧后延迟关闭用。sendError 后立即 close 会与未 flush 的 error 帧竞态——客户端只看到
+     * 1006 静默断开、拿不到任何提示（前端表现为"永远空白"），延迟一小段保证错误帧先落地。
+     */
+    private static final ScheduledExecutorService CLOSE_SCHEDULER =
+            Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread t = new Thread(r, "terminal-close-scheduler");
+                t.setDaemon(true);
+                return t;
+            });
 
     private final ProjectRepository projects;
     private final TicketRepository tickets;
@@ -157,27 +170,23 @@ public final class TerminalController implements WebController {
         String token = String.valueOf(msg.getOrDefault("token", ""));
         CredentialRepository.Domain domain = credentials.validate(token);
         if (!domain.isValid() || !domain.isHuman()) {
-            sendError(ctx, "invalid or non-HUMAN token (ADR-10)");
-            ctx.session.close();
+            sendErrorThenClose(ctx, "invalid or non-HUMAN token (ADR-10)");
             return;
         }
         Project p;
         try {
             p = requireProject(String.valueOf(msg.getOrDefault("project", "")));
         } catch (GateException e) {
-            sendError(ctx, e.getMessage());
-            ctx.session.close();
+            sendErrorThenClose(ctx, e.getMessage());
             return;
         }
         Path dir = Path.of(String.valueOf(msg.getOrDefault("dir", ""))).toAbsolutePath().normalize();
         if (!Files.isDirectory(dir) || !isProjectDirectory(p, dir)) {
-            sendError(ctx, "directory is not part of this project: " + dir);
-            ctx.session.close();
+            sendErrorThenClose(ctx, "directory is not part of this project: " + dir);
             return;
         }
         if (LIVE_SESSIONS.get() >= MAX_SESSIONS) {
-            sendError(ctx, "too many live terminals (" + MAX_SESSIONS + " max)");
-            ctx.session.close();
+            sendErrorThenClose(ctx, "too many live terminals (" + MAX_SESSIONS + " max)");
             return;
         }
         try {
@@ -188,8 +197,7 @@ public final class TerminalController implements WebController {
             ctx.send(Json.write(Map.of("op", "started", "dir", dir.toString())));
         } catch (IOException e) {
             LOG.warn("terminal spawn failed for {}: {}", dir, e.getMessage());
-            sendError(ctx, "cannot spawn shell: " + e.getMessage());
-            ctx.session.close();
+            sendErrorThenClose(ctx, "cannot spawn shell: " + e.getMessage());
         }
     }
 
@@ -213,6 +221,18 @@ public final class TerminalController implements WebController {
         } catch (Exception e) {
             LOG.debug("terminal send failed: {}", e.getMessage());
         }
+    }
+
+    /** sendError 后延迟一小段再 close：保证错误帧先送达客户端（立即 close 会把它挤掉）。 */
+    private void sendErrorThenClose(WsContext ctx, String message) {
+        sendError(ctx, message);
+        CLOSE_SCHEDULER.schedule(() -> {
+            try {
+                ctx.session.close();
+            } catch (Exception e) {
+                LOG.debug("terminal close failed: {}", e.getMessage());
+            }
+        }, 500, TimeUnit.MILLISECONDS);
     }
 
     private static void sendFrame(WsContext ctx, Map<String, Object> payload) {
