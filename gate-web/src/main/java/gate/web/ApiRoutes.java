@@ -4,6 +4,7 @@ import gate.web.controller.AppInfoController;
 import gate.web.controller.AuthController;
 import gate.web.controller.MetricsController;
 import gate.web.controller.OpenCodeProviderController;
+import gate.web.controller.PluginController;
 import gate.web.controller.PresubmitController;
 import gate.web.controller.ProjectController;
 import gate.web.controller.ProviderController;
@@ -15,6 +16,8 @@ import gate.web.controller.TerminalController;
 import gate.web.controller.TaskController;
 import gate.web.controller.TicketController;
 import gate.web.controller.WebController;
+import gate.web.plugin.PluginCatalog;
+import gate.web.plugin.PluginDataStore;
 import gate.web.service.SessionModelCatalog;
 import gate.web.service.OpenCodeConfigService;
 import gate.web.service.OpenCodeModelsApi;
@@ -50,6 +53,10 @@ public final class ApiRoutes implements WebController {
                         c.ticketRepository(), c.clock(), new SessionModelCatalog(), c.credentials(),
                         c.providerRepository()),
                 new SettingsController(c.gateToml()),
+                // 插件系统：manifest 扫描/启停/资产下发/KV 数据（目录都在 gateHome 下）
+                new PluginController(
+                        new PluginCatalog(c.config().gateHome().resolve("plugins")),
+                        new PluginDataStore(c.config().gateHome().resolve("plugins-data"))),
                 new AppInfoController()
         );
     }

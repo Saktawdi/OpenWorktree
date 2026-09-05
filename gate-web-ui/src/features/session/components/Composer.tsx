@@ -13,13 +13,14 @@ import {
   ShieldCheck,
   Sparkle,
   Stop,
-  TerminalWindow,
+  Ticket,
   Wrench,
   X,
 } from "@phosphor-icons/react";
 import type { Icon } from "@phosphor-icons/react";
 import { actions } from "@/app/actions";
 import { appStore, NO_CHAT, showToast, useApp } from "@/store";
+import { ChatActionChips } from "@/app/plugins/components/ChatActionChips";
 import {
   clearComposerDraft,
   clearDraftModelSel,
@@ -28,9 +29,11 @@ import {
 } from "@/features/session";
 import { setAgentId } from "@/features/agent";
 import { formatTokens, variantLabel } from "@/shared/format";
-import { extractAbsolutePath,
+import {
+  extractAbsolutePath,
   isAttachableImage,
-  toPendingAttachment, } from "@/shared/attachments";
+  toPendingAttachment,
+} from "@/shared/attachments";
 import type { CatalogProvider, PendingAttachment, SessionModelSel } from "@/shared/types";
 
 function AgentPicker({ ticketNo }: { ticketNo: string }) {
@@ -665,12 +668,23 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
     });
   };
 
+  /**
+   * 原生快捷 chip（Composer 域一等能力，不进插件注册表）：插件全禁用/宿主初始化
+   * 失败时依然完整可用；插件的追加 chip 由 ChatActionChips 渲染在本段之后。
+   */
   const quick = [
     diffs > 0 && !terminal
       ? { label: "预提审", prompt: "__presubmit__", Icon: LockKey }
       : null,
     diffs > 0 ? { label: "解释当前变更", prompt: "请解释当前工作区的全部改动", Icon: Eye } : null,
-    { label: "运行本地单测", prompt: "运行本地单元测试并汇总结果", Icon: TerminalWindow },
+    // 派单：指导 Agent 现在不要建单，等用户下一条消息给出需求描述后，
+    // 再走 MCP（服务器注册名 gate）的 ticket_create 建单，并据此补全标题与描述
+    {
+      label: "派单",
+      prompt:
+        "现在不要创建工单。请等我下一条消息描述完需求后，再使用 MCP（服务器注册名 gate）的 ticket_create 工具创建工单，届时用该需求补全工单标题与描述。",
+      Icon: Ticket,
+    },
     // 重启过的活跃工单才有「重启理由」注入上下文（AgentContextPrompt），语录才有意义
     restartCount > 0
       ? { label: "完成此工单", prompt: "完成此工单，处理下重启理由", Icon: CheckCircle }
@@ -704,6 +718,8 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
                 ))}
               </div>
             )}
+            {/* 插件追加 chip 段：无插件贡献时整体不渲染 */}
+            <ChatActionChips ticketNo={ticketNo} busy={busy} insertText={insertAtCursor} />
             <span className="flex-1" />
             {usage && (
               <span

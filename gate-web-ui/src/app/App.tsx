@@ -9,6 +9,7 @@ import { RepoViewPage } from "@/features/project/components/RepoView";
 import { TerminalWorkbench } from "@/features/project/components/ProjectTerminal";
 import { AgentsPage } from "@/features/agent/components/AgentsPage";
 import { SettingsPage } from "@/features/settings/components/SettingsPage";
+import { PluginPageHost } from "@/app/plugins/components/PluginPageHost";
 import { ConnectionDialog } from "@/app/components/ConnectionDialog";
 import { StageChangeConfirmDialog } from "@/features/ticket/components/StageChangeConfirmDialog";
 import { Toast } from "@/shared/components/Toast";
@@ -42,6 +43,7 @@ export default function App() {
       {view === "repo" && <RepoViewPage />}
       {view === "agents" && <AgentsPage />}
       {view === "settings" && <SettingsPage />}
+      {view === "plugin-page" && <PluginPageHost />}
       <ConnectionDialog />
       <StageChangeConfirmDialog />
       <TerminalWorkbench />

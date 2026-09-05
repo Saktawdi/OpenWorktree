@@ -26,6 +26,7 @@
     "zustand": "^5.0.3"
   },
   "devDependencies": {
+    "@gate/plugin-sdk": "file:../packages/plugin-sdk",
     "@tailwindcss/vite": "^4.1.4",
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",

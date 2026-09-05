@@ -1,12 +1,13 @@
 import { motion } from "motion/react";
-import { PlugsConnected, Robot, Rocket, Wrench } from "@phosphor-icons/react";
+import { PlugsConnected, PuzzlePiece, Robot, Rocket, Wrench } from "@phosphor-icons/react";
 
-export type SettingsTab = "toml" | "mcp" | "llm" | "app";
+export type SettingsTab = "toml" | "mcp" | "llm" | "app" | "plugins";
 
 const NAV_ITEMS = [
   { key: "toml", label: "系统设置", desc: "运行键值与默认值", Icon: Wrench },
   { key: "mcp", label: "MCP 状态", desc: "服务与工具清单", Icon: PlugsConnected },
   { key: "llm", label: "LLM 设置", desc: "Provider 与模型", Icon: Robot },
+  { key: "plugins", label: "插件", desc: "本地插件与扩展", Icon: PuzzlePiece },
   { key: "app", label: "应用设置", desc: "版本 · 更新 · 仓库", Icon: Rocket },
 ] as const;
 

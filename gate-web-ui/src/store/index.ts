@@ -14,6 +14,8 @@ export {
   setView,
   openRepoView,
   closeRepoView,
+  openPluginPage,
+  closePluginPage,
   setCenterTab,
   openConnect,
   closeConnect,

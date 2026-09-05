@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "motion/react";
 import {
   CaretDown,
@@ -17,7 +17,11 @@ import {
   Moon,
   X,
 } from "@phosphor-icons/react";
-import { appStore, openConnect, setView, switchProject, toggleTheme, useApp } from "@/store";
+import { appStore, openConnect, openPluginPage, setView, switchProject, toggleTheme, useApp } from "@/store";
+import { usePlugins } from "@/app/plugins/state";
+import { PAGE_ORDER_DEFAULT, SLOT_NAV_PAGES } from "@/app/plugins/slots";
+import { pluginIcon } from "@/app/plugins/icons";
+import type { PageContribution } from "@/app/plugins/types";
 import { RunMonitor } from "@/app/components/RunMonitor";
 import { TerminalMinimizedChip } from "@/features/project/components/ProjectTerminal";
 
@@ -73,6 +77,17 @@ const VIEWS = [
 
 function ViewSwitch() {
   const view = useApp((s) => s.view);
+  const pluginPageId = useApp((s) => s.pluginPageId);
+  const contributions = usePlugins((s) => s.contributions);
+  /** 插件整页入口：原生项之后按 order 升序追加（nav.pages 注册表，零改宿主即增减）。 */
+  const pluginPages = useMemo(
+    () =>
+      contributions
+        .filter((c) => c.slot === SLOT_NAV_PAGES)
+        .map((c) => c.contribution as PageContribution)
+        .sort((a, b) => (a.order ?? PAGE_ORDER_DEFAULT) - (b.order ?? PAGE_ORDER_DEFAULT)),
+    [contributions],
+  );
   return (
     <div className="flex items-center gap-0.5 bg-sunken rounded-lg p-0.5 border border-edge">
       {VIEWS.map(({ key, label, Icon }) => (
@@ -96,6 +111,31 @@ function ViewSwitch() {
           </span>
         </button>
       ))}
+      {pluginPages.map((p) => {
+        const active = view === "plugin-page" && pluginPageId === p.id;
+        const QIcon = pluginIcon(p.icon);
+        return (
+          <button
+            key={p.id}
+            onClick={() => openPluginPage(p.id)}
+            className={`relative inline-flex items-center gap-1.5 h-7 px-3 rounded-md text-[12.5px] font-medium cursor-pointer ${
+              active ? "text-ink" : "text-dim hover:text-ink"
+            }`}
+          >
+            {active && (
+              <motion.div
+                layoutId="view-switch-active"
+                className="absolute inset-0 bg-raised rounded-md border border-edge shadow-sm"
+                transition={{ type: "spring", stiffness: 500, damping: 35 }}
+              />
+            )}
+            <span className="relative z-10 inline-flex items-center gap-1.5">
+              <QIcon size={14} weight={active ? "fill" : "regular"} />
+              {p.title}
+            </span>
+          </button>
+        );
+      })}
     </div>
   );
 }

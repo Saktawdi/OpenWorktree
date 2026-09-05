@@ -1,0 +1,10 @@
+{
+  "id": "quick-quotes",
+  "name": "快捷语录",
+  "version": "0.1.0",
+  "apiVersion": "1",
+  "entry": "dist/index.js",
+  "css": "dist/style.css",
+  "description": "对话输入区上方的自定义快捷语录 chips（宿主原生 chip 的补充）：可增删改查、拖拽排序、按工单状态显隐，支持发送消息 / 触发功能 / 调用 MCP 工具三类动作",
+  "permissions": ["kv", "net"]
+}
