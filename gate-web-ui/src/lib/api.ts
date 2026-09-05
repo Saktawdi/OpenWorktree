@@ -20,14 +20,16 @@ import {
   refreshTicketBusy,
   resolvePermission,
   resolveQuestion,
+  clearDraftModelSel,
+  removeChatItem,
   setBusy,
   setCenterTab,
   setContextLimit,
   setContextTokens,
+  setCreatingSession,
   setDiffs,
   setFindings,
   setGateBusy,
-  setAgentId,
   setOutcome,
   setReviewError,
   setSessionBusy,
@@ -221,13 +223,6 @@ export async function selectTicketLive(no: string) {
   // 打开工单即视为看见"会话已结束"提醒
   clearSessionEnded(no);
   appStore.setState({ selectedNo: no, centerTab: "chat", highlight: null });
-  // 工单绑定的 agent 是新会话的默认协作对象：进工单时同步全局选择，
-  // 否则选择器停留在全局默认（如 claude），首条消息会建到错误的 agent 上。
-  const st0 = appStore.getState();
-  const bound = st0.tickets.find((t) => t.ticketNo === no)?.agentConfigId;
-  if (bound && st0.agentId !== bound && st0.agents.some((a) => a.id === bound)) {
-    setAgentId(bound);
-  }
   const loadDiff = () => loadTicketDiff(no);
   const loadSessions = async () => {
     try {
@@ -415,8 +410,36 @@ function mapSession(no: string, s: RawSession): ChatSession {
   };
 }
 
-export async function loadTicketSessions(no: string) {
-  const data = await api<{ sessions: RawSession[] }>(`/api/tickets/${no}/sessions`);
+/**
+ * 草稿态的 opencode 模型目录：直接从 opencode 配置文件（GET /api/opencode/providers）
+ * 构建，与 serve 目录同源 —— 无需先建会话即可浏览/选择模型与推理档位。
+ * claude 会话不走这里（ModelPicker 用内置预设 + 自定义输入，本就不依赖目录）。
+ */
+export function draftCatalogFromOc(ocProviders: import("./types").OpenCodeProvider[]): CatalogProvider[] {
+  return ocProviders.map((p) => ({
+    id: p.key,
+    name: p.name || p.key,
+    models: p.models.map((m) => {
+      const raw = (m.config ?? {}).variants;
+      const variants =
+        raw && typeof raw === "object" && !Array.isArray(raw)
+          ? Object.keys(raw).sort((a, b) => a.localeCompare(b))
+          : Array.isArray(raw)
+            ? raw.map(String)
+            : [];
+      return {
+        id: m.id,
+        name: m.id,
+        variants,
+        imageInput: false,
+        contextLimit: null,
+        outputLimit: null,
+      };
+    }),
+  }));
+}
+
+export async function loadTicketSessions(no: string) {  const data = await api<{ sessions: RawSession[] }>(`/api/tickets/${no}/sessions`);
   const list = (data.sessions ?? []).map((s) => mapSession(no, s));
   let latest: ChatSession | undefined;
   for (const sess of list) {
@@ -441,32 +464,6 @@ export async function refreshTicketSessionsMeta(no: string) {
     appStore.setState((st) => ({ sessions: { ...st.sessions, [no]: list } }));
   } catch {
     /* 静默失败：下个常规动作还有一次刷新机会 */
-  }
-}
-
-export async function createSessionLive(no: string) {
-  try {
-    // Demo data can leave a stale agent id in the store; fall back to the first
-    // backend agent config so session creation cannot fail on it.
-    const st = appStore.getState();
-    const agentId =
-      st.agents.some((a) => a.id === st.agentId) ? st.agentId : (st.agents[0]?.id ?? "");
-    const created = await api<{ id: string }>(`/api/tickets/${no}/sessions`, {
-      method: "POST",
-      body: JSON.stringify({ agent_config_id: agentId, initial_prompt: "" }),
-    });
-    // 不再强制上以时间命名的占位标题：opencode 会在首个真实用户回合后由 title agent
-    // 异步生成正式标题（适配器监听 session.updated 写库），在标题就位前列表用本地时间
-    // 标签回退展示（见 mapSession）。
-    await loadTicketSessions(no);
-    appStore.setState((st) => ({ activeSessionId: { ...st.activeSessionId, [no]: created.id } }));
-    await loadSessionMessages(no, created.id).catch(() => {});
-    // 新建会话为 ACTIVE，预拉未决权限/提问（一般为空，保持路径一致）。
-    void loadSessionPermissions(no, created.id);
-    void loadSessionQuestions(no, created.id);
-    void loadSessionCatalog(no, created.id);
-  } catch (e) {
-    showToast(`新建会话失败：${(e as Error).message}`);
   }
 }
 
@@ -788,60 +785,78 @@ function restoreTodosFromHistory(no: string, messages: RawMessage[]) {
   setTodos(no, todos ?? []);
 }
 
-export async function liveSendPrompt(no: string, userText: string, attachments: PendingAttachment[] = []) {
+export async function liveSendPrompt(
+  no: string,
+  userText: string,
+  attachments: PendingAttachment[] = [],
+): Promise<boolean> {
   const st = appStore.getState();
   // 目标永远是「当前查看的会话」（activeSessionId），不再有跨工单/跨会话的全局游标；
   // 同一会话生成中不允许并发追加，其他会话不受影响。
   // userText 已含 [图片 #n] 引用（Composer 粘贴时插入），原样推送与发送。
   const sessionId = st.activeSessionId[no];
-  if (sessionId && st.sessionBusy[sessionId]) return;
+  if (sessionId && st.sessionBusy[sessionId]) return true;
   // 工单重新进入运行状态：上一次的"会话已结束"提醒随之失效
   clearSessionEnded(no);
-  pushUserMessage(no, userText);
+  const userItem = pushUserMessage(no, userText);
   setBusy(no, true);
   let sid: string | null = sessionId || null;
+  // 草稿首条消息：建会话（空首句，仅启动 serve）→ 写入草稿的模型/推理覆盖 →
+  // 再发消息（首回合即用所选模型）。期间右侧面板显示「正在创建会话…」遮罩。
+  setCreatingSession(no, !sid);
+  let draftFailed = false;
   try {
     if (!sid) {
-      // 会话列表为空 → 首条消息自动创建会话并把首句作为 initial_prompt 直接开跑。
       const agentId = st.agents.some((a) => a.id === st.agentId) ? st.agentId : (st.agents[0]?.id ?? "");
       const created = await api<{ id: string }>(`/api/tickets/${no}/sessions`, {
         method: "POST",
-        body: JSON.stringify({ agent_config_id: agentId, initial_prompt: userText }),
+        body: JSON.stringify({ agent_config_id: agentId, initial_prompt: "" }),
       });
       sid = created.id;
-      // 立即把新会话同步进侧栏列表并固定 active 指针，否则整个流式回合期间
-      // 会话面板仍显示「暂无活跃会话」（回合结束的 done 刷新太晚）。
       await loadTicketSessions(no).catch(() => {});
       appStore.setState((s2) => ({ activeSessionId: { ...s2.activeSessionId, [no]: sid! } }));
-      // 模型目录按会话加载：让模型/推理强度选择器在首个回合就能用。
+      // 草稿里选过的模型/推理强度：建会话后立即持久化为覆盖（首回合即生效）。
+      const draftSel = appStore.getState().draftModelSel[no];
+      if (draftSel?.providerId && draftSel.modelId) {
+        await switchSessionModelLive(sid, draftSel);
+      }
+      clearDraftModelSel(no);
+      // 真目录按会话加载，草稿目录（opencode 配置）完成使命。
       void loadSessionCatalog(no, sid);
-    } else {
-      const sel = st.sessionModelSel[sid];
-      await api(`/api/sessions/${sid}/messages`, {
-        method: "POST",
-        body: JSON.stringify({
-          message: userText,
-          attachments: attachments.map((a) => ({
-            filename: a.filename,
-            mime: a.mime,
-            data_base64: a.dataBase64,
-          })),
-          provider_id: sel?.providerId ?? undefined,
-          model_id: sel?.modelId ?? undefined,
-          variant: sel?.variant ?? undefined,
-        }),
-      });
     }
+    const sel = appStore.getState().sessionModelSel[sid];
+    await api(`/api/sessions/${sid}/messages`, {
+      method: "POST",
+      body: JSON.stringify({
+        message: userText,
+        attachments: attachments.map((a) => ({
+          filename: a.filename,
+          mime: a.mime,
+          data_base64: a.dataBase64,
+        })),
+        provider_id: sel?.providerId ?? undefined,
+        model_id: sel?.modelId ?? undefined,
+        variant: sel?.variant ?? undefined,
+      }),
+    });
     setSessionBusy(sid, true);
     await consumeSessionStream(no, sid);
   } catch (e) {
     pushSystemMessage(no, `会话失败：${(e as Error).message}`, "warn");
-    // 请求都没发出去/流建立失败：没有 done/error 事件可依赖，这里直接打点
-    markSessionEnded(no, "failed");
+    if (!sid) {
+      // 连会话都没建成（如端口占用）：回滚用户消息恢复草稿——选择全保留，
+      // 输入框原文由 Composer 还原，用户直接重发即可，不打「已中断」标记。
+      removeChatItem(no, userItem.id);
+      draftFailed = true;
+    } else {
+      markSessionEnded(no, "failed");
+    }
   } finally {
+    setCreatingSession(no, false);
     if (sid) setSessionBusy(sid, false);
     refreshTicketBusy(no);
   }
+  return !draftFailed;
 }
 
 /* ─── 会话内实时切换模型 / 推理强度 ─── */

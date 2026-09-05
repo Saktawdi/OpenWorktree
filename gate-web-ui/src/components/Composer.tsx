@@ -19,7 +19,8 @@ import {
 } from "@phosphor-icons/react";
 import type { Icon } from "@phosphor-icons/react";
 import { actions } from "../lib/actions";
-import { appStore, NO_CHAT, setAgentId, showToast, useApp } from "../lib/store";
+import { appStore, clearDraftModelSel, NO_CHAT, setAgentId, showToast, useApp } from "../lib/store";
+import { draftCatalogFromOc } from "../lib/api";
 import { formatTokens, variantLabel } from "../lib/format";
 import {
   extractAbsolutePath,
@@ -31,8 +32,8 @@ import type { CatalogProvider, PendingAttachment, SessionModelSel } from "../lib
 function AgentPicker({ ticketNo }: { ticketNo: string }) {
   const agents = useApp((s) => s.agents);
   const agentId = useApp((s) => s.agentId);
-  // 会话一旦创建，agent 已随会话固化（哪怕还没发过消息），选择器同样锁定，
-  // 否则切换只改全局默认、对现有会话不生效，表现为「点了没反应」。
+  // agent 是会话级 1:1 且创建时固化：会话一激活（哪怕还没发过消息）选择器即锁定，
+  // 切换只改「新会话默认」、对本会话无效；「新建会话」进入草稿态后解锁重选。
   const hasSession = useApp((s) => (s.activeSessionId[ticketNo] ?? "") !== "");
   const locked =
     useApp((s) => (s.chats[ticketNo] ?? NO_CHAT).some((m) => m.kind === "user")) ||
@@ -80,7 +81,7 @@ function AgentPicker({ ticketNo }: { ticketNo: string }) {
           title={locked ? "会话已创建 · 协作 Agent 已锁定，新建会话可重新选择" : "选择协作的 Agent"}
         >
           <Sparkle size={12} className={locked ? "text-faint" : "text-accent"} weight="fill" />
-          {current ? `${current.name} · ${current.model}` : "选择 Agent"}
+          {current ? (current.model ? `${current.name} · ${current.model}` : current.name) : "选择 Agent"}
           {locked ? <Lock size={11} className="text-faint" weight="fill" /> : <CaretDown size={11} />}
         </button>
       </div>
@@ -96,6 +97,8 @@ function AgentPicker({ ticketNo }: { ticketNo: string }) {
                 }`}
                 onClick={() => {
                   setAgentId(a.id);
+                  // 换 Agent 后原模型/推理选择大概率不适用：清空草稿选择，回退新 Agent 默认。
+                  clearDraftModelSel(ticketNo);
                   setOpen(false);
                 }}
               >
@@ -161,19 +164,26 @@ function useEffectiveSel(ticketNo: string): {
   agentProviderId: string | null;
 } {
   const sessionId = useApp((s) => s.activeSessionId[ticketNo] ?? "");
-  const providers = useApp((s) => (sessionId ? s.sessionModels[sessionId] : undefined)) ?? [];
-  const stored = useApp((s) => (sessionId ? s.sessionModelSel[sessionId] : undefined));
+  const sessionProviders = useApp((s) => (sessionId ? s.sessionModels[sessionId] : undefined));
+  const ocProviders = useApp((s) => s.ocProviders);
+  // 会话态读已持久化的覆盖；草稿态读草稿暂存（随首条消息持久化）。
+  const stored = useApp((s) => (sessionId ? s.sessionModelSel[sessionId] : s.draftModelSel[ticketNo]));
   const sess = useApp((s) => (s.sessions[ticketNo] ?? []).find((x) => x.id === sessionId));
   const agents = useApp((s) => s.agents);
+  const globalAgentId = useApp((s) => s.agentId);
 
   return useMemo(() => {
-    const agent = agents.find((a) => a.id === (sess?.agentConfigId ?? ""));
+    const isDraft = sessionId === "";
+    // 草稿态 agent = 全局当前选择（AgentPicker 的值）；会话态 = 会话固化的 agent。
+    const agent = agents.find((a) => a.id === (sess?.agentConfigId ?? globalAgentId));
     const isClaude = agent?.cli === "claude";
     const agentProviderId = agent?.providerId ?? null;
-    if (!sessionId) {
+    // 草稿目录来自 opencode 配置文件（与 serve 目录同源）；claude 用内置预设，不依赖目录。
+    const providers = isDraft ? draftCatalogFromOc(ocProviders) : (sessionProviders ?? []);
+    if (!agent) {
       return { sessionId, sel: null, providers, currentVariants: [], isClaude, agentProviderId };
     }
-    const fallback = splitModelRef(agent?.model);
+    const fallback = splitModelRef(agent.model);
     let sel: EffectiveSel;
     if (stored?.providerId && stored.modelId) {
       sel = { ...stored, overridden: true };
@@ -196,14 +206,14 @@ function useEffectiveSel(ticketNo: string): {
       sessionId,
       sel,
       providers,
-      // opencode：档位来自 serve 目录里该模型的 variants；claude：CLI 固有枚举，
-      // 目录缺条目（自定义模型/空目录）也不影响选强度。
+      // opencode：档位来自目录里该模型的 variants；claude：CLI 固有枚举，
+      // 目录缺条目（自定义模型/空目录）也不影响选强度。草稿的图片支持未知，不拦截。
       currentVariants: modelEntry?.variants ?? (isClaude ? CLAUDE_EFFORTS : []),
-      imageSupported: modelEntry?.imageInput,
+      imageSupported: isDraft ? undefined : modelEntry?.imageInput,
       isClaude,
       agentProviderId,
     };
-  }, [sessionId, providers, stored, sess, agents]);
+  }, [sessionId, sessionProviders, ocProviders, stored, sess, agents, globalAgentId]);
 }
 
 function ModelPicker({
@@ -212,6 +222,7 @@ function ModelPicker({
   providers,
   isClaude,
   agentProviderId,
+  draft = false,
 }: {
   ticketNo: string;
   sel: EffectiveSel | null;
@@ -219,6 +230,8 @@ function ModelPicker({
   /** claude 会话：目录仅是可选的快捷列表，模型 ID 永远可手输（claude 用自己的网关鉴权）。 */
   isClaude: boolean;
   agentProviderId: string | null;
+  /** 草稿态：选择暂存草稿，随首条消息创建会话时一并生效。 */
+  draft?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -272,7 +285,6 @@ function ModelPicker({
     await pick(agentProviderId ?? "custom", p.id!);
   };
 
-  const label = sel ? `${sel.providerId} · ${sel.modelId}` : "模型";
   const catalogEmpty = providers.length === 0;
 
   return (
@@ -286,14 +298,24 @@ function ModelPicker({
         disabled={catalogEmpty && !isClaude}
         title={
           catalogEmpty && !isClaude
-            ? "模型目录不可用"
+            ? draft
+              ? "草稿态没有可浏览的模型目录：首条消息将使用 Agent 默认模型，会话创建后可切换"
+              : "模型目录不可用"
             : isClaude && catalogEmpty
               ? "输入 Claude 网关可用的模型 ID（目录未配置）"
-              : "切换本会话使用的模型（下一回合生效，可随时切换）"
+              : draft
+                ? "选择首条消息使用的模型（创建会话时一并生效）"
+                : "切换本会话使用的模型（下一回合生效，可随时切换）"
         }
       >
         <Cpu size={12} className="text-info" weight="fill" />
-        <span className="truncate font-mono text-[11px]">{label}</span>
+        <span className="truncate font-mono text-[11px]">
+          {sel
+            ? `${sel.providerId} · ${sel.modelId}`
+            : draft
+              ? "跟随 Agent 默认"
+              : "模型"}
+        </span>
         {sel?.overridden ? (
           <span className="size-1.5 rounded-full bg-success shrink-0" title="已覆盖默认模型" />
         ) : null}
@@ -476,7 +498,9 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
   // demo 模式没有真实的会话流，退回工单级 busy。
   const busy = useApp((s) =>
     s.mode === "live"
-      ? (activeSessionId ? s.sessionBusy[activeSessionId] === true : false)
+      ? (activeSessionId
+          ? s.sessionBusy[activeSessionId] === true
+          : (s.creatingSession[ticketNo] ?? false))
       : (s.busy[ticketNo] ?? false),
   );
   const stage = useApp((s) => s.tickets.find((t) => t.ticketNo === ticketNo)?.stage);
@@ -615,9 +639,18 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
   const send = () => {
     const t = text.trim();
     if ((!t && pendingAttachments.length === 0) || busy || terminal) return;
+    const prevText = t;
+    const prevAttachments = pendingAttachments;
     setText("");
     setPendingAttachments([]);
-    actions.sendPrompt(ticketNo, t, pendingAttachments);
+    void Promise.resolve(actions.sendPrompt(ticketNo, t, prevAttachments)).then((ok) => {
+      // 草稿建会话失败（如端口占用）：还原输入与附件，错误卡片已给出原因，
+      // 用户改完直接重发即可，不必重新打字。
+      if (ok === false) {
+        setText(prevText);
+        setPendingAttachments(prevAttachments);
+      }
+    });
   };
 
   const quick = [
@@ -724,7 +757,9 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
                 : stage === "DONE"
                   ? "工单已完成并归档"
                   : busy
-                    ? "Agent 正在工作，可点击右下按钮中断；切换的模型/推理强度将在下一回合生效…"
+                    ? live && !activeSessionId
+                      ? "正在创建会话…"
+                      : "Agent 正在工作，可点击右下按钮中断；切换的模型/推理强度将在下一回合生效…"
                     : "向 Agent 描述任务…（Enter 发送，Shift+Enter 换行，可粘贴图片/文件）"
             }
             className="composer-ta"
@@ -745,6 +780,7 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
                     providers={providers}
                     isClaude={isClaude}
                     agentProviderId={agentProviderId}
+                    draft={activeSessionId === ""}
                   />
                   <VariantPicker ticketNo={ticketNo} sel={sel} variants={currentVariants} />
                   {activeSessionId && (

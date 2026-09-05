@@ -19,7 +19,6 @@ import {
   STAGE_SORT_RANK,
 } from "../lib/format";
 import {
-  appStore,
   closeTicketCreator,
   openTicketCreator,
   setVisibleStages,
@@ -38,16 +37,14 @@ function NewTicketButton() {
   const [description, setDescription] = useState("");
   const [labels, setLabels] = useState<string[]>([]);
   const [targetBranch, setTargetBranch] = useState("");
-  const agents = useApp((s) => s.agents);
-  const agentId = useApp((s) => s.agentId);
   const backdrop = useBackdropClose(() => closeTicketCreator());
 
   const submit = () => {
     if (!title.trim()) return;
+    // 协作 Agent 不再绑定工单：会话创建时独立选择（见 GatePanel 新建会话草稿态）。
     actions.newTicket(title.trim(), priority, {
       description: description.trim() || undefined,
       labels,
-      agentConfigId: agentId,
       targetBranch: targetBranch.trim() || undefined,
     });
     setTitle("");
@@ -138,25 +135,6 @@ function NewTicketButton() {
               <div>
                 <label className="field-label">标签（可选）</label>
                 <LabelInput labels={labels} onChange={setLabels} />
-              </div>
-
-              <div>
-                <label className="field-label">协作智能体</label>
-                <div className="flex gap-1">
-                  {agents.map((a) => (
-                    <button
-                      key={a.id}
-                      onClick={() => appStore.setState({ agentId: a.id })}
-                      className={`flex-1 h-8 rounded-lg border text-[11.5px] cursor-pointer transition-colors truncate px-2 ${
-                        agentId === a.id
-                          ? "border-accent/50 bg-accent/10 text-accent"
-                          : "border-edge text-dim hover:text-ink hover:bg-raised"
-                      }`}
-                    >
-                      {a.name}
-                    </button>
-                  ))}
-                </div>
               </div>
             </div>
 

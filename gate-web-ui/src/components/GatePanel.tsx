@@ -572,9 +572,12 @@ function SessionList({ ticketNo, locked = false }: { ticketNo: string; locked?: 
   const displayed = tab === "active" ? activeSessions : archivedSessions;
 
   const handleCreate = () => {
-    if (locked || creating) return;
-    actions.createSession(ticketNo);
+    if (locked) return;
+    // 新建会话 = 进入空白草稿态（清空聊天区、解锁 Agent 选择），首条消息时才真正建会话。
+    // 已在草稿态（无激活会话）时按钮置灰，重复点击无意义。
+    actions.startSessionDraft(ticketNo);
   };
+  const drafting = (activeSessionId ?? "") === "";
 
   return (
     <div className="relative flex flex-col flex-1 min-h-0">
@@ -611,8 +614,8 @@ function SessionList({ ticketNo, locked = false }: { ticketNo: string; locked?: 
           <button
             className="icon-btn !w-6 !h-6 disabled:opacity-50 disabled:pointer-events-none"
             onClick={handleCreate}
-            disabled={creating}
-            title="新建会话"
+            disabled={drafting}
+            title={drafting ? "已在新会话草稿中" : "新建会话"}
             aria-label="新建会话"
           >
             <Plus size={13} weight="bold" />
@@ -631,13 +634,16 @@ function SessionList({ ticketNo, locked = false }: { ticketNo: string; locked?: 
         {displayed.length === 0 ? (
           <div className="py-6 text-center">
             <div className="text-[12px] text-faint">
-              {tab === "active" ? "暂无活跃会话" : "暂无归档会话"}
+              {tab === "active"
+                ? drafting
+                  ? "新会话草稿已就绪 · 选择 Agent 后发送首条消息"
+                  : "暂无活跃会话"
+                : "暂无归档会话"}
             </div>
-            {tab === "active" && !locked && (
+            {tab === "active" && !locked && !drafting && (
               <button
-                className="btn btn-sm mt-2 text-[11px] disabled:opacity-50 disabled:pointer-events-none"
+                className="btn btn-sm mt-2 text-[11px]"
                 onClick={handleCreate}
-                disabled={creating}
               >
                 <Plus size={12} />
                 新建会话
@@ -665,7 +671,7 @@ function SessionList({ ticketNo, locked = false }: { ticketNo: string; locked?: 
         )}
       </div>
 
-      {/* Creating overlay — blocks repeated clicks while the backend round-trip finishes */}
+      {/* Creating overlay — 草稿首条消息触发的「建会话→写覆盖→发消息」三步期间阻断重复操作 */}
       {creating && (
         <div className="absolute inset-0 z-20 grid place-items-center bg-canvas/70 backdrop-blur-[1.5px] rounded-lg">
           <div className="flex items-center gap-2 rounded-lg border border-edge bg-raised px-3.5 py-2 shadow-lg shadow-black/30 animate-rise">
@@ -690,6 +696,8 @@ function SessionItem({
   locked?: boolean;
 }) {
   const [showActions, setShowActions] = useState(false);
+  // 会话绑定的协作 Agent（创建时固化）：claude 紫 / opencode 蓝色点，与 Composer 选择器一致。
+  const agent = useApp((s) => s.agents.find((a) => a.id === session.agentConfigId));
 
   return (
     <div
@@ -714,8 +722,22 @@ function SessionItem({
       />
       <div className="flex-1 min-w-0">
         <div className="text-[12px] text-dim truncate">{session.title}</div>
-        <div className="font-mono text-[10px] text-faint mt-0.5">
-          {new Date(session.createdAt).toLocaleDateString("zh-CN", { month: "short", day: "numeric" })}
+        <div className="font-mono text-[10px] text-faint mt-0.5 flex items-center gap-1.5 min-w-0">
+          {/* agent 名在前（无色点），日期在后；id 缺失（旧数据）只显示日期，id 悬空（Agent 被删）兜底「已删除」 */}
+          {session.agentConfigId && (
+            <>
+              <span
+                className={`font-sans truncate ${agent ? "" : "text-faint/70"}`}
+                title={agent ? `${agent.name} · ${agent.model}` : "该会话绑定的智能体已被删除"}
+              >
+                {agent ? agent.name : "已删除"}
+              </span>
+              <span className="text-edge-strong shrink-0">·</span>
+            </>
+          )}
+          <span className="shrink-0">
+            {new Date(session.createdAt).toLocaleDateString("zh-CN", { month: "short", day: "numeric" })}
+          </span>
         </div>
       </div>
       {showActions && !locked && (

@@ -71,12 +71,10 @@ function groupByStage(tickets: Ticket[], orderMap: Record<string, number>): Map<
 
 function CardFace({
   ticket,
-  agentName,
   rejected,
   dragging,
 }: {
   ticket: Ticket;
-  agentName?: string;
   rejected?: boolean;
   dragging?: boolean;
 }) {
@@ -124,14 +122,6 @@ function CardFace({
         </div>
       )}
       <div className="mt-2 pt-2 border-t border-edge/50 flex items-center gap-2 text-[11px] text-faint">
-        {agentName && (
-          <span className="inline-flex items-center gap-1">
-            <span className="w-3.5 h-3.5 rounded-full bg-accent-dim grid place-items-center text-[8px] text-accent font-semibold">
-              {agentName.slice(0, 1)}
-            </span>
-            {agentName}
-          </span>
-        )}
         <span className="flex-1" />
         <span>{relativeTime(ticket.updatedAt)}</span>
       </div>
@@ -141,12 +131,10 @@ function CardFace({
 
 function SortableCard({
   ticket,
-  agentName,
   rejected,
   shaken,
 }: {
   ticket: Ticket;
-  agentName?: string;
   rejected?: boolean;
   shaken?: boolean;
 }) {
@@ -170,7 +158,7 @@ function SortableCard({
         if (!dragJustEnded()) actions.openTicket(ticket.ticketNo);
       }}
     >
-      <CardFace ticket={ticket} agentName={agentName} rejected={rejected} />
+      <CardFace ticket={ticket} rejected={rejected} />
     </motion.div>
   );
 }
@@ -189,14 +177,12 @@ function Lane({
   tickets,
   rejectedTickets,
   shakenId,
-  agentNameOf,
 }: {
   stage: Stage;
   title: string;
   tickets: Ticket[];
   rejectedTickets: Ticket[];
   shakenId: string | null;
-  agentNameOf: (t: Ticket) => string | undefined;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: `lane:${stage}` });
   const all = [...rejectedTickets, ...tickets];
@@ -217,10 +203,10 @@ function Lane({
       >
         <SortableContext items={all.map((t) => t.ticketNo)} strategy={verticalListSortingStrategy}>
           {rejectedTickets.map((t) => (
-            <SortableCard key={t.ticketNo} ticket={t} rejected shaken={shakenId === t.ticketNo} agentName={agentNameOf(t)} />
+            <SortableCard key={t.ticketNo} ticket={t} rejected shaken={shakenId === t.ticketNo} />
           ))}
           {tickets.map((t) => (
-            <SortableCard key={t.ticketNo} ticket={t} shaken={shakenId === t.ticketNo} agentName={agentNameOf(t)} />
+            <SortableCard key={t.ticketNo} ticket={t} shaken={shakenId === t.ticketNo} />
           ))}
         </SortableContext>
         {all.length === 0 && (
@@ -455,7 +441,6 @@ function KanbanFilterButton({
 export function KanbanBoard() {
   const ticketsAll = useApp((s) => s.tickets);
   const activeProjectId = useApp((s) => s.activeProjectId);
-  const agents = useApp((s) => s.agents);
   const orderMap = useApp((s) => s.order);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [shakenId, setShakenId] = useState<string | null>(null);
@@ -463,9 +448,6 @@ export function KanbanBoard() {
   const [filterOpen, setFilterOpen] = useState(false);
   const [priorityFilter, setPriorityFilter] = useState<PriorityFilter>("ALL");
   const kanbanStages = useApp((s) => s.kanbanStages);
-
-  const agentNameOf = (t: Ticket) =>
-    agents.find((a) => a.id === t.agentConfigId)?.name;
 
   // 快速模式超级工单（V19）是常驻基础设施：不占看板甬道、不可流转
   const tickets = useMemo(
@@ -734,7 +716,6 @@ export function KanbanBoard() {
                   key === "IN_PROGRESS" && rejectEmbedded ? byLane.get("REJECTED") ?? [] : []
                 }
                 shakenId={shakenId}
-                agentNameOf={agentNameOf}
               />
             ))}
           </div>
@@ -744,7 +725,6 @@ export function KanbanBoard() {
             <div className="w-[260px] cursor-grabbing">
               <CardFace
                 ticket={activeTicket}
-                agentName={agentNameOf(activeTicket)}
                 rejected={activeTicket.stage === "REJECTED"}
                 dragging
               />

@@ -4,7 +4,7 @@ import {
   appStore,
   appendStageChange,
   archiveSession as archiveSessionLocal,
-  createSession as createSessionLocal,
+  clearDraftModelSel,
   createTicket,
   deleteSession as deleteSessionLocal,
   pushSystemMessage,
@@ -16,10 +16,11 @@ import {
   seedDemo,
   selectTicket,
   setCenterTab,
-  setCreatingSession,
+  setDraftModelSel,
   setStage,
   setVerdict,
   showToast,
+  startSessionDraft as startSessionDraftLocal,
   switchSession as switchSessionLocal,
   updateTicket,
   upsertAgentConfig,
@@ -81,7 +82,6 @@ export const actions = {
     extra?: {
       description?: string;
       labels?: string[];
-      agentConfigId?: string;
       targetBranch?: string;
     },
   ): string | null {
@@ -99,7 +99,6 @@ export const actions = {
           project_id: projectId,
           description: extra?.description,
           labels: extra?.labels,
-          agent_config_id: extra?.agentConfigId,
           target_branch: extra?.targetBranch,
         });
         if (!no) return;
@@ -110,11 +109,10 @@ export const actions = {
     }
     const no = createTicket(title, priority);
     const p = extra ?? {};
-    if (p.description || p.labels?.length || p.agentConfigId) {
+    if (p.description || p.labels?.length) {
       updateTicket(no, {
         description: p.description,
         labels: p.labels,
-        agentConfigId: p.agentConfigId,
       });
     }
     return no;
@@ -127,17 +125,10 @@ export const actions = {
       note?: string;
       labels?: string[];
       priority?: Ticket["priority"];
-      agentConfigId?: string | null;
     },
   ) {
     if (appStore.getState().mode === "live") {
-      // 后端 PATCH /api/tickets/{no} 只认 snake_case 的 agent_config_id；
-      // 直接透传 camelCase 会被静默忽略，表现为绑定智能体「只改样式不落库」。
-      const { agentConfigId, ...rest } = patch;
-      return live.updateTicketLive(no, {
-        ...rest,
-        ...(agentConfigId !== undefined ? { agent_config_id: agentConfigId } : {}),
-      });
+      return live.updateTicketLive(no, { ...patch });
     }
     updateTicket(no, patch);
     return Promise.resolve(true);
@@ -421,21 +412,13 @@ export const actions = {
     pushSystemMessage(no, "演示模式无主分支可同步", "info");
     return Promise.resolve();
   },
-  createSession(no: string) {
-    if (appStore.getState().creatingSession[no]) return;
-    setCreatingSession(no, true);
-    if (appStore.getState().mode === "live") {
-      void live
-        .createSessionLive(no)
-        .catch(() => {})
-        .finally(() => setCreatingSession(no, false));
-      return;
-    }
-    try {
-      createSessionLocal(no);
-    } finally {
-      setCreatingSession(no, false);
-    }
+  /**
+   * 「新建会话」进入空白草稿态：清空聊天区、解锁 Composer 的 Agent 选择，
+   * 发送首条消息时才真正创建会话并固化 agent（live/demo 同一管道）。
+   * 不再立即建会话——此前按钮直接用全局默认 agent 建会话，用户没有选择机会。
+   */
+  startSessionDraft(no: string) {
+    startSessionDraftLocal(no);
   },
   archiveSession(no: string, id: string) {
     if (appStore.getState().mode === "live") {
@@ -473,9 +456,15 @@ export const actions = {
     sel: { providerId: string | null; modelId: string | null; variant: string | null },
   ) {
     const st = appStore.getState();
-    if (st.mode !== "live") return Promise.resolve(false);
     const sid = st.activeSessionId[no];
-    if (!sid) return Promise.resolve(false);
+    if (!sid) {
+      // 草稿态：暂存为草稿选择，随首条消息创建会话时持久化为覆盖。
+      // 清空覆盖（provider/model 皆空）等价于跟随新 Agent 的默认。
+      if (!sel.providerId && !sel.modelId) clearDraftModelSel(no);
+      else setDraftModelSel(no, sel);
+      return Promise.resolve(true);
+    }
+    if (st.mode !== "live") return Promise.resolve(false);
     return live.switchSessionModelLive(sid, sel);
   },
   /** 开关「权限：自动允许」：持久化到会话并回写 store。 */

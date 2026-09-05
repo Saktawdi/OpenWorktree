@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { NotePencil, Trash } from "@phosphor-icons/react";
 import { actions } from "../lib/actions";
-import { openStageChangeConfirm, openTicketEditor, setAgentId, useApp } from "../lib/store";
+import { openStageChangeConfirm, openTicketEditor, useApp } from "../lib/store";
 import type { Priority } from "../lib/types";
 import { LabelInput, useBackdropClose } from "./ui";
 
@@ -10,14 +10,12 @@ const PRIORITIES: Priority[] = ["P0", "P1", "P2", "P3"];
 export function TicketEditDialog() {
   const editingNo = useApp((s) => s.editingTicketNo);
   const ticket = useApp((s) => s.tickets.find((t) => t.ticketNo === s.editingTicketNo));
-  const agents = useApp((s) => s.agents);
 
   const [title, setTitle] = useState("");
   const [priority, setPriority] = useState<Priority>("P1");
   const [description, setDescription] = useState("");
   const [note, setNote] = useState("");
   const [labels, setLabels] = useState<string[]>([]);
-  const [agentConfigId, setAgentConfigId] = useState<string>("");
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -27,7 +25,6 @@ export function TicketEditDialog() {
     setDescription(ticket.description ?? "");
     setNote(ticket.note ?? "");
     setLabels([...ticket.labels]);
-    setAgentConfigId(ticket.agentConfigId ?? "");
   }, [ticket, editingNo]);
 
   const backdrop = useBackdropClose(() => openTicketEditor(null));
@@ -37,17 +34,15 @@ export function TicketEditDialog() {
   const save = async () => {
     if (!title.trim()) return;
     setSaving(true);
-    const ok = await actions.editTicket(editingNo, {
+    // 协作 Agent 归会话管（会话创建时独立选择），工单编辑不再涉及 agent 绑定。
+    await actions.editTicket(editingNo, {
       title: title.trim(),
       priority,
       description: description.trim() || undefined,
       note: note.trim() || undefined,
       labels,
-      agentConfigId: agentConfigId || null,
     });
     setSaving(false);
-    // 保存成功后同步全局默认 agent，让 composer 的选择器立刻反映新绑定。
-    if (ok && agentConfigId) setAgentId(agentConfigId);
     openTicketEditor(null);
   };
 
@@ -120,35 +115,6 @@ export function TicketEditDialog() {
           <div>
             <label className="field-label">标签</label>
             <LabelInput labels={labels} onChange={setLabels} />
-          </div>
-
-          <div>
-            <label className="field-label">绑定智能体</label>
-            <div className="flex gap-1">
-              <button
-                onClick={() => setAgentConfigId("")}
-                className={`flex-1 h-8 rounded-lg border text-[12px] cursor-pointer transition-colors ${
-                  agentConfigId === ""
-                    ? "border-accent/50 bg-accent/10 text-accent"
-                    : "border-edge text-dim hover:text-ink hover:bg-raised"
-                }`}
-              >
-                未绑定
-              </button>
-              {agents.map((a) => (
-                <button
-                  key={a.id}
-                  onClick={() => setAgentConfigId(a.id)}
-                  className={`flex-1 h-8 rounded-lg border text-[12px] cursor-pointer transition-colors truncate px-2 ${
-                    agentConfigId === a.id
-                      ? "border-accent/50 bg-accent/10 text-accent"
-                      : "border-edge text-dim hover:text-ink hover:bg-raised"
-                  }`}
-                >
-                  {a.name}
-                </button>
-              ))}
-            </div>
           </div>
 
           {!terminal && (

@@ -1388,7 +1388,6 @@ function AgentDialog({ initial, onClose }: { initial: AgentConfig | null; onClos
 
 export function AgentsPage() {
   const agents = useApp((s) => s.agents);
-  const tickets = useApp((s) => s.tickets);
   const agentId = useApp((s) => s.agentId);
   const [dialog, setDialog] = useState<{ open: boolean; agent: AgentConfig | null }>({ open: false, agent: null });
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
@@ -1418,7 +1417,6 @@ export function AgentsPage() {
 
           <div className="space-y-2">
             {agents.map((a) => {
-              const bound = tickets.filter((t) => t.agentConfigId === a.id).length;
               const isDefault = a.id === agentId;
               return (
                 <div key={a.id} className={`card p-4 ${isDefault ? "border-accent/30" : ""}`}>
@@ -1469,9 +1467,6 @@ export function AgentsPage() {
                   </div>
                   {a.description && <div className="mt-1.5 text-[12.5px] text-dim">{a.description}</div>}
                   <div className="mt-2.5 flex items-center gap-3 text-[11.5px] text-faint">
-                    <span>
-                      绑定工单 <span className="font-mono text-dim">{bound}</span>
-                    </span>
                     {a.systemPrompt && (
                       <span className="truncate max-w-[420px]" title={a.systemPrompt}>
                         提示词：{a.systemPrompt}

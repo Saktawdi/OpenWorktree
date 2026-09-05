@@ -93,6 +93,7 @@ export interface AppState {
   /** T-120 增强：会话结束提醒（key = 工单号）。done=回合正常完成；failed=出错/中止。打开工单或再次运行时清除。 */
   sessionEnded: Record<string, { kind: "done" | "failed"; at: number }>;
   gateBusy: Record<string, boolean>;
+  /** 草稿态（会话未创建）下的创建遮罩标记：首条消息走「建会话→写覆盖→发消息」三步期间为 true。 */
   creatingSession: Record<string, boolean>;
   usage: Record<string, UsageView>;
   /** 工单最新任务清单（todowrite 工具写入；侧栏环形图标的数据源）。 */
@@ -102,6 +103,8 @@ export interface AppState {
   centerTab: CenterTab;
   agents: AgentConfig[];
   runtimes: AgentRuntime[];
+  /** 草稿态（会话未创建）暂存的模型/推理选择：随首条消息创建会话时持久化为覆盖。 */
+  draftModelSel: Record<string, SessionModelSel>;
   /** OpenCode 配置文件的 provider 列表（live 从后端读写文件，demo 为示例数据）。 */
   ocProviders: import("./types").OpenCodeProvider[];
   ocConfigPath: string | null;
@@ -260,6 +263,7 @@ export const appStore = create<AppState>(() => ({
   order: {},
   sessions: {},
   activeSessionId: {},
+  draftModelSel: {},
   sessionModels: {},
   sessionModelSel: {},
   liveTurns: {},
@@ -556,16 +560,34 @@ export function setSessionModelSel(sessionId: string, sel: SessionModelSel) {
   set((st) => ({ sessionModelSel: { ...st.sessionModelSel, [sessionId]: sel } }));
 }
 
+/** 草稿态暂存模型/推理选择；创建会话时持久化为覆盖，切 agent 时清空回退新默认。 */
+export function setDraftModelSel(ticketNo: string, sel: SessionModelSel) {
+  set((st) => ({ draftModelSel: { ...st.draftModelSel, [ticketNo]: sel } }));
+}
+
+export function clearDraftModelSel(ticketNo: string) {
+  set((st) => {
+    if (!st.draftModelSel[ticketNo]) return st;
+    const draftModelSel = { ...st.draftModelSel };
+    delete draftModelSel[ticketNo];
+    return { draftModelSel };
+  });
+}
+
+/** 草稿发送期间的创建遮罩标记（SessionList 显示「正在创建会话…」）。 */
+export function setCreatingSession(no: string, busy: boolean) {
+  set((st) => {
+    const next = { ...st.creatingSession };
+    if (busy) next[no] = true;
+    else delete next[no];
+    return { creatingSession: next };
+  });
+}
+
 export function selectTicket(no: string) {
   // 打开工单即视为看见"会话已结束"提醒
   clearSessionEnded(no);
   patch({ selectedNo: no, centerTab: "chat", highlight: null });
-  // 与 live 的 selectTicketLive 一致：进工单时把绑定 agent 同步为默认选择，
-  // 避免选择器显示与工单无关的全局默认。
-  const bound = s().tickets.find((t) => t.ticketNo === no)?.agentConfigId;
-  if (bound && s().agentId !== bound && s().agents.some((a) => a.id === bound)) {
-    setAgentId(bound);
-  }
 }
 
 /**
@@ -724,8 +746,14 @@ export function revertQuestion(no: string, requestId: string) {
   notePendingQuestion(requestId, no, s().activeSessionId[no] ?? "");
 }
 
-export function pushAssistantPlaceholder(no: string): string {
-  const id = uid("a");
+/** 按 id 移除一条聊天条目（草稿建会话失败时回滚用户消息用）。 */
+export function removeChatItem(no: string, id: string) {
+  set((st) => ({
+    chats: { ...st.chats, [no]: (st.chats[no] ?? []).filter((m) => m.id !== id) },
+  }));
+}
+
+export function pushAssistantPlaceholder(no: string): string {  const id = uid("a");
   pushChatItem(no, {
     kind: "assistant",
     id,
@@ -972,15 +1000,6 @@ export function dropSessionPendings(sessionId: string) {
 }
 
 
-export function setCreatingSession(no: string, busy: boolean) {
-  set((st) => {
-    const next = { ...st.creatingSession };
-    if (busy) next[no] = true;
-    else delete next[no];
-    return { creatingSession: next };
-  });
-}
-
 export function setTask(no: string, task: TaskProgress | null) {
   set((st) => {
     const next = { ...st.tasks };
@@ -1121,7 +1140,6 @@ export function createTicket(title: string, priority: Ticket["priority"]) {
     labels: [],
     targetRef: "refs/heads/main",
     clonePath: `local-run/clones/${no}`,
-    agentConfigId: st.agentId,
     execTokenTotal: 0,
     createdAt: nowIso(),
     updatedAt: nowIso(),
@@ -1319,6 +1337,8 @@ export function createSession(ticketNo: string) {
     title: `会话 ${new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}`,
     status: "active",
     permissionAutoAccept: false,
+    // 会话创建时的协作 Agent 固化（demo 路径同 live）：会话 item 徽标与回复标注的数据源。
+    agentConfigId: s().agentId,
     createdAt: Date.now(),
     updatedAt: Date.now(),
   };
@@ -1336,12 +1356,46 @@ export function createSession(ticketNo: string) {
 }
 
 /**
- * 确保工单下存在活跃会话：列表为空（或全部归档）时自动创建并切换为新会话，
- * 返回活跃会话 id。用于「会话列表为空时发送首条消息即自动开会话」的路径。
+ * 「新建会话」进入空白草稿态：活跃指针置空（Composer 的 Agent 选择随之解锁），
+ * 聊天区替换为一条草稿提示；真正的会话在发出首条消息时才创建并固化 agent。
+ * 草稿不占会话列表、不持久任何输入——切走再切回即丢弃。
+ * 任务清单/上下文占用随草稿清空：二者按工单键暂存，残留会以旧会话的进度冒充草稿。
  */
-export function ensureActiveSession(ticketNo: string): string {
-  const existing = s().sessions[ticketNo]?.find((sess) => sess.status === "active");
-  if (existing) return existing.id;
+export function startSessionDraft(ticketNo: string) {
+  set((st) => {
+    const draftModelSel = { ...st.draftModelSel };
+    delete draftModelSel[ticketNo];
+    return {
+      activeSessionId: { ...st.activeSessionId, [ticketNo]: "" },
+      todos: { ...st.todos, [ticketNo]: [] },
+      context: { ...st.context, [ticketNo]: { tokens: 0, limit: st.context[ticketNo]?.limit ?? null } },
+      draftModelSel,
+      chats: {
+        ...st.chats,
+        [ticketNo]: [
+          {
+            kind: "system" as const,
+            id: uid("sys"),
+            tone: "info" as const,
+            ts: Date.now(),
+            text: "新会话草稿 · 在下方选择协作 Agent，发送首条消息后创建会话",
+          },
+        ],
+      },
+    };
+  });
+}
+
+/**
+ * 确保消息发到「当前查看的会话」（与 live 的 liveSendPrompt 同语义）：
+ * 草稿态（活跃指针为空，或指针指向的会话已不存在）时新建会话并固化
+ * 草稿里所选的 agent；否则沿用当前会话，不劫持其它活跃会话。
+ */
+export function ensureCurrentSession(ticketNo: string): string {
+  const cur = s().activeSessionId[ticketNo] ?? "";
+  if (cur && (s().sessions[ticketNo] ?? []).some((sess) => sess.id === cur)) {
+    return cur;
+  }
   return createSession(ticketNo);
 }
 

@@ -17,7 +17,16 @@ import { setCenterTab } from "../lib/store";
 function ContextStrip({ ticketNo }: { ticketNo: string }) {
   const ticket = useApp((s) => s.tickets.find((t) => t.ticketNo === ticketNo));
   const project = useApp((s) => s.projects.find((p) => p.id === ticket?.projectId));
-  const agent = useApp((s) => s.agents.find((a) => a.id === s.agentId));
+  // agent 跟随「当前查看的会话」（会话 1:1 agent，创建时固化）；
+  // 无激活会话（草稿态）时显示全局默认，即草稿里 AgentPicker 当前选的协作对象。
+  const sessionId = useApp((s) => s.activeSessionId[ticketNo] ?? "");
+  const sessionAgentId = useApp(
+    (s) => (s.sessions[ticketNo] ?? []).find((x) => x.id === sessionId)?.agentConfigId ?? null,
+  );
+  const agent = useApp((s) => s.agents.find((a) => a.id === (sessionAgentId ?? s.agentId)));
+  const agentHint = sessionId
+    ? "本会话协作 Agent（会话创建时锁定，切会话即切换）"
+    : "新会话默认协作 Agent（可在输入框左下更换）";
   const panelCollapsed = useApp((s) => s.gatePanelCollapsed);
   if (!ticket) return null;
   // 分支徽标展示项目主分支（建单基线）；未挂项目的工单退回显示自身锁定的目标分支
@@ -70,9 +79,18 @@ function ContextStrip({ ticketNo }: { ticketNo: string }) {
         <span className="font-mono">{branch}</span>
       </span>
       {agent && (
-        <span className="hidden md:inline-flex shrink-0 items-center gap-1.5 text-[12px] text-dim whitespace-nowrap">
+        <span
+          className="hidden md:inline-flex shrink-0 items-center gap-1.5 text-[12px] text-dim whitespace-nowrap"
+          title={agentHint}
+        >
           <Sparkle size={12} className="text-accent" weight="fill" />
-          {agent.name} · <span className="font-mono text-[11px] text-faint">{agent.model}</span>
+          {agent.name}
+          {agent.model && (
+            <>
+              {" · "}
+              <span className="font-mono text-[11px] text-faint">{agent.model}</span>
+            </>
+          )}
         </span>
       )}
       <button

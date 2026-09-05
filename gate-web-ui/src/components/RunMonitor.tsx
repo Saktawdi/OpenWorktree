@@ -103,8 +103,9 @@ export function RunMonitor() {
           const ticket = tickets.find((t) => t.ticketNo === no)!;
           const sid = activeSessionId[no];
           const session = sid ? (sessions[no] ?? []).find((x) => x.id === sid) : undefined;
+          // agent 归会话（1:1）：运行中的行按其会话取；缺会话上下文时回退全局默认。
           const agent =
-            agents.find((a) => a.id === (session?.agentConfigId ?? ticket.agentConfigId)) ??
+            agents.find((a) => a.id === (session?.agentConfigId ?? agentId)) ??
             agents.find((a) => a.id === agentId);
           return { ticketNo: no, ticket, session, agent, since: busySince[no] ?? Date.now() };
         }),

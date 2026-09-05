@@ -3,7 +3,7 @@ import {
   addUsage,
   clearSessionEnded,
   currentCancelSeq,
-  ensureActiveSession,
+  ensureCurrentSession,
   finishAssistant,
   markSessionEnded,
   patchAssistant,
@@ -169,8 +169,8 @@ async function runTodoWrite(
 export async function demoSendPrompt(no: string, userText: string) {
   const st0 = appStore.getState();
   if (st0.busy[no]) return;
-  // 会话列表为空（或无活跃会话）时，首条消息自动创建新会话，与 live 模式行为一致。
-  ensureActiveSession(no);
+  // 草稿态（无当前会话）时首条消息创建新会话并固化所选 agent，与 live 模式行为一致。
+  ensureCurrentSession(no);
   const seq = currentCancelSeq(no) + 1;
   appStore.setState({ cancelSeq: { ...st0.cancelSeq, [no]: seq } });
   // 工单重新进入运行状态：上一次的"会话已结束"提醒随之失效
@@ -483,8 +483,8 @@ export async function demoReturnWithFindings(no: string) {
   if (st.busy[no]) return;
   const findings = st.findings[no] ?? [];
   if (findings.length === 0) return;
-  // 无活跃会话（如对带 diff 的工单直接走审查→修复）时同样自动开会话。
-  ensureActiveSession(no);
+  // 草稿态（无当前会话，如对带 diff 的工单直接走审查→修复）时自动新建会话。
+  ensureCurrentSession(no);
   const seq = currentCancelSeq(no) + 1;
   appStore.setState({ cancelSeq: { ...st.cancelSeq, [no]: seq } });
   const lines = findings.map((f, i) => `${i + 1}. [${f.severity}] ${f.path}${f.lineStart ? ":" + f.lineStart : ""} — ${f.message}`);

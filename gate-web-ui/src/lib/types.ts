@@ -47,6 +47,7 @@ export interface Ticket {
   note?: string;
   targetRef: string;
   clonePath: string;
+  /** 已废弃（仅历史数据兼容）：协作 Agent 改为会话级 1:1，工单不再写入、界面不再展示。 */
   agentConfigId?: string | null;
   execTokenTotal: number;
   /** 重启次数（T-117）——demo 工单无此字段 */
@@ -291,7 +292,7 @@ export interface ChatSession {
   updatedAt: number;
   /** 会话是否自动允许权限请求（端侧开关，受控）。 */
   permissionAutoAccept: boolean;
-  /** Backing agent-config id (raw API field, used to resolve picker defaults). */
+  /** 会话固化的协作 Agent（会话 1:1 agent，创建时选定；会话徽标/回复标注/展示位的数据源）。 */
   agentConfigId?: string | null;
   /** 会话内实时切换的模型覆盖（null = 用 AgentConfig 默认值） */
   overrideProvider?: string | null;
