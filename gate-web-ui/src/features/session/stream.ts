@@ -415,8 +415,9 @@ async function consumeSessionStream(no: string, sessionId: string) {
       markSessionEnded(no, "failed");
       updateLiveTurn(sessionId, (a) => ({ ...a, streaming: false }));
       pushSystemMessage(no, msg, "warn");
-      // 出错中止同样做一次历史收敛：中断前已落库的 todo 不被流式残留掩盖。
-      void syncSessionTodos(no, sessionId);
+      // 断流不在此做历史收敛：连接中断未必代表回合结束（agent 可能仍在服务端
+      // 运行），按空历史重建只会清掉已显示的清单；回合真正结束后由 busy 轮询的
+      // 运行→空闲 transition 兜底收敛。
       finish();
     });
   });

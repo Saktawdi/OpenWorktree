@@ -93,7 +93,11 @@ export async function loadSessionMessages(no: string, sessionId: string) {
   appStore.setState((st) => ({ chats: { ...st.chats, [no]: items } }));
   // 会话隔离：任务清单与上下文占用都以"当前会话"为准重建——
   // 本会话没有 todowrite 就清空，不允许上一会话的侧栏状态泄漏过来。
-  restoreTodosFromHistory(no, hist.messages);
+  // 例外：该会话仍有 SSE 直连的生成中回合（liveTurns）时跳过历史重建——服务端
+  // 整回合 idle 才落库，历史里看不到本回合已写的 todo，按历史重建会把流式事件
+  // 刚更新的任务环清空（agent 仍在输出时图标消失）。此时 store 里的清单由
+  // 后续 tool 事件继续增量刷新，切走再切回也不中断。
+  if (!stash) restoreTodosFromHistory(no, hist.messages);
   setContextTokens(no, 0);
   // 后端历史消息不带 model/agent 标注，这里用当前会话的 agent/推理等级补齐底部 footer。
   applyReplyMetaDefaults(no);

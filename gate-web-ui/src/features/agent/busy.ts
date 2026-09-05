@@ -16,22 +16,23 @@ interface RawBusyAgent {
 
 /**
  * 后台运行会话的任务清单收敛（无 SSE 直连时的兜底）：
- * 正在查看的会话在跑、但本页没有它的 EventSource（刷新后/外部发起/事件断流）时，
- * 按轮询节拍用服务端历史回算任务清单——「等 agent 回复完才出现 / 只手动触发才刷新」
- * 的问题在回合落库后最多延迟一拍自动对齐。本地直连的会话由 SSE 实时回写，历史滞后
- * （整回合 idle 才落库），这里必须跳过，否则会把流式清单误清成旧数据。
+ * 只在「当前查看的会话从运行中转为空闲」的那一刻用服务端已落库历史回算一次任务
+ * 清单——回合落库后最多延迟一拍自动对齐，兑现"不手动刷新也能出现/更新"。
+ * 运行中绝不清零：本页没有 EventSource 时（刷新后/外部发起/事件断流），服务端
+ * 历史要到整回合 idle 才落库，运行期间按历史重建只会把已显示的清单误清空
+ * （agent 仍在输出中图标消失）；本地直连的会话由 SSE 实时回写，同样跳过。
  */
-function syncViewedRunningSessionTodos() {
+let prevRunningSessionIds = new Set<string>();
+
+function syncSessionTodosOnRunEnd() {
   const st = appStore.getState();
   if (st.mode !== "live" || st.conn !== "ok") return;
   const no = st.selectedNo;
   if (!no) return;
   const sid = st.activeSessionId[no];
   if (!sid || st.liveTurns[sid]) return;
-  const running =
-    st.runningAgents.count > 0 &&
-    st.runningAgents.sessions.some((r) => r.ticket_no === no && r.session_id === sid);
-  if (!running) return;
+  const runningNow = new Set(st.runningAgents.sessions.map((r) => r.session_id));
+  if (!prevRunningSessionIds.has(sid) || runningNow.has(sid)) return;
   void syncSessionTodos(no, sid);
 }
 
@@ -58,8 +59,9 @@ export async function fetchBusyAgents(): Promise<void> {
           : [],
       },
     });
-    // 当前查看会话若由后台运行（本页无 SSE），按拍收敛其任务清单
-    syncViewedRunningSessionTodos();
+    // 当前查看会话刚结束一次后台运行（上一拍还在跑、这一拍已空闲）→ 收敛任务清单
+    syncSessionTodosOnRunEnd();
+    prevRunningSessionIds = new Set(appStore.getState().runningAgents.sessions.map((r) => r.session_id));
   } catch {
     // 请求失败按现有 fetch 封装行为处理：静默，不改状态
   }
@@ -128,6 +130,8 @@ export function stopAgentBusyPolling() {
     document.removeEventListener("visibilitychange", handleBusyVisibility);
     busyPollVisibilityAttached = false;
   }
+  // 运行集随轮询停止作废：重启轮询时以新一轮快照为准，不触发陈旧 transition。
+  prevRunningSessionIds = new Set<string>();
   // 停轮询时若已不在 live/ok 也清零（调用方可能已清，这里兜底）
   const st = appStore.getState();
   if (st.mode !== "live" || st.conn !== "ok") {
