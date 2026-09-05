@@ -6,6 +6,11 @@
 
 ## 0.2.14（未发行）
 
+### 新增
+
+- **数据布局分根（破坏性重构，未发行窗口内直接落地）**：小数据/配置（gate.toml、gate.db、令牌、审计、blobs）常驻系统盘每用户目录 `%APPDATA%\OpenWorktree\local-run`，重装/覆盖安装/在线热更新永不移动；工单克隆工作区与项目镜像 `auth-*.git` 这类大体积数据（node_modules 可达数 GB）统一放安装目录【同级】独立目录 `OpenWorktree-data\`——随安装盘、处于安装/热更新载荷之外，更新不覆盖、卸载仅显式询问是否删除。首次启动自动收敛旧布局：按 gate.db 活度选本体树，gate-home 搬入轻根、clones/auth 搬入重根，克隆 `.git/config` origin 与 DB 行内旧绝对路径同步重基，其余旧树改名归档保留
+- **clone_path 存储根治**：`ticket`/`agent_session` 行内不再存死绝对路径——克隆根内路径统一相对化（如 `T-104`），读取时按当前克隆根解析回绝对路径；克隆根此后可整体搬家/换盘而无需改库
+
 ### 修复
 
 - **修复终端「创建后一直空白无响应」（native 版）**：GraalVM 镜像缺 WebSocket 栈运行时元数据——升级握手照常 101、但应用层帧（started/data/error）全部静默丢失；HTTP 冒烟测不到、TerminalApiTest 又属 slow 层被 CI 默认跳过，双重盲区放行。已把 io.javalin.** 与 Jetty websocket 栈全部类（383 个）补进 reflect-config，并给 native 冒烟新增裸 socket WS 断言（start 必须回 error 帧），回归将直接打红 CI。重编 native 后安装即修复

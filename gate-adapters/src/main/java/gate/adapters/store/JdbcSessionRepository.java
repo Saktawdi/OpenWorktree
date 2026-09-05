@@ -12,6 +12,7 @@ import gate.domain.session.ToolCall;
 import gate.ports.store.BlobStore;
 import gate.ports.store.SessionRepository;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.sql.ResultSet;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -22,38 +23,77 @@ import java.util.Optional;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 
-/** JdbcTemplate + BlobStore-backed {@link SessionRepository}. */
+/**
+ * JdbcTemplate + BlobStore-backed {@link SessionRepository}.
+ *
+ * <p>clone_path 列遵循与 {@link JdbcTicketRepository} 相同的克隆根约定：注入 {@code clonesRoot}
+ * 时克隆根内的绝对路径压成相对路径存储、读取时按当前克隆根解析（克隆根可随布局整体
+ * 搬家而无需改行内数据）；克隆根之外的绝对路径（快速模式用户工作区等）原样存取。
+ */
 public final class JdbcSessionRepository implements SessionRepository {
 
     private final JdbcTemplate jdbc;
     private final BlobStore blobs;
+    private final Path clonesRoot;
+    private final RowMapper<Session> sessionMapper;
 
     public JdbcSessionRepository(JdbcTemplate jdbc, BlobStore blobs) {
-        this.jdbc = jdbc;
-        this.blobs = blobs;
+        this(jdbc, blobs, null);
     }
 
-    private static final RowMapper<Session> SESSION_MAPPER = (ResultSet rs, int n) -> new Session(
-            rs.getString("id"),
-            rs.getString("ticket_no"),
-            rs.getString("agent_config_id"),
-            AgentCli.valueOf(rs.getString("cli")),
-            SessionStatus.valueOf(rs.getString("status")),
-            rs.getString("cli_session_id"),
-            rs.getString("clone_path"),
-            rs.getInt("allocated_port"),
-            Instant.parse(rs.getString("started_at")),
-            rs.getString("finished_at") == null ? null : Instant.parse(rs.getString("finished_at")),
-            new SessionUsage(
-                    rs.getObject("prompt_tokens") == null ? null : rs.getLong("prompt_tokens"),
-                    rs.getObject("completion_tokens") == null ? null : rs.getLong("completion_tokens"),
-                    rs.getObject("total_tokens") == null ? null : rs.getLong("total_tokens")),
-            rs.getString("title"),
-            rs.getInt("archived") != 0,
-            nullableColumn(rs, "override_provider"),
-            nullableColumn(rs, "override_model"),
-            nullableColumn(rs, "override_variant"),
-            rs.getInt("permission_auto_accept") != 0);
+    public JdbcSessionRepository(JdbcTemplate jdbc, BlobStore blobs, Path clonesRoot) {
+        this.jdbc = jdbc;
+        this.blobs = blobs;
+        this.clonesRoot = clonesRoot == null ? null : clonesRoot.toAbsolutePath().normalize();
+        this.sessionMapper = (ResultSet rs, int n) -> new Session(
+                rs.getString("id"),
+                rs.getString("ticket_no"),
+                rs.getString("agent_config_id"),
+                AgentCli.valueOf(rs.getString("cli")),
+                SessionStatus.valueOf(rs.getString("status")),
+                rs.getString("cli_session_id"),
+                loadPath(rs.getString("clone_path")),
+                rs.getInt("allocated_port"),
+                Instant.parse(rs.getString("started_at")),
+                rs.getString("finished_at") == null ? null : Instant.parse(rs.getString("finished_at")),
+                new SessionUsage(
+                        rs.getObject("prompt_tokens") == null ? null : rs.getLong("prompt_tokens"),
+                        rs.getObject("completion_tokens") == null ? null : rs.getLong("completion_tokens"),
+                        rs.getObject("total_tokens") == null ? null : rs.getLong("total_tokens")),
+                rs.getString("title"),
+                rs.getInt("archived") != 0,
+                nullableColumn(rs, "override_provider"),
+                nullableColumn(rs, "override_model"),
+                nullableColumn(rs, "override_variant"),
+                rs.getInt("permission_auto_accept") != 0);
+    }
+
+    /** 写入端：克隆根内的绝对路径 → 相对路径；其它原样。 */
+    private String storePath(String value) {
+        if (value == null || clonesRoot == null) {
+            return value;
+        }
+        Path p = Path.of(value).toAbsolutePath().normalize();
+        if (p.startsWith(clonesRoot)) {
+            Path rel = clonesRoot.relativize(p);
+            if (!rel.toString().isEmpty()) {
+                return rel.toString().replace('\\', '/');
+            }
+        }
+        return value;
+    }
+
+    /** 读取端：相对路径按当前克隆根解析回绝对路径。 */
+    private String loadPath(String value) {
+        if (value == null || clonesRoot == null) {
+            return value;
+        }
+        Path p = Path.of(value);
+        if (p.isAbsolute()) {
+            return value;
+        }
+        return clonesRoot.resolve(value.replace('/', java.io.File.separatorChar)).toString();
+    }
 
     private static String nullableColumn(ResultSet rs, String column) throws java.sql.SQLException {
         String value = rs.getString(column);
@@ -62,25 +102,25 @@ public final class JdbcSessionRepository implements SessionRepository {
 
     @Override
     public Optional<Session> find(String id) {
-        List<Session> rows = jdbc.query("SELECT * FROM agent_session WHERE id = ?", SESSION_MAPPER, id);
+        List<Session> rows = jdbc.query("SELECT * FROM agent_session WHERE id = ?", sessionMapper, id);
         return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
     }
 
     @Override
     public List<Session> findByTicket(String ticketNo) {
-        return jdbc.query("SELECT * FROM agent_session WHERE ticket_no = ? ORDER BY started_at", SESSION_MAPPER, ticketNo);
+        return jdbc.query("SELECT * FROM agent_session WHERE ticket_no = ? ORDER BY started_at", sessionMapper, ticketNo);
     }
 
     @Override
     public List<Session> findByAgentConfig(String agentConfigId) {
         return jdbc.query("SELECT * FROM agent_session WHERE agent_config_id = ? ORDER BY started_at",
-                SESSION_MAPPER, agentConfigId);
+                sessionMapper, agentConfigId);
     }
 
     @Override
     public List<Session> findByStatus(SessionStatus status) {
         return jdbc.query("SELECT * FROM agent_session WHERE status = ? ORDER BY started_at",
-                SESSION_MAPPER, status.name());
+                sessionMapper, status.name());
     }
 
     @Override
@@ -95,7 +135,7 @@ public final class JdbcSessionRepository implements SessionRepository {
                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 session.id(), session.ticketNo(), session.agentConfigId(), session.cli().name(),
-                session.status().name(), session.cliSessionId(), session.clonePath(),
+                session.status().name(), session.cliSessionId(), storePath(session.clonePath()),
                 session.allocatedPort(), u.promptTokens(), u.completionTokens(), u.totalTokens(),
                 session.startedAt().toString(),
                 session.finishedAt() == null ? null : session.finishedAt().toString(),

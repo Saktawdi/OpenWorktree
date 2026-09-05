@@ -138,7 +138,7 @@ public final class GateRuntime {
         TransactionTemplate txTemplate = new TransactionTemplate(new DataSourceTransactionManager(dataSource));
         DbTransactionRunner txRunner = new SpringDbTransactionRunner(txTemplate);
 
-        this.ticketRepository = new JdbcTicketRepository(jdbc);
+        this.ticketRepository = new JdbcTicketRepository(jdbc, config.clonesRoot());
         this.presubmitRepository = new JdbcPresubmitRepository(jdbc);
         this.ticketStageChangeRepository = new JdbcTicketStageChangeRepository(jdbc);
         this.reviewResultRepository = new JdbcReviewResultRepository(jdbc);
@@ -156,10 +156,14 @@ public final class GateRuntime {
         this.kmsService = new LocalKmsService("local-key-1", "local-secret-for-phase3-hmac");
         migrateProviderCredentials();
         this.agentConfigRepository = new JdbcAgentConfigRepository(jdbc);
-        this.sessionRepository = new JdbcSessionRepository(jdbc, blobStore);
+        this.sessionRepository = new JdbcSessionRepository(jdbc, blobStore, config.clonesRoot());
         this.projectRepository = new JdbcProjectRepository(jdbc);
         this.workspaceSyncer = new GitCliWorkspaceSyncer(git);
         this.cloneBaseSyncer = new gate.adapters.git.GitCliBaseSyncer(git);
+
+        // 分根布局一次性迁移（壳搬完物理文件后落 marker，本步骤把行内旧绝对路径重基）。
+        // 必须在任何工单/会话读取之前执行；仓库层已按新克隆根解析读写。
+        gate.adapters.store.LegacyLayoutMigration.apply(config, jdbc);
 
         ReviewEngineFactory reviewEngineFactory = config.engineConfigured()
                 ? new GateReviewEngineFactory(blobStore, config, providerRepository, this.kmsService)

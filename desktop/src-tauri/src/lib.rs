@@ -1,9 +1,9 @@
 // OpenWorktree 桌面壳：托管后端单文件（ow.exe / ow-linux）并注入登录令牌。
 //
 // 生命周期：setup 里经 shell 插件以 sidecar 方式拉起后端，工作目录指向数据目录
-// （resolve_data_dir：默认安装目录 data\，工单克隆等大体量数据随安装盘走；
-//  NSIS 卸载器 PREUNINSTALL 钩子会询问保留 → %APPDATA%\OpenWorktree\data，
-//  重装时 POSTINSTALL 钩子自动搬回）。
+// （resolve_data_dir：分根布局 —— 轻根 %APPDATA%\OpenWorktree\local-run 存小数据/配置，
+//  常驻系统盘每用户目录；工单克隆与项目镜像等大体积数据在安装目录同级 OpenWorktree-data，
+//  更新/热更新/卸载均不触碰；首次启动自动收敛旧布局，见下方「数据布局」注释）。
 // 后端日志经 slf4j-simple 走 STDERR（simpleLogger 未配 logFile），所以 stdout 与
 // stderr 都要读：抓到 "GATE_WEB_TOKEN=<token>" 后，WebView 跳转
 // http://127.0.0.1:<port>/?ow-token=<token>，SPA 的 boot() 完成自动登录并抹掉参数。
@@ -91,214 +91,271 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> bool {
     true
 }
 
-/// 解析数据目录 local-run/gate.toml 顶层 `gate_home = "…"`（行级，忽略注释；无/解析失败 → None）。
-fn read_gate_home(local_run: &Path) -> Option<PathBuf> {
-    let text = std::fs::read_to_string(local_run.join("gate.toml")).ok()?;
-    for raw in text.lines() {
-        let line = raw.split('#').next().unwrap_or("").trim();
-        let Some(rest) = line.strip_prefix("gate_home") else { continue };
-        let Some(value) = rest.trim_start().strip_prefix('=') else { continue };
-        let value = value.trim();
-        if let Some(v) = value.strip_prefix('"').and_then(|s| s.strip_suffix('"')) {
-            return Some(PathBuf::from(
-                v.replace('/', &std::path::MAIN_SEPARATOR.to_string()),
-            ));
-        }
-    }
-    None
+// ─── 数据布局（分根，v1）──────────────────────────────────────────────
+// 轻根：小数据/配置，常驻系统盘每用户目录，重装/更新/热更新永不移动：
+//   %APPDATA%\OpenWorktree\local-run\{gate.toml, gate-home\{gate.db, blobs, locks,
+//   approvals, audit.jsonl, web-token, …}}
+// 重根：大体积数据（工单克隆工作区、项目镜像 auth-*.git），随安装所在盘放置，
+//   位于安装目录【同级】的独立目录——安装包/在线热更新的载荷只认安装目录本身：
+//   <安装目录同级>\OpenWorktree-data\{clones\, auth\auth-*.git}
+// 快速模式超级工单的工作区是用户项目路径（不在上述任何数据根内），天然不受更新影响。
+// 后端工作目录 = 轻根（其下 local-run/gate.toml 由本文件首次启动时生成，显式给出重根
+// 绝对路径；后端默认配置解析即 ./local-run/gate.toml）。
+//
+// 旧布局（%APPDATA%\com.openworktree.desktop 整树 / 卸载「保留」备份 / 早期「安装目录
+// data\」快照）在此做一次性收敛：按 gate.db 活度挑本体树，把 gate-home 搬入轻根、
+// clones 与 auth-*.git 搬入重根，其余化石树改名归档（保留不删）；随后写
+// layout-migrate.json 标记，后端启动时把 DB 行内旧绝对路径重基为相对新克隆根
+// （LegacyLayoutMigration），克隆 .git/config 里的 auth origin 路径由本侧同步改写。
+
+use std::time::SystemTime;
+
+const HEAVY_DIR_NAME: &str = "OpenWorktree-data";
+const LEGACY_APP_DATA_DIR: &str = "com.openworktree.desktop";
+
+/// 轻根（%APPDATA%\OpenWorktree）；APPDATA 缺失时回退 app_data。
+fn light_root(app_data: &Option<PathBuf>) -> Option<PathBuf> {
+    std::env::var_os("APPDATA")
+        .map(PathBuf::from)
+        .map(|d| d.join("OpenWorktree"))
+        .or_else(|| app_data.clone())
 }
 
-/// 数据活度探针：local-run/gate-home/gate.db 的修改时间（无库 → None）。
-fn data_freshness(local_run: &Path) -> Option<std::time::SystemTime> {
+/// 重根：默认取安装目录同级 OpenWorktree-data（与安装同盘、载荷外）；不可写（如
+/// perMachine 装进受保护目录）时退回 %LOCALAPPDATA%\OpenWorktree-data 并在日志说明。
+fn heavy_root(install: &Path, log: &Option<PathBuf>) -> PathBuf {
+    let sibling = install
+        .parent()
+        .map(|p| p.join(HEAVY_DIR_NAME))
+        .unwrap_or_else(|| install.join(HEAVY_DIR_NAME));
+    for cand in [sibling.clone()] {
+        if std::fs::create_dir_all(&cand).is_ok() && dir_writable(&cand) {
+            return cand;
+        }
+    }
+    let fallback = std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .map(|d| d.join(HEAVY_DIR_NAME))
+        .unwrap_or_else(|| sibling.clone());
+    append_log(
+        log,
+        &format!(
+            "layout: heavy root {} not writable, fallback to {}",
+            sibling.display(),
+            fallback.display()
+        ),
+    );
+    let _ = std::fs::create_dir_all(&fallback);
+    fallback
+}
+
+/// 数据活度：local-run/gate-home/gate.db 的修改时间（无库 → None）。
+fn data_freshness(local_run: &Path) -> Option<SystemTime> {
     std::fs::metadata(local_run.join("gate-home").join("gate.db"))
         .ok()
         .and_then(|m| m.modified().ok())
 }
 
-/// gate.toml 绝对路径键的规范落脚点（相对 local_run）；auth_repo 为特例：保旧值文件名
-/// 置于 local_run 下。返回 None 表示键不参与回锚。
-fn canonical_path_for(key: &str, local_run: &Path) -> Option<PathBuf> {
-    match key {
-        "gate_home" => Some(local_run.join("gate-home")),
-        "clones_root" => Some(local_run.join("clones")),
-        "approvals_dir" => Some(local_run.join("gate-home").join("approvals")),
-        "blob_root" => Some(local_run.join("gate-home").join("blobs")),
-        "locks_dir" => Some(local_run.join("gate-home").join("locks")),
-        "index_dir" => Some(local_run.join("gate-home").join("idx")),
-        "db_path" => Some(local_run.join("gate-home").join("gate.db")),
-        "audit_path" => Some(local_run.join("gate-home").join("audit.jsonl")),
-        "human_token_file" => Some(local_run.join("gate-home").join("web-token")),
-        _ => None,
+/// 把旧树改名归档（local-run.stale-<毫秒>，保留不删）；失败仅记录。
+fn archive_tree(local_run: &Path, log: &Option<PathBuf>, what: &str) {
+    let ts = SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let stale = local_run.with_file_name(format!("local-run.stale-{ts}"));
+    match std::fs::rename(local_run, &stale) {
+        Ok(()) => append_log(
+            log,
+            &format!("layout: stale {} archived to {}", what, stale.display()),
+        ),
+        Err(e) => append_log(
+            log,
+            &format!("layout: cannot archive {} ({}): {}", what, local_run.display(), e),
+        ),
     }
 }
 
-/// 回锚配置：local-run/gate.toml 中指向数据目录外（旧版每用户目录/旧安装盘等遗留绝对
-/// 路径）的已知路径键，整行重写为 local_run 下规范位置；已自指/未命中键原样保留。
-/// 失败静默——后端无配置时的默认生成（BootstrapConfig）本就把 gate_home 锚在自身目录。
-fn reanchor_config(local_run: &Path) {
-    let cfg_path = local_run.join("gate.toml");
-    let text = match std::fs::read_to_string(&cfg_path) {
-        Ok(t) => t,
-        Err(_) => return,
-    };
-    let mut changed = false;
-    let mut out = String::with_capacity(text.len());
-    for raw in text.lines() {
-        let trim = raw.trim_end();
-        let mut keep = true;
-        if let Some(eq) = trim.find('=') {
-            let key = trim[..eq].trim();
-            if let Some(val) = trim[eq + 1..]
-                .trim()
-                .strip_prefix('"')
-                .and_then(|s| s.strip_suffix('"'))
-            {
-                let old = PathBuf::from(
-                    val.replace('/', &std::path::MAIN_SEPARATOR.to_string()),
-                );
-                let target = if key == "auth_repo" {
-                    old.file_name().map(|n| local_run.join(n))
-                } else {
-                    canonical_path_for(key, local_run)
-                };
-                if let Some(t) = target {
-                    if !old.starts_with(local_run) && t != old {
-                        out.push_str(key);
-                        out.push_str(" = \"");
-                        out.push_str(&t.to_string_lossy().replace('\\', "/"));
-                        out.push('"');
-                        changed = true;
-                        keep = false;
-                    }
-                }
-            }
-        }
-        if keep {
-            out.push_str(raw);
-        }
-        out.push('\n');
-    }
-    if !changed {
+/// 克隆 .git/config 的 origin 改写：旧 auth 父目录前缀 → 新重根 auth 目录（两种斜杠形式）。
+fn rewrite_clone_origins(clones_root: &Path, old_auth_parent: &Path, new_auth_dir: &Path, log: &Option<PathBuf>) {
+    if !clones_root.is_dir() {
         return;
     }
-    let tmp = cfg_path.with_extension("toml.tmp");
-    if std::fs::write(&tmp, out).is_ok() {
-        let _ = std::fs::rename(tmp, cfg_path);
+    let old_fs = old_auth_parent.to_string_lossy();
+    let old_fwd = old_fs.replace('\\', "/");
+    let new_fwd = new_auth_dir.to_string_lossy().replace('\\', "/");
+    let mut touched = 0usize;
+    fn walk(dir: &Path, old_fs: &str, old_fwd: &str, new_fwd: &str, touched: &mut usize, log: &Option<PathBuf>) {
+        let Ok(entries) = std::fs::read_dir(dir) else { return };
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                continue;
+            }
+            if entry.file_name() == ".git" {
+                let cfg = p.join("config");
+                let Ok(text) = std::fs::read_to_string(&cfg) else { continue };
+                let rewritten = text.replace(&*old_fs, &*new_fwd).replace(&*old_fwd, &*new_fwd);
+                if rewritten != text {
+                    if std::fs::write(&cfg, rewritten).is_ok() {
+                        *touched += 1;
+                    }
+                }
+                continue;
+            }
+            walk(&p, old_fs, old_fwd, new_fwd, touched, log);
+        }
+    }
+    walk(clones_root, &old_fs, &old_fwd, &new_fwd, &mut touched, log);
+    if touched > 0 {
+        append_log(log, &format!("layout: rewrote auth origin in {touched} clone .git/config"));
     }
 }
 
-/// 数据自愈决策（release 首启、后端拉起前调用）：安装目录 data\local-run 可能只是
-/// 历史快照——其 gate.toml 的 gate_home 指到外部（旧版每用户目录等），实际运行时数据
-/// （gate.db、克隆、审计，行内绝对路径与文件同体）一直在别处。此时【不搬活树】（DB
-/// 里的 clone_path/auth_repo 全是绝对路径，搬走即断引用），而是：
-///  1. 归档化石快照 data\local-run → data\local-run.stale-<ms>（保留不删，杜绝再被误
-///     恢复/误当本体，也消除「安装目录只有旧克隆」的误导）；
-///  2. 运行数据根重定向到活树所在目录（config 指向的树优先；否则取活度最高的旧版每
-///     用户树），其配置若指外则回锚到自身目录。
-/// 返回重定向后的数据根（含 local-run 的那层）；None = 无异常，安装目录数据即本体。
-/// 悬空配置（gate_home 指向已不存在的目录）在返回 None 前顺带回锚到安装目录自身。
-fn data_dir_redirect(handle: &tauri::AppHandle, data: &Path) -> Option<PathBuf> {
-    let log = Some(data.join("backend-boot.log"));
-    let resident = data.join("local-run");
-    let kept_base = std::env::var_os("APPDATA")
-        .map(PathBuf::from)
-        .map(|d| d.join("OpenWorktree").join("data"));
-    let legacy_base = handle.path().app_data_dir().ok();
-    let res_fresh = if resident.is_dir() {
-        data_freshness(&resident)
+/// 生成布局配置（轻根 local-run/gate.toml）：显式给出重根绝对路径与自指 gate_home。
+fn write_layout_config(local_run: &Path, heavy: &Path, log: &Option<PathBuf>) {
+    let abs = |p: &Path| p.to_string_lossy().replace('\\', "/");
+    let cfg = local_run.join("gate.toml");
+    let content = format!(
+        "# OpenWorktree 布局配置（壳首次启动生成）。\n\
+         # 小数据/配置常驻系统盘：{light}\\local-run；\n\
+         # 工单克隆与项目镜像等大体积数据在安装目录同级：{heavy}（更新/卸载不触碰）。\n\
+         schema_version = 2\n\
+         project = \"openworktree\"\n\
+         auth_repo = \"{auth}\"\n\
+         clones_root = \"{clones}\"\n\
+         gate_home = \"{home}\"\n\
+         \n\
+         [web]\n\
+         bind = \"127.0.0.1\"\n\
+         port = 18080\n",
+        light = abs(local_run),
+        heavy = abs(heavy),
+        auth = abs(&heavy.join("auth").join("auth.git")),
+        clones = abs(&heavy.join("clones")),
+        home = abs(&local_run.join("gate-home"))
+    );
+    let tmp = cfg.with_extension("toml.tmp");
+    if std::fs::write(&tmp, content).is_ok() && std::fs::rename(&tmp, &cfg).is_ok() {
+        append_log(log, &format!("layout: wrote config {}", cfg.display()));
     } else {
-        None
+        let _ = std::fs::remove_file(&tmp);
+        append_log(log, "layout: FAILED to write gate.toml (backend will fall back to minimal defaults)");
+    }
+}
+
+/// 旧布局 → 分根布局的一次性收敛（幂等：轻根已有 gate.toml 即跳过）。任何失败都不删源，
+/// 只记录；后端兜底生成最小配置也能跑（克隆落到轻根是降级情形，日志会提示）。
+fn bootstrap_layout(light: &Path, heavy: &Path, install: &Path, log: &Option<PathBuf>) {
+    let local_run = light.join("local-run");
+    let _ = std::fs::create_dir_all(local_run.join("gate-home"));
+    let cfg = local_run.join("gate.toml");
+    if cfg.is_file() {
+        return; // 布局已建立
+    }
+    let ap = std::env::var_os("APPDATA").map(PathBuf::from);
+    let legacy_local = ap.as_ref().map(|d| d.join(LEGACY_APP_DATA_DIR).join("local-run"));
+    let kept_local = ap.as_ref().map(|d| d.join("OpenWorktree").join("data").join("local-run"));
+    let install_local = install.join("data").join("local-run");
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    for (t, what) in [
+        (legacy_local, "legacy per-user"),
+        (kept_local, "keep-backup"),
+        (Some(install_local.clone()), "install-dir data"),
+    ] {
+        if let Some(p) = t {
+            if p.is_dir() {
+                append_log(log, &format!("layout: candidate {what}: {}", p.display()));
+                candidates.push(p);
+            }
+        }
+    }
+    // 本体树 = gate.db 最新者；无任何旧树 → 全新布局，只写配置。
+    let mut best: Option<PathBuf> = None;
+    let mut best_fresh: Option<SystemTime> = None;
+    for c in &candidates {
+        if let Some(t) = data_freshness(c) {
+            if best_fresh.is_none() || best_fresh.map_or(true, |b| t > b) {
+                best_fresh = Some(t);
+                best = Some(c.clone());
+            }
+        }
+    }
+    let Some(src) = best else {
+        write_layout_config(&local_run, heavy, log);
+        return;
     };
-    let home = if resident.is_dir() {
-        read_gate_home(&resident)
-    } else {
-        None
+    append_log(log, &format!("layout: adopting {} as data source", src.display()));
+
+    // 归档其余候选树（保留不删，杜绝误恢复/误导）。
+    for c in &candidates {
+        if c != &src {
+            archive_tree(c, log, "stale data tree");
+        }
+    }
+
+    // gate-home（小数据）→ 轻根 local-run 下。
+    let src_gate_home = src.join("gate-home");
+    let dst_gate_home = local_run.join("gate-home");
+    if src_gate_home.is_dir() {
+        let mut merged = false;
+        if !dst_gate_home.exists() && std::fs::rename(&src_gate_home, &dst_gate_home).is_ok() {
+            merged = true;
+        } else if move_dir(&src_gate_home, &dst_gate_home) {
+            merged = true;
+        }
+        if merged {
+            append_log(log, "layout: gate-home moved into light root");
+        } else {
+            append_log(log, "layout: WARN cannot move gate-home into light root");
+        }
+    }
+
+    // clones 与 auth-*.git（大体积）→ 重根；随后克隆 origin 前缀改写。
+    let _ = std::fs::create_dir_all(heavy.join("auth"));
+    let _ = std::fs::create_dir_all(heavy.join("clones"));
+    let src_clones = src.join("clones");
+    if src_clones.is_dir() {
+        if move_dir(&src_clones, &heavy.join("clones")) {
+            append_log(log, "layout: clones moved into heavy root");
+        } else {
+            append_log(log, "layout: WARN cannot move clones into heavy root");
+        }
+    }
+    let mut auth_moved = false;
+    let Ok(entries) = std::fs::read_dir(&src) else {
+        append_log(log, "layout: WARN cannot list legacy tree");
+        write_layout_config(&local_run, heavy, log);
+        return;
     };
-    let home_external = home
-        .as_ref()
-        .map(|h| h.is_absolute() && !h.starts_with(&resident))
-        .unwrap_or(false);
-
-    // 候选本体树 (base, local-run)：config 指向的外部活树 + 旧版每用户目录。
-    // 排除安装目录自身与保留备份（备份树的行内路径指向旧安装盘，不可作运行体）。
-    let mut cand: Vec<(PathBuf, PathBuf)> = Vec::new();
-    if let Some(b) = &legacy_base {
-        let local = b.join("local-run");
-        if local.is_dir() {
-            cand.push((b.clone(), local));
-        }
-    }
-    if home_external {
-        if let Some(h) = &home {
-            if h.is_dir() {
-                if let Some(local) = h.parent() {
-                    if let Some(base) = local.parent() {
-                        if base != data
-                            && local == base.join("local-run")
-                            && kept_base
-                                .as_deref()
-                                .map_or(true, |k| base != k)
-                        {
-                            cand.push((base.to_path_buf(), local.to_path_buf()));
-                        }
-                    }
-                }
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name.starts_with("auth-") && name.ends_with(".git") && entry.path().is_dir() {
+            if move_dir(&entry.path(), &heavy.join("auth").join(&*name)) {
+                auth_moved = true;
             }
         }
     }
-    // 活度最高的候选（平局保持先入顺序：legacy 先于 config 指向的外部树登记，可重复无害）
-    let mut best: Option<(PathBuf, PathBuf)> = None;
-    let mut best_fresh: Option<std::time::SystemTime> = None;
-    for (base, local) in cand {
-        let Some(t) = data_freshness(&local) else { continue };
-        if let Some(r) = res_fresh {
-            // 安装目录本体更活 → 不乱动；本体自指（常规安装）时平局也保留本体。
-            if t < r || (t == r && !home_external) {
-                continue;
-            }
-        }
-        if best_fresh.is_none() || best_fresh.map_or(true, |b| t > b) {
-            best_fresh = Some(t);
-            best = Some((base.clone(), local.clone()));
-        }
+    if auth_moved {
+        append_log(log, "layout: auth mirrors moved into heavy root");
     }
+    rewrite_clone_origins(&heavy.join("clones"), &src, &heavy.join("auth"), log);
 
-    if let Some((base, local)) = best {
-        if resident.is_dir() {
-            let ts = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_millis())
-                .unwrap_or(0);
-            let stale = data.join(format!("local-run.stale-{ts}"));
-            if std::fs::rename(&resident, &stale).is_err() {
-                append_log(&log, "data heal: cannot archive stale snapshot (keep as-is)");
-                return None;
-            }
-            append_log(
-                &log,
-                &format!(
-                    "data heal: install-data local-run was a stale snapshot, archived to {}",
-                    stale.display()
-                ),
-            );
-        }
-        reanchor_config(&local);
-        append_log(
-            &log,
-            &format!("data heal: runtime data redirect to {}", base.display()),
-        );
-        return Some(base);
-    }
+    // 迁移标记：后端启动时（LegacyLayoutMigration）把 DB 行内旧绝对路径重基。
+    let old_clones = src_clones.to_string_lossy().replace('\\', "/");
+    let old_auth = src.to_string_lossy().replace('\\', "/");
+    let marker = local_run.join("layout-migrate.json");
+    let _ = std::fs::write(
+        &marker,
+        format!(
+            "{{\"old_clones_root\":\"{clones}\",\"old_auth_parent\":\"{auth}\"}}",
+            clones = old_clones,
+            auth = old_auth
+        ),
+    );
+    append_log(log, &format!("layout: migration marker written at {}", marker.display()));
 
-    // 配置指向已不存在的目录（悬空）：把安装目录化石自身回锚，向后自愈。
-    if resident.is_dir()
-        && home_external
-        && home.as_ref().map(|h| !h.is_dir()).unwrap_or(false)
-    {
-        reanchor_config(&resident);
-        append_log(&log, "data heal: dangling gate_home re-anchored into install data");
-    }
-    None
+    write_layout_config(&local_run, heavy, log);
 }
 
 /// 把 src 整体搬为 dst：dst 不存在时一步 rename（同卷瞬时）；已存在（空目录）或
@@ -333,72 +390,36 @@ fn move_dir(src: &Path, dst: &Path) -> bool {
     true
 }
 
-/// 数据目录决策（后端的工作目录，local-run/ 落在其中）：
-/// 1. 安装目录 data\ —— 默认。克隆体积持续增长，装在哪个盘由安装时决定，卸载时随
-///    安装目录清理（卸载器钩子先询问是否保留）；
-/// 2. 上次卸载选「保留」的数据 %APPDATA%\OpenWorktree\data —— POSTINSTALL 钩子会搬回
-///    安装目录，rename 失败（跨卷）时由这里接管；
-/// 3. 每用户数据目录 %APPDATA%\com.openworktree.desktop —— 安装目录不可写时的兜底
-///    （如 perMachine 装进 Program Files），也是旧版数据的位置：release 首次运行且
-///    安装目录还没有 local-run 时整体搬入。
-/// 采用安装目录 data\ 前先做一次自愈（data_dir_redirect）：历史版本留下的快照 local-run
-/// 可能携带指到旧版每用户目录的过期 gate.toml（卸载「保留」→重装后新旧两份数据分叉），
-/// 此时不搬动活数据，而是把运行时重定向到活体目录、归档化石快照并回锚配置。
-/// tauri dev（debug 构建）不做迁移、仍用数据目录兜底路径，避免把真实安装的数据
-/// 搬进 target\debug（cargo clean 会清掉）。dev-shim 侧车自带仓库内 local-run 配置，
-/// 不受此目录影响。
+/// 数据目录决策（后端工作目录，local-run/ 落在其中）。
+/// release：分根布局 —— 轻根 %APPDATA%\OpenWorktree（小数据常驻系统盘）＋重根
+/// <安装同级>\OpenWorktree-data（克隆/镜像随安装盘）；首次启动完成旧布局一次性收敛。
+/// debug（tauri dev / 测试）：不做迁移，用每用户 app_data 兜底，避免把真实数据搬进
+/// target\debug（cargo clean 会清掉）。dev-shim 侧车自带仓库内 local-run 配置，不经此。
 fn resolve_data_dir(handle: &tauri::AppHandle) -> PathBuf {
     let app_data = handle.path().app_data_dir().ok();
-    let kept = std::env::var_os("APPDATA")
-        .map(PathBuf::from)
-        .map(|d| d.join("OpenWorktree").join("data"));
-
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(install) = exe.parent() {
-            let data = install.join("data");
-            if data.join("local-run").is_dir() {
-                if !cfg!(debug_assertions) {
-                    // 化石快照 → 运行时重定向到活体目录（归档+回锚），无异常则保持现状。
-                    if let Some(base) = data_dir_redirect(handle, &data) {
-                        return base;
-                    }
-                }
-                return data;
-            }
-            if !cfg!(debug_assertions) {
-                // data\local-run 尚不存在：若旧版每用户目录仍是活树（行内绝对路径与文件
-                // 同体），原地续用比重搬进安装目录安全；否则走保留备份/旧版数据搬入。
-                if let Some(base) = data_dir_redirect(handle, &data) {
-                    return base;
-                }
-                if let Some(k) = &kept {
-                    if k.join("local-run").is_dir() && move_dir(k, &data) {
-                        reanchor_config(&data.join("local-run"));
-                        return data;
-                    }
-                }
-                if let Some(l) = &app_data {
-                    let legacy = l.join("local-run");
-                    if legacy.is_dir() && move_dir(&legacy, &data.join("local-run")) {
-                        reanchor_config(&data.join("local-run"));
-                        return data;
-                    }
-                }
-            }
-            if std::fs::create_dir_all(&data).is_ok() && dir_writable(&data) {
-                return data;
-            }
-        }
+    if cfg!(debug_assertions) {
+        let fallback = app_data.unwrap_or_else(std::env::temp_dir);
+        let _ = std::fs::create_dir_all(&fallback);
+        return fallback;
     }
-    // 兜底链：保留的数据目录 > 旧版每用户数据目录
-    if let Some(k) = &kept {
-        if k.join("local-run").is_dir() {
-            return k.clone();
-        }
+    let Some(exe) = std::env::current_exe().ok() else {
+        return app_data.unwrap_or_else(std::env::temp_dir);
+    };
+    let Some(install) = exe.parent() else {
+        return app_data.unwrap_or_else(std::env::temp_dir);
+    };
+    let Some(light) = light_root(&app_data) else {
+        return app_data.unwrap_or_else(std::env::temp_dir);
+    };
+    let log = Some(light.join("backend-boot.log"));
+    let _ = std::fs::create_dir_all(light.join("local-run"));
+    append_log(&log, &format!("light data root: {}", light.display()));
+    if !light.join("local-run").join("gate.toml").is_file() {
+        let heavy = heavy_root(install, &log);
+        append_log(&log, &format!("heavy data root: {}", heavy.display()));
+        bootstrap_layout(&light, &heavy, install, &log);
     }
-    let fallback = app_data.unwrap_or_else(std::env::temp_dir);
-    let _ = std::fs::create_dir_all(&fallback);
-    fallback
+    light
 }
 
 /// 300ms 快速探测：端口有监听者即 true（无监听时本机 RST 立即返回，超时仅防火墙丢包场景）。
@@ -810,7 +831,8 @@ pub fn run() {
                 poll_backend_snapshot(&theme_handle);
             });
             tauri::async_runtime::spawn(async move {
-                // 数据目录：安装目录 data\（默认）/ 保留数据 / 每用户兜底，见 resolve_data_dir。
+                // 数据目录：轻根（系统盘每用户小数据/配置）＋重根（安装同级大体积克隆），
+                // 旧布局由 resolve_data_dir/bootstrap_layout 一次性收敛后返回轻根。data_dir 即轻根。
                 let data_dir = resolve_data_dir(&handle);
                 let boot_log = Some(data_dir.join("backend-boot.log"));
                 append_log(&boot_log, "=== backend boot ===");

@@ -3,6 +3,7 @@ package gate.adapters.store;
 import gate.domain.ticket.Ticket;
 import gate.domain.ticket.TicketStage;
 import gate.ports.store.TicketRepository;
+import java.nio.file.Path;
 import java.sql.ResultSet;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -11,36 +12,77 @@ import java.util.Optional;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 
-/** JdbcTemplate-backed {@code ticket} store (no JPA — §4.4). */
+/**
+ * JdbcTemplate-backed {@code ticket} store (no JPA — §4.4).
+ *
+ * <p>克隆根布局约定：克隆数据与系统小数据分根后，克隆根可在安装/升级周期之间保持稳定。
+ * 为避免 DB 行里存死绝对路径（搬克隆根即断引用），构造时传入 {@code clonesRoot} 的仓库
+ * 在写入时把克隆根内的绝对路径压成相对路径（如 {@code T-104}）、读取时再按当前克隆根
+ * 解析回绝对路径；快速模式超级工单的 clone_path 是用户项目工作区（克隆根之外），原样
+ * 存取。未注入克隆根的旧构造保持绝对路径直存直读（测试/旧用法不受影响）。
+ */
 public final class JdbcTicketRepository implements TicketRepository {
 
     private final JdbcTemplate jdbc;
+    private final Path clonesRoot;
+    private final RowMapper<Ticket> mapper;
 
     public JdbcTicketRepository(JdbcTemplate jdbc) {
-        this.jdbc = jdbc;
+        this(jdbc, null);
     }
 
-    private static final RowMapper<Ticket> MAPPER = (ResultSet rs, int n) -> new Ticket(
-            rs.getString("ticket_no"),
-            rs.getString("title"),
-            rs.getString("target_ref"),
-            rs.getString("clone_path"),
-            rs.getString("executor_provider_id"),
-            rs.getString("executor_model"),
-            rs.getString("reviewer_provider_id"),
-            rs.getString("reviewer_model"),
-            TicketStage.valueOf(rs.getString("stage")),
-            Instant.parse(rs.getString("created_at")),
-            Instant.parse(rs.getString("updated_at")),
-            getNullableLong(rs, "exec_token_total"),
-            rs.getString("exec_token_source"),
-            rs.getString("agent_config_id"),
-            rs.getString("priority"),
-            rs.getString("project_id"),
-            rs.getString("description"),
-            rs.getString("note"),
-            decodeLabels(rs.getString("labels")),
-            rs.getInt("is_super") != 0);
+    public JdbcTicketRepository(JdbcTemplate jdbc, Path clonesRoot) {
+        this.jdbc = jdbc;
+        this.clonesRoot = clonesRoot == null ? null : clonesRoot.toAbsolutePath().normalize();
+        this.mapper = (ResultSet rs, int n) -> new Ticket(
+                rs.getString("ticket_no"),
+                rs.getString("title"),
+                rs.getString("target_ref"),
+                loadPath(rs.getString("clone_path")),
+                rs.getString("executor_provider_id"),
+                rs.getString("executor_model"),
+                rs.getString("reviewer_provider_id"),
+                rs.getString("reviewer_model"),
+                TicketStage.valueOf(rs.getString("stage")),
+                Instant.parse(rs.getString("created_at")),
+                Instant.parse(rs.getString("updated_at")),
+                getNullableLong(rs, "exec_token_total"),
+                rs.getString("exec_token_source"),
+                rs.getString("agent_config_id"),
+                rs.getString("priority"),
+                rs.getString("project_id"),
+                rs.getString("description"),
+                rs.getString("note"),
+                decodeLabels(rs.getString("labels")),
+                rs.getInt("is_super") != 0);
+    }
+
+    /** 写入端：克隆根内的绝对路径 → 相对路径；其它（用户工作区等）原样。 */
+    private String storePath(String value) {
+        if (value == null || clonesRoot == null) {
+            return value;
+        }
+        Path p = Path.of(value).toAbsolutePath().normalize();
+        if (p.startsWith(clonesRoot)) {
+            Path rel = clonesRoot.relativize(p);
+            if (!rel.toString().isEmpty()) {
+                return rel.toString().replace('\\', '/');
+            }
+        }
+        return value;
+    }
+
+    /** 读取端：相对路径按当前克隆根解析回绝对路径。 */
+    private String loadPath(String value) {
+        if (value == null || clonesRoot == null) {
+            return value;
+        }
+        Path p = Path.of(value);
+        if (p.isAbsolute()) {
+            return value;
+        }
+        return clonesRoot.resolve(value.replace('/', java.io.File.separatorChar)).toString();
+    }
 
     @Override
     public void insert(Ticket ticket) {
@@ -54,7 +96,7 @@ public final class JdbcTicketRepository implements TicketRepository {
                                    description, note, labels, is_super)
                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
-                ticket.ticketNo(), ticket.title(), ticket.targetRef(), ticket.clonePath(),
+                ticket.ticketNo(), ticket.title(), ticket.targetRef(), storePath(ticket.clonePath()),
                 ticket.executorProviderId(), ticket.executorModel(),
                 ticket.reviewerProviderId(), ticket.reviewerModel(),
                 ticket.stage().name(), ticket.createdAt().toString(), ticket.updatedAt().toString(),
@@ -66,7 +108,7 @@ public final class JdbcTicketRepository implements TicketRepository {
 
     @Override
     public Optional<Ticket> find(String ticketNo) {
-        List<Ticket> rows = jdbc.query("SELECT * FROM ticket WHERE ticket_no = ?", MAPPER, ticketNo);
+        List<Ticket> rows = jdbc.query("SELECT * FROM ticket WHERE ticket_no = ?", mapper, ticketNo);
         return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
     }
 
@@ -135,7 +177,7 @@ public final class JdbcTicketRepository implements TicketRepository {
     public Optional<Ticket> findSuperByProject(String projectId) {
         List<Ticket> rows = jdbc.query(
                 "SELECT * FROM ticket WHERE is_super = 1 AND project_id = ? ORDER BY ticket_no",
-                MAPPER, projectId);
+                mapper, projectId);
         return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
     }
 
@@ -152,17 +194,17 @@ public final class JdbcTicketRepository implements TicketRepository {
 
     @Override
     public List<Ticket> findByStage(TicketStage stage) {
-        return jdbc.query("SELECT * FROM ticket WHERE stage = ? ORDER BY ticket_no", MAPPER, stage.name());
+        return jdbc.query("SELECT * FROM ticket WHERE stage = ? ORDER BY ticket_no", mapper, stage.name());
     }
 
     @Override
     public List<Ticket> findAll() {
-        return jdbc.query("SELECT * FROM ticket ORDER BY ticket_no", MAPPER);
+        return jdbc.query("SELECT * FROM ticket ORDER BY ticket_no", mapper);
     }
 
     @Override
     public List<Ticket> findAllByProject(String projectId) {
-        return jdbc.query("SELECT * FROM ticket WHERE project_id = ? ORDER BY ticket_no", MAPPER,
+        return jdbc.query("SELECT * FROM ticket WHERE project_id = ? ORDER BY ticket_no", mapper,
                 projectId);
     }
 
