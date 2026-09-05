@@ -91,7 +91,7 @@
       </dependency>
       <dependency>
         <groupId>gate</groupId>
-        <artifactId>gate-adapters</artifactId>
+        <artifactId>gate-bootstrap</artifactId>
         <version>${project.version}</version>
       </dependency>
     </dependencies>
