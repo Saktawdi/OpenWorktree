@@ -969,9 +969,9 @@ function PioneerBadge({ className = "" }: { className?: string }) {
   return (
     <svg
       className={`pioneer-badge ${className}`}
-      width="206"
+      width="170"
       height="30"
-      viewBox="0 0 206 30"
+      viewBox="0 0 170 30"
       role="img"
       aria-label="先行者：远程仓库还没有任何已发行版本"
     >
@@ -996,10 +996,10 @@ function PioneerBadge({ className = "" }: { className?: string }) {
           <stop offset="100%" stopColor="#ffffff" stopOpacity="0" />
         </linearGradient>
         <clipPath id="owp-clip">
-          <rect x="1" y="1" width="204" height="28" rx="14" />
+          <rect x="1" y="1" width="168" height="28" rx="14" />
         </clipPath>
       </defs>
-      <rect x="1" y="1" width="204" height="28" rx="14" fill="#0c1116" stroke="url(#owp-border)" strokeWidth="1.5" />
+      <rect x="1" y="1" width="168" height="28" rx="14" fill="#0c1116" stroke="url(#owp-border)" strokeWidth="1.5" />
       <g clipPath="url(#owp-clip)">
         <g transform="rotate(18 0 0)">
           <rect className="pioneer-badge-shine" x="-26" y="-8" width="20" height="46" fill="url(#owp-shine)" />
@@ -1011,8 +1011,8 @@ function PioneerBadge({ className = "" }: { className?: string }) {
         d="M0 -5 C0.8 -1.5 1.5 -0.8 5 0 C1.5 0.8 0.8 1.5 0 5 C-0.8 1.5 -1.5 0.8 -5 0 C-1.5 -0.8 -0.8 -1.5 0 -5 Z"
         fill="url(#owp-border)"
       />
-      <text x="32" y="19.5" fill="#eef0f6" fontSize="12" fontWeight="600" letterSpacing="0.5">先行者 · 未公开</text>
-      <text x="122" y="19.5" fill="url(#owp-border)" fontSize="10" fontWeight="800" letterSpacing="1.2">UNRELEASED</text>
+      <text x="32" y="19.5" fill="#eef0f6" fontSize="12" fontWeight="600" letterSpacing="0.5">先行者</text>
+      <text x="86" y="19.5" fill="url(#owp-border)" fontSize="10" fontWeight="800" letterSpacing="1.2">UNRELEASED</text>
     </svg>
   );
 }
