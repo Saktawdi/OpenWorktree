@@ -26,6 +26,16 @@ public final class PortAllocator {
         this.size = max - min + 1;
     }
 
+    /** Lowest port of the configured range（启动期孤儿清扫的扫描下界）. */
+    public int min() {
+        return min;
+    }
+
+    /** Number of ports in the configured range（启动期孤儿清扫的扫描上界用）. */
+    public int size() {
+        return size;
+    }
+
     /** Atomically reserves a free port in the configured range. */
     public int allocate() {
         for (int i = 0; i < size; i++) {
@@ -37,6 +47,17 @@ public final class PortAllocator {
         }
         throw new GateException(GateErrorCode.GATE_ERROR_IO,
                 "no free opencode ports in range [" + min + ", " + (min + size - 1) + "]");
+    }
+
+    /**
+     * 推进游标 n 格（不占用任何端口）。被外来进程占住的端口没有 release 语义，
+     * 调用方（acquireUsablePort 的 2^n 跨步）用它跳过游标附近的死区。n=0 为合法的
+     * 「跨 1 格」——allocate 本身已消耗当前格，无需再推。
+     */
+    public void skip(int n) {
+        if (n > 0) {
+            cursor.addAndGet(n);
+        }
     }
 
     /** Releases a previously allocated port so it can be reused. */

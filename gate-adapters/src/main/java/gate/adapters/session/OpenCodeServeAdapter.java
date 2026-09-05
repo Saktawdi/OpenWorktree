@@ -269,6 +269,7 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
         this.credentials = credentials;
         this.baseSynchronizer = baseSynchronizer;
         this.pidRegistry.sweepOrphans();
+        sweepRangeOrphans();
         this.executor = Executors.newSingleThreadExecutor(r -> {
             Thread t = new Thread(r, "opencode-session");
             t.setDaemon(true);
@@ -357,10 +358,9 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                 throw new GateException(GateErrorCode.USAGE,
                         "session has no cli session id to resume: " + sessionId);
             }
-            int port = ports.allocate();
+            int port = acquireUsablePort();
             try {
                 if (opencodeExecutable != null && !opencodeExecutable.isBlank()) {
-                    assertPortFree(port);
                     Map<String, String> env = credentials == null
                             ? Map.of()
                             : Map.of(gate.adapters.mcp.McpServer.TOKEN_ENV,
@@ -729,13 +729,13 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
             AgentConfig config = agentConfigs.find(request.agentConfigId())
                     .orElseThrow(() -> new GateException(GateErrorCode.USAGE,
                             "no such agent config: " + request.agentConfigId()));
-            int port = ports.allocate();
+            int port = acquireUsablePort();
             try {
                 if (opencodeExecutable != null && !opencodeExecutable.isBlank()) {
                     // A leftover opencode serve from a previous backend run silently answers /health
                     // on this port with STALE in-memory config; our own spawned process loses the
-                    // bind race and dies while waitHealthy talks to the orphan instead. Refuse.
-                    assertPortFree(port);
+                    // bind race and dies while waitHealthy talks to the orphan instead.
+                    // acquireUsablePort 已确保端口干净（孤儿自愈 + 2^n 跨步），这里直接拉起。
                     spawnServe(port, request.clonePath(), request.env());
                 }
                 waitHealthy(port);
@@ -2129,28 +2129,163 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
     // -------------------------------------------------------------------------------------------
 
     /**
-     * Throws when something already answers /health on the port BEFORE we spawn our own serve —
-     * an orphaned opencode process from a previous backend run. Reusing it would silently route
-     * the session onto a server with stale in-memory config (e.g. a default agent that has since
-     * been renamed), so the session must fail loudly instead.
+     * 启动期兜底清扫：登记文件（sweepOrphans）只记得「登记过的」serve，历史构建、登记文件
+     * 丢失或其诞生前遗留的孤儿永远清不到——新建会话会撞上 stale port 报错（49153-49156 连环
+     * 失败的实际案例）。这里扫整个进程表找 opencode 可执行体，对命令行是 {@code serve --port P}
+     * 且 P 落在 session.port_range 内的进程收割（与 ServePidRegistry 同一安全判据：命令行含
+     * opencode 才动手；用户自己的交互式 opencode / 端口段外的进程绝不碰）。仅适配器构造时
+     * 执行一次，运行中的会话进程此时尚未启动，无误杀窗口。
      */
-    private void assertPortFree(int port) {
+    private void sweepRangeOrphans() {
+        if (opencodeExecutable == null || opencodeExecutable.isBlank()) {
+            return;
+        }
+        boolean windows = System.getProperty("os.name", "").toLowerCase().contains("win");
+        List<Long> candidates = new ArrayList<>();
+        for (ProcessHandle ph : ProcessHandle.allProcesses().toList()) {
+            // name/command 在 Windows 上可用；arguments() 在 Windows 拿不到（null），
+            // 所以 serve 形态要靠下面的外部命令行查询确认。
+            String command = ph.info().command().orElse("");
+            if (command.contains("opencode")) {
+                candidates.add(ph.pid());
+            }
+        }
+        if (candidates.isEmpty()) {
+            return;
+        }
+        List<Long> orphans = new ArrayList<>();
+        for (long pid : candidates) {
+            String cmdline = processCommandLine(pid, windows);
+            if (cmdline == null || !cmdline.toLowerCase().contains("opencode")) {
+                continue;
+            }
+            java.util.regex.Matcher m = java.util.regex.Pattern
+                    .compile("serve\\s+--port\\s+(\\d+)").matcher(cmdline);
+            if (!m.find()) {
+                continue; // 交互式 opencode / 非 serve 形态，放过
+            }
+            int port = Integer.parseInt(m.group(1));
+            if (port >= ports.min() && port < ports.min() + ports.size()) {
+                orphans.add(pid);
+            }
+        }
+        if (orphans.isEmpty()) {
+            return;
+        }
+        int killed = ServePidRegistry.reapIfOpencode(orphans);
+        log.warn("opencode", "start.range-orphan-sweep", "killed", killed,
+                "candidates", orphans.size());
+    }
+
+    /** Best-effort command line lookup: wmic（Windows）/ ps（Unix），失败返回 null。 */
+    private String processCommandLine(long pid, boolean windows) {
+        try {
+            Process p = windows
+                    ? new ProcessBuilder("wmic", "process", "where", "ProcessId=" + pid,
+                            "get", "CommandLine").start()
+                    : new ProcessBuilder("ps", "-p", String.valueOf(pid), "-o", "args=").start();
+            p.waitFor(5, java.util.concurrent.TimeUnit.SECONDS);
+            try (BufferedReader r = new BufferedReader(
+                    new InputStreamReader(p.getInputStream()))) {
+                String line;
+                StringBuilder sb = new StringBuilder();
+                while ((line = r.readLine()) != null) {
+                    if (line.trim().isEmpty() || line.trim().equalsIgnoreCase("CommandLine")) {
+                        continue;
+                    }
+                    sb.append(line.trim()).append(' ');
+                }
+                return sb.length() == 0 ? null : sb.toString();
+            }
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** 占用拒绝的统一前缀：acquireUsablePort 的跨步重试据此识别「可跳过」的端口失败。 */
+    private static final String PORT_BUSY_PREFIX = "port busy: ";
+
+    private GateException portBusy(int port, String detail) {
+        return new GateException(GateErrorCode.GATE_ERROR_IO, PORT_BUSY_PREFIX + port + " " + detail);
+    }
+
+    private boolean isPortBusyRefusal(Throwable t) {
+        return t instanceof GateException ge
+                && ge.getMessage() != null
+                && ge.getMessage().startsWith(PORT_BUSY_PREFIX);
+    }
+
+    /** Something already answers /health on the port（孤儿 serve 或外来进程）. */
+    private boolean probePortOccupied(int port) {
         try {
             HttpResponse<String> resp = http.send(
                     HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/health"))
                             .timeout(Duration.ofMillis(500)).GET().build(),
                     HttpResponse.BodyHandlers.ofString());
-            if (resp.statusCode() == 200) {
-                throw new GateException(GateErrorCode.GATE_ERROR_IO,
-                        "port " + port + " is already served by a stale opencode process from an "
-                                + "earlier run; kill it (or adjust session.port_range in gate.toml) "
-                                + "and retry");
-            }
-        } catch (GateException e) {
-            log.error("opencode", "start.refused-stale-port", "port", port);
-            throw e;
+            return resp.statusCode() == 200;
         } catch (Exception ignored) {
-            // nothing listening -> port is genuinely free
+            return false; // nothing listening -> genuinely free
+        }
+    }
+
+    /**
+     * 端口择位：从分配器取一个端口并确保它真的可用。被占时先尝试孤儿自愈（收割占着该端口
+     * 的 opencode serve，上次运行被强杀时必然发生）；收割失败（外来进程占用）返回 null，
+     * 调用方释放并按 2^n 跨步换下一个候选。
+     */
+    private int acquireUsablePort() {
+        int skip = 1;
+        int attempts = 0;
+        while (true) {
+            int port = ports.allocate();
+            if (opencodeExecutable == null || opencodeExecutable.isBlank()) {
+                return port; // 无 CLI 可执行体：不 spawn，端口仅作占位
+            }
+            if (!probePortOccupied(port)) {
+                return port;
+            }
+            healStaleServe(port);
+            if (!probePortOccupied(port)) {
+                return port; // 孤儿已收割，端口已释放（socket 关闭略有延迟，waitHealthy 会重试）
+            }
+            // 外来进程占用：释放并按 1,2,4,8… 跨步跳过当前游标邻域的坏端口。
+            // allocate 本身已消耗当前格，跨 n 格只需再推 n-1 格。
+            ports.release(port);
+            log.warn("opencode", "start.port-busy-skip", "port", port, "skip", skip);
+            ports.skip(skip - 1);
+            skip = Math.min(skip * 2, 4096);
+            if (++attempts >= 32) {
+                throw portBusy(port, "port range exhausted after " + attempts + " skipping attempts");
+            }
+        }
+    }
+
+    /**
+     * 分配时自愈：找到 {@code serve --port <port>} 的 opencode 进程并收割（仅 OUR 端口段内、
+     * 命令行含 opencode 才动手）。返回是否收割成功——失败意味着占用者是外来进程。
+     */
+    private void healStaleServe(int port) {
+        boolean windows = System.getProperty("os.name", "").toLowerCase().contains("win");
+        for (ProcessHandle ph : ProcessHandle.allProcesses().toList()) {
+            if (!ph.info().command().orElse("").contains("opencode")) {
+                continue;
+            }
+            String cmdline = processCommandLine(ph.pid(), windows);
+            if (cmdline == null) {
+                continue;
+            }
+            java.util.regex.Matcher m = java.util.regex.Pattern
+                    .compile("serve\\s+--port\\s+(\\d+)").matcher(cmdline);
+            if (m.find() && Integer.parseInt(m.group(1)) == port) {
+                ServePidRegistry.reapIfOpencode(List.of(ph.pid()));
+                log.warn("opencode", "start.stale-serve-reaped", "port", port, "pid", ph.pid());
+                try {
+                    Thread.sleep(200); // socket 关闭到可重新 bind 有毫秒级延迟
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                }
+                return;
+            }
         }
     }
 

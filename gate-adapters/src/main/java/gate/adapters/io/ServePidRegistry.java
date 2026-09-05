@@ -83,4 +83,29 @@ public final class ServePidRegistry {
         }
         return killed;
     }
+
+    /**
+     * Kills the given PIDs when their executable looks like opencode（与 sweepOrphans 同一安全
+     * 判据：命令行含 opencode 才动手，recycled PID 的无关进程绝不误伤），返回实际收割数。
+     * 供适配器的启动期端口段清扫复用——登记文件只记得「登记过的」孤儿，历史构建/文件丢失
+     * 遗留的孤儿要靠端口段扫描兜底。
+     */
+    public static int reapIfOpencode(Iterable<Long> pids) {
+        final int[] killed = {0};
+        for (long pid : pids) {
+            try {
+                ProcessHandle.of(pid).ifPresent(handle -> {
+                    String command = handle.info().command().orElse("");
+                    if (command.contains("opencode")) {
+                        handle.descendants().forEach(ProcessHandle::destroyForcibly);
+                        handle.destroyForcibly();
+                        killed[0]++;
+                    }
+                });
+            } catch (Exception ignored) {
+                // already gone / inaccessible
+            }
+        }
+        return killed[0];
+    }
 }
