@@ -129,7 +129,23 @@ jobs:
       - name: Smoke (boot + token + status API + SPA + WS)
         shell: python
         run: |
-          import base64, json, os, socket, struct, subprocess, time, urllib.request
+          import base64, json, os, socket, struct, subprocess, sys, time, traceback, urllib.request
+
+          # 任何断言失败都把服务器 boot.log 尾部打出来——native 运行时的异常栈
+          # （NoClassDefFoundError 等）是定位反射缺类的唯一线索，不 dump 只能盲猜。
+          def boot_tail():
+              try:
+                  with open("boot.log", encoding="utf-8", errors="replace") as f:
+                      return f.read()[-4000:]
+              except FileNotFoundError:
+                  return "<no boot.log>"
+
+          def _dump_and_raise(kind, value, tb):
+              print("---- boot.log tail (diagnostic) ----")
+              print(boot_tail())
+              traceback.print_exception(kind, value, tb)
+
+          sys.excepthook = _dump_and_raise
 
           if os.name == "nt":
               bin_name, exe = "ow-windows-x86_64.exe", os.path.join("..", "ow-windows-x86_64.exe")
