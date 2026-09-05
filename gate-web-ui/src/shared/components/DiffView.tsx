@@ -1,13 +1,19 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import { CaretDown, CaretUp, FileCode, Warning } from "@phosphor-icons/react";
 import { NO_DIFF, useApp } from "@/store";
 import type { DiffFile, DiffHunk } from "@/shared/types";
 import { diffTotals } from "@/shared/diff";
 
-/* 超大 diff（如未加入 git 忽略的 node_modules 整目录入库）下的分批懒加载参数：
-   列表按"滚动到末尾再加载下一批"，单个文件展开内容也按行数分批，避免一次性铺开卡死页面。 */
-const FILES_PER_BATCH = 80; // 文件列表单批渲染/追加的数量
-const FILE_LINES_PER_BATCH = 2000; // 单个文件展开时单批追加的行数
+/* 超大 diff（如未加入 git 忽略的 node_modules 整目录入库）下渲染层根治：
+   文件列表采用窗口化虚拟渲染——只挂载视口 ± 缓冲范围内的文件块，滚出即卸载，
+   任意规模（数万文件/数十万行）DOM 规模都保持恒定；文件内部行仍按批展开。 */
+const FILE_LINES_PER_BATCH = 2000; // 单个文件展开时单批追加的行数（FileBlock 内部状态）
+const ROW_GAP = 12; // 文件块之间的垂直间距（替代原 space-y-3）
+const COLLAPSED_ROW_H = 42; // 折叠态固定高度：h-10 头部 40px + 卡片上下边框 2px
+const OVERSCAN_PX = 2400; // 视口上下各多挂载的缓冲高度（滚速越快缓冲越大）
+const EST_HEADER_H = 25; // 估算展开高：hunk 头行
+const EST_MORE_BAR_H = 33; // 估算展开高："展开剩余 N 行"栏
 
 /** 按行数上限裁剪 hunks：超过部分丢弃；返回保留的 hunks 与实际行数。 */
 function sliceHunks(hunks: DiffHunk[], cap: number): { hunks: DiffHunk[]; shown: number } {
@@ -46,7 +52,7 @@ const FileBlock = memo(
     highlightLine?: number;
     open: boolean;
     onToggle: (path: string) => void;
-    /** 审查跳转要求文件至少展开到该行数（配合文件级/行级分片也能定位到目标行）。 */
+    /** 审查跳转要求文件至少展开到该行数（配合文件内行分片也能定位到目标行）。 */
     minLines?: number;
   }) {
     const [cap, setCap] = useState(FILE_LINES_PER_BATCH);
@@ -144,7 +150,7 @@ const FileBlock = memo(
       </div>
     );
   },
-  // 折叠态的文件行只由头部字段决定：live 刷新替换整棵树时避免成千上万个折叠块全部重渲染
+  // 折叠态文件行只由头部字段决定：diff 刷新替换整棵树时，避免视口内大量折叠块重渲染
   (p, n) =>
     p.open === n.open &&
     p.highlightLine === n.highlightLine &&
@@ -156,6 +162,81 @@ const FileBlock = memo(
         p.file.deletions === n.file.deletions)),
 );
 
+/**
+ * 虚拟列表行：绝对定位在滚动容器内。折叠态高度由 CSS 固定（h-10 头部）确定，无需测量；
+ * 仅展开行需要挂 RO 实测高度回报，用于维护"测量值优先"的槽位表并校正离线行的估算高度。
+ */
+function VirtualRow({
+  path,
+  top,
+  open,
+  onHeight,
+  children,
+}: {
+  path: string;
+  top: number;
+  open: boolean;
+  onHeight: (path: string, height: number) => void;
+  children: ReactNode;
+}) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const report = useCallback(() => {
+    const el = ref.current;
+    if (el) onHeight(path, el.getBoundingClientRect().height);
+  }, [path, onHeight]);
+
+  useEffect(() => {
+    if (!open) return;
+    const el = ref.current;
+    if (!el) return;
+    report();
+    const ro = new ResizeObserver(report);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [open, report]);
+
+  return (
+    <div ref={ref} className="absolute left-0 right-0" style={{ top }}>
+      {children}
+    </div>
+  );
+}
+
+/** 估算某文件块的渲染高度：折叠态取 CSS 固定高；展开行已实测优先，未实测按行数粗估（挂载后即校正）。 */
+function estimateRowHeight(
+  f: DiffFile,
+  open: boolean,
+  measured: Record<string, number>,
+): number {
+  if (!open) return COLLAPSED_ROW_H;
+  const m = measured[f.path];
+  if (m !== undefined) return m;
+  let rows = 0;
+  let hunks = 0;
+  for (const h of f.hunks) {
+    hunks++;
+    rows += h.lines.length;
+  }
+  const shown = Math.min(rows, FILE_LINES_PER_BATCH);
+  return COLLAPSED_ROW_H + hunks * EST_HEADER_H + shown * 19 + (rows > shown ? EST_MORE_BAR_H : 0) + 3;
+}
+
+/** 槽位表：slots[i] = 第 i 个文件块距列表顶部的偏移；含行间距。 */
+function buildSlots(
+  files: DiffFile[],
+  openPaths: ReadonlySet<string>,
+  measured: Record<string, number>,
+): number[] {
+  const slots = new Array<number>(files.length + 1);
+  slots[0] = 0;
+  let acc = 0;
+  for (let i = 0; i < files.length; i++) {
+    acc += estimateRowHeight(files[i], openPaths.has(files[i].path), measured) + ROW_GAP;
+    slots[i + 1] = acc;
+  }
+  return slots;
+}
+
 export function DiffView({ ticketNo }: { ticketNo: string }) {
   const files = useApp((s) => s.diffs[ticketNo] ?? NO_DIFF);
   const eolWarning = useApp((s) => s.diffWarnings[ticketNo] ?? "");
@@ -166,19 +247,40 @@ export function DiffView({ ticketNo }: { ticketNo: string }) {
   });
   const highlight = useApp((s) => s.highlight);
   const totals = useMemo(() => diffTotals(files), [files]);
-  // 文件默认折叠：整仓级 diff（数万行）一次性铺开会把页面压死，点击文件头再渲染内容。
   const [openPaths, setOpenPaths] = useState<Set<string>>(new Set());
-  // 懒加载：只挂载前 N 个文件；滚动到列表底部（哨兵可见）再按批追加。
-  const [visibleCount, setVisibleCount] = useState(FILES_PER_BATCH);
-  // 审查跳转目标文件的行数下限（跨文件分页/行分片定位用）。
+  // 审查跳转目标文件的行数下限（配合文件内行分片定位）。
   const [revealLines, setRevealLines] = useState<{ path: string; min: number } | null>(null);
+  // 已实测的文件块高度（path → 高度，跨刷新/跨工单会话累积，挂载即复测校正）。
+  const [measured, setMeasured] = useState<Record<string, number>>({});
+  // 当前挂载窗口 [start, end)。
+  const [range, setRange] = useState<{ start: number; end: number }>({ start: 0, end: 0 });
   const scrollerRef = useRef<HTMLDivElement | null>(null);
-  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const filesRef = useRef(files);
+  filesRef.current = files;
+
+  // 槽位表依赖 files / 展开集 / 实测值；scroll 处理器从 ref 读取最新表。
+  const slots = useMemo(
+    () => buildSlots(files, openPaths, measured),
+    [files, openPaths, measured],
+  );
+  const slotsRef = useRef(slots);
+  slotsRef.current = slots;
+
+  const recordHeight = useCallback((path: string, h: number) => {
+    setMeasured((prev) => {
+      const cur = prev[path];
+      if (cur !== undefined && Math.abs(cur - h) < 0.5) return prev;
+      return { ...prev, [path]: h };
+    });
+  }, []);
 
   useEffect(() => {
     setOpenPaths(new Set());
-    setVisibleCount(FILES_PER_BATCH);
     setRevealLines(null);
+    setRange({ start: 0, end: 0 });
+    const sc = scrollerRef.current;
+    if (sc) sc.scrollTop = 0;
   }, [ticketNo]);
 
   const togglePath = useCallback((path: string) => {
@@ -190,16 +292,92 @@ export function DiffView({ ticketNo }: { ticketNo: string }) {
     });
   }, []);
 
-  // 审查定位跳转：文件还没被懒加载挂载时先把渲染窗口扩展到它；
-  // 目标行超出文件行分片时先抬高行数下限，随后滚动 effect 等元素就绪后再定位。
+  // 计算当前滚动位置对应的挂载窗口（读 DOM 与槽位表，不依赖上次渲染结果）。
+  const layoutRange = useCallback((forceIdx?: number): { start: number; end: number } => {
+    const sc = scrollerRef.current;
+    const list = listRef.current;
+    const slots = slotsRef.current;
+    const n = filesRef.current.length;
+    if (!sc || !list || n === 0) return { start: 0, end: 0 };
+    const scRect = sc.getBoundingClientRect();
+    const listTop =
+      sc.scrollTop + (list.getBoundingClientRect().top - scRect.top);
+    const viewTop = sc.scrollTop - listTop;
+    const viewH = sc.clientHeight;
+
+    let start = 0;
+    const target = viewTop - OVERSCAN_PX;
+    if (target > 0) {
+      let lo = 0;
+      let hi = n;
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if ((slots[mid] ?? 0) < target) lo = mid + 1;
+        else hi = mid;
+      }
+      start = Math.max(0, lo - 1);
+    }
+    if (forceIdx !== undefined) start = Math.max(0, Math.min(start, forceIdx - 2));
+
+    let end = start + 1;
+    const limit = viewTop + viewH + OVERSCAN_PX;
+    while (end < n && (slots[end] ?? 0) <= limit) end++;
+    if (forceIdx !== undefined) end = Math.max(end, Math.min(n, forceIdx + 3));
+    return { start, end: Math.min(end, n) };
+  }, []);
+
+  const applyRange = useCallback(
+    (forceIdx?: number) => {
+      const next = layoutRange(forceIdx);
+      setRange((r) => (r.start === next.start && r.end === next.end ? r : next));
+    },
+    [layoutRange],
+  );
+
+  // 滚动 / 容器尺寸变化时跟随更新挂载窗口（rAF 节流）。
+  // hasFiles 翻转后滚动容器才存在：初次空态占位无 scroller，数据到达后需补挂监听。
+  const hasFiles = files.length > 0;
+  useEffect(() => {
+    const sc = scrollerRef.current;
+    if (!sc) return;
+    let raf = 0;
+    const onScroll = () => {
+      if (raf) return;
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        applyRange();
+      });
+    };
+    sc.addEventListener("scroll", onScroll, { passive: true });
+    const ro = new ResizeObserver(() => applyRange());
+    ro.observe(sc);
+    applyRange();
+    return () => {
+      sc.removeEventListener("scroll", onScroll);
+      cancelAnimationFrame(raf);
+      ro.disconnect();
+    };
+  }, [applyRange, hasFiles]);
+
+  // 数据 / 展开集 / 实测高度变化后刷新窗口。
+  useEffect(() => {
+    applyRange();
+  }, [files, openPaths, measured, applyRange]);
+
+  // 审查定位跳转（每个高亮只处理一次，diff 刷新不重复强制展开已手动收起的文件）：
+  // 自动展开目标文件并确保展开深度覆盖目标行；数据未就绪时等 files 变化再处理。
+  const handledHighlight = useRef<string | null>(null);
   useEffect(() => {
     if (!highlight) {
+      handledHighlight.current = null;
       setRevealLines(null);
       return;
     }
+    const key = `${highlight.path}:${highlight.line}`;
+    if (handledHighlight.current === key) return;
     const idx = files.findIndex((f) => f.path === highlight.path);
     if (idx < 0) return;
-    setVisibleCount((c) => Math.max(c, idx + 1));
+    handledHighlight.current = key;
     setOpenPaths((prev) => {
       if (prev.has(highlight.path)) return prev;
       const next = new Set(prev);
@@ -214,32 +392,43 @@ export function DiffView({ ticketNo }: { ticketNo: string }) {
     }
   }, [highlight, files]);
 
+  // 跳转落地：先滚动到目标文件块的估算位置，等窗口随滚动迁移挂载、目标行入 DOM 后，
+  // 再做精确 scrollIntoView 居中；文件数据晚到/被刷新时由轮询自行重试。
   useEffect(() => {
     if (!highlight) return;
-    const el = document.querySelector(`[data-line="${highlight.path}:${highlight.line}"]`);
-    el?.scrollIntoView({ behavior: "smooth", block: "center" });
-  }, [highlight, openPaths, revealLines, visibleCount, files]);
+    const sc = scrollerRef.current;
+    if (!sc) return;
+    const target = `[data-line="${highlight.path}:${highlight.line}"]`;
+    let tries = 0;
+    let raf = 0;
+    let jumped = false;
+    const attempt = () => {
+      applyRange();
+      const el = document.querySelector(target);
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+        return;
+      }
+      if (!jumped) {
+        const idx = filesRef.current.findIndex((f) => f.path === highlight.path);
+        const list = listRef.current;
+        if (idx >= 0 && list) {
+          const scRect = sc.getBoundingClientRect();
+          const listTop = sc.scrollTop + (list.getBoundingClientRect().top - scRect.top);
+          sc.scrollTo({
+            top: Math.max(0, listTop + (slotsRef.current[idx] ?? 0) - 96),
+            behavior: "smooth",
+          });
+          jumped = true;
+        }
+      }
+      if (tries++ < 300) raf = requestAnimationFrame(attempt);
+    };
+    raf = requestAnimationFrame(attempt);
+    return () => cancelAnimationFrame(raf);
+  }, [highlight, applyRange]);
 
-  const hasMore = files.length > 0 && visibleCount < files.length;
-  const loadMore = useCallback(() => {
-    setVisibleCount((c) => Math.min(files.length, c + FILES_PER_BATCH));
-  }, [files.length]);
-
-  // 滚动到底部附近自动追加下一批文件（哨兵进入滚动容器可视区即触发）。
-  useEffect(() => {
-    if (!hasMore) return;
-    const scroller = scrollerRef.current;
-    const sentinel = sentinelRef.current;
-    if (!scroller || !sentinel) return;
-    const io = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((e) => e.isIntersecting)) loadMore();
-      },
-      { root: scroller, rootMargin: "0px 0px 800px 0px", threshold: 0 },
-    );
-    io.observe(sentinel);
-    return () => io.disconnect();
-  }, [hasMore, loadMore]);
+  const totalH = files.length > 0 ? slots[files.length] : 0;
 
   if (files.length === 0) {
     return (
@@ -257,11 +446,34 @@ export function DiffView({ ticketNo }: { ticketNo: string }) {
     );
   }
 
-  const mounted = files.slice(0, visibleCount);
+  const rows: ReactNode[] = [];
+  const lo = Math.max(0, range.start);
+  const hi = Math.min(range.end, files.length);
+  for (let i = lo; i < hi; i++) {
+    const f = files[i];
+    const open = openPaths.has(f.path);
+    rows.push(
+      <VirtualRow
+        key={`${ticketNo}:${f.path}`}
+        path={f.path}
+        top={slots[i]}
+        open={open}
+        onHeight={recordHeight}
+      >
+        <FileBlock
+          file={f}
+          open={open}
+          onToggle={togglePath}
+          highlightLine={highlight?.path === f.path ? highlight.line : undefined}
+          minLines={revealLines?.path === f.path ? revealLines.min : undefined}
+        />
+      </VirtualRow>,
+    );
+  }
 
   return (
     <div ref={scrollerRef} className="flex-1 min-h-0 overflow-auto px-5 py-4">
-      <div className="max-w-[900px] mx-auto space-y-3">
+      <div className="mx-auto w-full max-w-[900px] space-y-3">
         {eolWarning && (
           <div className="rounded-xl border border-warn/30 bg-warn/[0.06] px-3.5 py-2.5 flex items-start gap-2">
             <Warning size={14} className="text-warn shrink-0 mt-0.5" weight="fill" />
@@ -277,7 +489,7 @@ export function DiffView({ ticketNo }: { ticketNo: string }) {
           <span className="text-[11.5px] text-faint">·</span>
           <button
             className="text-[11.5px] text-dim hover:text-ink cursor-pointer transition-colors"
-            onClick={() => setOpenPaths(new Set(mounted.map((f) => f.path)))}
+            onClick={() => setOpenPaths(new Set(files.map((f) => f.path)))}
           >
             展开全部
           </button>
@@ -289,39 +501,9 @@ export function DiffView({ ticketNo }: { ticketNo: string }) {
             收起全部
           </button>
         </div>
-        {mounted.map((f) => (
-          <FileBlock
-            key={f.path}
-            file={f}
-            open={openPaths.has(f.path)}
-            onToggle={togglePath}
-            highlightLine={highlight?.path === f.path ? highlight.line : undefined}
-            minLines={revealLines?.path === f.path ? revealLines.min : undefined}
-          />
-        ))}
-        {hasMore && (
-          <div
-            ref={sentinelRef}
-            className="flex items-center justify-center gap-3 pt-1 pb-2 text-[12px] text-faint"
-          >
-            <span className="tabular-nums">
-              已加载 {mounted.length} / {files.length} 个文件
-            </span>
-            <button
-              className="text-dim hover:text-ink cursor-pointer transition-colors"
-              onClick={loadMore}
-            >
-              加载下一批
-            </button>
-            <span className="text-faint/70">·</span>
-            <button
-              className="text-dim hover:text-ink cursor-pointer transition-colors"
-              onClick={() => setVisibleCount(files.length)}
-            >
-              加载全部
-            </button>
-          </div>
-        )}
+        <div ref={listRef} className="relative" style={{ height: totalH }}>
+          {rows}
+        </div>
       </div>
     </div>
   );
