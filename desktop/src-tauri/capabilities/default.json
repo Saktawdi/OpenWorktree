@@ -1,9 +1,10 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capability for the main window (shell bootstrap page)",
+  "description": "Capability for the main window (shell bootstrap page) and the tray panel",
   "windows": [
-    "main"
+    "main",
+    "tray-panel"
   ],
   "permissions": [
     "core:default",

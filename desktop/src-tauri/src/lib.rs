@@ -31,11 +31,11 @@ struct BackendChild(Mutex<Option<tauri_plugin_shell::process::CommandChild>>);
 /// None = 后端尚未就绪，轮询线程空转等待。
 struct TrayBackend(Mutex<Option<(u16, String)>>);
 
-/// 托盘菜单里当前选中项目 id（SPA 回传），与轮询到的项目列表比对画绿点。
+/// 托盘面板里当前选中项目 id（SPA 回传），与轮询到的项目列表比对画绿点。
 struct TraySelectedProject(Mutex<Option<String>>);
 
-/// 上一次托盘菜单快照签名：轮询周期内数据没变就不重建，避免用户正开着菜单被 set_menu 打断。
-struct TrayMenuSig(Mutex<String>);
+/// 托盘面板的渲染数据快照（轮询线程每 5s 刷新 + 变化即推事件）。
+struct TraySnapshot(Mutex<serde_json::Value>);
 
 fn append_log(path: &Option<PathBuf>, line: &str) {
     use std::io::Write;
@@ -197,33 +197,26 @@ fn read_configured_port(data_dir: &Path) -> Option<u16> {
 }
 
 /* ─── 托盘 ───
- * 右键菜单：Agent 运行数（禁用态标题）+ 接入项目列表（绿点 = SPA 当前选中的工作台）
- * + 打开主窗口 + 退出。数据每 5s 轮询后端 REST（Bearer 鉴权，与浏览器同源不同路：
- * 查询 token 仅 SSE 放行），菜单整体重建——条目数极少，开销可忽略。
+ * 图标 + 自绘面板：右键托盘弹出一个无边框小窗（tray-panel.html，WebRender 渲染，
+ * 应用自己的设计风格——原生菜单无法配色、画不了真正的绿点）。面板数据由轮询线程
+ * 每 5s 从后端 REST 拉取（Bearer 鉴权，查询串 token 仅 SSE 放行）写入 TraySnapshot，
+ * 变化时 emit tray-snapshot 推给面板实时刷新；面板显示期间轮询加密到 2s。
+ *
+ * 交互：左键单击图标回主窗口；主窗口点 ✕ = 隐藏到托盘（进程与后端常驻，托盘面板
+ * 「退出 OpenWorktree」才是唯一出口，走 app.exit → ExitRequested kill 后端）。
  * 点击项目 → emit tray-open-project → 启动页桥接给 iframe SPA → switchProject。
  */
 
-use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
-use tauri::tray::TrayIconBuilder;
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::Listener;
 
-/// 项目名截断：托盘菜单宽度有限，超长 workspace 名收尾加省略号。
-fn truncate_label(s: &str, max: usize) -> String {
-    if s.chars().count() <= max {
-        s.to_string()
-    } else {
-        let cut: String = s.chars().take(max.saturating_sub(1)).collect();
-        format!("{}…", cut)
-    }
-}
+const PANEL_W: f64 = 300.0;
+const PANEL_ROW_H: f64 = 38.0;
+const PANEL_MAX_ROWS: usize = 8;
 
-/// GET /api/agents/busy → { count, running: [...] }。失败（后端未就绪/重启中）返回 None，
-/// 调用方按 0 处理但标题写「离线」。
+/// GET /api/agents/busy → { count, running: [...] }。失败（后端未就绪/重启中）返回 None。
 fn fetch_busy(port: u16, token: &str) -> Option<u32> {
-    let text = http_get(
-        port,
-        token,
-        "/api/agents/busy",
-    )?;
+    let text = http_get(port, token, "/api/agents/busy")?;
     serde_json::from_str::<serde_json::Value>(&text)
         .ok()?
         .get("count")?
@@ -263,131 +256,149 @@ fn http_get(port: u16, token: &str, path: &str) -> Option<String> {
         .set("Authorization", &format!("Bearer {token}"))
         .timeout(std::time::Duration::from_secs(3))
         .call();
-    // 非 2xx（含 401：后端重启后 token 轮换，等壳下轮重新对表——token 其实不变，
-    // 这里只是防御）也走 None，调用方按离线降级。
     res.ok()?.into_string().ok()
 }
 
-/// 14×14 绿色圆点（#22c55e）：托盘菜单里标记「当前选中的工作台」。
-/// 运行期合成 RGBA，无需资源文件；IconMenuItem 在 Windows 上原生渲染位图。
-fn green_dot_icon() -> tauri::image::Image<'static> {
-    const S: usize = 14;
-    let mut rgba = vec![0u8; S * S * 4];
-    let c = (S as f32 - 1.0) / 2.0;
-    let r = 5.0f32;
-    for y in 0..S {
-        for x in 0..S {
-            let d = ((x as f32 - c).powi(2) + (y as f32 - c).powi(2)).sqrt();
-            // 半径内实心，边缘一圈按距离简易抗锯齿
-            let alpha = if d <= r - 1.0 {
-                255u8
-            } else if d <= r {
-                ((r - d) * 255.0) as u8
-            } else {
-                0
-            };
-            let i = (y * S + x) * 4;
-            rgba[i] = 0x22;
-            rgba[i + 1] = 0xc5;
-            rgba[i + 2] = 0x5e;
-            rgba[i + 3] = alpha;
-        }
-    }
-    tauri::image::Image::new_owned(rgba, S as u32, S as u32)
+/// 依据快照估算面板高度（页头 + 状态行 + 项目行 + 分隔 + 操作行 + 内边距）。
+fn panel_height(snap: &serde_json::Value) -> f64 {
+    let projects = snap
+        .get("projects")
+        .and_then(|p| p.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0);
+    let rows = projects.clamp(0, PANEL_MAX_ROWS) as f64;
+    56.0 + 34.0 + 10.0 + rows * PANEL_ROW_H + if projects > 0 { 14.0 } else { 0.0 } + 46.0 + 16.0
 }
 
-/// 按当前快照整体重建托盘菜单。重建前必须 set_menu 换新再 drop 旧的，避免悬空。
-fn rebuild_tray_menu(handle: &tauri::AppHandle) {
-    let busy = handle.state::<TrayBackend>();
-    let selected = handle.state::<TraySelectedProject>();
-    let backend = busy.0.lock().expect("tray backend lock poisoned").clone();
-    let sel = selected
+/// 在托盘图标上方弹出/隐藏自绘面板（已可见则收起）。
+/// icon_rect 来自托盘事件（物理像素）；面板逻辑尺寸 × scale_factor 对齐到物理坐标。
+fn toggle_tray_panel(app: &tauri::AppHandle, icon_rect: tauri::Rect) {
+    let Some(panel) = app.get_webview_window("tray-panel") else {
+        return;
+    };
+    if panel.is_visible().unwrap_or(false) {
+        let _ = panel.hide();
+        return;
+    }
+    let snap = app
+        .state::<TraySnapshot>()
+        .0
+        .lock()
+        .expect("tray snapshot lock poisoned")
+        .clone();
+    let scale = panel.scale_factor().unwrap_or(1.0);
+    let h = panel_height(&snap).min(520.0);
+    let _ = panel.set_size(tauri::LogicalSize::new(PANEL_W, h));
+
+    // 水平：托盘图标中心对齐面板中心；垂直：面板底边贴图标上方留 6px 缝。
+    // 全程物理像素，再钳回图标所在显示器可见范围（托盘多在屏幕右下）。
+    let scale = scale as f64;
+    let pw = PANEL_W * scale;
+    let ph = h * scale;
+    // Position/Size 是枚举（Physical/Logical），只能解构取值；托盘 rect 恒为物理坐标。
+    let (rect_x, rect_y, rect_w) = match (icon_rect.position, icon_rect.size) {
+        (tauri::Position::Physical(p), tauri::Size::Physical(s)) => {
+            (p.x as f64, p.y as f64, s.width as f64)
+        }
+        // 兜底：个别平台给逻辑坐标，乘 scale 折算物理
+        (tauri::Position::Logical(p), tauri::Size::Logical(s)) => {
+            (p.x * scale, p.y * scale, s.width * scale)
+        }
+        _ => return,
+    };
+    let cx = rect_x + rect_w / 2.0;
+    let bottom = rect_y;
+    let (mut x, mut y) = (cx - pw / 2.0, bottom - ph - 6.0);
+    if let Ok(Some(m)) = app.monitor_from_point(cx, bottom) {
+        let (mx, my) = (m.position().x as f64, m.position().y as f64);
+        let (mw, mh) = (m.size().width as f64, m.size().height as f64);
+        x = x.clamp(mx + 8.0, (mx + mw - pw - 8.0).max(mx + 8.0));
+        y = y.clamp(my + 8.0, (my + mh - ph - 8.0).max(my + 8.0));
+    } else {
+        x = x.max(8.0);
+        y = y.max(8.0);
+    }
+    let _ = panel.set_position(tauri::PhysicalPosition::new(x, y));
+    let _ = panel.show();
+    let _ = panel.set_focus();
+    // 展示即推一帧最新快照，避免面板里留着上一轮的旧数据
+    let _ = panel.emit("tray-snapshot", snap);
+}
+
+/// 收起托盘面板（失焦时调用；不存在/不可见时静默）。
+fn hide_tray_panel(app: &tauri::AppHandle) {
+    if let Some(panel) = app.get_webview_window("tray-panel") {
+        if panel.is_visible().unwrap_or(false) {
+            let _ = panel.hide();
+        }
+    }
+}
+
+/// 轮询一轮后端，更新 TraySnapshot；有变化且面板可见时推事件给面板刷新。
+fn poll_backend_snapshot(handle: &tauri::AppHandle) {
+    let backend = handle
+        .state::<TrayBackend>()
+        .0
+        .lock()
+        .expect("tray backend lock poisoned")
+        .clone();
+    let (status, busy, projects) = match &backend {
+        None => ("starting".to_string(), None, Vec::new()),
+        Some((port, token)) => match fetch_busy(*port, token) {
+            Some(0) => ("idle".to_string(), Some(0), fetch_projects(*port, token)),
+            Some(n) => ("running".to_string(), Some(n), fetch_projects(*port, token)),
+            None => ("offline".to_string(), None, Vec::new()),
+        },
+    };
+    let selected = handle
+        .state::<TraySelectedProject>()
         .0
         .lock()
         .expect("tray selected project lock poisoned")
         .clone();
-
-    let status_text = match &backend {
-        None => "后端启动中…".to_string(),
-        Some((port, token)) => match fetch_busy(*port, token) {
-            Some(0) => "智能体空闲".to_string(),
-            Some(n) => format!("Agent 运行中 × {n}"),
-            None => format!("后端离线（:{port}）"),
-        },
+    let snap = serde_json::json!({
+        "status": status,
+        "busy": busy,
+        "selected": selected,
+        "projects": projects.iter().map(|(id, name)| serde_json::json!({
+            "id": id,
+            "name": name,
+            "selected": selected.as_deref() == Some(id.as_str()),
+        })).collect::<Vec<_>>(),
+    });
+    let changed = {
+        let state = handle.state::<TraySnapshot>();
+        let mut g = state.0.lock().expect("tray snapshot lock poisoned");
+        let changed = *g != snap;
+        *g = snap.clone();
+        changed
     };
-
-    let mut items: Vec<tauri::menu::IconMenuItem<tauri::Wry>> = Vec::new();
-    let mut projects: Vec<(String, String)> = Vec::new();
-
-    if let Some((port, token)) = &backend {
-        projects = fetch_projects(*port, token);
-        for (id, name) in &projects {
-            let label = truncate_label(name, 36);
-            let selected = sel.as_deref() == Some(id.as_str());
-            // 选中项带绿色圆点图标（绿色圆点 = SPA 当前选中的工作台）；未选中不带图标
-            let item = tauri::menu::IconMenuItem::with_id(
-                handle,
-                format!("project:{id}"),
-                label,
-                true,
-                if selected { Some(green_dot_icon()) } else { None },
-                None::<String>,
-            )
-            .expect("icon menu item");
-            items.push(item);
+    if changed {
+        if let Some(panel) = handle.get_webview_window("tray-panel") {
+            let _ = panel.emit("tray-snapshot", snap);
         }
-    }
-
-    // 快照签名：状态行 + 项目列表 + 选中项。没变化直接跳过（不 set_menu，不打断展开中的菜单）。
-    let sig = format!("{status_text}|{projects:?}|{sel:?}");
-    {
-        let sig_state = handle.state::<TrayMenuSig>();
-        let mut last = sig_state.0.lock().expect("tray menu sig lock poisoned");
-        if *last == sig {
-            return;
-        }
-        *last = sig;
-    }
-
-    let menu = Menu::with_id(handle, "ow-tray-menu").expect("tray menu");
-    let status = MenuItem::with_id(handle, "__status", &status_text, false, None::<String>)
-        .expect("status item");
-    let _ = menu.append(&status);
-    let sep = PredefinedMenuItem::separator(handle).expect("separator");
-    let _ = menu.append(&sep);
-
-    for it in &items {
-        let _ = menu.append(it);
-    }
-    if !items.is_empty() {
-        let sep2 = PredefinedMenuItem::separator(handle).expect("separator");
-        let _ = menu.append(&sep2);
-    }
-
-    let open = MenuItem::with_id(handle, "open-main", "打开工作台", true, None::<String>)
-        .expect("open item");
-    let quit = MenuItem::with_id(handle, "__quit", "退出 OpenWorktree", true, None::<String>)
-        .expect("quit item");
-    let _ = menu.append(&open);
-    let _ = menu.append(&quit);
-
-    if let Some(tray) = handle.tray_by_id("ow-tray") {
-        let _ = tray.set_menu(Some(menu));
     }
 }
 
-/// 后端就绪后启动的轮询线程：每 5s 对表一次（busy 数 + 项目 + SPA 回传的选中项目），
-/// 重建托盘菜单。快照由 setup 阶段 manage 的 TrayBackend / TraySelectedProject 提供。
+/// 后端就绪后启动的轮询线程：每 5s 对表一次；面板展开期间加密到 2s（轮询本身轻量）。
 fn spawn_tray_poller(handle: tauri::AppHandle) {
-    std::thread::spawn(move || {
-        loop {
-            std::thread::sleep(std::time::Duration::from_secs(5));
-            rebuild_tray_menu(&handle);
-        }
+    std::thread::spawn(move || loop {
+        std::thread::sleep(std::time::Duration::from_secs(
+            if handle
+                .get_webview_window("tray-panel")
+                .and_then(|p| p.is_visible().ok())
+                .unwrap_or(false)
+            {
+                2
+            } else {
+                5
+            },
+        ));
+        poll_backend_snapshot(&handle);
     });
 }
 
-/// 托盘图标（窗口右下角常驻）。图标复用打包 PNG；点击左键回主窗口。
+/// 托盘图标（窗口右下角常驻）。左键单击回主窗口；右键弹出自绘面板。
 fn setup_tray(handle: &tauri::AppHandle) {
     let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/128x128.png"))
         .expect("decode tray icon");
@@ -395,30 +406,20 @@ fn setup_tray(handle: &tauri::AppHandle) {
         .icon(icon)
         .tooltip("OpenWorktree")
         .show_menu_on_left_click(false)
-        .on_menu_event(|app, event| match event.id().as_ref() {
-            "__quit" => {
-                // 与窗口关闭同一条收割路径：RunEvent::ExitRequested kill 子进程。
-                app.exit(0);
-            }
-            "open-main" => {
-                show_main(app);
-            }
-            id if id.starts_with("project:") => {
-                let project_id = id.trim_start_matches("project:").to_string();
-                show_main(app);
-                let _ = app.emit("tray-open-project", project_id);
-            }
-            _ => {}
-        })
         .on_tray_icon_event(|tray, event| {
-            // Windows：左键单击图标（无菜单）= 打开主窗口，与常见 IM/下载器一致。
-            if let tauri::tray::TrayIconEvent::Click {
-                button: tauri::tray::MouseButton::Left,
-                button_state: tauri::tray::MouseButtonState::Up,
+            // Windows：左键单击图标 = 打开主窗口；右键抬起 = toggle 自绘面板。
+            if let TrayIconEvent::Click {
+                button,
+                button_state: MouseButtonState::Up,
+                rect,
                 ..
             } = event
             {
-                show_main(tray.app_handle());
+                match button {
+                    MouseButton::Left => show_main(tray.app_handle()),
+                    MouseButton::Right => toggle_tray_panel(tray.app_handle(), rect),
+                    _ => {}
+                }
             }
         })
         .build(handle)
@@ -432,6 +433,43 @@ fn show_main(app: &tauri::AppHandle) {
         let _ = win.show();
         let _ = win.set_focus();
     }
+}
+
+/* ─── 托盘面板命令（tray-panel.html 经 __TAURI__.core.invoke 调用）── */
+
+/// 面板首帧数据（后续增量靠 tray-snapshot 事件推）。
+#[tauri::command]
+fn get_tray_state(app: tauri::AppHandle) -> serde_json::Value {
+    app.state::<TraySnapshot>()
+        .0
+        .lock()
+        .expect("tray snapshot lock poisoned")
+        .clone()
+}
+
+#[tauri::command]
+fn tray_close_panel(app: tauri::AppHandle) {
+    hide_tray_panel(&app);
+}
+
+/// 点项目：收面板 → 主窗口带回前台 → 通知启动页桥接给 SPA 切工作台。
+#[tauri::command]
+fn tray_open_project(app: tauri::AppHandle, project_id: String) {
+    hide_tray_panel(&app);
+    show_main(&app);
+    let _ = app.emit("tray-open-project", project_id);
+}
+
+#[tauri::command]
+fn tray_open_main(app: tauri::AppHandle) {
+    hide_tray_panel(&app);
+    show_main(&app);
+}
+
+/// 唯一退出出口：ExitRequested 兜底 kill 后端子进程。
+#[tauri::command]
+fn tray_quit(app: tauri::AppHandle) {
+    app.exit(0);
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -449,20 +487,66 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
+        // 托盘面板的操作命令（tauri:// 域的 tray-panel.html 经 invoke 调用）
+        .invoke_handler(tauri::generate_handler![
+            get_tray_state,
+            tray_close_panel,
+            tray_open_project,
+            tray_open_main,
+            tray_quit
+        ])
         .setup(|app| {
             let handle = app.handle().clone();
-            // 托盘：后端未就绪前菜单只有状态行与退出；就绪后轮询线程 5s 刷新。
+            // 托盘：后端未就绪前面板显示「启动中」；就绪后轮询线程刷新快照。
             // 轮询参数（port/token）由下方 boot 协程抓到后写入 TrayBackend。
             handle.manage(TrayBackend(Mutex::new(None)));
             handle.manage(TraySelectedProject(Mutex::new(None)));
-            handle.manage(TrayMenuSig(Mutex::new(String::new())));
+            handle.manage(TraySnapshot(Mutex::new(serde_json::json!({
+                "status": "starting", "busy": null, "selected": null, "projects": [],
+            }))));
             setup_tray(&handle);
-            // 先铺一版「后端启动中…」菜单，避免首次轮询（5s 后）前右键空白
-            rebuild_tray_menu(&handle);
             spawn_tray_poller(handle.clone());
-            // SPA 选中项目变化 → 启动页桥接转发 → 这里记录，托盘菜单画绿点。
+
+            // 自绘托盘面板：无边框、无任务栏项、点击外部不自动关（由失焦监听收起）。
+            // 预建隐藏窗口，右键托盘即弹出——不用临时建窗（首帧白屏）。
+            let _ = tauri::WebviewWindowBuilder::new(
+                app,
+                "tray-panel",
+                tauri::WebviewUrl::App("tray-panel.html".into()),
+            )
+            .title("OpenWorktree Tray")
+            .inner_size(PANEL_W, 220.0)
+            .visible(false)
+            .decorations(false)
+            .resizable(false)
+            .skip_taskbar(true)
+            .always_on_top(true)
+            .focused(false)
+            .shadow(true)
+            .build()?;
+
+            // 主窗口点 ✕ → 隐藏到托盘（进程与后端常驻）；退出只走托盘面板「退出」。
+            let main = app.get_webview_window("main").expect("main window");
+            let close_handle = handle.clone();
+            main.on_window_event(move |event| {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    if let Some(win) = close_handle.get_webview_window("main") {
+                        let _ = win.hide();
+                    }
+                }
+            });
+            // 面板失焦即收起（含点击托盘图标以外任意处；托盘右键 toggle 会再弹出）。
+            let panel = app.get_webview_window("tray-panel").expect("tray panel");
+            let blur_handle = handle.clone();
+            panel.on_window_event(move |event| {
+                if let tauri::WindowEvent::Focused(false) = event {
+                    hide_tray_panel(&blur_handle);
+                }
+            });
+
+            // SPA 选中项目变化 → 启动页桥接转发 → 这里记录，托盘面板画绿点。
             // payload 是 JSON 字符串（去引号后即 project id）；空串表示无选中。
-            use tauri::Listener;
             let sel_handle = handle.clone();
             handle.listen("tray-selected-project", move |event| {
                 let id = event.payload().trim_matches('"').to_string();
@@ -472,6 +556,7 @@ pub fn run() {
                     .lock()
                     .expect("tray selected project lock poisoned") =
                     if id.is_empty() { None } else { Some(id) };
+                poll_backend_snapshot(&sel_handle);
             });
             tauri::async_runtime::spawn(async move {
                 // 数据目录：安装目录 data\（默认）/ 保留数据 / 每用户兜底，见 resolve_data_dir。
@@ -590,14 +675,14 @@ pub fn run() {
         .run(|app, event| {
             if let tauri::RunEvent::ExitRequested { .. } = event {
                 // 兜底收割：Windows 上 shell 插件不保证随窗口退出回收子进程，显式 kill。
-                if let Some(child) = app
-                    .state::<BackendChild>()
-                    .0
-                    .lock()
-                    .expect("backend child lock poisoned")
-                    .take()
-                {
-                    let _ = child.kill();
+                // try_state：后端从未拉起（端口冲突/秒退）时该状态未 manage，直接
+                // state() 会在退出路上 panic。
+                if let Some(state) = app.try_state::<BackendChild>() {
+                    if let Ok(mut g) = state.0.lock() {
+                        if let Some(child) = g.take() {
+                            let _ = child.kill();
+                        }
+                    }
                 }
             }
         });
