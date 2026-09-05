@@ -536,3 +536,11 @@ export interface UpdateCheck {
   source?: "releases" | "tags" | null;
   error?: string | null;
 }
+
+/** 更新日志拉取应答：ok 时 content 为远程 CHANGELOG.md 中对应版本的小节（Markdown 原文）。 */
+export interface UpdateNotes {
+  ok: boolean;
+  version: string;
+  content?: string;
+  error?: string;
+}

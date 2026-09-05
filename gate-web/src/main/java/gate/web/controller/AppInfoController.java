@@ -26,6 +26,7 @@ public final class AppInfoController implements WebController {
     public void register(Javalin app) {
         app.get("/api/app/info", this::info);
         app.get("/api/app/update-check", this::updateCheck);
+        app.get("/api/app/changelog", this::changelog);
     }
 
     public void info(Context ctx) {
@@ -37,5 +38,13 @@ public final class AppInfoController implements WebController {
         boolean force = "1".equals(ctx.queryParam("force"));
         ctx.status(HttpStatus.OK);
         ctx.json(appInfo.checkUpdate(force));
+    }
+
+    /** 发现新版本时应用内展示的更新日志（version 取自 update-check 的 latest_version）。 */
+    public void changelog(Context ctx) {
+        String version = ctx.queryParam("version");
+        boolean force = "1".equals(ctx.queryParam("force"));
+        ctx.status(HttpStatus.OK);
+        ctx.json(appInfo.fetchChangelog(version, force));
     }
 }

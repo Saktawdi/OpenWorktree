@@ -21,10 +21,11 @@ import {
   Robot,
   X,
 } from "@phosphor-icons/react";
-import { fetchGateToml, fetchMcpStatus, fetchProviders, updateGateToml, createProvider, updateProvider, deleteProvider, updateProviderModels, fetchUpstreamModels, setProviderCredential, fetchAppInfo, checkAppUpdate } from "../lib/api";
+import { fetchGateToml, fetchMcpStatus, fetchProviders, updateGateToml, createProvider, updateProvider, deleteProvider, updateProviderModels, fetchUpstreamModels, setProviderCredential, fetchAppInfo, checkAppUpdate, fetchUpdateNotes } from "../lib/api";
 import { openConnect, showToast, useApp } from "../lib/store";
-import type { GateTomlResponse, GateTomlKey, GateTomlOption, McpStatus, LlmProvider, AppInfo, UpdateCheck } from "../lib/types";
+import type { GateTomlResponse, GateTomlKey, GateTomlOption, McpStatus, LlmProvider, AppInfo, UpdateCheck, UpdateNotes } from "../lib/types";
 import { CopyButton, Spinner, useBackdropClose } from "./ui";
+import { Markdown } from "./Markdown";
 
 // 选项依赖运行期 LLM Provider 列表、后端无法静态下发的键：
 // provider 类直接列 Providers；model 类的选项跟随各自的 provider 键当前值。
@@ -1017,18 +1018,40 @@ function PioneerBadge({ className = "" }: { className?: string }) {
   );
 }
 
-/** 检查更新三态结果：有更新（跳下载页 + 在线更新预留位）/ 已最新 / 先行 beta / 先行者 / 无法比对或失败。 */
+/** 检查更新三态结果：有更新（跳下载页 + 展示更新日志）/ 已最新 / 先行 beta / 先行者 / 无法比对或失败。 */
 function UpdateStatusArea({
   check,
   checking,
   currentVersion,
+  repoUrl,
   onRetry,
 }: {
   check: UpdateCheck | null;
   checking: boolean;
   currentVersion: string;
+  repoUrl: string;
   onRetry: () => void;
 }) {
+  const hasUpdate = !!check && check.ok && check.status === "update_available";
+  // 发现新版本时自动拉取远程 CHANGELOG.md 的对应版本小节（后端已按版本截取，失败静默）
+  const [notes, setNotes] = useState<UpdateNotes | null>(null);
+  const [notesLoading, setNotesLoading] = useState(false);
+  const latestVersion = check?.latest_version ?? "";
+  useEffect(() => {
+    if (!hasUpdate || !latestVersion) {
+      setNotes(null);
+      return;
+    }
+    let cancelled = false;
+    setNotesLoading(true);
+    setNotes(null);
+    fetchUpdateNotes(latestVersion)
+      .then((n) => { if (!cancelled) setNotes(n); })
+      .catch(() => { if (!cancelled) setNotes({ ok: false, version: latestVersion }); })
+      .finally(() => { if (!cancelled) setNotesLoading(false); });
+    return () => { cancelled = true; };
+  }, [hasUpdate, latestVersion]);
+
   if (checking && !check) {
     return <div className="flex items-center gap-2 text-[12.5px] text-faint"><Spinner /> 正在检查更新 …</div>;
   }
@@ -1078,6 +1101,7 @@ function UpdateStatusArea({
           </button>
         </div>
         <div className="text-[11px] text-faint leading-relaxed">在线自动更新已预留接口，当前版本请通过下载页获取安装包。</div>
+        <UpdateNotesBlock notes={notes} loading={notesLoading} version={latestVersion} repoUrl={repoUrl} />
       </motion.div>
     );
   }
@@ -1127,6 +1151,38 @@ function UpdateStatusArea({
         <span className="ml-2 text-[12px] text-faint">与远程最新发行 v{check.latest_version} 一致</span>
       )}
     </motion.div>
+  );
+}
+
+/** 更新日志卡片：后端已从远程 CHANGELOG.md 截取对应版本小节；拉取失败静默（不打扰用户）。 */
+function UpdateNotesBlock({ notes, loading, version, repoUrl }: {
+  notes: UpdateNotes | null;
+  loading: boolean;
+  version: string;
+  repoUrl: string;
+}) {
+  if (loading) {
+    return <div className="flex items-center gap-2 text-[12px] text-faint"><Spinner /> 正在拉取更新日志 …</div>;
+  }
+  if (!notes || !notes.ok || !notes.content) {
+    return null;
+  }
+  return (
+    <div className="rounded-lg border border-edge bg-sunken/50 px-4 py-3">
+      <div className="flex items-center gap-2">
+        <span className="text-[12px] font-semibold text-dim">更新内容</span>
+        <span className="flex-1" />
+        <a
+          className="text-[11px] text-accent hover:brightness-110"
+          href={`${repoUrl}/blob/HEAD/CHANGELOG.md`}
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          完整日志 <ArrowUpRight size={10} className="inline" />
+        </a>
+      </div>
+      <Markdown className="mt-1 text-[12.5px] text-dim max-h-[280px] overflow-y-auto">{notes.content}</Markdown>
+    </div>
   );
 }
 
@@ -1207,6 +1263,7 @@ function AppInfoBlock() {
             check={check}
             checking={checking}
             currentVersion={currentVersion}
+            repoUrl={info.repo_url}
             onRetry={() => void runCheck(true)}
           />
         </div>

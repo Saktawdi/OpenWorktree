@@ -229,6 +229,84 @@ class AppInfoServiceTest {
         assertEquals(2, transport.requests.size());
     }
 
+    // ── 更新日志：发现新版本时应用内展示对应版本小节 ──
+
+    private static final String CHANGELOG_MD = """
+            # 更新日志
+
+            维护约定……
+
+            ## 0.1.0
+
+            - 旧版本内容
+
+            ## 0.2.0（未发行）
+
+            ### 新增
+
+            - 数据目录随安装盘走
+            - 更新检查区分先行者与网络不通
+
+            ### 修复
+
+            - 修复 opencode 孤儿 serve 端口占用
+            """;
+
+    @Test
+    void changelogExtractsSectionForRequestedVersion() throws Exception {
+        FakeTransport transport = FakeTransport.of(FakeResponse.plain(200, CHANGELOG_MD));
+        AppInfoService service = new AppInfoService("0.2.0-alpha.1", transport);
+        Map<String, Object> out = service.fetchChangelog("0.2.0", false);
+        assertEquals(Boolean.TRUE, out.get("ok"), String.valueOf(out));
+        String content = String.valueOf(out.get("content"));
+        assertTrue(content.contains("数据目录随安装盘走"), content);
+        assertTrue(content.startsWith("## 0.2.0"), content);
+        assertFalse(content.contains("旧版本内容"), "不得串入其他版本小节");
+        assertTrue(transport.requests.get(0).uri().toString().contains("/HEAD/"), content);
+    }
+
+    @Test
+    void changelogMissingVersionSectionIsOkFalseData() {
+        FakeTransport transport = FakeTransport.of(FakeResponse.plain(200, CHANGELOG_MD));
+        AppInfoService service = new AppInfoService("0.2.0-alpha.1", transport);
+        Map<String, Object> out = service.fetchChangelog("9.9.9", false);
+        assertEquals(Boolean.FALSE, out.get("ok"));
+        assertTrue(String.valueOf(out.get("error")).contains("9.9.9"), String.valueOf(out));
+    }
+
+    @Test
+    void changelogNetworkFailureDegradesToData() {
+        AppInfoService service = new AppInfoService("0.2.0-alpha.1",
+                FakeTransport.failing(new IOException("connection reset")));
+        Map<String, Object> out = service.fetchChangelog("0.2.0", false);
+        assertEquals(Boolean.FALSE, out.get("ok"));
+        assertTrue(String.valueOf(out.get("error")).contains("无法连接 GitHub"));
+    }
+
+    @Test
+    void changelogCachedWithinTtlPerVersion() throws Exception {
+        FakeTransport transport = FakeTransport.of(
+                FakeResponse.plain(200, CHANGELOG_MD),
+                FakeResponse.plain(200, CHANGELOG_MD));
+        AppInfoService service = new AppInfoService("0.2.0-alpha.1", transport);
+        service.fetchChangelog("0.2.0", false);
+        service.fetchChangelog("0.2.0", false); // 同版本 TTL 内走缓存
+        assertEquals(1, transport.requests.size(), "cached changelog must not re-hit GitHub");
+        service.fetchChangelog("0.1.0", false); // 版本不同必须重新拉取
+        assertEquals(2, transport.requests.size());
+    }
+
+    @Test
+    void extractSectionMatchesVersionCoreIgnoringVAndSuffix() {
+        String md = "# 日志\n\n## v0.2.0 (2026-01-01)\n- A\n\n## 0.1.0\n- B\n";
+        String section = AppInfoService.extractSection(md, "0.2.0");
+        assertTrue(section.startsWith("## v0.2.0"), section);
+        assertTrue(section.contains("- A"));
+        assertFalse(section.contains("- B"));
+        assertNull(AppInfoService.extractSection(md, "3.3.3"));
+        assertNull(AppInfoService.extractSection(md, "not-a-version"));
+    }
+
     // ── /api/app/info 静态数据 ──
 
     @Test
@@ -300,6 +378,11 @@ class AppInfoServiceTest {
             implements HttpResponse<String> {
 
         static HttpResponse<String> json(int code, String body) {
+            return new FakeResponse(code, body, Map.of());
+        }
+
+        /** 非应答体的纯文本（raw.githubusercontent 的 CHANGELOG.md 就是 text/plain）。 */
+        static HttpResponse<String> plain(int code, String body) {
             return new FakeResponse(code, body, Map.of());
         }
 

@@ -49,6 +49,8 @@ public final class AppInfoService {
     public static final String RELEASES_URL = REPO_URL + "/releases";
     /** 有更新时前端"前往下载页"的跳转目标（在线更新上线前的过渡出口）。 */
     public static final String DOWNLOAD_URL = RELEASES_URL + "/latest";
+    /** 仓库默认分支上的更新日志文件（Keep a Changelog 惯例命名）：发现新版本时应用内展示对应版本小节。 */
+    public static final String CHANGELOG_FILE = "CHANGELOG.md";
 
     private static final String API_BASE = "https://api.github.com/repos/" + REPO_OWNER + "/" + REPO_NAME;
     /** 版本号的数字核心：从首个数字段起，连续的「数字.数字」序列（0.1.0-SNAPSHOT → 0.1.0）。 */
@@ -62,6 +64,7 @@ public final class AppInfoService {
     private final String version;
     private final HttpTransport transport;
     private volatile CachedCheck cached;
+    private volatile CachedCheck cachedChangelog;
 
     /** HTTP 出口缝：测试注入假 GitHub 应答，不真的出网。 */
     @FunctionalInterface
@@ -137,6 +140,105 @@ public final class AppInfoService {
             cached = new CachedCheck(body, Instant.now());
         }
         return body;
+    }
+
+    /**
+     * {@code GET /api/app/changelog?version=X} 应答体：读仓库默认分支上的 {@link #CHANGELOG_FILE}，
+     * 抽取 {@code version} 对应的小节（二级行首标题按版本号匹配）。应用内只在「发现新版本」时
+     * 调用——日志内容以远程仓库为准，本地旧构建也能展示新版本的变更说明。
+     *
+     * <p>结果同样按 {@link #CHECK_TTL} 缓存（同一版本反复切页不打穿配额）；失败降级为
+     * {@code ok:false + error} 数据（日志拿不到不该让页面报错，最多不展示）。
+     */
+    public Map<String, Object> fetchChangelog(String version, boolean force) {
+        CachedCheck entry = cachedChangelog;
+        if (!force && entry != null && version != null && version.equals(entry.body().get("version"))
+                && Duration.between(entry.at(), Instant.now()).compareTo(CHECK_TTL) < 0) {
+            return entry.body();
+        }
+        Map<String, Object> body = doFetchChangelog(version);
+        if (Boolean.TRUE.equals(body.get("ok"))) {
+            cachedChangelog = new CachedCheck(body, Instant.now());
+        }
+        return body;
+    }
+
+    private Map<String, Object> doFetchChangelog(String version) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("ok", false);
+        out.put("version", version == null ? "" : version);
+        try {
+            // raw 的 HEAD 指向仓库默认分支（master），永远取最新内容；CHANGELOG.md 为 ASCII 文件名，URL 无需编码
+            String url = "https://raw.githubusercontent.com/" + REPO_OWNER + "/" + REPO_NAME + "/HEAD/" + CHANGELOG_FILE;
+            HttpResponse<String> resp = transport.send(HttpRequest.newBuilder(URI.create(url))
+                    .timeout(REQUEST_TIMEOUT)
+                    .header("User-Agent", PRODUCT_NAME + "-updater")
+                    .GET().build());
+            if (resp.statusCode() != 200) {
+                return changelogError(out, "更新日志拉取失败（HTTP " + resp.statusCode() + "）");
+            }
+            String section = extractSection(resp.body(), version);
+            if (section == null) {
+                return changelogError(out, "更新日志中没有找到 " + version + " 的小节");
+            }
+            out.put("ok", true);
+            out.put("content", section);
+            return out;
+        } catch (IOException e) {
+            return changelogError(out, "无法连接 GitHub：" + e.getMessage());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return changelogError(out, "更新日志拉取被中断");
+        }
+    }
+
+    private static Map<String, Object> changelogError(Map<String, Object> out, String message) {
+        out.put("ok", false);
+        out.put("error", message);
+        return out;
+    }
+
+    /**
+     * 从更新日志全文中抽取某版本的小节：定位以 {@code ##} 开头、标题含该版本号（如
+     * {@code ## 0.2.0（未发行）}）的行，截到下一个 {@code ##} 或文件尾；版本号比对用
+     * 数字核心（与更新检查一致，容忍「v」前缀与日期后缀）。找不到返回 null。
+     */
+    static String extractSection(String markdown, String version) {
+        if (markdown == null || version == null || version.isBlank()) {
+            return null;
+        }
+        int[] wanted = versionCore(version);
+        if (wanted == null) {
+            return null;
+        }
+        String[] lines = markdown.split("\r?\n", -1);
+        int start = -1;
+        for (int i = 0; i < lines.length; i++) {
+            String line = lines[i];
+            if (!line.startsWith("## ")) {
+                continue;
+            }
+            int[] core = versionCore(line.substring(3).trim());
+            if (core != null && java.util.Arrays.equals(core, wanted)) {
+                start = i;
+                break;
+            }
+        }
+        if (start < 0) {
+            return null;
+        }
+        int end = lines.length;
+        for (int i = start + 1; i < lines.length; i++) {
+            if (lines[i].startsWith("## ")) {
+                end = i;
+                break;
+            }
+        }
+        StringBuilder sb = new StringBuilder();
+        for (int i = start; i < end; i++) {
+            sb.append(lines[i]).append(end - 1 == i ? "" : "\n");
+        }
+        return sb.toString().trim();
     }
 
     private Map<String, Object> doCheck() {

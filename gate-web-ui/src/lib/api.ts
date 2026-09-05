@@ -61,6 +61,7 @@ import type {
   LlmProvider,
   AppInfo,
   UpdateCheck,
+  UpdateNotes,
 } from "./types";
 import { parseUnifiedDiff } from "./diff";
 import { approxDiffBytes } from "./diff";
@@ -2285,4 +2286,14 @@ export async function fetchAppInfo(): Promise<AppInfo> {
  */
 export async function checkAppUpdate(force?: boolean): Promise<UpdateCheck> {
   return api<UpdateCheck>(`/api/app/update-check${force ? "?force=1" : ""}`);
+}
+
+/**
+ * 拉取更新日志：后端从仓库默认分支读 CHANGELOG.md，截取 version 对应的小节
+ * （发现新版本时在「应用设置」页展示该版本的更新内容）。失败降级为 ok:false 数据。
+ */
+export async function fetchUpdateNotes(version: string, force?: boolean): Promise<UpdateNotes> {
+  const q = new URLSearchParams({ version });
+  if (force) q.set("force", "1");
+  return api<UpdateNotes>(`/api/app/changelog?${q.toString()}`);
 }
