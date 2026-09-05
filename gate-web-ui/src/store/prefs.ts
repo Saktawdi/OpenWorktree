@@ -12,6 +12,7 @@ const VISIBLE_STAGES_KEY = "gate-visible-stages";
 const KANBAN_STAGES_KEY = "gate-kanban-stages";
 const GATE_PANEL_KEY = "gate-panel-collapsed";
 const GATE_SECTIONS_KEY = "gate-sections";
+const COMPOSER_DRAFTS_KEY = "gate-composer-drafts";
 
 export const DEFAULT_GATE_SECTIONS: GateSections = { info: true, pipeline: true, sessions: true };
 
@@ -127,5 +128,29 @@ export function saveGateSections(sections: GateSections) {
     localStorage.setItem(GATE_SECTIONS_KEY, JSON.stringify(sections));
   } catch {
     /* ignore */
+  }
+}
+
+/** 读取本地持久化的输入框草稿（按工单号键）；损坏/不可用时返回空表，空串条目不还原。 */
+export function loadComposerDrafts(): Record<string, string> {
+  try {
+    const raw = typeof window !== "undefined" ? localStorage.getItem(COMPOSER_DRAFTS_KEY) : null;
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const out: Record<string, string> = {};
+    for (const [no, v] of Object.entries(parsed)) {
+      if (typeof v === "string" && v.trim() !== "") out[no] = v;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+export function saveComposerDrafts(drafts: Record<string, string>) {
+  try {
+    localStorage.setItem(COMPOSER_DRAFTS_KEY, JSON.stringify(drafts));
+  } catch {
+    /* 配额满或隐私模式等存储不可用场景：草稿降级为仅本窗口内保留 */
   }
 }

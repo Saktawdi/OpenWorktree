@@ -29,6 +29,8 @@ export {
   setSessionModelSel,
   setDraftModelSel,
   clearDraftModelSel,
+  setComposerDraft,
+  clearComposerDraft,
   setCreatingSession,
   setBusy,
   setSessionBusy,

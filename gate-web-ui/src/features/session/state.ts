@@ -3,6 +3,7 @@
  * 用量、任务清单与上下文占用。聊天条目与回合见 chat.ts。
  */
 import { appStore } from "@/store";
+import { saveComposerDrafts } from "@/store/prefs";
 import type { CatalogProvider, ChatSession, SessionModelSel, TodoItem } from "@/shared/types";
 import { uid } from "@/shared/format";
 
@@ -31,6 +32,43 @@ export function clearDraftModelSel(ticketNo: string) {
     delete draftModelSel[ticketNo];
     return { draftModelSel };
   });
+}
+
+/* ─── 输入框草稿自动保存（按工单键暂存 + localStorage 落盘） ─── */
+
+let composerDraftTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** 延迟落盘输入框草稿：打字期间合并写，避免每个按键都刷 localStorage。 */
+function scheduleComposerDraftPersist() {
+  if (composerDraftTimer) clearTimeout(composerDraftTimer);
+  composerDraftTimer = setTimeout(() => {
+    composerDraftTimer = null;
+    try {
+      saveComposerDrafts(appStore.getState().composerDrafts);
+    } catch {
+      /* ignore */
+    }
+  }, 250);
+}
+
+/** 暂存某工单输入框的草稿文本（空白/空串即清除）。Composer 每次输入都调用。 */
+export function setComposerDraft(ticketNo: string, text: string) {
+  const value = text.trim() === "" ? "" : text;
+  const drafts = { ...s().composerDrafts };
+  if ((drafts[ticketNo] ?? "") === value) return;
+  if (value === "") delete drafts[ticketNo];
+  else drafts[ticketNo] = value;
+  set({ composerDrafts: drafts });
+  scheduleComposerDraftPersist();
+}
+
+/** 清除某工单的输入框草稿（发送成功/工单进入终态后调用）。 */
+export function clearComposerDraft(ticketNo: string) {
+  if (!s().composerDrafts[ticketNo]) return;
+  const drafts = { ...s().composerDrafts };
+  delete drafts[ticketNo];
+  set({ composerDrafts: drafts });
+  scheduleComposerDraftPersist();
 }
 
 /** 草稿发送期间的创建遮罩标记（SessionList 显示「正在创建会话…」）。 */

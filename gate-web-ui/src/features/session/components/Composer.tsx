@@ -20,7 +20,12 @@ import {
 import type { Icon } from "@phosphor-icons/react";
 import { actions } from "@/app/actions";
 import { appStore, NO_CHAT, showToast, useApp } from "@/store";
-import { clearDraftModelSel, draftCatalogFromOc } from "@/features/session";
+import {
+  clearComposerDraft,
+  clearDraftModelSel,
+  draftCatalogFromOc,
+  setComposerDraft,
+} from "@/features/session";
 import { setAgentId } from "@/features/agent";
 import { formatTokens, variantLabel } from "@/shared/format";
 import { extractAbsolutePath,
@@ -513,10 +518,12 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
     activeSessionId ? (s.sessions[ticketNo] ?? []).find((x) => x.id === activeSessionId) : undefined,
   );
   const autoAccept = activeSession?.permissionAutoAccept ?? false;
-  const [text, setText] = useState("");
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const live = mode === "live";
+  // 草稿文本收进全局 store（按工单键自动保存 + localStorage 落盘）：
+  // 切 tab/工单/页面再回来时原样还原，发送成功或工单终态时自动清除。
+  const text = useApp((s) => s.composerDrafts[ticketNo] ?? "");
   const { sel, providers, currentVariants, imageSupported, isClaude, agentProviderId } =
     useEffectiveSel(ticketNo);
 
@@ -536,13 +543,19 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
   const terminal = stage === "DONE" || stage === "CANCELLED";
   const cancelled = stage === "CANCELLED";
 
+  // 工单进入终态后输入框锁定，遗留草稿永远发不出去：清除自动保存，避免以后切回时
+  // 在禁用输入框里看到无法再发送的幽灵文本。
+  useEffect(() => {
+    if (terminal) clearComposerDraft(ticketNo);
+  }, [terminal, ticketNo]);
+
   /** 在光标处插入文本（粘贴引用/绝对路径），插入后把光标移到插入文本之后。 */
   const insertAtCursor = (insert: string) => {
     if (!insert) return;
     const ta = taRef.current;
     const start = ta?.selectionStart ?? text.length;
     const end = ta?.selectionEnd ?? start;
-    setText((prev) => prev.slice(0, start) + insert + prev.slice(end));
+    setComposerDraft(ticketNo, text.slice(0, start) + insert + text.slice(end));
     requestAnimationFrame(() => {
       const el = taRef.current;
       if (!el) return;
@@ -599,7 +612,7 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
         if (i > 0 || text.slice(0, caretStart).trim().length > 0) citations += "\n\n";
         citations += `[图片 #${pendingAttachments.length + i + 1}] ${imageFiles[i].name}`;
       }
-      setText((prev) => prev.slice(0, caretStart) + citations + prev.slice(caretEnd));
+      setComposerDraft(ticketNo, text.slice(0, caretStart) + citations + text.slice(caretEnd));
       await addPendingImages(imageFiles);
       return;
     }
@@ -640,13 +653,13 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
     if ((!t && pendingAttachments.length === 0) || busy || terminal) return;
     const prevText = t;
     const prevAttachments = pendingAttachments;
-    setText("");
+    clearComposerDraft(ticketNo);
     setPendingAttachments([]);
     void Promise.resolve(actions.sendPrompt(ticketNo, t, prevAttachments)).then((ok) => {
       // 草稿建会话失败（如端口占用）：还原输入与附件，错误卡片已给出原因，
       // 用户改完直接重发即可，不必重新打字。
       if (ok === false) {
-        setText(prevText);
+        setComposerDraft(ticketNo, prevText);
         setPendingAttachments(prevAttachments);
       }
     });
@@ -741,7 +754,7 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
             ref={taRef}
             value={text}
             disabled={terminal}
-            onChange={(e) => setText(e.target.value)}
+            onChange={(e) => setComposerDraft(ticketNo, e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();

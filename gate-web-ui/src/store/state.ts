@@ -43,6 +43,7 @@ import {
 } from "@/demo/scenario";
 import {
   loadAgentId,
+  loadComposerDrafts,
   loadGatePanelCollapsed,
   loadGateSections,
   loadKanbanStages,
@@ -122,6 +123,8 @@ export interface AppState {
   runtimes: AgentRuntime[];
   /** 草稿态（会话未创建）暂存的模型/推理选择：随首条消息创建会话时持久化为覆盖。 */
   draftModelSel: Record<string, SessionModelSel>;
+  /** 输入框草稿自动保存（按工单号键）：切 tab/工单/页面后回来自动还原，发送成功或工单终态时清除。 */
+  composerDrafts: Record<string, string>;
   /** OpenCode 配置文件的 provider 列表（live 从后端读写文件，demo 为示例数据）。 */
   ocProviders: OpenCodeProvider[];
   ocConfigPath: string | null;
@@ -220,6 +223,7 @@ export const appStore = create<AppState>(() => ({
   sessions: {},
   activeSessionId: {},
   draftModelSel: {},
+  composerDrafts: loadComposerDrafts(),
   sessionModels: {},
   sessionModelSel: {},
   liveTurns: {},
