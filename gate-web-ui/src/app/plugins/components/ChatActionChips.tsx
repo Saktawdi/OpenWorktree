@@ -1,16 +1,17 @@
 /**
- * 插件系统（app/plugins）：对话输入区上方的「快捷动作」通用槽位。
+ * 插件系统（app/plugins）：composer.chips 区域的插件贡献段。
  *
- * 这是插件贡献点（ChatInputActionContribution）在宿主侧的唯一渲染点：读取注册表、
- * 组装 ChatInputState、执行插件的可见性判断与动作分发、条目过多时折叠/展开。
- * 本组件对具体插件零感知——新增/删除/更新插件都不需要改这里，更不需要改业务组件；
- * 业务组件（如 session/Composer）只需一行挂载并按需注入输入框能力。
+ * 原生快捷 chip（预提审/解释变更/单测…）是 Composer 域一等数据，**不进插件注册表**、
+ * 不经过本组件——宿主 UI 在插件全禁用/加载失败时仍完整可用。本组件只负责渲染插件的
+ * 追加贡献（原生段之后）：读取注册表、组装 ChatInputState、执行可见性判断与动作分发、
+ * 条目过多时折叠/展开。对具体插件零感知，新增/删除/更新插件都不需要改这里。
  */
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { CaretUp, DotsThree } from "@phosphor-icons/react";
 import { actions } from "@/app/actions";
 import { showToast, useApp } from "@/store";
 import { usePlugins } from "@/app/plugins/state";
+import { SLOT_COMPOSER_CHIPS } from "@/app/plugins/slots";
 import { pluginIcon } from "@/app/plugins/icons";
 import type { ChatActionApi, ChatInputActionContribution, ChatInputState } from "@/app/plugins/types";
 
@@ -23,12 +24,17 @@ interface Props {
   busy: boolean;
   /** 在输入框光标处插入文本（textarea 能力，由挂载方注入）。 */
   insertText(text: string): void;
-  /** 行尾附加内容（如 token 用量）；无可见 chips 且无附加内容时整行不渲染。 */
-  children?: ReactNode;
 }
 
-export function ChatActionChips({ ticketNo, busy, insertText, children }: Props) {
-  const pluginActions = usePlugins((s) => s.actions);
+export function ChatActionChips({ ticketNo, busy, insertText }: Props) {
+  const contributions = usePlugins((s) => s.contributions);
+  const pluginActions = useMemo(
+    () =>
+      contributions
+        .filter((c) => c.slot === SLOT_COMPOSER_CHIPS)
+        .map((c) => ({ pluginId: c.pluginId, action: c.contribution as ChatInputActionContribution })),
+    [contributions],
+  );
   const mode = useApp((s) => s.mode);
   const stage = useApp((s) => s.tickets.find((t) => t.ticketNo === ticketNo)?.stage);
   const restartCount = useApp(
@@ -91,63 +97,48 @@ export function ChatActionChips({ ticketNo, busy, insertText, children }: Props)
     }
   };
 
-  const hasExtras = useMemo(() => {
-    const arr = [];
-    for (const child of [children]) {
-      if (child === null || child === false || child === undefined) continue;
-      arr.push(child);
-    }
-    return arr.length > 0;
-  }, [children]);
-
-  if (visibleChips.length === 0 && !hasExtras) return null;
+  if (visibleChips.length === 0) return null;
 
   return (
-    <div className="flex items-center gap-3">
-      {visibleChips.length > 0 && (
-        <div className="flex flex-wrap gap-1.5 min-w-0">
-          {(chipsExpanded ? visibleChips : visibleChips.slice(0, CHIP_COLLAPSE_LIMIT)).map(
-            ({ pluginId, action }) => {
-              const QIcon = pluginIcon(action.icon);
-              return (
-                <button
-                  key={`${pluginId}:${action.id}`}
-                  disabled={busy}
-                  className="composer-chip"
-                  onClick={() => runAction(action)}
-                >
-                  <QIcon size={12} weight="fill" className="opacity-60" />
-                  {action.label}
-                </button>
-              );
-            },
-          )}
-          {!chipsExpanded && visibleChips.length > CHIP_COLLAPSE_LIMIT && (
+    <div className="flex flex-wrap gap-1.5 min-w-0">
+      {(chipsExpanded ? visibleChips : visibleChips.slice(0, CHIP_COLLAPSE_LIMIT)).map(
+        ({ pluginId, action }) => {
+          const QIcon = pluginIcon(action.icon);
+          return (
             <button
-              className="composer-chip"
+              key={`${pluginId}:${action.id}`}
               disabled={busy}
-              title={`展开其余 ${visibleChips.length - CHIP_COLLAPSE_LIMIT} 条快捷动作`}
-              onClick={() => setChipsExpanded(true)}
-            >
-              <DotsThree size={12} weight="bold" className="opacity-60" />
-              {`+${visibleChips.length - CHIP_COLLAPSE_LIMIT}`}
-            </button>
-          )}
-          {chipsExpanded && visibleChips.length > CHIP_COLLAPSE_LIMIT && (
-            <button
               className="composer-chip"
-              disabled={busy}
-              title="收起快捷动作"
-              onClick={() => setChipsExpanded(false)}
+              onClick={() => runAction(action)}
             >
-              <CaretUp size={12} weight="bold" className="opacity-60" />
-              收起
+              <QIcon size={12} weight="fill" className="opacity-60" />
+              {action.label}
             </button>
-          )}
-        </div>
+          );
+        },
       )}
-      <span className="flex-1" />
-      {children}
+      {!chipsExpanded && visibleChips.length > CHIP_COLLAPSE_LIMIT && (
+        <button
+          className="composer-chip"
+          disabled={busy}
+          title={`展开其余 ${visibleChips.length - CHIP_COLLAPSE_LIMIT} 条快捷动作`}
+          onClick={() => setChipsExpanded(true)}
+        >
+          <DotsThree size={12} weight="bold" className="opacity-60" />
+          {`+${visibleChips.length - CHIP_COLLAPSE_LIMIT}`}
+        </button>
+      )}
+      {chipsExpanded && visibleChips.length > CHIP_COLLAPSE_LIMIT && (
+        <button
+          className="composer-chip"
+          disabled={busy}
+          title="收起快捷动作"
+          onClick={() => setChipsExpanded(false)}
+        >
+          <CaretUp size={12} weight="bold" className="opacity-60" />
+          收起
+        </button>
+      )}
     </div>
   );
 }

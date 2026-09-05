@@ -76,9 +76,11 @@ export interface AppState {
   token: string;
   connectOpen: boolean;
   theme: Theme;
-  view: "workbench" | "kanban" | "projects" | "agents" | "settings" | "repo";
+  view: "workbench" | "kanban" | "projects" | "agents" | "settings" | "repo" | "plugin-page";
   /** 仓库视图整页（view="repo"）当前展示的项目；null = 未打开。 */
   repoViewProjectId: string | null;
+  /** 插件整页（view="plugin-page"）当前打开的页面贡献 id；null = 未打开。 */
+  pluginPageId: string | null;
   /** 终端会话（tab）列表；进程与 WebSocket 随会话存活，最小化不影响运行。 */
   terminalSessions: TerminalSessionMeta[];
   /** 终端工作台当前激活的 tab；null = 无。 */
@@ -177,6 +179,7 @@ export const appStore = create<AppState>(() => ({
   theme: loadTheme() as Theme,
   view: "workbench",
   repoViewProjectId: null,
+  pluginPageId: null,
   terminalSessions: [],
   activeTerminalId: null,
   terminalView: "closed",

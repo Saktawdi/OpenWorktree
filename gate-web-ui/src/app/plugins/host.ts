@@ -22,13 +22,16 @@ import {
   clearAll,
   dropPlugin,
   markPlugin,
-  registerAction,
-  registerWidget,
+  pluginStore,
+  registerContribution,
   setCatalog,
 } from "./state";
+import { emitPluginEvent, onPluginEvent } from "./events";
+import { SLOT_COMPOSER_CHIPS, SLOT_NAV_PAGES, SLOT_SETTINGS_PLUGINS } from "./slots";
 import type {
   Disposable,
   HostFetchRequest,
+  PageContribution,
   PanelWidgetContribution,
   ChatInputActionContribution,
   PluginContext,
@@ -161,6 +164,7 @@ async function loadPlugin(info: PluginListItem): Promise<void> {
     if (typeof returned === "function") disposers.push(returned);
     active.set(info.id, { info, disposers, cssLink });
     markPlugin(info.id, "active", null);
+    emitPluginEvent("plugin.activated", { pluginId: info.id });
   } catch (e) {
     // 激活失败：清掉半注册的贡献点与样式，记录错误供设置页展示。
     disposers.forEach((d) => safeDispose(info.id, d));
@@ -168,6 +172,7 @@ async function loadPlugin(info: PluginListItem): Promise<void> {
     const msg = (e as Error).message ?? String(e);
     console.warn(`[plugins] ${info.id} 激活失败：${msg}`);
     markPlugin(info.id, "error", msg);
+    emitPluginEvent("plugin.error", { pluginId: info.id, error: msg });
   }
 }
 
@@ -175,12 +180,24 @@ function unloadPlugin(id: string): void {
   const plugin = active.get(id);
   if (!plugin) return;
   active.delete(id);
+  // 正在打开的插件页若属于本插件，先优雅关闭（回工作台），避免渲染已卸载贡献物。
+  const pageIds = new Set(
+    pluginStore
+      .getState()
+      .contributions.filter((c) => c.pluginId === id && c.slot === SLOT_NAV_PAGES)
+      .map((c) => (c.contribution as PageContribution).id),
+  );
+  const st = appStore.getState();
+  if (st.view === "plugin-page" && st.pluginPageId && pageIds.has(st.pluginPageId)) {
+    appStore.setState({ view: "workbench", pluginPageId: null });
+  }
   // 逆序执行：后注册的资源先释放（与宿主内其它 Disposable 链约定一致）。
   for (let i = plugin.disposers.length - 1; i >= 0; i--) {
     safeDispose(id, plugin.disposers[i]);
   }
   plugin.cssLink?.remove();
   dropPlugin(id);
+  emitPluginEvent("plugin.deactivated", { pluginId: id });
 }
 
 function safeDispose(id: string, d: Disposable) {
@@ -206,12 +223,17 @@ function buildContext(info: PluginListItem, disposers: Disposable[]): PluginCont
     pluginId: info.id,
     manifest,
     registerChatInputAction(action: ChatInputActionContribution) {
-      const dispose = registerAction(info.id, action);
+      const dispose = registerContribution(info.id, SLOT_COMPOSER_CHIPS, action);
       disposers.push(dispose);
       return dispose;
     },
     registerPanelWidget(widget: PanelWidgetContribution) {
-      const dispose = registerWidget(info.id, widget);
+      const dispose = registerContribution(info.id, SLOT_SETTINGS_PLUGINS, widget);
+      disposers.push(dispose);
+      return dispose;
+    },
+    registerPage(page: PageContribution) {
+      const dispose = registerContribution(info.id, SLOT_NAV_PAGES, page);
       disposers.push(dispose);
       return dispose;
     },
@@ -224,6 +246,12 @@ function buildContext(info: PluginListItem, disposers: Disposable[]): PluginCont
     },
     onDeactivate(fn: Disposable) {
       disposers.push(fn);
+    },
+    on(event: string, handler: (payload: never) => void) {
+      // 插件忘掉返回的 Disposable 也没关系：dispose 已进 disposers，停用/重载时强制注销。
+      const dispose = onPluginEvent(event, handler as (payload: unknown) => void);
+      disposers.push(dispose);
+      return dispose;
     },
     log(...args: unknown[]) {
       console.log(`[plugin:${info.id}]`, ...args);

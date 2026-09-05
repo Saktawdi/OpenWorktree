@@ -11,7 +11,8 @@ import {
 } from "@phosphor-icons/react";
 import { refreshPlugins, reloadPluginById, togglePlugin } from "@/app/plugins/host";
 import { usePlugins } from "@/app/plugins/state";
-import { PluginBoundary } from "./PluginBoundary";
+import { PluginSlot } from "./PluginSlot";
+import type { PanelWidgetContribution } from "@/app/plugins/types";
 import type { PluginView } from "@/app/plugins/state";
 
 /** 启停开关（原生语义 role=switch，样式与 LlmBlock 控件一致）。 */
@@ -108,24 +109,24 @@ function PluginRow({ plugin }: { plugin: PluginView }) {
   );
 }
 
-/** 插件挂件渲染区：每个挂件一格卡片，PluginBoundary 隔离渲染崩溃。 */
+/** 插件挂件渲染区：settings.plugins 区域，每个挂件一格卡片（卡片 chrome 留在本区域侧）。 */
 function WidgetArea() {
-  const widgets = usePlugins((s) => s.widgets);
-  if (widgets.length === 0) return null;
   return (
-    <>
-      {widgets.map(({ pluginId, widget }) => (
-        <div key={`${pluginId}:${widget.id}`} className="card overflow-hidden">
-          <div className="px-4 h-9 flex items-center gap-2 border-b border-edge bg-raised/40">
-            <PuzzlePiece size={12} className="text-faint" />
-            <span className="text-[12.5px] font-semibold">{widget.title ?? pluginId}</span>
+    <PluginSlot
+      name="settings.plugins"
+      wrap={(node, { pluginId, contribution }) => {
+        const widget = contribution as PanelWidgetContribution;
+        return (
+          <div className="card overflow-hidden">
+            <div className="px-4 h-9 flex items-center gap-2 border-b border-edge bg-raised/40">
+              <PuzzlePiece size={12} className="text-faint" />
+              <span className="text-[12.5px] font-semibold">{widget.title ?? pluginId}</span>
+            </div>
+            <div className="p-4">{node}</div>
           </div>
-          <div className="p-4">
-            <PluginBoundary label={widget.title ?? pluginId}>{widget.render()}</PluginBoundary>
-          </div>
-        </div>
-      ))}
-    </>
+        );
+      }}
+    />
   );
 }
 

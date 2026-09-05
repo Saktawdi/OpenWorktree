@@ -1,7 +1,9 @@
 # OpenWorktree 插件模板（空白起点）
 
 复制本目录为 `plugins/<你的插件名>/`（或任意位置），改掉 manifest 的 `id` / `name`，就能开始开发。
-本模板自带一个演示：composer 上方一枚「插入问候」chip + 设置中心「插件」分区的示例面板。
+本模板自带一个演示：composer 上方「插入问候」（insertText）与「运行本地单测」（sendPrompt，
+原宿主原生 chip 迁移示例）两枚 chip + 设置中心「插件」分区的示例面板
++ 顶栏导航「示例页」整页 + 工单/会话事件订阅日志。
 
 ## 快速开始
 
@@ -28,11 +30,12 @@ plugin-template/
 ├─ vite.config.ts       # lib 构建 + react 桥接 alias
 ├─ scripts/install.mjs  # 构建产物 → gate-home/plugins/<id>/
 └─ src/
-   ├─ index.ts          # 入口：export function activate(ctx)
-   ├─ panel.tsx         # 示例面板组件
-   ├─ styles.css        # 插件私有样式（类名带前缀）
-   ├─ host-types.ts     # 宿主契约类型镜像（与宿主 types.ts 手工同步）
-   └─ host/             # SDK 桥接（勿改）：react / jsx-runtime shim
+   ├─ index.tsx          # 入口：export function activate(ctx)
+   ├─ panel.tsx          # 示例面板组件
+   └─ styles.css         # 插件私有样式（类名带前缀）
+
+宿主契约类型与 React 桥接 shim 都来自 `@gate/plugin-sdk`（仓库内 `packages/plugin-sdk/`，
+经 `file:` 依赖引入），工程内不再维护任何镜像文件。
 ```
 
 ## 插件生命周期
@@ -53,8 +56,9 @@ export function activate(ctx) {
 
 ## 共享 React（重要）
 
-插件**不打包自己的 React**。`vite.config.ts` 把 `react` / `react/jsx-runtime` alias 到
-`src/host/` 的 shim，运行时从宿主注入的全局 `__GATE_PLUGIN_SHARED__` 取**同一个 React 实例**——
+插件**不打包自己的 React**。`vite.config.ts` 用 `@gate/plugin-sdk/vite` 的 `pluginReactAliases()`
+把 `react` / `react/jsx-runtime` alias 到 SDK 的 shim，运行时从宿主注入的全局
+`__GATE_PLUGIN_SHARED__` 取**同一个 React 实例**——
 所以插件组件可以直接返回 JSX、用 hooks、挂进宿主树。
 
 推论：
@@ -74,12 +78,16 @@ export function activate(ctx) {
 
 ## 贡献点
 
+权威清单见 `packages/plugin-sdk/README.md`（契约唯一来源）；速查：
+
 | API | 落点 |
 |---|---|
-| `ctx.registerChatInputAction({ id, label, icon?, when?, run })` | 对话输入区上方快捷 chip；`when(state)` 按工单上下文（diffs/findings/restartCount/stage/busy…）决定显隐；`run(api, state)` 里可 `api.insertText / sendPrompt / presubmit / returnWithFindings / toast` |
+| `ctx.registerChatInputAction({ id, label, icon?, when?, run })` | 对话输入区上方快捷 chip；`when(state)` 按工单上下文（diffs/findings/restartCount/stage/busy…）决定显隐；`run(api, state)` 里可 `api.insertText / sendPrompt / presubmit / returnWithFindings / toast`。**原生 chip 由宿主自管**，插件贡献追加在其后 |
 | `ctx.registerPanelWidget({ id, title?, render })` | 设置中心「插件」分区的管理面板（`render()` 返回 React 节点） |
+| `ctx.registerPage({ id, title, icon?, order?, render })` | 顶栏导航整页（order 升序、缺省 100）；插件禁用/重载时宿主自动关闭该页 |
+| `ctx.on(event, handler)` | 事件总线订阅（`ticket.stage-changed` / `session.created` / `session.ended` / `plugin.*`；no replay，详见 SDK README） |
 
-icon 只能引用宿主白名单（见 `src/host-types.ts` 注释），未知名回落对话图标。
+icon 只能引用宿主白名单（见 `@gate/plugin-sdk` 的 `ChatInputActionContribution` 注释），未知名回落对话图标。
 
 ## 安装形态
 
@@ -100,5 +108,6 @@ icon 只能引用宿主白名单（见 `src/host-types.ts` 注释），未知名
 - **改了代码不生效**：`npm run build` → 设置页「重载」（指纹变化才会重新 import）
 - **激活失败/面板渲染崩溃**：设置页会展示具体错误；渲染崩溃卡片上有「重试渲染」
 - **demo 模式看不到插件**：插件设施依赖后端目录与资产，连接后端（live）才有
-- **宿主契约升级**：改了 `gate-web-ui/src/app/plugins/types.ts` 后需同步 `src/host-types.ts`，
+- **宿主契约升级**：契约唯一来源是 `packages/plugin-sdk/src/types.ts`，宿主与插件共用；
+  升级 API 代次时需同步 SDK 与后端的 `SUPPORTED_API_VERSION` 两处常量，
   并把 manifest 的 `apiVersion` 与宿主 `SUPPORTED_API_VERSION` 对齐

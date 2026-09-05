@@ -1,0 +1,18 @@
+{
+  "name": "@gate/plugin-sdk",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "gate 插件契约与 React 桥接 SDK：宿主与插件共用的唯一契约来源（类型 + 共享 React shim + vite alias 助手）",
+  "exports": {
+    ".": "./src/index.ts",
+    "./vite": {
+      "types": "./vite.d.mts",
+      "default": "./vite.mjs"
+    }
+  },
+  "devDependencies": {
+    "@types/react": "^19.1.0",
+    "react": "^19.1.0"
+  }
+}

@@ -5,6 +5,7 @@
 import { appStore } from "@/store";
 import type { CatalogProvider, ChatSession, SessionModelSel, TodoItem } from "@/shared/types";
 import { uid } from "@/shared/format";
+import { emitPluginEvent } from "@/app/plugins/events";
 
 const set = appStore.setState;
 const s = () => appStore.getState();
@@ -76,7 +77,9 @@ export function refreshTicketBusy(no: string) {
  * 记录一次会话回合结束（done=正常完成，failed=出错/中止）供工单列表提醒。
  * 用户当前停留在该工单的工作台时视为"已看见"回合结束，不叠加列表提醒。
  */
-export function markSessionEnded(no: string, kind: "done" | "failed") {
+export function markSessionEnded(no: string, kind: "done" | "failed", sessionId?: string) {
+  // 回合结束是语义写入点：无论用户是否在查看（reminder 可能跳过），事件都 emit。
+  emitPluginEvent("session.ended", { ticketNo: no, sessionId: sessionId ?? null, kind });
   set((st) => {
     if (st.selectedNo === no && st.view === "workbench") return st;
     return { sessionEnded: { ...st.sessionEnded, [no]: { kind, at: Date.now() } } };
@@ -196,6 +199,12 @@ export function createSession(ticketNo: string) {
       [ticketNo]: id,
     },
   }));
+  // 会话创建语义写入点（demo 路径）；live 路径在 stream.ts 建会话成功后单独 emit。
+  emitPluginEvent("session.created", {
+    ticketNo,
+    sessionId: id,
+    agentConfigId: session.agentConfigId ?? null,
+  });
   return id;
 }
 

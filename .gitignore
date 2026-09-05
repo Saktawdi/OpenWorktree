@@ -83,3 +83,4 @@ desktop/src-tauri/binaries/*.native-backup
 gate-web-ui/.sidecar-classpath/
 
 desktop/src-tauri/binaries/*.shim-backup
+packages/*/node_modules/

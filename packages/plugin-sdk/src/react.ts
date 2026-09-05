@@ -1,9 +1,9 @@
 /**
- * 宿主共享 React 桥接 shim —— 构建期由 vite alias 把 "react" 指向本文件。
+ * 宿主共享 React 桥接 shim —— 插件构建期由 vite alias 把 "react" 指向本文件。
  * 运行时从全局 __GATE_PLUGIN_SHARED__ 取宿主的 React 实例：
  * 插件组件与宿主共用同一个 React，hooks 才能安全工作（双 React 实例会 Invalid hook call）。
  *
- * !! 本文件属于模板 SDK，正常开发不需要改动 !!
+ * !! 本文件属于 SDK，正常开发不需要改动 !!
  */
 const shared = (
   globalThis as unknown as {

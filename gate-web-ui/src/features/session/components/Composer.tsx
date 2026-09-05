@@ -3,15 +3,21 @@ import {
   Brain,
   CaretDown,
   Check,
+  CheckCircle,
   Cpu,
+  Eye,
   Lock,
+  LockKey,
   MagnifyingGlass,
   PaperPlaneRight,
   ShieldCheck,
   Sparkle,
   Stop,
+  Ticket,
+  Wrench,
   X,
 } from "@phosphor-icons/react";
+import type { Icon } from "@phosphor-icons/react";
 import { actions } from "@/app/actions";
 import { appStore, NO_CHAT, showToast, useApp } from "@/store";
 import { ChatActionChips } from "@/app/plugins/components/ChatActionChips";
@@ -649,11 +655,59 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
     });
   };
 
+  /**
+   * 原生快捷 chip（Composer 域一等能力，不进插件注册表）：插件全禁用/宿主初始化
+   * 失败时依然完整可用；插件的追加 chip 由 ChatActionChips 渲染在本段之后。
+   */
+  const quick = [
+    diffs > 0 && !terminal
+      ? { label: "预提审", prompt: "__presubmit__", Icon: LockKey }
+      : null,
+    diffs > 0 ? { label: "解释当前变更", prompt: "请解释当前工作区的全部改动", Icon: Eye } : null,
+    // 派单：指导 Agent 现在不要建单，等用户下一条消息给出需求描述后，
+    // 再走 MCP（服务器注册名 gate）的 ticket_create 建单，并据此补全标题与描述
+    {
+      label: "派单",
+      prompt:
+        "现在不要创建工单。请等我下一条消息描述完需求后，再使用 MCP（服务器注册名 gate）的 ticket_create 工具创建工单，届时用该需求补全工单标题与描述。",
+      Icon: Ticket,
+    },
+    // 重启过的活跃工单才有「重启理由」注入上下文（AgentContextPrompt），语录才有意义
+    restartCount > 0
+      ? { label: "完成此工单", prompt: "完成此工单，处理下重启理由", Icon: CheckCircle }
+      : null,
+    findingsCount > 0 && stage === "REJECTED"
+      ? { label: "按审查意见修复", prompt: "__findings__", Icon: Wrench }
+      : null,
+  ].filter(Boolean) as Array<{ label: string; prompt: string; Icon: Icon }>;
+
   return (
     <div className="shrink-0 px-5 py-3">
       <div className="max-w-[760px] mx-auto space-y-2">
-        {!terminal && (
-          <ChatActionChips ticketNo={ticketNo} busy={busy} insertText={insertAtCursor}>
+        {!terminal && (quick.length > 0 || usage) && (
+          <div className="flex items-center gap-3">
+            {quick.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 min-w-0">
+                {quick.map(({ label, prompt, Icon: QIcon }) => (
+                  <button
+                    key={label}
+                    disabled={busy}
+                    className="composer-chip"
+                    onClick={() => {
+                      if (prompt === "__findings__") actions.returnWithFindings(ticketNo);
+                      else if (prompt === "__presubmit__") actions.presubmit(ticketNo);
+                      else actions.sendPrompt(ticketNo, prompt);
+                    }}
+                  >
+                    <QIcon size={12} weight="fill" className="opacity-60" />
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
+            {/* 插件追加 chip 段：无插件贡献时整体不渲染 */}
+            <ChatActionChips ticketNo={ticketNo} busy={busy} insertText={insertAtCursor} />
+            <span className="flex-1" />
             {usage && (
               <span
                 className="font-mono text-[11px] text-faint tabular-nums whitespace-nowrap"
@@ -662,7 +716,7 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
                 ↑ {formatTokens(usage.promptTokens)} · ↓ {formatTokens(usage.completionTokens)}
               </span>
             )}
-          </ChatActionChips>
+          </div>
         )}
 
         {/* 统一输入卡：textarea 与控制栏同卡，聚焦时整卡亮起（参考 OpenChamber） */}

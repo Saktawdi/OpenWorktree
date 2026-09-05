@@ -1,8 +1,8 @@
 /**
- * 宿主共享 jsx-runtime 桥接 shim —— 构建期由 vite alias 把 "react/jsx-runtime" 指向本文件
+ * 宿主共享 jsx-runtime 桥接 shim —— 插件构建期由 vite alias 把 "react/jsx-runtime" 指向本文件
  * （jsx: "react-jsx" 编译出的 JSX 调用走这里）。
  *
- * !! 本文件属于模板 SDK，正常开发不需要改动 !!
+ * !! 本文件属于 SDK，正常开发不需要改动 !!
  */
 const shared = (
   globalThis as unknown as {

@@ -7,6 +7,7 @@ import { saveKanbanStages, saveVisibleStages } from "@/store/prefs";
 import type { DiffFile, Stage, StageChangeRecord, Ticket } from "@/shared/types";
 import { ALL_STAGES, KANBAN_DEFAULT_STAGES, KANBAN_LANE_COUNT, KANBAN_STAGE_ORDER, uid } from "@/shared/format";
 import { clearSessionEnded } from "@/features/session/state";
+import { emitPluginEvent } from "@/app/plugins/events";
 import type { AppState } from "@/store";
 
 const set = appStore.setState;
@@ -17,11 +18,16 @@ function patch(partial: Partial<AppState>) {
 }
 
 export function setStage(no: string, stage: Stage) {
+  // from→to 在写入点已知，显式 emit（不做快照 diff 还原）；无订阅者时空操作。
+  const prev = s().tickets.find((t) => t.ticketNo === no)?.stage;
   set((st) => ({
     tickets: st.tickets.map((t) =>
       t.ticketNo === no ? { ...t, stage, updatedAt: new Date().toISOString() } : t,
     ),
   }));
+  if (prev && prev !== stage) {
+    emitPluginEvent("ticket.stage-changed", { ticketNo: no, from: prev, to: stage });
+  }
 }
 
 export function setDiffs(no: string, files: DiffFile[], eolWarning?: string) {

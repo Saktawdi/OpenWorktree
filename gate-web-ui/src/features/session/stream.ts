@@ -7,6 +7,7 @@ import { api } from "@/net";
 import { appStore, showToast } from "@/store";
 import type { PendingAttachment, ToolIconKind } from "@/shared/types";
 import { friendlyToolName, isTodoTool, parseTodos } from "@/shared/todoUtils";
+import { emitPluginEvent } from "@/app/plugins/events";
 import { loadTicketSessions, refreshTicketSessionsMeta, syncSessionTodos } from "./api";
 import { loadSessionCatalog, switchSessionModelLive } from "./catalog";
 import { mapPermissionAsk, mapQuestionAsk, todoArgsSummary } from "./model";
@@ -90,6 +91,8 @@ export async function liveSendPrompt(
         body: JSON.stringify({ agent_config_id: agentId, initial_prompt: "" }),
       });
       sid = created.id;
+      // 会话创建语义写入点（live 路径）：后端建会话成功即 emit。
+      emitPluginEvent("session.created", { ticketNo: no, sessionId: sid, agentConfigId: agentId || null });
       await loadTicketSessions(no).catch(() => {});
       appStore.setState((s2) => ({ activeSessionId: { ...s2.activeSessionId, [no]: sid! } }));
       // 草稿里选过的模型/推理强度：建会话后立即持久化为覆盖（首回合即生效）。
@@ -129,7 +132,7 @@ export async function liveSendPrompt(
       removeChatItem(no, userItem.id);
       draftFailed = true;
     } else {
-      markSessionEnded(no, "failed");
+      markSessionEnded(no, "failed", sid);
     }
   } finally {
     setCreatingSession(no, false);
@@ -373,7 +376,7 @@ async function consumeSessionStream(no: string, sessionId: string) {
     });
     es.addEventListener("done", () => {
       // T-120 增强：回合结束提醒（用户中止的会话按"已中断"呈现）。
-      markSessionEnded(no, abortingSessions.has(sessionId) ? "failed" : "done");
+      markSessionEnded(no, abortingSessions.has(sessionId) ? "failed" : "done", sessionId);
       // 后端此刻已把 opencode 的自动生成标题写库（session.updated → sessions.update）。
       // 只刷新列表数据，不动 activeSessionId，避免把用户在查看的会话顶走。
       void refreshTicketSessionsMeta(no);
@@ -412,7 +415,7 @@ async function consumeSessionStream(no: string, sessionId: string) {
         }
       }
       // T-120 增强：意外失败中止也属于"会话结束"，工单列表按"已中断"提醒。
-      markSessionEnded(no, "failed");
+      markSessionEnded(no, "failed", sessionId);
       updateLiveTurn(sessionId, (a) => ({ ...a, streaming: false }));
       pushSystemMessage(no, msg, "warn");
       // 出错中止同样做一次历史收敛：中断前已落库的 todo 不被流式残留掩盖。

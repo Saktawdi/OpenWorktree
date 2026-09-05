@@ -1,20 +1,17 @@
 import { defineConfig } from "vite";
 import { fileURLToPath } from "node:url";
+import { pluginReactAliases } from "@gate/plugin-sdk/vite";
 
 const r = (p: string) => fileURLToPath(new URL(p, import.meta.url));
 
 /**
  * 插件构建：ESM 单入口产物（dist/index.js + dist/style.css）。
- * react 不打进产物——经 alias 桥接到 src/host/react.ts shim，
+ * react 不打进产物——经 alias 桥接到 @gate/plugin-sdk 的宿主共享 shim，
  * 运行时从宿主注入的全局取同一个 React 实例（详见 README「共享 React」）。
  */
 export default defineConfig({
   resolve: {
-    alias: [
-      // 顺序敏感："react" 前缀规则会一并命中 "react/jsx-runtime"，jsx-runtime 必须在前
-      { find: "react/jsx-runtime", replacement: r("./src/host/jsx-runtime.ts") },
-      { find: "react", replacement: r("./src/host/react.ts") },
-    ],
+    alias: pluginReactAliases(),
   },
   build: {
     lib: {

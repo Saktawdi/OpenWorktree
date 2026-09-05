@@ -33,6 +33,16 @@ export function closeRepoView() {
   patch({ view: "projects", repoViewProjectId: null });
 }
 
+/** 打开插件贡献的整页（顶栏导航注册表里的 nav.pages 条目）。 */
+export function openPluginPage(pageId: string) {
+  patch({ view: "plugin-page", pluginPageId: pageId });
+}
+
+/** 关闭插件整页，回工作台（插件被禁用/重载时也走这里）。 */
+export function closePluginPage() {
+  patch({ view: "workbench", pluginPageId: null });
+}
+
 export function setCenterTab(tab: CenterTab) {
   patch({ centerTab: tab });
 }

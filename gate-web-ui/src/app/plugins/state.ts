@@ -3,9 +3,12 @@
  *
  * 不并入 appStore：贡献物是函数（不可 JSON 序列化），也不该进工作台快照；
  * 插件启停/重载本身就是注册表的生命周期，重进页面时由 host 重建。
+ *
+ * 注册表是插槽总线：所有贡献物统一落在 contributions[]（按区域名 + 注册顺序），
+ * 渲染方按 SlotName 过滤消费——新增区域/贡献不需要改注册表本身。
  */
 import { create } from "zustand";
-import type { ChatInputActionContribution, PanelWidgetContribution, PluginListItem } from "./types";
+import type { PluginListItem } from "./types";
 
 type Disposable = () => void;
 
@@ -17,22 +20,18 @@ export interface PluginView extends PluginListItem {
   error: string | null;
 }
 
-export interface RegisteredAction {
+/** 一条插件贡献物：归属插件 + 目标区域 + 贡献物本体（契约由 slots.ts 的 SlotContributionMap 锚定）。 */
+export interface RegisteredContribution {
   pluginId: string;
-  action: ChatInputActionContribution;
-}
-
-export interface RegisteredWidget {
-  pluginId: string;
-  widget: PanelWidgetContribution;
+  slot: string;
+  contribution: unknown;
 }
 
 interface PluginsState {
   /** 已完成至少一次目录同步（后端不可达时保持 false，设置页据此显示空态）。 */
   loaded: boolean;
   plugins: PluginView[];
-  actions: RegisteredAction[];
-  widgets: RegisteredWidget[];
+  contributions: RegisteredContribution[];
   /** 最近一次目录同步失败原因；null = 正常。 */
   listError: string | null;
 }
@@ -40,8 +39,7 @@ interface PluginsState {
 export const pluginStore = create<PluginsState>(() => ({
   loaded: false,
   plugins: [],
-  actions: [],
-  widgets: [],
+  contributions: [],
   listError: null,
 }));
 
@@ -83,29 +81,25 @@ export function markPlugin(id: string, status: PluginStatus, error: string | nul
 export function dropPlugin(id: string) {
   set((st) => ({
     plugins: st.plugins.map((p) => (p.id === id ? { ...p, status: "off", error: null } : p)),
-    actions: st.actions.filter((a) => a.pluginId !== id),
-    widgets: st.widgets.filter((w) => w.pluginId !== id),
+    contributions: st.contributions.filter((c) => c.pluginId !== id),
   }));
 }
 
 export function clearAll() {
-  set({ loaded: false, plugins: [], actions: [], widgets: [], listError: null });
+  set({ loaded: false, plugins: [], contributions: [], listError: null });
 }
 
-export function registerAction(pluginId: string, action: ChatInputActionContribution): Disposable {
-  set((st) => ({ actions: [...st.actions, { pluginId, action }] }));
+export function registerContribution(
+  pluginId: string,
+  slot: string,
+  contribution: unknown,
+): Disposable {
+  set((st) => ({ contributions: [...st.contributions, { pluginId, slot, contribution }] }));
   return () => {
     set((st) => ({
-      actions: st.actions.filter((a) => !(a.pluginId === pluginId && a.action === action)),
-    }));
-  };
-}
-
-export function registerWidget(pluginId: string, widget: PanelWidgetContribution): Disposable {
-  set((st) => ({ widgets: [...st.widgets, { pluginId, widget }] }));
-  return () => {
-    set((st) => ({
-      widgets: st.widgets.filter((w) => !(w.pluginId === pluginId && w.widget === widget)),
+      contributions: st.contributions.filter(
+        (c) => !(c.pluginId === pluginId && c.slot === slot && c.contribution === contribution),
+      ),
     }));
   };
 }

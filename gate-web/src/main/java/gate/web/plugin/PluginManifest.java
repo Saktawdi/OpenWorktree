@@ -29,7 +29,11 @@ public record PluginManifest(
         String description,
         List<String> permissions) {
 
-    /** 宿主当前实现的插件 API 代次；manifest 声明其他值一律拒绝加载。 */
+    /**
+     * 宿主当前实现的插件 API 代次；manifest 声明其他值一律拒绝加载。
+     * 与前端 SDK 常量 packages/plugin-sdk 导出的 SUPPORTED_API_VERSION 保持一致
+     * （跨语言各持一份，升级代次时两处 + CHANGELOG 必须同步）。
+     */
     public static final String SUPPORTED_API_VERSION = "1";
 
     /** KV 能力权限：声明后宿主才下发 ctx.kv，后端 KV 端点也据此鉴权。 */

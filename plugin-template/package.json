@@ -9,6 +9,7 @@
     "deploy": "tsc --noEmit -p tsconfig.json && vite build && node scripts/install.mjs"
   },
   "devDependencies": {
+    "@gate/plugin-sdk": "file:../packages/plugin-sdk",
     "@types/react": "^19.1.0",
     "react": "^19.1.0",
     "typescript": "~5.8.3",

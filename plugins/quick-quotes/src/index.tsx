@@ -1,10 +1,16 @@
 /**
  * 快捷语录插件入口。
- * 职责：KV 装载/种子/防抖保存，语录 → composer chips 的注册与重注册，管理面板挂件。
+ * 职责：KV 装载/种子/原生条目迁移/防抖保存，语录 → composer chips 的注册与重注册，管理面板挂件。
  */
 import "./styles.css";
-import type { PluginContext } from "./host-types";
-import { BUILTIN_QUOTES, sanitizeQuotes, toAction, type QuoteItem } from "./quotes";
+import type { PluginContext } from "@gate/plugin-sdk";
+import {
+  BUILTIN_QUOTES,
+  NATIVE_BUILTIN_IDS,
+  sanitizeQuotes,
+  toAction,
+  type QuoteItem,
+} from "./quotes";
 import { quoteStore } from "./quote-store";
 import { QuotesManager } from "./manager";
 
@@ -37,7 +43,9 @@ export function activate(ctx: PluginContext) {
     persist();
   });
 
-  /* 初始装载：KV 为空（首次安装）→ 种子内置语录；有值 → 清洗后恢复 */
+  /* 初始装载：KV 为空（首次安装）→ 种子内置语录；有值 → 清洗后恢复。
+   * round 2 迁移：原生五条种子已回迁宿主，存量 KV 里的对应条目过滤回写，
+   * 否则会与宿主原生 chip 成对重复。 */
   const boot = async () => {
     if (!kv) {
       quoteStore.set([...BUILTIN_QUOTES]);
@@ -50,7 +58,10 @@ export function activate(ctx: PluginContext) {
         void kv.set(KV_KEY, BUILTIN_QUOTES);
         return;
       }
-      quoteStore.set(sanitizeQuotes(stored));
+      const nativeIds = new Set<string>(NATIVE_BUILTIN_IDS);
+      const migrated = sanitizeQuotes(stored).filter((q) => !nativeIds.has(q.id));
+      quoteStore.set(migrated);
+      void kv.set(KV_KEY, migrated);
     } catch (e) {
       ctx.log("语录装载失败，回退内置", e);
       quoteStore.set([...BUILTIN_QUOTES]);

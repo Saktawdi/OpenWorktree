@@ -2,7 +2,7 @@
  * 快捷语录数据模型：类型/显隐条件/内置种子/插件贡献点映射。
  * 原 Composer 硬编码 quick 数组的完整迁移（含原有显隐语义），外加 MCP 工具语录类型。
  */
-import type { ChatInputActionContribution, ChatInputState } from "./host-types";
+import type { ChatInputActionContribution, ChatInputState } from "@gate/plugin-sdk";
 
 export type QuoteKind = "message" | "presubmit" | "findings" | "mcp";
 export type QuoteWhen = "always" | "has_diffs" | "has_diffs_active" | "rejected_findings" | "has_restarts";
@@ -86,47 +86,22 @@ export function toAction(q: QuoteItem): ChatInputActionContribution {
 }
 
 /**
- * 内置语录（首次安装种子）：前五条迁移自 Composer 原硬编码 quick 数组，
- * 最后一条演示 MCP 工具语录（指示 Agent 调用 agent 域工具 presubmit_create）。
+ * 原生 chip 回迁宿主后被移除的内置种子 id（round 2）。
+ * 存量用户 KV 里还留着这五条，activate 时按此清单过滤回写，避免与宿主原生 chip 重复。
+ */
+export const NATIVE_BUILTIN_IDS = [
+  "builtin-presubmit",
+  "builtin-explain-diff",
+  "builtin-unit-tests",
+  "builtin-finish",
+  "builtin-fix-findings",
+] as const;
+
+/**
+ * 内置种子：原生五条已回迁宿主（见 NATIVE_BUILTIN_IDS），仅保留 MCP 工具语录示例。
+ * 「恢复内置」按 mergeBuiltins 合并本清单。
  */
 export const BUILTIN_QUOTES: QuoteItem[] = [
-  { id: "builtin-presubmit", label: "预提审", kind: "presubmit", when: "has_diffs_active", icon: "LockKey", builtin: true },
-  {
-    id: "builtin-explain-diff",
-    label: "解释当前变更",
-    kind: "message",
-    when: "has_diffs",
-    prompt: "请解释当前工作区的全部改动",
-    icon: "Eye",
-    builtin: true,
-  },
-  {
-    id: "builtin-unit-tests",
-    label: "运行本地单测",
-    kind: "message",
-    when: "always",
-    prompt: "运行本地单元测试并汇总结果",
-    icon: "TerminalWindow",
-    builtin: true,
-  },
-  // 重启过的活跃工单才有「重启理由」注入上下文（AgentContextPrompt），语录才有意义
-  {
-    id: "builtin-finish",
-    label: "完成此工单",
-    kind: "message",
-    when: "has_restarts",
-    prompt: "完成此工单，处理下重启理由",
-    icon: "CheckCircle",
-    builtin: true,
-  },
-  {
-    id: "builtin-fix-findings",
-    label: "按审查意见修复",
-    kind: "findings",
-    when: "rejected_findings",
-    icon: "Wrench",
-    builtin: true,
-  },
   {
     id: "builtin-mcp-presubmit",
     label: "MCP 预提审",
