@@ -415,9 +415,21 @@ async function consumeSessionStream(no: string, sessionId: string) {
       markSessionEnded(no, "failed");
       updateLiveTurn(sessionId, (a) => ({ ...a, streaming: false }));
       pushSystemMessage(no, msg, "warn");
-      // 断流不在此做历史收敛：连接中断未必代表回合结束（agent 可能仍在服务端
-      // 运行），按空历史重建只会清掉已显示的清单；回合真正结束后由 busy 轮询的
-      // 运行→空闲 transition 兜底收敛。
+      // 断流≠回合结束：agent 可能仍在服务端运行，立即按（尚未落库的）空历史重建
+      // 只会清掉已显示的清单，故不即时收敛。延迟一拍主动核对一次运行集：
+      // - 会话已空闲 → 回合确已终结且已落库，此时收敛一次（覆盖极短回合从未进入
+      //   轮询快照、以及轮询随页面隐藏暂停的窗口）；
+      // - 仍在运行 → 不碰，等 busy 轮询的「运行→空闲」transition 兜底收敛。
+      setTimeout(() => {
+        void api<{ running: Array<{ session_id: string }> }>("/api/agents/busy")
+          .then((d) => {
+            const stillRunning = (d.running ?? []).some((r) => r.session_id === sessionId);
+            if (!stillRunning) void syncSessionTodos(no, sessionId);
+          })
+          .catch(() => {
+            /* 核对失败：保持现状，等轮询 transition 兜底 */
+          });
+      }, 2000);
       finish();
     });
   });
