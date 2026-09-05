@@ -282,6 +282,39 @@ class SettingsRoutesTest {
             assertFalse(Files.readString(toml).contains("engine.engine"), "file must stay untouched");
         }
 
+        /** 设置中心分区顺序：高频分区在前，顶层键收尾为「高级设置」；只读键不下发。 */
+        @Test
+        void viewOrdersSectionsAndHidesReadOnlyKeys() throws Exception {
+            HttpResponse<String> res = httpGet("/api/settings/gate-toml");
+            assertEquals(200, res.statusCode(), res.body());
+            Map<String, Object> body = JSON.readValue(res.body(), Map.class);
+            List<Map<String, Object>> sections = castList(body.get("sections"));
+            List<String> order = new java.util.ArrayList<>();
+            for (Map<String, Object> section : sections) {
+                order.add(String.valueOf(section.get("section")));
+            }
+            assertEquals(List.of("web", "engine", "policy", "agent", "gate_identity", "session", ""), order);
+            assertEquals("高级设置", sections.get(sections.size() - 1).get("title"));
+            for (Map<String, Object> section : sections) {
+                List<Map<String, Object>> keys = castList(section.get("keys"));
+                for (Map<String, Object> key : keys) {
+                    assertTrue(Boolean.TRUE.equals(key.get("editable")),
+                            "read-only key must not be exposed: " + key);
+                }
+            }
+        }
+
+        /** 提交身份不再伪称静态默认值（1700000000 +0000 之类）：不下发 default，改下发 placeholder。 */
+        @Test
+        void commitIdentityUsesPlaceholderInsteadOfFakeDefault() throws Exception {
+            HttpResponse<String> res = httpGet("/api/settings/gate-toml");
+            assertEquals(200, res.statusCode(), res.body());
+            Map<String, Object> body = JSON.readValue(res.body(), Map.class);
+            Map<String, Object> date = keyOf(body, "date");
+            assertTrue(date.get("default") == null, date.toString());
+            assertEquals("默认：发布时刻（真实时间）", date.get("placeholder"), date.toString());
+        }
+
         private static String shortKey(String fullKey) {
             int dot = fullKey.indexOf('.');
             return dot < 0 ? fullKey : fullKey.substring(dot + 1);

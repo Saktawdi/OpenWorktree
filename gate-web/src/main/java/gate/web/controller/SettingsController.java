@@ -21,14 +21,15 @@ import java.util.Map;
  */
 public final class SettingsController implements WebController {
 
+    /** 设置中心分区顺序（高频可调项在前）。空 section = 顶层键，收尾作为「高级设置」。 */
     private static final List<SectionSpec> SECTIONS = List.of(
-            new SectionSpec("", "基本"),
-            new SectionSpec("gate_identity", "提交身份"),
             new SectionSpec("web", "Web 控制台"),
-            new SectionSpec("session", "会话编排"),
-            new SectionSpec("policy", "审查策略"),
             new SectionSpec("engine", "审查引擎"),
-            new SectionSpec("agent", "智能体默认"));
+            new SectionSpec("policy", "审查策略"),
+            new SectionSpec("agent", "智能体默认"),
+            new SectionSpec("gate_identity", "提交身份"),
+            new SectionSpec("session", "会话编排"),
+            new SectionSpec("", "高级设置"));
 
     private record SectionSpec(String section, String title) {
     }
@@ -38,9 +39,6 @@ public final class SettingsController implements WebController {
     private static Map<String, Object> buildDefaults() {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("target_ref_whitelist", List.of("refs/heads/main"));
-        m.put("gate_identity.name", "gate");
-        m.put("gate_identity.email", "gate@localhost");
-        m.put("gate_identity.date", "1700000000 +0000");
         m.put("policy.strictness", "BLOCKER_ONLY");
         m.put("policy.require_coverage", Boolean.TRUE);
         m.put("policy.max_diff_bytes", 2_000_000L);
@@ -89,6 +87,17 @@ public final class SettingsController implements WebController {
 
     private static final Map<String, KeyMeta> KEY_META = buildKeyMeta();
 
+    /** 未设置键输入框的 placeholder（如实描述运行期行为，不放误导性的静态值）。 */
+    private static final Map<String, String> PLACEHOLDERS = buildPlaceholders();
+
+    private static Map<String, String> buildPlaceholders() {
+        Map<String, String> m = new LinkedHashMap<>();
+        m.put("gate_identity.name", "默认：本机 git user.name，无配置时回退 gate");
+        m.put("gate_identity.email", "默认：本机 git user.email，无配置时回退 gate@localhost");
+        m.put("gate_identity.date", "默认：发布时刻（真实时间）");
+        return Map.copyOf(m);
+    }
+
     private static Map<String, KeyMeta> buildKeyMeta() {
         Map<String, KeyMeta> m = new LinkedHashMap<>();
         // —— 基本 ——
@@ -106,9 +115,9 @@ public final class SettingsController implements WebController {
         m.put("locks_dir", KeyMeta.hint("锁文件目录，初始化时生成"));
         m.put("index_dir", KeyMeta.hint("索引目录，初始化时生成"));
         // —— 提交身份 ——
-        m.put("gate_identity.name", KeyMeta.hint("门禁提交者的 git 身份名"));
-        m.put("gate_identity.email", KeyMeta.hint("门禁提交者的 git 邮箱"));
-        m.put("gate_identity.date", KeyMeta.hint("门禁提交时间，git 风格：秒级时间戳 + 时区，如 1700000000 +0000"));
+        m.put("gate_identity.name", KeyMeta.hint("门禁提交者的 git 身份名；不写则回退 gate"));
+        m.put("gate_identity.email", KeyMeta.hint("门禁提交者的 git 邮箱；不写则回退 gate@localhost"));
+        m.put("gate_identity.date", KeyMeta.hint("门禁提交时间，git 风格：秒级时间戳 + 时区；不写则用发布时刻"));
         // —— 审查策略 ——
         m.put("policy.strictness", KeyMeta.select(
                 "BLOCKER 驳回；WARNING 默认放行，切到 BLOCKER_AND_WARNING 后一并驳回",
@@ -175,6 +184,11 @@ public final class SettingsController implements WebController {
                 if (!sectionOf(key).equals(spec.section())) {
                     continue;
                 }
+                // 只读键不放出来：初始化生成的路径类键（gate_home/db_path/…）与 schema_version
+                // 由系统管理，设置中心只展示可编辑项。
+                if (!TomlGateConfigWriter.isEditable(key)) {
+                    continue;
+                }
                 Map<String, Object> k = new LinkedHashMap<>();
                 k.put("key", shortKeyOf(key));
                 k.put("value", raw.get(key));
@@ -193,6 +207,10 @@ public final class SettingsController implements WebController {
                         k.put("max", meta.max());
                     }
                     k.put("hint", meta.hint());
+                }
+                String placeholder = PLACEHOLDERS.get(key);
+                if (placeholder != null) {
+                    k.put("placeholder", placeholder);
                 }
                 keys.add(k);
             }

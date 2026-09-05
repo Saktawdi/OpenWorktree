@@ -52,8 +52,14 @@ function keyFullName(section: string, key: string): string {
   return `${section}.${key}`;
 }
 
-function isPathLike(key: string): boolean {
-  return /(path|dir|repo|file|home|root|blob|audit|locks|index|clone)/i.test(key);
+/**
+ * 未设置键的输入框 placeholder：优先后端下发的 placeholder（运行期行为如实描述，
+ * 如提交身份「默认：本机 git 作者」）；否则回退静态默认值。
+ */
+function inputPlaceholder(k: GateTomlKey): string {
+  if (k.placeholder) return k.placeholder;
+  if (k.default === null || k.default === undefined) return "未设置";
+  return `默认 ${formatDefault(k.default)}`;
 }
 
 /** 数值约束的展示文案；两侧都未约束时返回 null。 */
@@ -346,21 +352,24 @@ function GateTomlBlock() {
         )}
       </div>
 
-      {data.sections.map((sec) => (
+      {data.sections.map((sec) => {
+        // 只读键不放出来（后端已过滤，前端兜底再滤一次）；空分区不渲染
+        const keys = sec.keys.filter((k) => k.editable);
+        if (keys.length === 0) return null;
+        return (
         <div key={sec.section || "__root__"} className="card overflow-hidden">
           <div className="px-4 h-9 flex items-center gap-2 border-b border-edge bg-raised/40">
-            <span className="text-[12.5px] font-semibold">{sec.title || "基本"}</span>
+            <span className="text-[12.5px] font-semibold">{sec.title || "高级设置"}</span>
             {sec.section && <span className="font-mono text-[11px] text-faint">[{sec.section}]</span>}
-            <span className="chip border border-edge-strong bg-sunken text-faint ml-auto">{sec.keys.length} 项</span>
+            <span className="chip border border-edge-strong bg-sunken text-faint ml-auto">{keys.length} 项</span>
           </div>
           <div className="divide-y divide-edge">
-            {sec.keys.map((k) => {
+            {keys.map((k) => {
               const full = keyFullName(sec.section, k.key);
               const cur = getCurrent(full, sec.section, k);
               const isUnset = k.value === null || k.value === undefined;
-              const pathLike = isPathLike(k.key);
-              const disabled = !k.editable || pathLike;
-              const showGray = disabled;
+              // 只读键已被过滤，此处的键全部可编辑
+              const disabled = false;
               const isProviderKey = k.type === "string" && PROVIDER_SELECT_KEYS.has(full);
               const isModelKey = k.type === "string" && MODEL_SELECT_KEYS.has(full);
               const modelSource = isModelKey ? getModelSourceProvider(full) : "";
@@ -376,26 +385,35 @@ function GateTomlBlock() {
               const isNonEmptyList = k.type === "string_list" && (full === "target_ref_whitelist" || full === "web.allowed_origins");
               const listEmpty = isNonEmptyList && !disabled && !isUnset && Array.isArray(cur) && (cur as string[]).length === 0;
               return (
-                <div key={k.key} className={`px-4 py-3 flex gap-4 items-start transition-colors ${showGray ? "bg-sunken/40" : "hover:bg-raised/25"}`}>
+                <div key={k.key} className={`px-4 py-3 flex gap-4 items-start transition-colors hover:bg-raised/25`}>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-mono text-[12.5px] font-medium text-ink">{k.key}</span>
                       <span className="chip border border-edge-strong bg-raised text-faint text-[10.5px]">{k.type}</span>
-                      {k.editable && !pathLike ? <span className="chip border border-accent/30 bg-accent/10 text-accent text-[10.5px]">可编辑</span> : <span className="chip border border-edge-strong bg-raised text-faint text-[10.5px]">只读</span>}
-                      {isUnset && <span className="text-[11px] text-faint">未设置（默认 {formatDefault(k.default)}）</span>}
+                      {isUnset && (
+                        <span className="text-[11px] text-faint">
+                          未设置{k.default != null ? `（默认 ${formatDefault(k.default)}）` : ""}
+                        </span>
+                      )}
                     </div>
                     {k.hint && <div className="mt-1 text-[11px] text-faint leading-relaxed max-w-[560px]">{k.hint}</div>}
                     {!disabled && isUnset && cur === null && (
                       <div className="mt-1 text-[11px] text-faint">当前未写入文件，保存后将写入该键；点“恢复默认”可保持未设置</div>
                     )}
                   </div>
-                  <div className={`w-[320px] shrink-0 space-y-1.5 ${showGray ? "opacity-60" : ""}`}>
+                  <div className="w-[320px] shrink-0 space-y-1.5">
                     {useSelect && (
                       <>
                         <KeySelect
                           value={typeof cur === "string" ? cur : ""}
                           options={selectOptions}
-                          emptyLabel={isUnset ? `未设置（默认 ${formatDefault(k.default)}）` : "未设置（清除该键）"}
+                          emptyLabel={
+                            isUnset
+                              ? k.default != null
+                                ? `未设置（默认 ${formatDefault(k.default)}）`
+                                : "未设置"
+                              : "未设置（清除该键）"
+                          }
                           disabled={disabled}
                           onChange={(v) => (v === "" ? clearKey(full) : setKeyValue(full, v))}
                         />
@@ -417,7 +435,7 @@ function GateTomlBlock() {
                           disabled={disabled}
                           className="text-input font-mono text-[12px] disabled:opacity-50"
                           value={cur === null || cur === undefined ? "" : String(cur as number)}
-                          placeholder={isUnset ? `默认 ${formatDefault(k.default)}` : undefined}
+                          placeholder={isUnset ? inputPlaceholder(k) : undefined}
                           onChange={(e) => {
                             const v = e.target.value;
                             if (v === "") { setCleared((c) => ({ ...c, [full]: true })); setEdits((m) => { const n = { ...m }; delete n[full]; return n; }); }
@@ -432,7 +450,7 @@ function GateTomlBlock() {
                       <div className="flex items-center gap-2 h-9">
                         <BoolSwitch value={Boolean(cur)} onChange={(v) => { setCleared((c) => { const n = { ...c }; delete n[full]; return n; }); setEdits((m) => ({ ...m, [full]: v })); }} disabled={disabled} />
                         <span className="text-[12px] text-dim">{Boolean(cur) ? "开启" : "关闭"}</span>
-                        {isUnset && <span className="text-[11px] text-faint ml-1">默认 {formatDefault(k.default)}</span>}
+                        {isUnset && k.default != null && <span className="text-[11px] text-faint ml-1">默认 {formatDefault(k.default)}</span>}
                       </div>
                     )}
                     {!useSelect && k.type === "string" && (
@@ -440,7 +458,7 @@ function GateTomlBlock() {
                         disabled={disabled}
                         className="text-input font-mono text-[12px] disabled:opacity-50"
                         value={cur === null || cur === undefined ? "" : String(cur)}
-                        placeholder={isUnset ? `默认 ${formatDefault(k.default)}` : undefined}
+                        placeholder={isUnset ? inputPlaceholder(k) : undefined}
                         onChange={(e) => {
                           const v = e.target.value;
                           if (v === "" && isUnset) { setCleared((c) => ({ ...c, [full]: true })); setEdits((m) => { const n = { ...m }; delete n[full]; return n; }); }
@@ -473,14 +491,14 @@ function GateTomlBlock() {
                       </div>
                     )}
                     {!disabled && crossWarn && <div className="text-[11px] text-danger">{crossWarn}</div>}
-                    {showGray && <div className="text-[11px] text-faint">路径类配置为只读，灰显展示</div>}
                   </div>
                 </div>
               );
             })}
           </div>
         </div>
-      ))}
+        );
+      })}
 
       <AnimatePresence>
         {hasDirty && (
@@ -1226,7 +1244,7 @@ function AppInfoBlock() {
 type SettingsTab = "toml" | "mcp" | "llm" | "app";
 
 const NAV_ITEMS = [
-  { key: "toml", label: "gate.toml 参数", desc: "运行键值与默认值", Icon: Wrench },
+  { key: "toml", label: "系统设置", desc: "运行键值与默认值", Icon: Wrench },
   { key: "mcp", label: "MCP 状态", desc: "服务与工具清单", Icon: PlugsConnected },
   { key: "llm", label: "LLM 设置", desc: "Provider 与模型", Icon: Robot },
   { key: "app", label: "应用设置", desc: "版本 · 更新 · 仓库", Icon: Rocket },
@@ -1287,7 +1305,7 @@ export function SettingsPage() {
               <GearSix size={22} className="text-faint" />
             </div>
             <div className="mt-4 text-[15px] font-semibold">设置中心需要连接后端</div>
-            <div className="mt-1.5 text-[12.5px] text-faint leading-relaxed">当前为演示模式，gate.toml / MCP / LLM / 应用设置仅在连接后端后可用</div>
+            <div className="mt-1.5 text-[12.5px] text-faint leading-relaxed">当前为演示模式，系统设置 / MCP / LLM / 应用设置仅在连接后端后可用</div>
             <button className="btn btn-primary mt-5" onClick={openConnect}>连接后端</button>
           </div>
         </div>

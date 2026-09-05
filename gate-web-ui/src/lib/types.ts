@@ -471,6 +471,8 @@ export interface GateTomlKey {
   max?: number;
   /** 人性化说明文字（约束、默认行为） */
   hint?: string;
+  /** 未设置时输入框的 placeholder（如实描述运行期行为） */
+  placeholder?: string;
 }
 
 export interface GateTomlSection {
