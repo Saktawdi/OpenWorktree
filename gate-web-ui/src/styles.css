@@ -499,6 +499,7 @@ body {
   }
 
   /* ── Markdown Body ── */
+  .md-body { min-width: 0; overflow-wrap: anywhere; }
   .md-body > *:first-child { margin-top: 0; }
   .md-body > *:last-child { margin-bottom: 0; }
   .md-body strong { font-weight: 600; color: var(--color-ink); }
