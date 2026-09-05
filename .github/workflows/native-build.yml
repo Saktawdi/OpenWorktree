@@ -132,9 +132,9 @@ jobs:
           import base64, json, os, socket, struct, subprocess, time, urllib.request
 
           if os.name == "nt":
-              bin_name, exe = "./ow-windows-x86_64.exe", "./ow-windows-x86_64.exe"
+              bin_name, exe = "ow-windows-x86_64.exe", os.path.join("..", "ow-windows-x86_64.exe")
           else:
-              bin_name, exe = "./ow-linux-x86_64", "./ow-linux-x86_64"
+              bin_name, exe = "ow-linux-x86_64", os.path.join("..", "ow-linux-x86_64")
           os.makedirs("smoke-run", exist_ok=True)
           os.chdir("smoke-run")
           with open("boot.log", "w") as log:
