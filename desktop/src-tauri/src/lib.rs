@@ -91,6 +91,216 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> bool {
     true
 }
 
+/// 解析数据目录 local-run/gate.toml 顶层 `gate_home = "…"`（行级，忽略注释；无/解析失败 → None）。
+fn read_gate_home(local_run: &Path) -> Option<PathBuf> {
+    let text = std::fs::read_to_string(local_run.join("gate.toml")).ok()?;
+    for raw in text.lines() {
+        let line = raw.split('#').next().unwrap_or("").trim();
+        let Some(rest) = line.strip_prefix("gate_home") else { continue };
+        let Some(value) = rest.trim_start().strip_prefix('=') else { continue };
+        let value = value.trim();
+        if let Some(v) = value.strip_prefix('"').and_then(|s| s.strip_suffix('"')) {
+            return Some(PathBuf::from(
+                v.replace('/', &std::path::MAIN_SEPARATOR.to_string()),
+            ));
+        }
+    }
+    None
+}
+
+/// 数据活度探针：local-run/gate-home/gate.db 的修改时间（无库 → None）。
+fn data_freshness(local_run: &Path) -> Option<std::time::SystemTime> {
+    std::fs::metadata(local_run.join("gate-home").join("gate.db"))
+        .ok()
+        .and_then(|m| m.modified().ok())
+}
+
+/// gate.toml 绝对路径键的规范落脚点（相对 local_run）；auth_repo 为特例：保旧值文件名
+/// 置于 local_run 下。返回 None 表示键不参与回锚。
+fn canonical_path_for(key: &str, local_run: &Path) -> Option<PathBuf> {
+    match key {
+        "gate_home" => Some(local_run.join("gate-home")),
+        "clones_root" => Some(local_run.join("clones")),
+        "approvals_dir" => Some(local_run.join("gate-home").join("approvals")),
+        "blob_root" => Some(local_run.join("gate-home").join("blobs")),
+        "locks_dir" => Some(local_run.join("gate-home").join("locks")),
+        "index_dir" => Some(local_run.join("gate-home").join("idx")),
+        "db_path" => Some(local_run.join("gate-home").join("gate.db")),
+        "audit_path" => Some(local_run.join("gate-home").join("audit.jsonl")),
+        "human_token_file" => Some(local_run.join("gate-home").join("web-token")),
+        _ => None,
+    }
+}
+
+/// 回锚配置：local-run/gate.toml 中指向数据目录外（旧版每用户目录/旧安装盘等遗留绝对
+/// 路径）的已知路径键，整行重写为 local_run 下规范位置；已自指/未命中键原样保留。
+/// 失败静默——后端无配置时的默认生成（BootstrapConfig）本就把 gate_home 锚在自身目录。
+fn reanchor_config(local_run: &Path) {
+    let cfg_path = local_run.join("gate.toml");
+    let text = match std::fs::read_to_string(&cfg_path) {
+        Ok(t) => t,
+        Err(_) => return,
+    };
+    let mut changed = false;
+    let mut out = String::with_capacity(text.len());
+    for raw in text.lines() {
+        let trim = raw.trim_end();
+        let mut keep = true;
+        if let Some(eq) = trim.find('=') {
+            let key = trim[..eq].trim();
+            if let Some(val) = trim[eq + 1..]
+                .trim()
+                .strip_prefix('"')
+                .and_then(|s| s.strip_suffix('"'))
+            {
+                let old = PathBuf::from(
+                    val.replace('/', &std::path::MAIN_SEPARATOR.to_string()),
+                );
+                let target = if key == "auth_repo" {
+                    old.file_name().map(|n| local_run.join(n))
+                } else {
+                    canonical_path_for(key, local_run)
+                };
+                if let Some(t) = target {
+                    if !old.starts_with(local_run) && t != old {
+                        out.push_str(key);
+                        out.push_str(" = \"");
+                        out.push_str(&t.to_string_lossy().replace('\\', "/"));
+                        out.push('"');
+                        changed = true;
+                        keep = false;
+                    }
+                }
+            }
+        }
+        if keep {
+            out.push_str(raw);
+        }
+        out.push('\n');
+    }
+    if !changed {
+        return;
+    }
+    let tmp = cfg_path.with_extension("toml.tmp");
+    if std::fs::write(&tmp, out).is_ok() {
+        let _ = std::fs::rename(tmp, cfg_path);
+    }
+}
+
+/// 数据自愈决策（release 首启、后端拉起前调用）：安装目录 data\local-run 可能只是
+/// 历史快照——其 gate.toml 的 gate_home 指到外部（旧版每用户目录等），实际运行时数据
+/// （gate.db、克隆、审计，行内绝对路径与文件同体）一直在别处。此时【不搬活树】（DB
+/// 里的 clone_path/auth_repo 全是绝对路径，搬走即断引用），而是：
+///  1. 归档化石快照 data\local-run → data\local-run.stale-<ms>（保留不删，杜绝再被误
+///     恢复/误当本体，也消除「安装目录只有旧克隆」的误导）；
+///  2. 运行数据根重定向到活树所在目录（config 指向的树优先；否则取活度最高的旧版每
+///     用户树），其配置若指外则回锚到自身目录。
+/// 返回重定向后的数据根（含 local-run 的那层）；None = 无异常，安装目录数据即本体。
+/// 悬空配置（gate_home 指向已不存在的目录）在返回 None 前顺带回锚到安装目录自身。
+fn data_dir_redirect(handle: &tauri::AppHandle, data: &Path) -> Option<PathBuf> {
+    let log = Some(data.join("backend-boot.log"));
+    let resident = data.join("local-run");
+    let kept_base = std::env::var_os("APPDATA")
+        .map(PathBuf::from)
+        .map(|d| d.join("OpenWorktree").join("data"));
+    let legacy_base = handle.path().app_data_dir().ok();
+    let res_fresh = if resident.is_dir() {
+        data_freshness(&resident)
+    } else {
+        None
+    };
+    let home = if resident.is_dir() {
+        read_gate_home(&resident)
+    } else {
+        None
+    };
+    let home_external = home
+        .as_ref()
+        .map(|h| h.is_absolute() && !h.starts_with(&resident))
+        .unwrap_or(false);
+
+    // 候选本体树 (base, local-run)：config 指向的外部活树 + 旧版每用户目录。
+    // 排除安装目录自身与保留备份（备份树的行内路径指向旧安装盘，不可作运行体）。
+    let mut cand: Vec<(PathBuf, PathBuf)> = Vec::new();
+    if let Some(b) = &legacy_base {
+        let local = b.join("local-run");
+        if local.is_dir() {
+            cand.push((b.clone(), local));
+        }
+    }
+    if home_external {
+        if let Some(h) = &home {
+            if h.is_dir() {
+                if let Some(local) = h.parent() {
+                    if let Some(base) = local.parent() {
+                        if base != data
+                            && local == base.join("local-run")
+                            && kept_base
+                                .as_deref()
+                                .map_or(true, |k| base != k)
+                        {
+                            cand.push((base.to_path_buf(), local.to_path_buf()));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // 活度最高的候选（平局保持先入顺序：legacy 先于 config 指向的外部树登记，可重复无害）
+    let mut best: Option<(PathBuf, PathBuf)> = None;
+    let mut best_fresh: Option<std::time::SystemTime> = None;
+    for (base, local) in cand {
+        let Some(t) = data_freshness(&local) else { continue };
+        if let Some(r) = res_fresh {
+            // 安装目录本体更活 → 不乱动；本体自指（常规安装）时平局也保留本体。
+            if t < r || (t == r && !home_external) {
+                continue;
+            }
+        }
+        if best_fresh.is_none() || best_fresh.map_or(true, |b| t > b) {
+            best_fresh = Some(t);
+            best = Some((base.clone(), local.clone()));
+        }
+    }
+
+    if let Some((base, local)) = best {
+        if resident.is_dir() {
+            let ts = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis())
+                .unwrap_or(0);
+            let stale = data.join(format!("local-run.stale-{ts}"));
+            if std::fs::rename(&resident, &stale).is_err() {
+                append_log(&log, "data heal: cannot archive stale snapshot (keep as-is)");
+                return None;
+            }
+            append_log(
+                &log,
+                &format!(
+                    "data heal: install-data local-run was a stale snapshot, archived to {}",
+                    stale.display()
+                ),
+            );
+        }
+        reanchor_config(&local);
+        append_log(
+            &log,
+            &format!("data heal: runtime data redirect to {}", base.display()),
+        );
+        return Some(base);
+    }
+
+    // 配置指向已不存在的目录（悬空）：把安装目录化石自身回锚，向后自愈。
+    if resident.is_dir()
+        && home_external
+        && home.as_ref().map(|h| !h.is_dir()).unwrap_or(false)
+    {
+        reanchor_config(&resident);
+        append_log(&log, "data heal: dangling gate_home re-anchored into install data");
+    }
+    None
+}
+
 /// 把 src 整体搬为 dst：dst 不存在时一步 rename（同卷瞬时）；已存在（空目录）或
 /// 跨卷 rename 失败时退化为逐项复制后删除源。任一步失败返回 false 且不删源（不丢数据）。
 fn move_dir(src: &Path, dst: &Path) -> bool {
@@ -131,6 +341,9 @@ fn move_dir(src: &Path, dst: &Path) -> bool {
 /// 3. 每用户数据目录 %APPDATA%\com.openworktree.desktop —— 安装目录不可写时的兜底
 ///    （如 perMachine 装进 Program Files），也是旧版数据的位置：release 首次运行且
 ///    安装目录还没有 local-run 时整体搬入。
+/// 采用安装目录 data\ 前先做一次自愈（data_dir_redirect）：历史版本留下的快照 local-run
+/// 可能携带指到旧版每用户目录的过期 gate.toml（卸载「保留」→重装后新旧两份数据分叉），
+/// 此时不搬动活数据，而是把运行时重定向到活体目录、归档化石快照并回锚配置。
 /// tauri dev（debug 构建）不做迁移、仍用数据目录兜底路径，避免把真实安装的数据
 /// 搬进 target\debug（cargo clean 会清掉）。dev-shim 侧车自带仓库内 local-run 配置，
 /// 不受此目录影响。
@@ -144,17 +357,30 @@ fn resolve_data_dir(handle: &tauri::AppHandle) -> PathBuf {
         if let Some(install) = exe.parent() {
             let data = install.join("data");
             if data.join("local-run").is_dir() {
+                if !cfg!(debug_assertions) {
+                    // 化石快照 → 运行时重定向到活体目录（归档+回锚），无异常则保持现状。
+                    if let Some(base) = data_dir_redirect(handle, &data) {
+                        return base;
+                    }
+                }
                 return data;
             }
             if !cfg!(debug_assertions) {
+                // data\local-run 尚不存在：若旧版每用户目录仍是活树（行内绝对路径与文件
+                // 同体），原地续用比重搬进安装目录安全；否则走保留备份/旧版数据搬入。
+                if let Some(base) = data_dir_redirect(handle, &data) {
+                    return base;
+                }
                 if let Some(k) = &kept {
                     if k.join("local-run").is_dir() && move_dir(k, &data) {
+                        reanchor_config(&data.join("local-run"));
                         return data;
                     }
                 }
                 if let Some(l) = &app_data {
                     let legacy = l.join("local-run");
                     if legacy.is_dir() && move_dir(&legacy, &data.join("local-run")) {
+                        reanchor_config(&data.join("local-run"));
                         return data;
                     }
                 }
