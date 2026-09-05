@@ -100,7 +100,7 @@ export async function loadSessionMessages(no: string, sessionId: string) {
 }
 
 /** 以该会话历史中最后一条合法 todowrite 参数重建任务清单；没有则清空。 */
-function restoreTodosFromHistory(no: string, messages: RawMessage[]) {
+export function restoreTodosFromHistory(no: string, messages: RawMessage[]) {
   let latest: string | null = null;
   for (const m of messages) {
     for (const tc of m.tool_calls ?? []) {
@@ -109,4 +109,19 @@ function restoreTodosFromHistory(no: string, messages: RawMessage[]) {
   }
   const todos = latest ? parseTodos(latest) : null;
   setTodos(no, todos ?? []);
+}
+
+/**
+ * 轻量收敛：仅用服务端已落库的消息历史回算该会话的任务清单（不触碰聊天视图与
+ * 上下文占用）。供回合结束与「无 SSE 直连」的后台会话轮询兜底——流式事件一旦
+ * 丢失（断流/刷新/后台运行），任务清单在此与持久化数据最终一致，不再只靠
+ * 手动切会话/切工单才会刷新。
+ */
+export async function syncSessionTodos(no: string, sessionId: string) {
+  try {
+    const hist = await api<{ messages: RawMessage[] }>(`/api/sessions/${sessionId}/messages`);
+    restoreTodosFromHistory(no, hist.messages);
+  } catch {
+    /* 静默失败：下一次同步时机（下一拍轮询/下一回合结束）再试 */
+  }
 }

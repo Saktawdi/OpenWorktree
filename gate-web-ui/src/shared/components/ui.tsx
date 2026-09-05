@@ -133,18 +133,57 @@ export function HashReveal({ hash, className = "" }: { hash: string; className?:
   return <span className={className}>{shown}</span>;
 }
 
+/** 剪贴板回退：navigator.clipboard 不可用或被权限策略拒绝（WebView/iframe 等）时走
+ *  临时 textarea + execCommand 老路，保证复制按钮在任何嵌入环境下都可点击生效。 */
+function legacyCopyText(text: string): boolean {
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.setAttribute("readonly", "");
+  ta.style.position = "fixed";
+  ta.style.top = "-1000px";
+  ta.style.opacity = "0";
+  document.body.appendChild(ta);
+  const sel = document.getSelection();
+  const prevRange = sel && sel.rangeCount > 0 ? sel.getRangeAt(0) : null;
+  ta.select();
+  ta.setSelectionRange(0, ta.value.length);
+  let ok = false;
+  try {
+    ok = document.execCommand("copy");
+  } catch {
+    ok = false;
+  }
+  document.body.removeChild(ta);
+  if (prevRange && sel) {
+    sel.removeAllRanges();
+    sel.addRange(prevRange);
+  }
+  return ok;
+}
+
 export function CopyButton({ text, label }: { text: string; label?: string }) {
   const [done, setDone] = useState(false);
   return (
     <button
+      type="button"
       className="icon-btn"
       title={label ?? "复制"}
       aria-label={label ?? "复制"}
       onClick={() => {
-        navigator.clipboard?.writeText(text).then(() => {
+        const t = String(text ?? "");
+        if (!t) return;
+        const flash = () => {
           setDone(true);
           setTimeout(() => setDone(false), 1400);
-        });
+        };
+        // 复制成功才闪 ✓；API 缺失/被拒时回退 execCommand，两路都失败不假装成功。
+        if (navigator.clipboard?.writeText) {
+          navigator.clipboard.writeText(t).then(flash).catch(() => {
+            if (legacyCopyText(t)) flash();
+          });
+        } else if (legacyCopyText(t)) {
+          flash();
+        }
       }}
     >
       {done ? (

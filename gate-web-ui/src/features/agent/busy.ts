@@ -5,12 +5,34 @@
 import { api } from "@/net";
 import { appStore } from "@/store";
 import { loadTickets } from "@/features/ticket/api";
+import { syncSessionTodos } from "@/features/session/api";
 
 interface RawBusyAgent {
   session_id: string;
   title: string | null;
   ticket_no: string | null;
   cli: string | null;
+}
+
+/**
+ * 后台运行会话的任务清单收敛（无 SSE 直连时的兜底）：
+ * 正在查看的会话在跑、但本页没有它的 EventSource（刷新后/外部发起/事件断流）时，
+ * 按轮询节拍用服务端历史回算任务清单——「等 agent 回复完才出现 / 只手动触发才刷新」
+ * 的问题在回合落库后最多延迟一拍自动对齐。本地直连的会话由 SSE 实时回写，历史滞后
+ * （整回合 idle 才落库），这里必须跳过，否则会把流式清单误清成旧数据。
+ */
+function syncViewedRunningSessionTodos() {
+  const st = appStore.getState();
+  if (st.mode !== "live" || st.conn !== "ok") return;
+  const no = st.selectedNo;
+  if (!no) return;
+  const sid = st.activeSessionId[no];
+  if (!sid || st.liveTurns[sid]) return;
+  const running =
+    st.runningAgents.count > 0 &&
+    st.runningAgents.sessions.some((r) => r.ticket_no === no && r.session_id === sid);
+  if (!running) return;
+  void syncSessionTodos(no, sid);
 }
 
 export async function fetchBusyAgents(): Promise<void> {
@@ -36,6 +58,8 @@ export async function fetchBusyAgents(): Promise<void> {
           : [],
       },
     });
+    // 当前查看会话若由后台运行（本页无 SSE），按拍收敛其任务清单
+    syncViewedRunningSessionTodos();
   } catch {
     // 请求失败按现有 fetch 封装行为处理：静默，不改状态
   }

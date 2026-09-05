@@ -7,7 +7,7 @@ import { api } from "@/net";
 import { appStore, showToast } from "@/store";
 import type { PendingAttachment, ToolIconKind } from "@/shared/types";
 import { friendlyToolName, isTodoTool, parseTodos } from "@/shared/todoUtils";
-import { loadTicketSessions, refreshTicketSessionsMeta } from "./api";
+import { loadTicketSessions, refreshTicketSessionsMeta, syncSessionTodos } from "./api";
 import { loadSessionCatalog, switchSessionModelLive } from "./catalog";
 import { mapPermissionAsk, mapQuestionAsk, todoArgsSummary } from "./model";
 import {
@@ -265,8 +265,11 @@ async function consumeSessionStream(no: string, sessionId: string) {
       // 工具输出随终态事件携带（opencode 侧 RUNNING 时 result 为 null）。此前被丢弃，
       // 流式回合的工具行没有 resultDetail，最新一轮无法展开查看，只能等重拉历史。
       const resultText = typeof d.result === "string" && d.result ? d.result : "";
-      // todo 类工具在终态时把累积的完整参数解析进侧栏任务清单。
-      if (todo && (d.status === "SUCCESS" || d.status === "FAILED")) {
+      // todo 类工具在参数可解析为完整清单时即时回写侧栏任务清单，不再等终态——
+      // opencode 每次 part 更新都重发完整 input 快照，首次广播即可让任务环出现；
+      // Claude 残片累积未成形时解析失败自然跳过，终态快照到齐后同样即时生效。
+      // （历史遗留的终态门控会让任务清单在事件缺失/断流时拖到手动刷新才更新。）
+      if (todo) {
         const todos = parseTodos(entry.args);
         if (todos) setTodos(no, todos);
       }
@@ -380,6 +383,9 @@ async function consumeSessionStream(no: string, sessionId: string) {
       // tool_call 监听万一漏掉，这里保证面板按钮与真实阶段一致，而不是点了才报 400。
       void refreshTicket(no);
       void loadPresubmits(no);
+      // 回合结束任务清单收敛：后端此刻已整回合落库（flushTurn → done），以历史回算
+      // 一次——流式事件若有遗漏/断流，侧栏任务环仍与持久化数据最终一致。
+      void syncSessionTodos(no, sessionId);
       finish();
     });
     es.addEventListener("error", (ev) => {
@@ -409,6 +415,8 @@ async function consumeSessionStream(no: string, sessionId: string) {
       markSessionEnded(no, "failed");
       updateLiveTurn(sessionId, (a) => ({ ...a, streaming: false }));
       pushSystemMessage(no, msg, "warn");
+      // 出错中止同样做一次历史收敛：中断前已落库的 todo 不被流式残留掩盖。
+      void syncSessionTodos(no, sessionId);
       finish();
     });
   });

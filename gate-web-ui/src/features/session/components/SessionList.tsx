@@ -252,7 +252,7 @@ function SessionItem({
       {showActions && !locked && (
         <div className="flex items-center gap-0.5 shrink-0">
           <span
-            className="[&>.icon-btn]:!w-5 [&>.icon-btn]:!h-5 [&>.icon-btn]:text-faint/70"
+            className="[&>.icon-btn]:!w-5 [&>.icon-btn]:!h-5"
             onClick={(e) => e.stopPropagation()}
           >
             <CopyButton text={session.id} label="复制会话 ID" />
