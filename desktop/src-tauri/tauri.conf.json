@@ -37,6 +37,11 @@
     ],
     "externalBin": [
       "binaries/ow"
-    ]
+    ],
+    "windows": {
+      "nsis": {
+        "installerHooks": "./installer-hooks.nsh"
+      }
+    }
   }
 }

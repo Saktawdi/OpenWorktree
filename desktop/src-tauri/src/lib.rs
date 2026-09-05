@@ -1,17 +1,19 @@
 // OpenWorktree 桌面壳：托管后端单文件（ow.exe / ow-linux）并注入登录令牌。
 //
-// 生命周期：setup 里经 shell 插件以 sidecar 方式拉起后端，工作目录指向每用户数据目录
-// （local-run/ 的 gate.toml、SQLite、令牌、工单克隆都落在那里，不混进安装目录）。
+// 生命周期：setup 里经 shell 插件以 sidecar 方式拉起后端，工作目录指向数据目录
+// （resolve_data_dir：默认安装目录 data\，工单克隆等大体量数据随安装盘走；
+//  NSIS 卸载器 PREUNINSTALL 钩子会询问保留 → %APPDATA%\OpenWorktree\data，
+//  重装时 POSTINSTALL 钩子自动搬回）。
 // 后端日志经 slf4j-simple 走 STDERR（simpleLogger 未配 logFile），所以 stdout 与
 // stderr 都要读：抓到 "GATE_WEB_TOKEN=<token>" 后，WebView 跳转
 // http://127.0.0.1:<port>/?ow-token=<token>，SPA 的 boot() 完成自动登录并抹掉参数。
 //
-// 诊断：后端全部输出镜像到 <app_data>/backend-boot.log——壳本身无控制台（release 是
+// 诊断：后端全部输出镜像到 <数据目录>\backend-boot.log——壳本身无控制台（release 是
 // windows_subsystem=windows），黑盒排查就靠这份文件。
 //
 // 退出：RunEvent::ExitRequested 里显式 kill 子进程（Windows 上 shell 插件不保证随窗口
 // 退出回收子进程）。端口冲突：后端以非零码退出，启动页显示原因并指向 gate.toml。
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use tauri::{Emitter, Manager};
@@ -35,6 +37,131 @@ fn append_log(path: &Option<PathBuf>, line: &str) {
     }
 }
 
+/// 目录可写性探针（创建即删）。装进 Program Files 的 perMachine 安装不可写。
+fn dir_writable(dir: &Path) -> bool {
+    let probe = dir.join(".ow-write-probe");
+    match std::fs::write(&probe, b"ok") {
+        Ok(()) => {
+            let _ = std::fs::remove_file(&probe);
+            true
+        }
+        Err(_) => false,
+    }
+}
+
+/// 递归复制目录（跨卷搬迁兜底）。符号链接/连接点跳过。
+fn copy_dir_recursive(src: &Path, dst: &Path) -> bool {
+    if !src.is_dir() || std::fs::create_dir_all(dst).is_err() {
+        return false;
+    }
+    let entries = match std::fs::read_dir(src) {
+        Ok(e) => e,
+        Err(_) => return false,
+    };
+    for entry in entries.flatten() {
+        let ty = match entry.file_type() {
+            Ok(t) => t,
+            Err(_) => return false,
+        };
+        let to = dst.join(entry.file_name());
+        let ok = if ty.is_dir() {
+            copy_dir_recursive(&entry.path(), &to)
+        } else if ty.is_file() {
+            std::fs::copy(entry.path(), &to).is_ok()
+        } else {
+            true
+        };
+        if !ok {
+            return false;
+        }
+    }
+    true
+}
+
+/// 把 src 整体搬为 dst：dst 不存在时一步 rename（同卷瞬时）；已存在（空目录）或
+/// 跨卷 rename 失败时退化为逐项复制后删除源。任一步失败返回 false 且不删源（不丢数据）。
+fn move_dir(src: &Path, dst: &Path) -> bool {
+    if !src.is_dir() {
+        return false;
+    }
+    if !dst.exists() && std::fs::rename(src, dst).is_ok() {
+        return true;
+    }
+    let entries = match std::fs::read_dir(src) {
+        Ok(e) => e,
+        Err(_) => return false,
+    };
+    for entry in entries.flatten() {
+        let to = dst.join(entry.file_name());
+        let p = entry.path();
+        let moved = if p.is_dir() {
+            std::fs::rename(&p, &to).is_ok()
+                || (copy_dir_recursive(&p, &to) && std::fs::remove_dir_all(&p).is_ok())
+        } else if p.is_file() {
+            std::fs::copy(&p, &to).is_ok() && std::fs::remove_file(&p).is_ok()
+        } else {
+            true
+        };
+        if !moved {
+            return false;
+        }
+    }
+    let _ = std::fs::remove_dir(src);
+    true
+}
+
+/// 数据目录决策（后端的工作目录，local-run/ 落在其中）：
+/// 1. 安装目录 data\ —— 默认。克隆体积持续增长，装在哪个盘由安装时决定，卸载时随
+///    安装目录清理（卸载器钩子先询问是否保留）；
+/// 2. 上次卸载选「保留」的数据 %APPDATA%\OpenWorktree\data —— POSTINSTALL 钩子会搬回
+///    安装目录，rename 失败（跨卷）时由这里接管；
+/// 3. 每用户数据目录 %APPDATA%\com.openworktree.desktop —— 安装目录不可写时的兜底
+///    （如 perMachine 装进 Program Files），也是旧版数据的位置：release 首次运行且
+///    安装目录还没有 local-run 时整体搬入。
+/// tauri dev（debug 构建）不做迁移、仍用数据目录兜底路径，避免把真实安装的数据
+/// 搬进 target\debug（cargo clean 会清掉）。dev-shim 侧车自带仓库内 local-run 配置，
+/// 不受此目录影响。
+fn resolve_data_dir(handle: &tauri::AppHandle) -> PathBuf {
+    let app_data = handle.path().app_data_dir().ok();
+    let kept = std::env::var_os("APPDATA")
+        .map(PathBuf::from)
+        .map(|d| d.join("OpenWorktree").join("data"));
+
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(install) = exe.parent() {
+            let data = install.join("data");
+            if data.join("local-run").is_dir() {
+                return data;
+            }
+            if !cfg!(debug_assertions) {
+                if let Some(k) = &kept {
+                    if k.join("local-run").is_dir() && move_dir(k, &data) {
+                        return data;
+                    }
+                }
+                if let Some(l) = &app_data {
+                    let legacy = l.join("local-run");
+                    if legacy.is_dir() && move_dir(&legacy, &data.join("local-run")) {
+                        return data;
+                    }
+                }
+            }
+            if std::fs::create_dir_all(&data).is_ok() && dir_writable(&data) {
+                return data;
+            }
+        }
+    }
+    // 兜底链：保留的数据目录 > 旧版每用户数据目录
+    if let Some(k) = &kept {
+        if k.join("local-run").is_dir() {
+            return k.clone();
+        }
+    }
+    let fallback = app_data.unwrap_or_else(std::env::temp_dir);
+    let _ = std::fs::create_dir_all(&fallback);
+    fallback
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -43,13 +170,11 @@ pub fn run() {
         .setup(|app| {
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
-                // 数据目录：local-run/（gate.toml、db、令牌、克隆）统一落在每用户数据目录。
-                let data_dir = handle.path().app_data_dir().ok();
-                if let Some(d) = &data_dir {
-                    let _ = std::fs::create_dir_all(d);
-                }
-                let boot_log = data_dir.as_ref().map(|d| d.join("backend-boot.log"));
+                // 数据目录：安装目录 data\（默认）/ 保留数据 / 每用户兜底，见 resolve_data_dir。
+                let data_dir = resolve_data_dir(&handle);
+                let boot_log = Some(data_dir.join("backend-boot.log"));
                 append_log(&boot_log, "=== backend boot ===");
+                append_log(&boot_log, &format!("data dir: {}", data_dir.display()));
 
                 let sidecar = match handle.shell().sidecar("ow") {
                     Ok(s) => s,
@@ -59,10 +184,7 @@ pub fn run() {
                         return;
                     }
                 };
-                let mut cmd = sidecar;
-                if let Some(d) = &data_dir {
-                    cmd = cmd.current_dir(d);
-                }
+                let cmd = sidecar.current_dir(&data_dir);
                 let (mut rx, child) = match cmd.spawn() {
                     Ok(pair) => pair,
                     Err(e) => {
@@ -114,7 +236,7 @@ pub fn run() {
                                 let _ = handle.emit(
                                     "backend-error",
                                     format!(
-                                        "后端进程退出（code={:?}）。端口 18080 被占用时请改数据目录下 local-run/gate.toml",
+                                        "后端进程退出（code={:?}）。端口 18080 被占用时请改数据目录下 local-run/gate.toml（见 backend-boot.log 的 data dir 行）",
                                         status.code
                                     ),
                                 );

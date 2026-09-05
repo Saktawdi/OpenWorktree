@@ -52,5 +52,20 @@ gate.web.GateWebApp --config local-run/gate.toml`，并把 JVM 的 stdout/stderr
 
 ## 打包内容
 
-安装包 = 壳（~8MB）+ 后端单文件（~60MB）。数据仍在运行目录的 `local-run\`。
+安装包 = 壳（~8MB）+ 后端单文件（~60MB）。
+
+## 数据目录
+
+后端工作目录（`local-run\` 的 gate.toml、SQLite、令牌、工单克隆都落在其中）由壳的
+`resolve_data_dir` 决定，优先级：
+
+1. **安装目录 `data\`**（默认）——数据随安装盘走（克隆体积会持续增长，装在哪个盘由用户
+   安装时决定）；卸载时 NSIS 钩子（`installer-hooks.nsh`）会询问保留或删除，选保留则
+   数据移到 `%APPDATA%\OpenWorktree\data`，重装时自动搬回；
+2. **`%APPDATA%\OpenWorktree\data`**——上次卸载「保留」的数据（重装搬回失败时兜底）；
+3. **`%APPDATA%\com.openworktree.desktop`**——安装目录不可写（如 perMachine 装进
+   Program Files）时的兜底，也是旧版数据的位置：首次运行会整体搬入安装目录 `data\`。
+
+`tauri dev`（debug 构建）不做迁移；dev-shim 侧车使用仓库内 `local-run/gate.toml`，
+与上述目录无关。`backend-boot.log` 落在所选数据目录根。
 
