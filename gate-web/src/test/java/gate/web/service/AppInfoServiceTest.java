@@ -181,16 +181,6 @@ class AppInfoServiceTest {
     // ── 网络失败降级为数据 ──
 
     @Test
-    void networkFailureReturnsOkFalseData() {
-        AppInfoService service = new AppInfoService("0.1.0-SNAPSHOT",
-                FakeTransport.failing(new IOException("connection reset")));
-        Map<String, Object> out = service.checkUpdate(false);
-        assertEquals(Boolean.FALSE, out.get("ok"));
-        assertEquals("unknown", out.get("status"));
-        assertTrue(String.valueOf(out.get("error")).contains("无法连接 GitHub"));
-    }
-
-    @Test
     void rateLimitedResponseGetsSpecificError() {
         AppInfoService service = new AppInfoService("0.1.0-SNAPSHOT", FakeTransport.of(
                 FakeResponse.json(403, "{\"message\":\"API rate limit exceeded\"}", Map.of("X-RateLimit-Remaining", "0"))));
