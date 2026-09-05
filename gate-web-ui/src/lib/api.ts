@@ -840,6 +840,9 @@ export async function liveSendPrompt(
         variant: sel?.variant ?? undefined,
       }),
     });
+    // 遮罩只覆盖「建会话→写覆盖→发消息」三步：后端受理消息即返回，回合从此开始
+    // 流式输出，必须现在就撤；finally 要等整个回合结束才执行，只留给异常路径兜底。
+    setCreatingSession(no, false);
     setSessionBusy(sid, true);
     await consumeSessionStream(no, sid);
   } catch (e) {
