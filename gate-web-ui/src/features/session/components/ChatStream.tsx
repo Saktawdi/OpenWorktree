@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { RefObject } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import {
@@ -60,7 +60,11 @@ function splitToolArgs(tool: ToolCallView): { toolName: string; argsPart: string
   return { toolName: summary, argsPart: "" };
 }
 
-function ThinkingBlock({ thinking }: { thinking: NonNullable<Extract<ChatItem, { kind: "assistant" }>["thinking"]> }) {
+const ThinkingBlock = memo(function ThinkingBlock({
+  thinking,
+}: {
+  thinking: NonNullable<Extract<ChatItem, { kind: "assistant" }>["thinking"]>;
+}) {
   const [expanded, setExpanded] = useState(!thinking.done);
   const wasDone = useRef(thinking.done);
 
@@ -99,9 +103,9 @@ function ThinkingBlock({ thinking }: { thinking: NonNullable<Extract<ChatItem, {
       )}
     </div>
   );
-}
+});
 
-function ToolRow({ tool }: { tool: ToolCallView }) {
+const ToolRow = memo(function ToolRow({ tool }: { tool: ToolCallView }) {
   const [open, setOpen] = useState(false);
   const Icon = TOOL_ICONS[tool.icon] ?? TerminalWindow;
   const { toolName, argsPart } = splitToolArgs(tool);
@@ -167,7 +171,7 @@ function ToolRow({ tool }: { tool: ToolCallView }) {
       )}
     </div>
   );
-}
+});
 
 function AssistantFooter({ item }: { item: Extract<ChatItem, { kind: "assistant" }> }) {
   // openchamber 式 footer：元信息（完成的 agent + 推理等级）常驻左对齐，
@@ -205,7 +209,13 @@ function AssistantFooter({ item }: { item: Extract<ChatItem, { kind: "assistant"
   );
 }
 
-function AssistantMessage({ item }: { item: Extract<ChatItem, { kind: "assistant" }> }) {
+// 流式期间 chat 数组每次补丁都换新引用，未受影响的消息行必须 memo 跳过重渲染，
+// 否则整列表的 Markdown 全量重新解析，主线程卡顿放大滚动/点击的一切延迟
+const AssistantMessage = memo(function AssistantMessage({
+  item,
+}: {
+  item: Extract<ChatItem, { kind: "assistant" }>;
+}) {
   return (
     <div className="group/msg animate-rise">
       <div className="flex items-center gap-2 mb-1.5">
@@ -237,9 +247,13 @@ function AssistantMessage({ item }: { item: Extract<ChatItem, { kind: "assistant
       </div>
     </div>
   );
-}
+});
 
-function SystemMessage({ item }: { item: Extract<ChatItem, { kind: "system" }> }) {
+const SystemMessage = memo(function SystemMessage({
+  item,
+}: {
+  item: Extract<ChatItem, { kind: "system" }>;
+}) {
   const Icon = item.tone === "success" ? Check : item.tone === "warn" ? Warning : Info;
   const color =
     item.tone === "success" ? "text-accent" : item.tone === "warn" ? "text-warn" : "text-faint";
@@ -252,7 +266,7 @@ function SystemMessage({ item }: { item: Extract<ChatItem, { kind: "system" }> }
       <span className="flex-1 border-t border-edge" />
     </div>
   );
-}
+});
 
 const RAIL_MIN_MESSAGES = 3; // 用户消息达到该数量才出现导航刻度（短会话用不上）
 const RAIL_MIN_OVERFLOW = 120; // 内容超出视口该像素才需要跳转
@@ -294,14 +308,19 @@ function ChatRail({
 
   const show = userMsgs.length >= RAIL_MIN_MESSAGES && overflowPx > RAIL_MIN_OVERFLOW;
 
-  // 测量每条用户消息相对滚动容器顶部的偏移；内容或容器尺寸变化都会重算
+  // 测量每条用户消息在滚动内容中的文档偏移：基准取内容原点（容器可视顶 − scrollTop），
+  // 消息视口位置减基准即得内容坐标，与当前滚动位置无关——跳转 scrollTo 与刻度高亮
+  // 共用该坐标系。（旧实现把 scrollTop 加进基准，偏差随滚动距离翻倍：滚到底后 tops
+  // 全为负值，点击刻度 scrollTo(0) 直接跳到会话顶部、activeIdx 永远停在最后一根。）
   const measure = useCallback(() => {
     const el = scrollRef.current;
     if (!el) return;
-    const base = el.getBoundingClientRect().top + el.scrollTop;
+    const base = el.getBoundingClientRect().top - el.scrollTop;
     const next: number[] = [];
     el.querySelectorAll<HTMLElement>("[data-chat-msg]").forEach((n) => {
-      next.push(n.getBoundingClientRect().top - base);
+      const top = n.getBoundingClientRect().top - base;
+      // 消息按 DOM 顺序天然递增；monotonic 兜底吸收入场动画/图片加载造成的瞬时抖动
+      next.push(next.length === 0 ? Math.max(0, top) : Math.max(next[next.length - 1], top));
     });
     setTops((prev) =>
       prev.length === next.length && prev.every((v, i) => Math.abs(v - next[i]) < 0.5) ? prev : next,
@@ -389,6 +408,13 @@ function ChatRail({
           transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
           className="absolute top-1/2 z-20"
           style={{ left: railLeft, height: railHeight }}
+          onWheel={(e) => {
+            // 刻度条悬在滚动容器外侧（absolute 兄弟节点），滚轮落在其上不会驱动聊天滚动；
+            // 手动转发给滚动容器，避免“光标停在刻度条上滚轮失灵”的观感
+            const el = scrollRef.current;
+            if (!el) return;
+            el.scrollTop += e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
+          }}
         >
           <div className="flex h-full flex-col">
             {userMsgs.map((m, i) => {
@@ -455,20 +481,38 @@ export function ChatStream({ ticketNo }: { ticketNo: string }) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
+  const lastTop = useRef(0);
 
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
+    lastTop.current = el.scrollTop;
     const onScroll = () => {
-      stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+      const goingUp = el.scrollTop < lastTop.current - 1;
+      lastTop.current = el.scrollTop;
+      // 方向感知吸附：用户向上滚立即解除（哪怕只滚出一格，流式更新不再把视口拽回底部），
+      // 向下滚回贴底范围才恢复。旧逻辑按“距底 <120px”单向判定，从底部上滚的头几下
+      // 始终落在阈值内，配合每次 chat 更新的 smooth 回底，表现为“卡在最底部滚不动”。
+      if (goingUp) stick.current = false;
+      else if (el.scrollHeight - el.scrollTop - el.clientHeight < 120) stick.current = true;
     };
     el.addEventListener("scroll", onScroll, { passive: true });
     return () => el.removeEventListener("scroll", onScroll);
   }, []);
 
+  const last = chat[chat.length - 1];
+  const streaming = !!last && last.kind === "assistant" && last.streaming === true;
+
   useEffect(() => {
-    if (stick.current) bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [chat]);
+    if (!stick.current) return;
+    if (streaming) {
+      // 流式期间高频更新会把 smooth 动画反复打断重启，观感即“滚不动”，改为瞬时贴底
+      const el = scrollRef.current;
+      if (el) el.scrollTop = el.scrollHeight;
+    } else {
+      bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    }
+  }, [chat, streaming]);
 
   return (
     <div className="relative flex-1 min-h-0">
@@ -484,13 +528,21 @@ export function ChatStream({ ticketNo }: { ticketNo: string }) {
             ) : item.kind === "assistant" ? (
               <AssistantMessage key={item.id} item={item} />
             ) : item.kind === "permission" ? (
-              <div key={item.id} className="animate-rise">
-                <PermissionCard ticketNo={ticketNo} sessionId={sessionId} item={item} locked={cancelled} />
-              </div>
+              <PermissionCard
+                key={item.id}
+                ticketNo={ticketNo}
+                sessionId={sessionId}
+                item={item}
+                locked={cancelled}
+              />
             ) : item.kind === "question" ? (
-              <div key={item.id} className="animate-rise">
-                <QuestionCard ticketNo={ticketNo} sessionId={sessionId} item={item} locked={cancelled} />
-              </div>
+              <QuestionCard
+                key={item.id}
+                ticketNo={ticketNo}
+                sessionId={sessionId}
+                item={item}
+                locked={cancelled}
+              />
             ) : (
               <SystemMessage key={item.id} item={item} />
             ),

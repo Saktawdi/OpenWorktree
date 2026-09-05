@@ -2,7 +2,15 @@ import React from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
-export function Markdown({ children, className }: { children: string; className?: string }) {
+// memo：流式期间聊天列表高频重渲染，历史消息的 Markdown 字符串不变，
+// 跳过重复的 markdown→React 解析（长会话下该解析是主要主线程开销之一）
+export const Markdown = React.memo(function Markdown({
+  children,
+  className,
+}: {
+  children: string;
+  className?: string;
+}) {
   return (
     <div className={className}>
       <ReactMarkdown
@@ -60,4 +68,4 @@ export function Markdown({ children, className }: { children: string; className?
       </ReactMarkdown>
     </div>
   );
-}
+});
