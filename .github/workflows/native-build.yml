@@ -48,6 +48,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+      # plugin-sdk 以 file: 软链进 gate-web-ui，软链不递归安装自身依赖；
+      # 其 types.ts import react 类型，须先在包内装好 devDependencies（react/@types/react）。
+      - name: Install plugin-sdk deps
+        working-directory: packages/plugin-sdk
+        run: npm install --no-audit --no-fund --no-package-lock
       - name: Build SPA
         working-directory: gate-web-ui
         run: |
