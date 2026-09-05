@@ -21,6 +21,8 @@ import gate.domain.publish.ApprovalId;
 import gate.domain.publish.PublishIntent;
 import gate.domain.publish.PublishStatus;
 import gate.domain.review.ReviewEvidence;
+import gate.domain.review.EvidenceVisitor;
+import gate.domain.review.Finding;
 import gate.domain.snapshot.Snapshot;
 import gate.domain.ticket.Ticket;
 import gate.domain.ticket.TicketStage;
@@ -509,8 +511,12 @@ public final class PublishHandler {
      * 提交信息 = 工单号 + 标题 + 轮次。标题压成单行并截断：主题行是给人看的定位线索，
      * 换行/超长标题会破坏 git log 的可读性；空标题退回纯工单号。锚定信息（Ticket/Tree/
      * Reviewed-By）留在正文，与快照指纹的核验口径一致。
+     *
+     * <p>round &gt; 1 时正文再追加一段"轮次背景"：回溯最近一轮"未通过/未落地"的评审，
+     * 把重启/重提审的原因写进提交信息——否则 git log 只留下 round 3 却看不到 round 2
+     * 为什么没发布（T-104 反馈）。纯装饰性信息：任何解析失败都退回无背景段落，绝不影响发布。
      */
-    private static String commitMessage(Ticket ticket, PresubmitRepository.PresubmitRow row) {
+    private String commitMessage(Ticket ticket, PresubmitRepository.PresubmitRow row) {
         String title = ticket.title() == null ? "" : ticket.title().replaceAll("\\s+", " ").trim();
         if (title.length() > 72) {
             title = title.substring(0, 72);
@@ -518,10 +524,111 @@ public final class PublishHandler {
         String subject = title.isEmpty()
                 ? ticket.ticketNo() + " round " + row.reviewRound()
                 : ticket.ticketNo() + " " + title + " (round " + row.reviewRound() + ")";
-        return subject + "\n\n"
+        String body = subject + "\n\n"
                 + "Ticket: " + ticket.ticketNo() + "\n"
                 + "Tree: " + row.treeHash().hex() + "\n"
                 + "Reviewed-By: gate\n";
+        String background = roundBackground(ticket.ticketNo(), row.reviewRound());
+        return background == null ? body : body + "\n" + background;
+    }
+
+    /**
+     * 从紧邻的上一轮向前回溯，找到最近一段让工单没能往前走（= 推动本轮重新预提审）的记录：
+     * 评审未通过 / 已过审但发布未落地 / 预提审后未产生评审结论。找到即返回正文段落，否则返回
+     * null。回溯遇"已过审且已发布"的轮次即停——更早的历史与本次轮次跳变无关。
+     */
+    private String roundBackground(String ticketNo, int round) {
+        for (int r = round - 1; r >= 1; r--) {
+            Optional<PresubmitRepository.PresubmitRow> prev = presubmits.find(ticketNo, r);
+            if (prev.isEmpty()) {
+                // 轮次空洞（如重启预留位）：没有预提审就没有评审故事，继续向前看。
+                continue;
+            }
+            Optional<ReviewResultRepository.ReviewResultRow> review =
+                    reviewResults.findLatestForPresubmit(prev.get().id());
+            if (review.isEmpty()) {
+                return "Restart-Reason: round " + r + " 预提审后未产生评审结论，后续轮次重新提交";
+            }
+            ReviewResultRepository.ReviewResultRow rr = review.get();
+            if (rr.verdict() == Decision.Verdict.PASS) {
+                if (roundPublished(ticketNo, r)) {
+                    break;
+                }
+                return "Restart-Reason: round " + r + " 已过审但发布未落地（工单被重开），round "
+                        + round + " 重新提交";
+            }
+            String summary = reviewSummary(rr);
+            return "Restart-Reason: round " + r + " 评审未通过（" + rr.verdict() + ", "
+                    + rr.engine().engineId() + "）" + summary;
+        }
+        return null;
+    }
+
+    /** 某轮是否有落地的发布意图（PUBLISHED）。旧轮无意图行时按已落地处理——不可误判历史。 */
+    private boolean roundPublished(String ticketNo, int round) {
+        boolean sawIntent = false;
+        for (PublishIntent intent : intents.findByTicket(ticketNo)) {
+            if (intent.reviewRound() != round) {
+                continue;
+            }
+            sawIntent = true;
+            if (intent.status() == PublishStatus.PUBLISHED) {
+                return true;
+            }
+        }
+        return !sawIntent;
+    }
+
+    /** 把上一轮的评审结论压成一行可读摘要（驳回原因/人工 note/引擎 findings）。失败给兜底文案。 */
+    private String reviewSummary(ReviewResultRepository.ReviewResultRow rr) {
+        try {
+            byte[] evidenceBytes = blobStore.get(new BlobRef(
+                    rr.findingsBlobPath(), 0L, "0".repeat(64)));
+            ReviewEvidence evidence = EvidenceCodec.fromJson(
+                    new String(evidenceBytes, StandardCharsets.UTF_8),
+                    new BlobRef(rr.rawBlobPath(), 0L, "0".repeat(64)));
+            return evidence.accept(new EvidenceVisitor<String>() {
+                @Override
+                public String visit(gate.domain.review.EngineReport report) {
+                    java.util.List<Finding> findings = report.findings();
+                    if (findings.isEmpty()) {
+                        return "：评审报告未给出具体发现";
+                    }
+                    StringBuilder sb = new StringBuilder("：");
+                    int shown = 0;
+                    for (Finding f : findings) {
+                        if (shown >= 2) {
+                            break;
+                        }
+                        if (shown > 0) {
+                            sb.append("；");
+                        }
+                        sb.append(f.severity()).append(": ").append(collapse(f.message(), 160));
+                        shown++;
+                    }
+                    if (findings.size() > 2) {
+                        sb.append("；另有 ").append(findings.size() - 2).append(" 条问题");
+                    }
+                    return sb.length() > 480 ? sb.substring(0, 480) + "…" : sb.toString();
+                }
+
+                @Override
+                public String visit(gate.domain.review.EngineFailure failure) {
+                    return "：引擎故障（" + failure.kind() + "）: " + collapse(failure.detail(), 240);
+                }
+            });
+        } catch (Exception e) {
+            return "：驳回详情见评审记录";
+        }
+    }
+
+    /** 单行折叠：压空白并截断，防止评审文本里的换行/超长内容破坏提交信息排版。 */
+    private static String collapse(String text, int max) {
+        if (text == null) {
+            return "";
+        }
+        String one = text.replaceAll("\\s+", " ").trim();
+        return one.length() > max ? one.substring(0, max) + "…" : one;
     }
 
     private void audit(String kind, String ticketNo, Integer round, Map<String, String> fields) {

@@ -104,6 +104,60 @@ class PublishIdentityApiTest {
                 "commit subject must be ticketNo + title + round");
     }
 
+    /**
+     * 重启轮次的提交正文要携带上一轮的驳回原因（T-104 反馈）：round 2 发布时正文追加
+     * Restart-Reason 段落，含 round 1 的人工驳回 note——git log 不再只剩"round 3"猜哑谜。
+     */
+    @Test
+    void restarted_round_commit_carries_previous_rejection_reason() throws Exception {
+        Path ws = harness.root().resolve("restart-ws");
+        Files.createDirectories(ws);
+        var git = harness.components().git();
+        git.must(ws, Map.of(), "init", "-b", "main");
+
+        HttpResponse<String> created = post("/api/projects",
+                "{\"name\":\"RestartProj\",\"workspace_path\":\"" + json(ws.toString()) + "\"}");
+        assertEquals(201, created.statusCode(), created.body());
+        String projectId = extract(created.body(), "id");
+        String authRepo = extract(created.body(), "auth_repo");
+        git.must(ws, Map.of(), "fetch", authRepo, "main");
+        git.must(ws, Map.of(), "reset", "--hard", "FETCH_HEAD");
+
+        String ticketNo = "RESTART-1";
+        HttpResponse<String> tCreated = post("/api/tickets",
+                "{\"ticket_no\":\"" + ticketNo + "\",\"title\":\"restart\",\"project_id\":\"" + projectId
+                        + "\",\"target_branch\":\"main\"}");
+        assertEquals(201, tCreated.statusCode(), tCreated.body());
+
+        Path clone = harness.components().config().clonesRoot().resolve(ticketNo);
+        Files.writeString(clone.resolve("one.txt"), "round 1\n");
+        assertEquals(200, post("/api/tickets/" + ticketNo + "/presubmit", "").statusCode());
+
+        String rejectTask = startTask("POST", "/api/tickets/" + ticketNo + "/review",
+                "{\"human_pass\":false,\"note\":\"插件面板 API 缺鉴权，需补白名单\"}");
+        waitForStatus(rejectTask, "SUCCEEDED");
+
+        // round 2: 修完再提审——note 内容应原样出现在 round 2 发布提交的正文里。
+        Files.writeString(clone.resolve("two.txt"), "round 2\n");
+        assertEquals(200, post("/api/tickets/" + ticketNo + "/presubmit", "").statusCode());
+        String passTask = startTask("POST", "/api/tickets/" + ticketNo + "/review",
+                "{\"human_pass\":true}");
+        waitForStatus(passTask, "SUCCEEDED");
+        String publishTask = startTask("POST", "/api/tickets/" + ticketNo + "/publish", "{}");
+        waitForStatus(publishTask, "SUCCEEDED");
+        String commitSha = extract(taskResultJson(publishTask), "commit_sha");
+
+        var auth = gate.domain.git.RepoRef.of(Path.of(authRepo));
+        assertEquals("RESTART-1 restart (round 2)",
+                git.line(auth, "show", "-s", "--format=%s", commitSha).trim(),
+                "round 2 subject must keep the ticketNo + title + round shape");
+        String body = git.line(auth, "show", "-s", "--format=%b", commitSha);
+        assertTrue(body.contains("Restart-Reason: round 1 评审未通过（REJECT, manual）"),
+                "round 2 body must explain why round 1 did not publish, got: " + body);
+        assertTrue(body.contains("插件面板 API 缺鉴权"),
+                "the round 1 human reject note must surface in the round 2 commit body, got: " + body);
+    }
+
     /** provider 读的是 global/system 合成视角；测试用同一视角求期望值，未配置回退固定身份。 */
     private String configOr(Path cwd, String key, String fallback) {
         var run = harness.components().git().run(cwd, Map.of(), "config", "--get", key);
