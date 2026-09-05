@@ -20,15 +20,24 @@ export function ticketNoOfSession(id: string): string | null {
 export async function loadTicketSessions(no: string) {
   const data = await api<{ sessions: RawSession[] }>(`/api/tickets/${no}/sessions`);
   const list = (data.sessions ?? []).map((s) => mapSession(no, s));
-  let latest: import("@/shared/types").ChatSession | undefined;
-  for (const sess of list) {
-    if (sess.status === "active" && (!latest || sess.createdAt >= latest.createdAt)) latest = sess;
-  }
-  const activeId = latest?.id ?? "";
-  appStore.setState((st) => ({
-    sessions: { ...st.sessions, [no]: list },
-    activeSessionId: { ...st.activeSessionId, [no]: activeId },
-  }));
+  appStore.setState((st) => {
+    // 保留「上次查看的会话」：从工单列表切走再点回来不跳回最新会话。
+    // 仅当记忆的会话已不存在或已归档时才回退到最近活跃会话。
+    const prev = st.activeSessionId[no] ?? "";
+    const remembered = prev !== "" && list.some((sess) => sess.id === prev && sess.status === "active");
+    let activeId = remembered ? prev : "";
+    if (!activeId) {
+      let latest: import("@/shared/types").ChatSession | undefined;
+      for (const sess of list) {
+        if (sess.status === "active" && (!latest || sess.createdAt >= latest.createdAt)) latest = sess;
+      }
+      activeId = latest?.id ?? "";
+    }
+    return {
+      sessions: { ...st.sessions, [no]: list },
+      activeSessionId: { ...st.activeSessionId, [no]: activeId },
+    };
+  });
 }
 
 /**
