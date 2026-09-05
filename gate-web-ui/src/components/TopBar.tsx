@@ -215,7 +215,8 @@ function shellPost(action: string) {
 }
 
 /** 桌面壳窗口控制：最小化/最大化/关闭（紧挨日夜切换，同为 icon-btn 风格）。
- *  关闭钮悬停红，对齐 Windows 标题栏惯例；浏览器/非壳环境整组不渲染。 */
+ *  关闭钮悬停红，对齐 Windows 标题栏惯例；浏览器/非壳环境整组不渲染。
+ *  兼承载托盘桥：收「打开项目工作台」、发「当前选中项目」（托盘绿点数据源）。 */
 function WindowControls() {
   const [maximized, setMaximized] = useState(false);
   const desktop = isDesktopShell();
@@ -223,11 +224,36 @@ function WindowControls() {
     if (!desktop) return;
     shellPost("query-maximized");
     const onMessage = (e: MessageEvent) => {
-      const d = e.data as { __ow?: boolean; action?: string; value?: boolean };
-      if (d?.__ow && d.action === "maximized") setMaximized(!!d.value);
+      const d = e.data as { __ow?: boolean; action?: string; value?: boolean; projectId?: string };
+      if (!d?.__ow) return;
+      if (d.action === "maximized") {
+        setMaximized(!!d.value);
+      } else if (d.action === "open-project" && d.projectId) {
+        // 托盘点项目：与顶栏项目选择器同语义（switchProject 选首个非终态工单），
+        // 外加切回工作台视图——托盘入口的用户意图就是"去那个项目的工单界面"。
+        switchProject(d.projectId);
+        setView("workbench");
+      }
     };
+    // 选中项目 → 壳 → Rust 托盘画绿点。仅值变化时推送，避免高频 store 变更刷爆 postMessage。
+    let lastProjectId = appStore.getState().activeProjectId;
+    const pushSelected = () =>
+      window.parent.postMessage(
+        { __ow: true, action: "tray-selected-project", projectId: lastProjectId },
+        "*",
+      );
+    pushSelected();
+    const unsub = appStore.subscribe((st) => {
+      if (st.activeProjectId !== lastProjectId) {
+        lastProjectId = st.activeProjectId;
+        pushSelected();
+      }
+    });
     window.addEventListener("message", onMessage);
-    return () => window.removeEventListener("message", onMessage);
+    return () => {
+      unsub();
+      window.removeEventListener("message", onMessage);
+    };
   }, [desktop]);
   if (!desktop) return null;
   return (

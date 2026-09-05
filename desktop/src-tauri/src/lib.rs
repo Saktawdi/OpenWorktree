@@ -27,6 +27,16 @@ const DEFAULT_PORT: u16 = 18080;
 /// 后端子进程句柄：spawn 后存入，退出时收割。Mutex<Option<_>> 便于 take() 一次性消费。
 struct BackendChild(Mutex<Option<tauri_plugin_shell::process::CommandChild>>);
 
+/// 托盘轮询所需的运行期参数（port + token 在后端就绪后才能确定）。
+/// None = 后端尚未就绪，轮询线程空转等待。
+struct TrayBackend(Mutex<Option<(u16, String)>>);
+
+/// 托盘菜单里当前选中项目 id（SPA 回传），与轮询到的项目列表比对画绿点。
+struct TraySelectedProject(Mutex<Option<String>>);
+
+/// 上一次托盘菜单快照签名：轮询周期内数据没变就不重建，避免用户正开着菜单被 set_menu 打断。
+struct TrayMenuSig(Mutex<String>);
+
 fn append_log(path: &Option<PathBuf>, line: &str) {
     use std::io::Write;
     if let Some(p) = path {
@@ -186,6 +196,244 @@ fn read_configured_port(data_dir: &Path) -> Option<u16> {
     None
 }
 
+/* ─── 托盘 ───
+ * 右键菜单：Agent 运行数（禁用态标题）+ 接入项目列表（绿点 = SPA 当前选中的工作台）
+ * + 打开主窗口 + 退出。数据每 5s 轮询后端 REST（Bearer 鉴权，与浏览器同源不同路：
+ * 查询 token 仅 SSE 放行），菜单整体重建——条目数极少，开销可忽略。
+ * 点击项目 → emit tray-open-project → 启动页桥接给 iframe SPA → switchProject。
+ */
+
+use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+use tauri::tray::TrayIconBuilder;
+
+/// 项目名截断：托盘菜单宽度有限，超长 workspace 名收尾加省略号。
+fn truncate_label(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        s.to_string()
+    } else {
+        let cut: String = s.chars().take(max.saturating_sub(1)).collect();
+        format!("{}…", cut)
+    }
+}
+
+/// GET /api/agents/busy → { count, running: [...] }。失败（后端未就绪/重启中）返回 None，
+/// 调用方按 0 处理但标题写「离线」。
+fn fetch_busy(port: u16, token: &str) -> Option<u32> {
+    let text = http_get(
+        port,
+        token,
+        "/api/agents/busy",
+    )?;
+    serde_json::from_str::<serde_json::Value>(&text)
+        .ok()?
+        .get("count")?
+        .as_u64()
+        .map(|c| c as u32)
+}
+
+/// GET /api/projects → { projects: [{ id, name, ... }] }。失败返回空。
+fn fetch_projects(port: u16, token: &str) -> Vec<(String, String)> {
+    let Some(text) = http_get(port, token, "/api/projects") else {
+        return Vec::new();
+    };
+    serde_json::from_str::<serde_json::Value>(&text)
+        .ok()
+        .and_then(|v| v.get("projects").cloned())
+        .and_then(|p| serde_json::from_value::<Vec<serde_json::Value>>(p).ok())
+        .map(|rows| {
+            rows.iter()
+                .filter_map(|p| {
+                    let id = p.get("id")?.as_str()?.to_string();
+                    let name = p
+                        .get("name")
+                        .and_then(|n| n.as_str())
+                        .unwrap_or(&id)
+                        .to_string();
+                    Some((id, name))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// 带鉴权地 GET 后端 REST。非 200 或连接失败 → None。
+fn http_get(port: u16, token: &str, path: &str) -> Option<String> {
+    let url = format!("http://127.0.0.1:{port}{path}");
+    let res = ureq::get(&url)
+        .set("Authorization", &format!("Bearer {token}"))
+        .timeout(std::time::Duration::from_secs(3))
+        .call();
+    // 非 2xx（含 401：后端重启后 token 轮换，等壳下轮重新对表——token 其实不变，
+    // 这里只是防御）也走 None，调用方按离线降级。
+    res.ok()?.into_string().ok()
+}
+
+/// 14×14 绿色圆点（#22c55e）：托盘菜单里标记「当前选中的工作台」。
+/// 运行期合成 RGBA，无需资源文件；IconMenuItem 在 Windows 上原生渲染位图。
+fn green_dot_icon() -> tauri::image::Image<'static> {
+    const S: usize = 14;
+    let mut rgba = vec![0u8; S * S * 4];
+    let c = (S as f32 - 1.0) / 2.0;
+    let r = 5.0f32;
+    for y in 0..S {
+        for x in 0..S {
+            let d = ((x as f32 - c).powi(2) + (y as f32 - c).powi(2)).sqrt();
+            // 半径内实心，边缘一圈按距离简易抗锯齿
+            let alpha = if d <= r - 1.0 {
+                255u8
+            } else if d <= r {
+                ((r - d) * 255.0) as u8
+            } else {
+                0
+            };
+            let i = (y * S + x) * 4;
+            rgba[i] = 0x22;
+            rgba[i + 1] = 0xc5;
+            rgba[i + 2] = 0x5e;
+            rgba[i + 3] = alpha;
+        }
+    }
+    tauri::image::Image::new_owned(rgba, S as u32, S as u32)
+}
+
+/// 按当前快照整体重建托盘菜单。重建前必须 set_menu 换新再 drop 旧的，避免悬空。
+fn rebuild_tray_menu(handle: &tauri::AppHandle) {
+    let busy = handle.state::<TrayBackend>();
+    let selected = handle.state::<TraySelectedProject>();
+    let backend = busy.0.lock().expect("tray backend lock poisoned").clone();
+    let sel = selected
+        .0
+        .lock()
+        .expect("tray selected project lock poisoned")
+        .clone();
+
+    let status_text = match &backend {
+        None => "后端启动中…".to_string(),
+        Some((port, token)) => match fetch_busy(*port, token) {
+            Some(0) => "智能体空闲".to_string(),
+            Some(n) => format!("Agent 运行中 × {n}"),
+            None => format!("后端离线（:{port}）"),
+        },
+    };
+
+    let mut items: Vec<tauri::menu::IconMenuItem<tauri::Wry>> = Vec::new();
+    let mut projects: Vec<(String, String)> = Vec::new();
+
+    if let Some((port, token)) = &backend {
+        projects = fetch_projects(*port, token);
+        for (id, name) in &projects {
+            let label = truncate_label(name, 36);
+            let selected = sel.as_deref() == Some(id.as_str());
+            // 选中项带绿色圆点图标（绿色圆点 = SPA 当前选中的工作台）；未选中不带图标
+            let item = tauri::menu::IconMenuItem::with_id(
+                handle,
+                format!("project:{id}"),
+                label,
+                true,
+                if selected { Some(green_dot_icon()) } else { None },
+                None::<String>,
+            )
+            .expect("icon menu item");
+            items.push(item);
+        }
+    }
+
+    // 快照签名：状态行 + 项目列表 + 选中项。没变化直接跳过（不 set_menu，不打断展开中的菜单）。
+    let sig = format!("{status_text}|{projects:?}|{sel:?}");
+    {
+        let sig_state = handle.state::<TrayMenuSig>();
+        let mut last = sig_state.0.lock().expect("tray menu sig lock poisoned");
+        if *last == sig {
+            return;
+        }
+        *last = sig;
+    }
+
+    let menu = Menu::with_id(handle, "ow-tray-menu").expect("tray menu");
+    let status = MenuItem::with_id(handle, "__status", &status_text, false, None::<String>)
+        .expect("status item");
+    let _ = menu.append(&status);
+    let sep = PredefinedMenuItem::separator(handle).expect("separator");
+    let _ = menu.append(&sep);
+
+    for it in &items {
+        let _ = menu.append(it);
+    }
+    if !items.is_empty() {
+        let sep2 = PredefinedMenuItem::separator(handle).expect("separator");
+        let _ = menu.append(&sep2);
+    }
+
+    let open = MenuItem::with_id(handle, "open-main", "打开工作台", true, None::<String>)
+        .expect("open item");
+    let quit = MenuItem::with_id(handle, "__quit", "退出 OpenWorktree", true, None::<String>)
+        .expect("quit item");
+    let _ = menu.append(&open);
+    let _ = menu.append(&quit);
+
+    if let Some(tray) = handle.tray_by_id("ow-tray") {
+        let _ = tray.set_menu(Some(menu));
+    }
+}
+
+/// 后端就绪后启动的轮询线程：每 5s 对表一次（busy 数 + 项目 + SPA 回传的选中项目），
+/// 重建托盘菜单。快照由 setup 阶段 manage 的 TrayBackend / TraySelectedProject 提供。
+fn spawn_tray_poller(handle: tauri::AppHandle) {
+    std::thread::spawn(move || {
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(5));
+            rebuild_tray_menu(&handle);
+        }
+    });
+}
+
+/// 托盘图标（窗口右下角常驻）。图标复用打包 PNG；点击左键回主窗口。
+fn setup_tray(handle: &tauri::AppHandle) {
+    let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/128x128.png"))
+        .expect("decode tray icon");
+    let _ = TrayIconBuilder::with_id("ow-tray")
+        .icon(icon)
+        .tooltip("OpenWorktree")
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app, event| match event.id().as_ref() {
+            "__quit" => {
+                // 与窗口关闭同一条收割路径：RunEvent::ExitRequested kill 子进程。
+                app.exit(0);
+            }
+            "open-main" => {
+                show_main(app);
+            }
+            id if id.starts_with("project:") => {
+                let project_id = id.trim_start_matches("project:").to_string();
+                show_main(app);
+                let _ = app.emit("tray-open-project", project_id);
+            }
+            _ => {}
+        })
+        .on_tray_icon_event(|tray, event| {
+            // Windows：左键单击图标（无菜单）= 打开主窗口，与常见 IM/下载器一致。
+            if let tauri::tray::TrayIconEvent::Click {
+                button: tauri::tray::MouseButton::Left,
+                button_state: tauri::tray::MouseButtonState::Up,
+                ..
+            } = event
+            {
+                show_main(tray.app_handle());
+            }
+        })
+        .build(handle)
+        .expect("build tray icon");
+}
+
+/// 主窗口带回前台（单实例回调与托盘共用）。
+fn show_main(app: &tauri::AppHandle) {
+    if let Some(win) = app.get_webview_window("main") {
+        let _ = win.unminimize();
+        let _ = win.show();
+        let _ = win.set_focus();
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -203,6 +451,28 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .setup(|app| {
             let handle = app.handle().clone();
+            // 托盘：后端未就绪前菜单只有状态行与退出；就绪后轮询线程 5s 刷新。
+            // 轮询参数（port/token）由下方 boot 协程抓到后写入 TrayBackend。
+            handle.manage(TrayBackend(Mutex::new(None)));
+            handle.manage(TraySelectedProject(Mutex::new(None)));
+            handle.manage(TrayMenuSig(Mutex::new(String::new())));
+            setup_tray(&handle);
+            // 先铺一版「后端启动中…」菜单，避免首次轮询（5s 后）前右键空白
+            rebuild_tray_menu(&handle);
+            spawn_tray_poller(handle.clone());
+            // SPA 选中项目变化 → 启动页桥接转发 → 这里记录，托盘菜单画绿点。
+            // payload 是 JSON 字符串（去引号后即 project id）；空串表示无选中。
+            use tauri::Listener;
+            let sel_handle = handle.clone();
+            handle.listen("tray-selected-project", move |event| {
+                let id = event.payload().trim_matches('"').to_string();
+                *sel_handle
+                    .state::<TraySelectedProject>()
+                    .0
+                    .lock()
+                    .expect("tray selected project lock poisoned") =
+                    if id.is_empty() { None } else { Some(id) };
+            });
             tauri::async_runtime::spawn(async move {
                 // 数据目录：安装目录 data\（默认）/ 保留数据 / 每用户兜底，见 resolve_data_dir。
                 let data_dir = resolve_data_dir(&handle);
@@ -274,6 +544,15 @@ pub fn run() {
                             if let (Some(t), false) = (token.clone(), navigated) {
                                 navigated = true;
                                 append_log(&boot_log, &format!("backend ready on port {port}"));
+                                // 托盘轮询数据源就绪：REST 鉴权用 HUMAN token（查询串 token 仅 SSE 放行）。
+                                *handle
+                                    .state::<TrayBackend>()
+                                    .0
+                                    .lock()
+                                    .expect("tray backend lock poisoned") = Some((port, t.clone()));
+                                if let Some(tray) = handle.tray_by_id("ow-tray") {
+                                    let _ = tray.set_title(Some("OpenWorktree · 运行中"));
+                                }
                                 // 启动页（tauri:// 域）监听此事件后以 iframe 承载 SPA 并桥接窗口操作
                                 let _ = handle.emit(
                                     "backend-ready",
@@ -283,6 +562,12 @@ pub fn run() {
                         }
                         CommandEvent::Terminated(status) => {
                             append_log(&boot_log, &format!("backend terminated: {status:?}"));
+                            // 托盘菜单随之下线：轮询线程下次醒来会把标题写成「后端离线」。
+                            *handle
+                                .state::<TrayBackend>()
+                                .0
+                                .lock()
+                                .expect("tray backend lock poisoned") = None;
                             if !navigated {
                                 let _ = handle.emit(
                                     "backend-error",

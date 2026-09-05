@@ -90,6 +90,14 @@
         err.style.display = "block";
       });
 
+      // —— 托盘桥：三段链路 ——
+      // ① Rust 轮询后端 → 菜单显示运行数/项目列表（Rust 侧独立完成，不经过本页）；
+      // ② 托盘点项目 → Rust emit tray-open-project → 本页转发给 iframe SPA 切工作台；
+      // ③ SPA 切项目 → postMessage 给本页 → 本页 emit tray-selected-project → Rust 记录画绿点。
+      window.__TAURI__.event.listen("tray-open-project", (e) => {
+        iframe.contentWindow?.postMessage({ __ow: true, action: "open-project", projectId: e.payload }, "*");
+      });
+
       // —— postMessage 桥：SPA（远端 origin）→ 本页执行窗口操作 ——
       window.addEventListener("message", async (e) => {
         const d = e.data || {};
@@ -100,6 +108,11 @@
           case "minimize": void w.minimize(); break;
           case "toggle-maximize": void w.toggleMaximize(); break;
           case "close": void w.close(); break;
+          // SPA 侧 activeProjectId 变化（含切换/清空）→ 通知 Rust 托盘画绿点。
+          // emit 需经 Tauri API（本页 tauri:// 域可用），SPA 自身拿不到。
+          case "tray-selected-project":
+            void window.__TAURI__.event.emit("tray-selected-project", d.projectId ?? "");
+            break;
           // startDragging 需在鼠标按住期间发起；iframe mousedown → postMessage 的延迟
           // 在一帧内，可正常拖动。若个别环境失效，退路是回到系统标题栏。
           case "start-drag": void w.startDragging(); break;
