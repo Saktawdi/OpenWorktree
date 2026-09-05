@@ -162,9 +162,43 @@ fn resolve_data_dir(handle: &tauri::AppHandle) -> PathBuf {
     fallback
 }
 
+/// 300ms 快速探测：端口有监听者即 true（无监听时本机 RST 立即返回，超时仅防火墙丢包场景）。
+fn port_in_use(port: u16) -> bool {
+    std::net::TcpStream::connect_timeout(
+        &std::net::SocketAddr::from(([127, 0, 0, 1], port)),
+        std::time::Duration::from_millis(300),
+    )
+    .is_ok()
+}
+
+/// 从数据目录的 local-run/gate.toml 读取 web.port（`port = N` 行；无文件/解析失败回退 None，
+/// 调用方兜底 DEFAULT_PORT）。port_range_* 等键不会误匹配：strip_prefix 后必须紧跟「=」。
+fn read_configured_port(data_dir: &Path) -> Option<u16> {
+    let text = std::fs::read_to_string(data_dir.join("local-run").join("gate.toml")).ok()?;
+    for raw in text.lines() {
+        let line = raw.split('#').next().unwrap_or("").trim();
+        let rest = line.strip_prefix("port")?.trim_start();
+        let value = rest.strip_prefix('=')?.trim();
+        if let Ok(p) = value.parse::<u16>() {
+            return Some(p);
+        }
+    }
+    None
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // 单实例（必须最先注册）：二次启动时把已有实例的主窗口带回前台，
+        // 第二个进程随即退出——不再拉起第二个竞争 18080 的后端。
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            use tauri::Manager;
+            if let Some(win) = app.get_webview_window("main") {
+                let _ = win.unminimize();
+                let _ = win.show();
+                let _ = win.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
         .setup(|app| {
@@ -175,6 +209,23 @@ pub fn run() {
                 let boot_log = Some(data_dir.join("backend-boot.log"));
                 append_log(&boot_log, "=== backend boot ===");
                 append_log(&boot_log, &format!("data dir: {}", data_dir.display()));
+
+                // 端口预检：18080（或 gate.toml 配置的 web.port）已有监听者时直接给出可读提示，
+                // 不再拉起必然失败的后端（此前表现为 INTERNAL/code=70 的笼统报错）。
+                // 能到这一步说明不是本应用已运行的实例（单实例插件已拦截），多半是残存的
+                // 后端孤儿或别的程序占了端口。
+                let port = read_configured_port(&data_dir).unwrap_or(DEFAULT_PORT);
+                if port_in_use(port) {
+                    append_log(&boot_log, &format!("port {port} already in use before spawn"));
+                    let _ = handle.emit(
+                        "backend-error",
+                        format!(
+                            "端口 {port} 已被占用（可能是未完全退出的 OpenWorktree 后端）。请关闭它或稍后重试；也可改 {dir}\\local-run\\gate.toml 的 web.port 换端口。",
+                            dir = data_dir.display()
+                        ),
+                    );
+                    return;
+                }
 
                 let sidecar = match handle.shell().sidecar("ow") {
                     Ok(s) => s,
