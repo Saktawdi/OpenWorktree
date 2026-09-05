@@ -11,11 +11,13 @@ import java.nio.file.Path;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 
 /**
  * V18 project star/pin + manual drag ordering: starred toggles through the update endpoint and
  * reorder assigns dense sort_order values; listing order is starred first, then sort_order.
  */
+@Tag("slow")
 class ProjectStarOrderApiTest {
 
     private WebHarness harness;

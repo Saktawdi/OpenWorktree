@@ -14,12 +14,14 @@ import java.util.Map;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 
 /**
  * 项目 → 仓库视图 (web console): GET /api/projects/{id}/repo (branch/commit graph with lanes) and
  * GET /api/projects/{id}/tree[/{path}] (lazy directory listing with last-commit attribution),
  * driven against a real workspace repo built with the real git binary.
  */
+@Tag("slow")
 class ProjectRepoViewApiTest {
 
     private WebHarness harness;

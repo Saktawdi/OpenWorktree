@@ -29,6 +29,7 @@ import javax.sql.DataSource;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -42,6 +43,7 @@ import static org.junit.jupiter.api.Assertions.*;
  *   <li>PG/Git/Worker fault does not create duplicate publish</li>
  * </ul>
  */
+@Tag("slow")
 class Phase3HaFaultTest {
 
     private Path tempDir;

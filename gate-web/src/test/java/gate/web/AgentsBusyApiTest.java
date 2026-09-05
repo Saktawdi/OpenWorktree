@@ -27,11 +27,13 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 
 /**
  * GET /api/agents/busy 契约：count 与 running 数组，元素含 session_id/title/ticket_no/cli。
  * 复用 WebHarness + 内存 FakeAgentSessionPort + 真实 SessionRepository（SQLite）。
  */
+@Tag("slow")
 class AgentsBusyApiTest {
 
     private WebHarness harness;

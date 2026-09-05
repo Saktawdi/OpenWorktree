@@ -13,6 +13,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 
 /**
  * B17: two concurrent pushes race the SAME approval id; the OS-atomic {@code mv} in the hook means
@@ -23,6 +24,7 @@ import org.junit.jupiter.api.Test;
  * genuinely attempt to move the ref — otherwise the race would be trivially serialised by git's own
  * fast-forward check rather than by the single-consumption property we mean to test.
  */
+@Tag("slow")
 class ConcurrentApprovalTest extends BypassTestBase {
 
     @Test

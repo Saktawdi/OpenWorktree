@@ -19,6 +19,7 @@ import javax.sql.DataSource;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -33,6 +34,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * 5. Slow-consumer bounded buffer backpressure (DEBT-006, SseHandler MAX_BUFFERED_EVENTS=100)
  * 6. Node switch replay after lease expiry (Worker A -> Worker B takeover without loss)
  */
+@Tag("slow")
 class TaskEventOutboxFaultTest {
 
     private Path tempDir;

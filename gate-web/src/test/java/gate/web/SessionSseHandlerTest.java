@@ -31,11 +31,13 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 
 /**
  * Session SSE keep-alive tests (执行文档-后端-web §9.3): the stream must stay open beyond the old
  * 5s cap, emit `: ping` heartbeat frames while idle, and close promptly once done arrives.
  */
+@Tag("slow")
 class SessionSseHandlerTest {
 
     private static final String SESSION_ID = "sse-keepalive-1";

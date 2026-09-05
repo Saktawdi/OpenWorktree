@@ -13,12 +13,14 @@ import java.util.Map;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 
 /**
  * Ticket metadata (web console): priority + project tagging on create, editable content, the PATCH
  * edit endpoint, queue-stage guard rails, and the live working-tree diff that replaces the UI's
  * sample diff.
  */
+@Tag("slow")
 class TicketMetaApiTest {
 
     private WebHarness harness;

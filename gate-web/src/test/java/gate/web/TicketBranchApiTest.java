@@ -15,11 +15,13 @@ import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 
 /**
  * 工单级目标分支（T-110 后续反馈）：默认 {@code refs/heads/<工单号>}，可自定义短名，
  * 创建后锁定。一工单一分支：克隆、预提审、发布与工作区同步全部锚定该分支，主分支不动。
  */
+@Tag("slow")
 class TicketBranchApiTest {
 
     private WebHarness harness;

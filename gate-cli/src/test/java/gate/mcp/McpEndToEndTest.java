@@ -13,6 +13,7 @@ import java.time.Instant;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -29,6 +30,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * the human domain runs the review and publishes. Two separate server instances model the two
  * spawned processes with their two independent tokens.
  */
+@Tag("slow")
 class McpEndToEndTest {
 
     private GateHarness harness;

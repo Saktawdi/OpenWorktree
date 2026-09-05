@@ -15,11 +15,13 @@ import java.util.Map;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 
 /**
  * T-118 基座同步 API：POST /api/tickets/{no}/sync-base 把落后主分支的工单 clone 与权威分支快进到
  * base tip，未提交改动按 allow_dirty 语义跳过或 stash 重放；审查门禁期与终态工单拒绝同步。
  */
+@Tag("slow")
 class BaseSyncApiTest {
 
     private WebHarness harness;

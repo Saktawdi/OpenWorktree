@@ -16,6 +16,7 @@ import gate.testkit.GateHarness;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 
 /**
  * A1/A3/A4 acceptance behaviours through the real service (架构落地执行文档 §4 P1).
@@ -23,6 +24,7 @@ import org.junit.jupiter.api.Test;
  * <p>A5 (crash recovery via a hard kill) is a separate test that spawns a child JVM, since a
  * precise kill cannot be simulated in-process.
  */
+@Tag("slow")
 class AcceptanceTest {
 
     private GateHarness h;

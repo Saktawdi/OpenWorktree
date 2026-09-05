@@ -17,6 +17,7 @@ import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 
 /**
  * Fail-Closed degradation when no review engine is configured (架构规范 I7; 产品文档异常场景表:
@@ -32,6 +33,7 @@ import org.junit.jupiter.api.Test;
  *   <li><b>false</b> — human reject → REJECT, stage REJECTED.</li>
  * </ul>
  */
+@Tag("slow")
 class NoEngineFailClosedReviewTest {
 
     private WebHarness harness;

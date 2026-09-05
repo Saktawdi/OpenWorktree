@@ -29,12 +29,14 @@ import javax.sql.DataSource;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 /**
  * S5 cost writeback (执行文档-后端-web §5.7, §9.5 A19): after a session starts with parsed usage,
  * {@code ticket.exec_token_total} is populated from the agent CLI and H1 cost ratio can be computed.
  */
+@Tag("slow")
 class SessionCostWritebackTest {
 
     private Path root;

@@ -15,6 +15,7 @@ import java.util.List;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 
 /**
  * S0 acceptance A13 (执行文档-后端-web §9.5): auth + binding.
@@ -27,6 +28,7 @@ import org.junit.jupiter.api.Test;
  *   <li>{@code web.bind = 0.0.0.0} refused at config construction (fail-closed, exit 22 path)</li>
  * </ul>
  */
+@Tag("slow")
 class WebAuthTest {
 
     private WebHarness harness;

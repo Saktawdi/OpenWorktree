@@ -18,11 +18,13 @@ import java.nio.file.Path;
 import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 
 /**
  * Capture-time invariants (架构落地执行文档 §3.2/§3.3, ADR-5). These are the measured P0 facts turned
  * into assertions.
  */
+@Tag("slow")
 class CaptureTest {
 
     /**

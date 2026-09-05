@@ -15,11 +15,13 @@ import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 
 /**
  * 项目主分支（target_ref）的解析与编辑（T-118 基座同步的配套）：接入项目可显式指定主分支（master 等）、
  * 已有 git 工作区自动探测当前分支、编辑项目可改主分支；非法分支名拒绝。
  */
+@Tag("slow")
 class ProjectTargetBranchApiTest {
 
     private WebHarness harness;

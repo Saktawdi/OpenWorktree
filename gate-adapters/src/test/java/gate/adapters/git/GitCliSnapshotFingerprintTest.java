@@ -3,6 +3,7 @@ package gate.adapters.git;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 
 /**
  * R4 fingerprint column alignment: {@code ls-files -s} puts the blob sha in column 1
@@ -10,6 +11,7 @@ import org.junit.jupiter.api.Test;
  * ("&lt;mode&gt; blob &lt;sha&gt;"). Reading the wrong column for ls-tree yielded the literal
  * "blob" as the base fingerprint, so every clone with a tracked .gitignore raised a spurious R4.
  */
+@Tag("slow")
 class GitCliSnapshotFingerprintTest {
 
     private static final String SHA = "4341a12345ee9d172e73886957f6b92b70207231";

@@ -10,6 +10,7 @@ import java.nio.charset.StandardCharsets;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -20,6 +21,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * <p>Drives the {@link McpServer} through in-memory pipes (no real subprocess), sending one
  * JSON-RPC message per line and reading responses from stdout.
  */
+@Tag("slow")
 class McpProtocolTest {
 
     private GateHarness harness;

@@ -8,6 +8,7 @@ import java.util.Map;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -17,6 +18,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * cross-project creation, no silently unprojected (gate-level) creation. Server-side and
  * authoritative, like every other domain check (§1.3).
  */
+@Tag("slow")
 class TicketCreateProjectScopeTest {
 
     private GateHarness harness;

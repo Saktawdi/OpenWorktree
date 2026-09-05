@@ -40,6 +40,7 @@ import javax.sql.DataSource;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 /**
@@ -47,6 +48,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
  * 会话行仍是 ACTIVE。首次使用（发消息 / 拉模型目录）时按会话行重建 serve、写回新端口、
  * 重接上游事件流；复活失败时 ERROR 必须能送达迟到的 SSE 订阅者（否则 UI 转圈到看门狗超时）。
  */
+@Tag("slow")
 class OpenCodeServeResurrectTest {
 
     private Path root;

@@ -16,12 +16,14 @@ import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 
 /**
  * 项目 → 终端 (web console): GET /api/projects/{id}/terminals enumerates the project's own
  * directories (workspace + per-ticket clones), and the /ws/terminal socket authenticates on its
  * first frame, spawns a shell in the requested directory and pipes output back.
  */
+@Tag("slow")
 class TerminalApiTest {
 
     private WebHarness harness;

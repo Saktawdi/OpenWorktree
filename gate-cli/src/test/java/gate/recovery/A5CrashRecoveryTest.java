@@ -11,6 +11,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 
 /**
  * A5 crash recovery (架构落地执行文档 §4 P1, §7.4).
@@ -24,6 +25,7 @@ import org.junit.jupiter.api.Test;
  * leave the tip unmoved and reconcile must be able to complete the publish; a kill mid-push must
  * converge to exactly one commit whether or not receive-pack had accepted before the halt.
  */
+@Tag("slow")
 class A5CrashRecoveryTest {
 
     @Test

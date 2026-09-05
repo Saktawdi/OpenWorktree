@@ -13,6 +13,7 @@ import java.util.Map;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 
 /**
  * 「应用设置」路由挂载（V5 web console）：/api/app/info 必须在鉴权之后、带 HUMAN token 可读，
@@ -21,6 +22,7 @@ import org.junit.jupiter.api.Test;
  * <p>update-check 路由会真的访问 GitHub，不在 HTTP 层测——判定逻辑与 GitHub 出口已在
  * {@code gate.web.service.AppInfoServiceTest} 用假传输覆盖。
  */
+@Tag("slow")
 class AppInfoRoutesTest {
 
     private static final ObjectMapper JSON = new ObjectMapper();

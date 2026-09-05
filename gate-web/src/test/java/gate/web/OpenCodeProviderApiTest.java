@@ -18,12 +18,14 @@ import java.util.Map;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 
 /**
  * OpenCode provider-file CRUD over HTTP (the ai-toolbox-style management surface). The service
  * reads {@code opencode.config.path} on every request, so pointing it at a temp file keeps the
  * user's real {@code ~/.config/opencode} out of the test.
  */
+@Tag("slow")
 class OpenCodeProviderApiTest {
 
     private static final ObjectMapper JSON = new ObjectMapper();

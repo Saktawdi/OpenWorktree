@@ -29,11 +29,13 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 
 /**
  * S4 session orchestration via HTTP (执行文档-后端-web §9.5 A18, §10 S4). Uses a fake
  * {@link AgentSessionPort} so the test does not depend on a real claude binary.
  */
+@Tag("slow")
 class SessionOrchestrationTest {
 
     private WebHarness harness;

@@ -12,12 +12,14 @@ import java.nio.file.Path;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 
 /**
  * V19 快速模式（项目超级工单）：每个项目恰有一条系统创建的常驻工单——直接操作项目原工作区
  * （clone_path 即 workspace_path，不克隆），永不关闭（PATCH 流转被拒），不走门禁
  * （presubmit / sync-base 均被拒），提交通过普通 git 直达主分支。
  */
+@Tag("slow")
 class QuickModeSuperTicketApiTest {
 
     private WebHarness harness;

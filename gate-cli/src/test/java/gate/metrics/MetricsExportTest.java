@@ -10,6 +10,7 @@ import java.util.List;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -21,6 +22,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * prove the export machinery and field completeness, not the real prism token data (which is
  * unavailable anyway — docs/archive/prism-schema-validation.md).
  */
+@Tag("slow")
 class MetricsExportTest {
 
     private GateHarness harness;

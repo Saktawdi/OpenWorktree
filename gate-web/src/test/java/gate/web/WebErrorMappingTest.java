@@ -10,6 +10,7 @@ import java.net.http.HttpResponse;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 
 /**
  * S1 error-model coverage (执行文档-后端-web §4.4, §10 S1 交付物 "错误码映射").
@@ -20,6 +21,7 @@ import org.junit.jupiter.api.Test;
  * gate.domain.error.GateException} thrown inside a route (USAGE→400, REJECT_PRECONDITION→422), and
  * the inline 405 for a whitelisted endpoint invoked with the wrong method.
  */
+@Tag("slow")
 class WebErrorMappingTest {
 
     private WebHarness harness;

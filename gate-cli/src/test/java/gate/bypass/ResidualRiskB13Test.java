@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import gate.ports.infra.ProcessRunner;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 
 /**
  * B13: {@code git push --receive-pack=<own script>} (架构落地执行文档 §11.2, §1.3).
@@ -23,6 +24,7 @@ import org.junit.jupiter.api.Test;
  * <p>The test records the residual-risk boundary so a future reader does not mistake its absence
  * from the REJECT matrix for an oversight.
  */
+@Tag("slow")
 class ResidualRiskB13Test extends BypassTestBase {
 
     @Test

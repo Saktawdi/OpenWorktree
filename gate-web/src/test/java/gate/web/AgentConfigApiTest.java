@@ -10,8 +10,10 @@ import java.net.http.HttpResponse;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 
 /** S3 AgentConfig CRUD via HTTP (执行文档-后端-web §4.1, §9.5 A17). */
+@Tag("slow")
 class AgentConfigApiTest {
 
     private WebHarness harness;

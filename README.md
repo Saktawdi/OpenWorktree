@@ -327,6 +327,18 @@ java -cp "gate-cli/target/classes:gate-cli/target/dependency/*" gate.cli.GateApp
 - **后端起不来**：多数是漏了第 1 步的两条构建命令；看启动终端报错的第一行即可定位。
 - **令牌文件、数据库等都落在 `local-run/`**：整目录不入库，整目录拷走即可迁移。
 
+### 测试分层
+
+全量套件约 17 分钟（真实 Git 操作、Javalin 端到端、故障注入），日常迭代用分层 profile 控制反馈速度。分层靠 JUnit `@Tag("slow")`：打标的是**起真实服务器/Git 仓库的端到端、故障注入/崩溃恢复、真实 CLI smoke**——即崩溃、并发、重放、错权、SSE 断线、任务恢复这类慢而关键的路径；不打标的是纯单元、HTTP 契约、内存协议测试。
+
+| 命令 | 跑什么 | 耗时 |
+|------|--------|------|
+| `mvn test`（默认，等同 `-Pfast`） | 不打 slow 标签的全部测试 | 约 1 分钟 |
+| `mvn test -Pintegration` | **只跑** slow 层（端到端/故障注入/smoke） | 约 15 分钟 |
+| `mvn test -Pfull` | 全量（提交前 / 发版前跑一次） | 约 17 分钟 |
+
+约定：日常开发 `mvn test`；推前置验证 `mvn test -Pintegration`；提交前的最终确认与发版用 `-Pfull`。CI 流水线（native-build / docker-publish）目前 `-DskipTests` 不受影响。
+
 ## 路线图
 
 近期规划方向：

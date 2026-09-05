@@ -9,6 +9,7 @@ import java.util.Map;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -24,6 +25,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * {@code review_run} and {@code commit_and_publish} must <b>never</b> be reachable from the agent
  * domain — otherwise an agent could repeatedly run reviews until it lucks into a pass.
  */
+@Tag("slow")
 class PermissionDomainTest {
 
     private GateHarness harness;

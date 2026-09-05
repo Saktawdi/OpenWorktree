@@ -17,12 +17,14 @@ import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 
 /**
  * S2 acceptance A15/A16 (执行文档-后端-web §9.1, §9.5): the Web gate is equivalent to the MCP/CLI
  * gate — a full happy path through the HTTP console moves the authoritative HEAD by exactly one
  * commit, and bypass attempts fail without moving it.
  */
+@Tag("slow")
 class WebGateEquivalenceTest {
 
     private WebHarness harness;

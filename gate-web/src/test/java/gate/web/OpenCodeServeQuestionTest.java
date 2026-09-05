@@ -40,12 +40,14 @@ import javax.sql.DataSource;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 /**
  * question 工具链路（opencode ≥ question.asked/replied/rejected）：asked 事件 → 卡片 chunk +
  * pending 快照；reply/reject 转发到 serve 的 /question/{id}/reply|reject；replied 事件清除待决。
  */
+@Tag("slow")
 class OpenCodeServeQuestionTest {
 
     private Path root;

@@ -12,11 +12,13 @@ import java.nio.file.Path;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 
 /**
  * S4 concurrency test (执行文档-后端-web §9.4): while a session/ticket lock is held, presubmit fails
  * fast with 422 instead of queueing.
  */
+@Tag("slow")
 class ConcurrentPresubmitAndSessionTest {
 
     private WebHarness harness;

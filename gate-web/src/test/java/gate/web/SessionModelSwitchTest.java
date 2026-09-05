@@ -25,12 +25,14 @@ import java.util.Map;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 
 /**
  * 会话内实时切换模型/推理强度 (OpenChamber-style per-session picker):
  * POST /api/sessions/{id}/model persists the override, GET /api/sessions/{id}/models proxies
  * the session's opencode serve {@code /config/providers}, and the send body carries the switch.
  */
+@Tag("slow")
 class SessionModelSwitchTest {
 
     private WebHarness harness;

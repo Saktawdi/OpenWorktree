@@ -13,11 +13,13 @@ import java.nio.file.Path;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 
 /**
  * V5 project registry + workspace picker (web console): codex-style "select a workspace → create a
  * project", duplicate-workspace guard, per-project ticket counts, and delete-detach semantics.
  */
+@Tag("slow")
 class ProjectsWorkspacesApiTest {
 
     private WebHarness harness;

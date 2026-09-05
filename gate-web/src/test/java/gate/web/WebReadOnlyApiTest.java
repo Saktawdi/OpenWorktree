@@ -18,6 +18,7 @@ import java.util.Map;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 
 /**
  * S1 acceptance A14 (执行文档-后端-web §9.5, §9.6): read-only + synchronous REST.
@@ -32,6 +33,7 @@ import org.junit.jupiter.api.Test;
  *
  * <p>All requests carry the HUMAN bearer token minted by {@link WebHarness}.
  */
+@Tag("slow")
 class WebReadOnlyApiTest {
 
     private WebHarness harness;

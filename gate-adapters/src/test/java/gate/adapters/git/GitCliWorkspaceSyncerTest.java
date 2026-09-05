@@ -11,9 +11,11 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.io.TempDir;
 
 /** Real-git coverage for the non-destructive, fast-forward-only workspace projection. */
+@Tag("slow")
 class GitCliWorkspaceSyncerTest {
 
     @TempDir

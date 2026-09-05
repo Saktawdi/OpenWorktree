@@ -16,10 +16,12 @@ import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 
 /**
  * Integration tests for workspace sync after publish and POST /api/projects/{id}/workspace-sync.
  */
+@Tag("slow")
 class WorkspaceSyncApiTest {
 
     private WebHarness harness;

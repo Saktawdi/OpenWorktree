@@ -12,11 +12,13 @@ import java.nio.file.Path;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 
 /**
  * S2 SSE tests (执行文档-后端-web §9.3): task event stream auth, Content-Type and terminal done
  * event.
  */
+@Tag("slow")
 class WebSseTest {
 
     private WebHarness harness;

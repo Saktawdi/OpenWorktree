@@ -39,12 +39,14 @@ import javax.sql.DataSource;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 /**
  * S3 ClaudeHeadlessAdapter tests (执行文档-后端-web §9.2): a fake {@code claude} stub emits
  * stream-json and the adapter parses session id / message / usage into the session store.
  */
+@Tag("slow")
 class ClaudeHeadlessAdapterTest {
 
     private Path root;

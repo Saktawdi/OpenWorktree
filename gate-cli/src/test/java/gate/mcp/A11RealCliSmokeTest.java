@@ -27,6 +27,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 
 /**
  * A11 real-CLI smoke test (执行文档 §4 P3 A11 — the real-binary counterpart of {@link
@@ -50,6 +51,7 @@ import org.junit.jupiter.api.Test;
  * it can be included or excluded selectively.
  */
 @Tag("smoke")
+@Tag("slow")
 class A11RealCliSmokeTest {
 
     /** JDK used to launch the child JVM (MUST set JAVA_HOME in the child, task requirement §3). */

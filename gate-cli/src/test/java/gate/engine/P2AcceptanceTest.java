@@ -20,6 +20,7 @@ import java.nio.charset.StandardCharsets;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 
 /**
  * P2 acceptance A6 / A8 (架构落地执行文档 §4 P2).
@@ -33,6 +34,7 @@ import org.junit.jupiter.api.Test;
  * <p>A8: the rejected review's evidence is persisted as a structured findings blob carrying
  * file / line / severity / message, exportable for feeding back to the agent.
  */
+@Tag("slow")
 class P2AcceptanceTest {
 
     private GateHarness h;

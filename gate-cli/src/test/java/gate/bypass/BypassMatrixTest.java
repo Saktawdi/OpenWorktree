@@ -11,11 +11,13 @@ import gate.ports.infra.ProcessRunner;
 import java.nio.file.Files;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 
 /**
  * The bypass matrix B1–B19 (架构落地执行文档 §11.2). One test per attack, uniform assertion:
  * REJECT and the authoritative tip never moves.
  */
+@Tag("slow")
 class BypassMatrixTest extends BypassTestBase {
 
     /** B1: commit with --no-verify (bypass client hooks) then push with no gate token. */

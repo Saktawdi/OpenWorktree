@@ -20,6 +20,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
@@ -29,6 +30,7 @@ import org.junit.jupiter.api.io.TempDir;
  * 服务端（WebHarness 不携带 toml 路径 → gate-toml 应答 USAGE，mcp/status 应答 disabled）；
  * 写回路径用真实临时 toml 的 WebServer 实例验证持久化与 .bak 备份。
  */
+@Tag("slow")
 class SettingsRoutesTest {
 
     private static final ObjectMapper JSON = new ObjectMapper();

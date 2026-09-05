@@ -40,6 +40,13 @@
     <spring.boot.version>3.2.5</spring.boot.version>
     <picocli.version>4.7.6</picocli.version>
     <archunit.version>1.2.1</archunit.version>
+
+    <!-- 测试分层（surefire 按 JUnit @Tag 过滤）：
+         fast（默认）= 不打 slow 标签的全部测试——纯单元/HTTP 契约/内存协议测试，秒级反馈；
+         slow = 起真实服务器与 Git 仓库的端到端、故障注入/崩溃恢复、真实 CLI smoke——
+                覆盖崩溃、并发、重放、错权、SSE 断线、任务恢复等难点路径（见 README 测试分层）。 -->
+    <test.groups />
+    <test.excludedGroups>slow</test.excludedGroups>
   </properties>
 
   <dependencyManagement>
@@ -84,7 +91,7 @@
       </dependency>
       <dependency>
         <groupId>gate</groupId>
-        <artifactId>gate-bootstrap</artifactId>
+        <artifactId>gate-adapters</artifactId>
         <version>${project.version}</version>
       </dependency>
     </dependencies>
@@ -112,6 +119,9 @@
             <!-- Tests shell out to real git; keep output decodable on Windows. -->
             <argLine>-Dfile.encoding=UTF-8</argLine>
             <trimStackTrace>false</trimStackTrace>
+            <!-- 测试分层：属性默认值见 <properties>（fast），三个 profile 覆盖 -->
+            <groups>${test.groups}</groups>
+            <excludedGroups>${test.excludedGroups}</excludedGroups>
           </configuration>
         </plugin>
         <plugin>
@@ -154,4 +164,31 @@
       </plugin>
     </plugins>
   </build>
+
+  <profiles>
+    <!-- 快速反馈（日常开发）：默认即 fast，此 profile 只是显式别名。mvn test -Pfast -->
+    <profile>
+      <id>fast</id>
+      <properties>
+        <test.groups />
+        <test.excludedGroups>slow</test.excludedGroups>
+      </properties>
+    </profile>
+    <!-- 只跑重型端到端/故障注入：mvn test -Pintegration -->
+    <profile>
+      <id>integration</id>
+      <properties>
+        <test.groups>slow</test.groups>
+        <test.excludedGroups />
+      </properties>
+    </profile>
+    <!-- 全量（提交前/发版）：mvn test -Pfull -->
+    <profile>
+      <id>full</id>
+      <properties>
+        <test.groups />
+        <test.excludedGroups />
+      </properties>
+    </profile>
+  </profiles>
 </project>

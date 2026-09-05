@@ -11,6 +11,7 @@ import java.util.List;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -23,6 +24,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * {@code extractCost} 只读报告字段（引擎实例零状态）——本测试直接构造证据验证该契约，
  * 不需要起 HTTP stub。
  */
+@Tag("slow")
 class CostExtractionTest {
 
     private GateHarness harness;

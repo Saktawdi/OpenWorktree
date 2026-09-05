@@ -15,11 +15,13 @@ import java.util.concurrent.Executors;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 
 /**
  * V5 runtime/model-fetch endpoints (web console): the real runtime-environment snapshot, and the
  * provider model pull against a local OpenAI-compatible upstream stub.
  */
+@Tag("slow")
 class RuntimeAndModelFetchTest {
 
     private WebHarness harness;

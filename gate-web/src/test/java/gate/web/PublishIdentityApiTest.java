@@ -14,12 +14,14 @@ import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 
 /**
  * 发布身份集成测试：默认提交作者 = 本机 git 作者（未配置则回退 gate），提交时间为发布时刻
  * 真实时间——不再是 [gate_identity] 钉死的 gate@localhost / 1700000000（T-110 后续反馈）。
  * 主题行同时验证"工单号 + 标题 + 轮次"格式。
  */
+@Tag("slow")
 class PublishIdentityApiTest {
 
     private WebHarness harness;

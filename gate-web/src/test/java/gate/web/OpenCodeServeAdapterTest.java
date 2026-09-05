@@ -41,6 +41,7 @@ import javax.sql.DataSource;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 /**
@@ -48,6 +49,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
  * {@code opencode serve} endpoints. The adapter fires {@code prompt_async} and persists the
  * assistant reply from the streamed {@code /event} bus (part updates + completion snapshot).
  */
+@Tag("slow")
 class OpenCodeServeAdapterTest {
 
     private Path root;
