@@ -198,9 +198,23 @@ jobs:
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: desktop/src-tauri
+      # 安装包版本号 = 根 pom <revision>（单一事实来源）。此前安装包后缀长期停在
+      # tauri.conf.json 里手写的 0.1.0，与后端版本脱钩；这里构建期动态注入覆盖，
+      # 不再信任 conf 里的副本（那份仅作本地 dev 兜底，由 doc/local/tools/version-bump 同步）。
+      - name: Read app version from pom revision
+        shell: bash
+        run: |
+          VER=$(grep -o "<revision>[^<]*</revision>" pom.xml | head -1 | sed -e 's/<[^>]*>//g')
+          if [ -z "$VER" ]; then
+            echo "cannot read <revision> from pom.xml" >&2
+            exit 1
+          fi
+          echo "APP_VERSION=$VER" >> "$GITHUB_ENV"
+          echo "installer version: $VER"
       - name: Build installer
         working-directory: desktop
-        run: npx tauri build
+        shell: bash
+        run: npx tauri build --config "{\"version\":\"$APP_VERSION\"}"
 
       - uses: actions/upload-artifact@v4
         with:
