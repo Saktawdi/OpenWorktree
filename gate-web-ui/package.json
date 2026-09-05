@@ -1,7 +1,7 @@
 {
   "name": "gate-web-ui",
   "private": true,
-  "version": "0.2.5",
+  "version": "0.2.7",
   "type": "module",
   "scripts": {
     "dev": "vite",
