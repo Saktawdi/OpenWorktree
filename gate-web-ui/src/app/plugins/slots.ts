@@ -25,7 +25,7 @@ import type {
 export interface SlotContributionMap {
   /** 对话输入区上方的插件快捷 chip（原生 chip 不在此列，归 Composer 域自管）。 */
   "composer.chips": ChatInputActionContribution;
-  /** 设置中心「插件」分区的面板挂件。 */
+  /** 顶栏「插件」管理页面的面板挂件（如快捷语录管理面板）。 */
   "settings.plugins": PanelWidgetContribution;
   /** 顶栏导航的插件整页（页面体惰性挂载，禁用/重载时优雅关闭）。 */
   "nav.pages": PageContribution;

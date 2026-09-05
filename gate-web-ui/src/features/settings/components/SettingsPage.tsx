@@ -7,9 +7,8 @@ import { GateTomlBlock } from "./toml/GateTomlBlock";
 import { McpBlock } from "./mcp/McpBlock";
 import { LlmBlock } from "./llm/LlmBlock";
 import { AppInfoBlock } from "./app-info/AppInfoBlock";
-import { PluginsBlock } from "@/app/plugins/components/PluginsBlock";
 
-/** 设置中心：系统设置（gate.toml）/ MCP / LLM / 插件 / 应用信息五个分区。 */
+/** 设置中心：系统设置（gate.toml）/ MCP / LLM / 应用信息四个分区（插件管理已移至顶栏一级视图）。 */
 export function SettingsPage() {
   const mode = useApp((s) => s.mode);
   const [tab, setTab] = useState<SettingsTab>("toml");
@@ -23,7 +22,7 @@ export function SettingsPage() {
               <GearSix size={22} className="text-faint" />
             </div>
             <div className="mt-4 text-[15px] font-semibold">设置中心需要连接后端</div>
-            <div className="mt-1.5 text-[12.5px] text-faint leading-relaxed">当前为演示模式，系统设置 / MCP / LLM / 插件 / 应用设置仅在连接后端后可用</div>
+            <div className="mt-1.5 text-[12.5px] text-faint leading-relaxed">当前为演示模式，系统设置 / MCP / LLM / 应用设置仅在连接后端后可用</div>
             <button className="btn btn-primary mt-5" onClick={openConnect}>连接后端</button>
           </div>
         </div>
@@ -48,7 +47,6 @@ export function SettingsPage() {
                 {tab === "toml" && <GateTomlBlock />}
                 {tab === "mcp" && <McpBlock />}
                 {tab === "llm" && <LlmBlock />}
-                {tab === "plugins" && <PluginsBlock />}
                 {tab === "app" && <AppInfoBlock />}
               </motion.div>
             </AnimatePresence>

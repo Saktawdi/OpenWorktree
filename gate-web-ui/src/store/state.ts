@@ -77,7 +77,7 @@ export interface AppState {
   token: string;
   connectOpen: boolean;
   theme: Theme;
-  view: "workbench" | "kanban" | "projects" | "agents" | "settings" | "repo" | "plugin-page";
+  view: "workbench" | "kanban" | "projects" | "agents" | "plugins" | "settings" | "repo" | "plugin-page";
   /** 仓库视图整页（view="repo"）当前展示的项目；null = 未打开。 */
   repoViewProjectId: string | null;
   /** 插件整页（view="plugin-page"）当前打开的页面贡献 id；null = 未打开。 */

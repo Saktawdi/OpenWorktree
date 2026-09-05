@@ -10,6 +10,7 @@ import {
   Kanban,
   Minus,
   Plus,
+  PuzzlePiece,
   SquaresFour,
   Sparkle,
   FolderPlus,
@@ -73,6 +74,7 @@ const VIEWS = [
   { key: "kanban", label: "看板", Icon: Kanban },
   { key: "projects", label: "项目", Icon: FolderOpen },
   { key: "agents", label: "智能体", Icon: Sparkle },
+  { key: "plugins", label: "插件", Icon: PuzzlePiece },
 ] as const;
 
 function ViewSwitch() {

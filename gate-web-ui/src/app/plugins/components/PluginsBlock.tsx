@@ -1,5 +1,5 @@
 /**
- * 插件系统（app/plugins）：设置中心「插件」分区。
+ * 插件系统（app/plugins）：顶栏「插件」一级页面的核心面板。
  * 插件列表（启停/重载/错误展示）+ 各插件注册的面板挂件渲染区（管理界面都在这里）。
  */
 import { useEffect, useState } from "react";
