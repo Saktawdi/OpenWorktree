@@ -1,0 +1,17 @@
+{
+  "name": "gate-plugin-template",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "build": "tsc --noEmit -p tsconfig.json && vite build",
+    "watch": "vite build --watch",
+    "deploy": "tsc --noEmit -p tsconfig.json && vite build && node scripts/install.mjs"
+  },
+  "devDependencies": {
+    "@types/react": "^19.1.0",
+    "react": "^19.1.0",
+    "typescript": "~5.8.3",
+    "vite": "^6.3.2"
+  }
+}

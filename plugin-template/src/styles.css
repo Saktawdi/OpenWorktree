@@ -1,0 +1,6 @@
+/* 插件私有样式：宿主的全局类（card/btn/chip/text-* …）在插件 DOM 上同样生效（同一 document），
+   这里只写插件特有的规则。类名一律带插件前缀（tpl-），避免与宿主及其它插件冲突。 */
+.tpl-panel {
+  display: flex;
+  flex-direction: column;
+}

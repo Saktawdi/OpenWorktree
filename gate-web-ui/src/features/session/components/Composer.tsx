@@ -3,29 +3,26 @@ import {
   Brain,
   CaretDown,
   Check,
-  CheckCircle,
   Cpu,
-  Eye,
   Lock,
-  LockKey,
   MagnifyingGlass,
   PaperPlaneRight,
   ShieldCheck,
   Sparkle,
   Stop,
-  TerminalWindow,
-  Wrench,
   X,
 } from "@phosphor-icons/react";
-import type { Icon } from "@phosphor-icons/react";
 import { actions } from "@/app/actions";
 import { appStore, NO_CHAT, showToast, useApp } from "@/store";
+import { ChatActionChips } from "@/app/plugins/components/ChatActionChips";
 import { clearDraftModelSel, draftCatalogFromOc } from "@/features/session";
 import { setAgentId } from "@/features/agent";
 import { formatTokens, variantLabel } from "@/shared/format";
-import { extractAbsolutePath,
+import {
+  extractAbsolutePath,
   isAttachableImage,
-  toPendingAttachment, } from "@/shared/attachments";
+  toPendingAttachment,
+} from "@/shared/attachments";
 import type { CatalogProvider, PendingAttachment, SessionModelSel } from "@/shared/types";
 
 function AgentPicker({ ticketNo }: { ticketNo: string }) {
@@ -652,46 +649,11 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
     });
   };
 
-  const quick = [
-    diffs > 0 && !terminal
-      ? { label: "预提审", prompt: "__presubmit__", Icon: LockKey }
-      : null,
-    diffs > 0 ? { label: "解释当前变更", prompt: "请解释当前工作区的全部改动", Icon: Eye } : null,
-    { label: "运行本地单测", prompt: "运行本地单元测试并汇总结果", Icon: TerminalWindow },
-    // 重启过的活跃工单才有「重启理由」注入上下文（AgentContextPrompt），语录才有意义
-    restartCount > 0
-      ? { label: "完成此工单", prompt: "完成此工单，处理下重启理由", Icon: CheckCircle }
-      : null,
-    findingsCount > 0 && stage === "REJECTED"
-      ? { label: "按审查意见修复", prompt: "__findings__", Icon: Wrench }
-      : null,
-  ].filter(Boolean) as Array<{ label: string; prompt: string; Icon: Icon }>;
-
   return (
     <div className="shrink-0 px-5 py-3">
       <div className="max-w-[760px] mx-auto space-y-2">
-        {!terminal && (quick.length > 0 || usage) && (
-          <div className="flex items-center gap-3">
-            {quick.length > 0 && (
-              <div className="flex flex-wrap gap-1.5 min-w-0">
-                {quick.map(({ label, prompt, Icon: QIcon }) => (
-                  <button
-                    key={label}
-                    disabled={busy}
-                    className="composer-chip"
-                    onClick={() => {
-                      if (prompt === "__findings__") actions.returnWithFindings(ticketNo);
-                      else if (prompt === "__presubmit__") actions.presubmit(ticketNo);
-                      else actions.sendPrompt(ticketNo, prompt);
-                    }}
-                  >
-                    <QIcon size={12} weight="fill" className="opacity-60" />
-                    {label}
-                  </button>
-                ))}
-              </div>
-            )}
-            <span className="flex-1" />
+        {!terminal && (
+          <ChatActionChips ticketNo={ticketNo} busy={busy} insertText={insertAtCursor}>
             {usage && (
               <span
                 className="font-mono text-[11px] text-faint tabular-nums whitespace-nowrap"
@@ -700,7 +662,7 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
                 ↑ {formatTokens(usage.promptTokens)} · ↓ {formatTokens(usage.completionTokens)}
               </span>
             )}
-          </div>
+          </ChatActionChips>
         )}
 
         {/* 统一输入卡：textarea 与控制栏同卡，聚焦时整卡亮起（参考 OpenChamber） */}

@@ -1,0 +1,10 @@
+{
+  "id": "hello-template",
+  "name": "空白模板插件",
+  "version": "0.1.0",
+  "apiVersion": "1",
+  "entry": "dist/index.js",
+  "css": "dist/style.css",
+  "description": "插件开发模板：复制本目录为起点，改 id/name 后开发你自己的插件",
+  "permissions": []
+}

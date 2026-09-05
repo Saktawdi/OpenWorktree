@@ -6,6 +6,7 @@ import { seedDemo } from "@/demo/seed";
 import { detectBackend } from "@/net";
 import { loadEngineConfig } from "@/features/gate";
 import { startAgentBusyPolling, stopAgentBusyPolling } from "@/features/agent";
+import { initPlugins, shutdownPlugins } from "@/app/plugins/host";
 import { actions } from "./actions";
 
 export async function boot() {
@@ -52,6 +53,8 @@ export async function boot() {
     // 刷新后走 sessionStorage 恢复，不会经过 connectLive：引擎配置（AI 审查入口的
     // 可用性判断）必须在这里补拉，否则 engine 恒为 null，按钮永远停在"配置读取中"。
     void loadEngineConfig();
+    // 插件宿主：live + 连通才加载（demo 无后端，没有插件目录与资产可取）。
+    void initPlugins();
   } else if (conn !== "ok") {
     appStore.setState({ runningAgents: { count: 0, sessions: [] } });
     stopAgentBusyPolling();
@@ -63,10 +66,13 @@ export async function boot() {
     if (cur.mode !== prevMode || cur.conn !== prevConn) {
       prevMode = cur.mode;
       prevConn = cur.conn;
-      if (cur.mode === "live" && cur.conn === "ok") startAgentBusyPolling();
-      else {
+      if (cur.mode === "live" && cur.conn === "ok") {
+        startAgentBusyPolling();
+        void initPlugins();
+      } else {
         appStore.setState({ runningAgents: { count: 0, sessions: [] } });
         stopAgentBusyPolling();
+        shutdownPlugins();
       }
     }
   });

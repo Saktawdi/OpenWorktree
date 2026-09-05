@@ -5,6 +5,14 @@ target/
 gate-web-ui/node_modules/
 gate-web-ui/dist/
 
+# Gate 插件工程（plugin-template / plugins/*）：依赖与构建产物不入库
+plugin-template/node_modules/
+plugin-template/dist/
+plugin-template/.vite-temp/
+plugins/*/node_modules/
+plugins/*/dist/
+plugins/*/.vite-temp/
+
 # Archival / test output — build artifacts dumps
 doc/归档/
 doc/local/

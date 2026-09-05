@@ -20,6 +20,11 @@ export default defineConfig({
         target: backend,
         changeOrigin: true,
       },
+      // 插件资产（ES import 无法带 Authorization 头，走免鉴权资产端点）
+      "/plugins": {
+        target: backend,
+        changeOrigin: true,
+      },
       "/ws": {
         target: backend,
         ws: true,

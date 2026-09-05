@@ -1,0 +1,21 @@
+{
+  "name": "gate-plugin-quick-quotes",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "build": "tsc --noEmit -p tsconfig.json && vite build",
+    "watch": "vite build --watch",
+    "deploy": "tsc --noEmit -p tsconfig.json && vite build && node scripts/install.mjs"
+  },
+  "devDependencies": {
+    "@dnd-kit/core": "^6.3.1",
+    "@dnd-kit/sortable": "^10.0.0",
+    "@dnd-kit/utilities": "^3.2.2",
+    "@phosphor-icons/react": "^2.1.7",
+    "@types/react": "^19.1.0",
+    "react": "^19.1.0",
+    "typescript": "~5.8.3",
+    "vite": "^6.3.2"
+  }
+}
