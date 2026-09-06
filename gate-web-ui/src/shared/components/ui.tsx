@@ -161,6 +161,22 @@ function legacyCopyText(text: string): boolean {
   return ok;
 }
 
+/** 复制文本：优先 Clipboard API，不可用或被权限策略拒绝（WebView/iframe 等）时回退
+ *  临时 textarea + execCommand 老路；返回是否复制成功，供调用方给出真实反馈。 */
+export async function copyText(text: string): Promise<boolean> {
+  const t = String(text ?? "");
+  if (!t) return false;
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(t);
+      return true;
+    } catch {
+      /* 权限策略拒绝时走 execCommand 老路 */
+    }
+  }
+  return legacyCopyText(t);
+}
+
 export function CopyButton({ text, label }: { text: string; label?: string }) {
   const [done, setDone] = useState(false);
   return (
@@ -172,18 +188,13 @@ export function CopyButton({ text, label }: { text: string; label?: string }) {
       onClick={() => {
         const t = String(text ?? "");
         if (!t) return;
-        const flash = () => {
-          setDone(true);
-          setTimeout(() => setDone(false), 1400);
-        };
         // 复制成功才闪 ✓；API 缺失/被拒时回退 execCommand，两路都失败不假装成功。
-        if (navigator.clipboard?.writeText) {
-          navigator.clipboard.writeText(t).then(flash).catch(() => {
-            if (legacyCopyText(t)) flash();
-          });
-        } else if (legacyCopyText(t)) {
-          flash();
-        }
+        void copyText(t).then((ok) => {
+          if (ok) {
+            setDone(true);
+            setTimeout(() => setDone(false), 1400);
+          }
+        });
       }}
     >
       {done ? (

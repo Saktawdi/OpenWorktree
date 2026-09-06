@@ -3,7 +3,7 @@
  * 用量、任务清单与上下文占用。聊天条目与回合见 chat.ts。
  */
 import { appStore } from "@/store";
-import { saveComposerDrafts, savePendingQuotes } from "@/store/prefs";
+import { saveComposerDrafts, savePendingQuotes, saveSessionGroups, saveSessionPinned } from "@/store/prefs";
 import type { CatalogProvider, ChatSession, QuoteChip, SessionModelSel, TodoItem } from "@/shared/types";
 import { QUOTE_MAX_CHARS } from "@/shared/quotes";
 import { uid } from "@/shared/format";
@@ -231,104 +231,149 @@ export function dropSessionPendings(sessionId: string) {
   });
 }
 
-/* ─── 会话分组管理 ─── */
+/* ─── 会话分组与置顶（T-105） ───
+ * 分组是端侧软数据（live 后端暂无分组 API）：分组表 sessionGroups、会话归属表
+ * sessionGroupMembers（sessionId → groupId）都独立于会话对象存放，列表刷新覆盖时
+ * 归属不丢；置顶是有序 sessionId 数组，渲染时置顶段优先。三者持久化到 localStorage
+ * （见 store/prefs.ts），写操作经 250ms 防抖合并落盘，避免连点反复刷存储。 */
 
-/** 创建会话分组 */
-export function createSessionGroup(ticketNo: string, groupId: string, groupName: string, color: string) {
-  // 更新该工单下所有会话的分组信息
-  set((st) => ({
-    sessions: {
-      ...st.sessions,
-      [ticketNo]: (st.sessions[ticketNo] ?? []).map(session => ({
-        ...session,
-        groupId,
-        groupName
-      })),
-    }
-  }));
+/** 分组名称长度上限（新建/编辑分组对话框用）。 */
+export const GROUP_NAME_MAX = 24;
+
+export const GROUP_COLOR_PALETTE = [
+  "#35d99e", // accent 绿
+  "#67e8f9", // 青
+  "#7cc7f7", // 信息蓝
+  "#b4a3f7", // 紫
+  "#f5b84f", // 琥珀
+  "#fb7185", // 玫红
+  "#f472b6", // 粉
+  "#a3e635", // 草绿
+] as const;
+
+let sessionGroupsPersistTimer: ReturnType<typeof setTimeout> | null = null;
+let sessionPinnedPersistTimer: ReturnType<typeof setTimeout> | null = null;
+
+function scheduleSessionGroupsPersist() {
+  if (sessionGroupsPersistTimer) clearTimeout(sessionGroupsPersistTimer);
+  sessionGroupsPersistTimer = setTimeout(() => {
+    sessionGroupsPersistTimer = null;
+    const st = appStore.getState();
+    saveSessionGroups({ groups: st.sessionGroups, members: st.sessionGroupMembers });
+  }, 250);
 }
 
-/** 将会话移入分组 */
-export function moveSessionToGroup(ticketNo: string, sessionId: string, groupId: string, groupName: string) {
-  set((st) => ({
-    sessions: {
-      ...st.sessions,
-      [ticketNo]: (st.sessions[ticketNo] ?? []).map(session =>
-        session.id === sessionId
-          ? { ...session, groupId, groupName }
-          : session
-      ),
-    }
-  }));
+function scheduleSessionPinnedPersist() {
+  if (sessionPinnedPersistTimer) clearTimeout(sessionPinnedPersistTimer);
+  sessionPinnedPersistTimer = setTimeout(() => {
+    sessionPinnedPersistTimer = null;
+    saveSessionPinned(appStore.getState().sessionPinned);
+  }, 250);
 }
 
-/** 删除会话分组（将会话从分组中移出） */
-export function removeSessionGroup(ticketNo: string) {
+/** 创建分组（返回新分组 id），名称必填、颜色取调色板。 */
+export function createSessionGroup(ticketNo: string, name: string, color: string): string {
+  const id = uid("sgrp");
   set((st) => ({
-    sessions: {
-      ...st.sessions,
-      [ticketNo]: (st.sessions[ticketNo] ?? []).map(session => ({
-        ...session,
-        groupId: null,
-        groupName: null
-      })),
-    }
+    sessionGroups: {
+      ...st.sessionGroups,
+      [ticketNo]: [...(st.sessionGroups[ticketNo] ?? []), { id, name, color }],
+    },
   }));
+  scheduleSessionGroupsPersist();
+  return id;
 }
 
-/** 更新会话分组信息 */
-export function updateSessionGroup(ticketNo: string, sessionId: string, groupId: string | null, groupName: string | null) {
-  set((st) => ({
-    sessions: {
-      ...st.sessions,
-      [ticketNo]: (st.sessions[ticketNo] ?? []).map(session =>
-        session.id === sessionId
-          ? { ...session, groupId, groupName }
-          : session
-      ),
+/** 更新分组（改名/换色）；分组不存在时是 no-op。 */
+export function updateSessionGroup(
+  ticketNo: string,
+  groupId: string,
+  patch: { name?: string; color?: string },
+) {
+  set((st) => {
+    const current = st.sessionGroups[ticketNo] ?? [];
+    if (!current.some((g) => g.id === groupId)) return st;
+    const next = current.map((g) =>
+      g.id === groupId
+        ? { ...g, ...(patch.name !== undefined ? { name: patch.name } : {}), ...(patch.color ? { color: patch.color } : {}) }
+        : g,
+    );
+    return { sessionGroups: { ...st.sessionGroups, [ticketNo]: next } };
+  });
+  scheduleSessionGroupsPersist();
+}
+
+/** 删除分组：其归属的会话回到未分组（归属映射按 groupId 全局清除，无跨工单串扰）。 */
+export function deleteSessionGroup(ticketNo: string, groupId: string) {
+  set((st) => {
+    const current = st.sessionGroups[ticketNo] ?? [];
+    if (!current.some((g) => g.id === groupId)) return st;
+    const sessionGroups = { ...st.sessionGroups };
+    if (current.every((g) => g.id === groupId)) delete sessionGroups[ticketNo];
+    else sessionGroups[ticketNo] = current.filter((g) => g.id !== groupId);
+    const sessionGroupMembers = { ...st.sessionGroupMembers };
+    let touched = false;
+    for (const [sid, gid] of Object.entries(sessionGroupMembers)) {
+      if (gid === groupId) {
+        delete sessionGroupMembers[sid];
+        touched = true;
+      }
     }
-  }));
+    return touched ? { sessionGroups, sessionGroupMembers } : { sessionGroups };
+  });
+  scheduleSessionGroupsPersist();
+}
+
+/** 会话移入分组（groupId 传 null = 移出分组）；目标组不存在时 no-op。 */
+export function moveSessionToGroup(ticketNo: string, sessionId: string, groupId: string | null) {
+  set((st) => {
+    if (groupId !== null && groupId !== "ungrouped"
+      && !(st.sessionGroups[ticketNo] ?? []).some((g) => g.id === groupId)) {
+      return st;
+    }
+    const sessionGroupMembers = { ...st.sessionGroupMembers };
+    if (groupId === null || groupId === "ungrouped") delete sessionGroupMembers[sessionId];
+    else sessionGroupMembers[sessionId] = groupId;
+    return { sessionGroupMembers };
+  });
+  scheduleSessionGroupsPersist();
+}
+
+/** 置顶/取消置顶会话（在其状态与分段内置顶；置顶段优先展示）。 */
+export function setSessionPinned(ticketNo: string, sessionId: string, pinned: boolean) {
+  set((st) => {
+    const current = st.sessionPinned[ticketNo] ?? [];
+    const has = current.includes(sessionId);
+    if (pinned === has) return st;
+    const sessionPinned = { ...st.sessionPinned };
+    sessionPinned[ticketNo] = pinned ? [sessionId, ...current] : current.filter((x) => x !== sessionId);
+    return { sessionPinned };
+  });
+  scheduleSessionPinnedPersist();
+}
+
+/** 覆写某工单的置顶会话序列（渲染层分区编辑后的规范化写回；未知 id 原样保留）。 */
+export function setSessionPinnedOrder(ticketNo: string, orderedIds: string[]) {
+  set((st) => {
+    const current = st.sessionPinned[ticketNo] ?? [];
+    if (current.length === orderedIds.length && current.every((id, i) => orderedIds[i] === id)) return st;
+    return { sessionPinned: { ...st.sessionPinned, [ticketNo]: [...orderedIds] } };
+  });
+  scheduleSessionPinnedPersist();
 }
 
 /** 重命名会话标题 */
 export function renameSession(ticketNo: string, sessionId: string, newTitle: string) {
+  const title = newTitle.trim();
+  if (!title) return;
   set((st) => ({
     sessions: {
       ...st.sessions,
-      [ticketNo]: (st.sessions[ticketNo] ?? []).map(session =>
-        session.id === sessionId
-          ? { ...session, title: newTitle }
-          : session
+      [ticketNo]: (st.sessions[ticketNo] ?? []).map((session) =>
+        session.id === sessionId ? { ...session, title, updatedAt: Date.now() } : session,
       ),
-    }
+    },
   }));
-}
-
-/** 将会话移动到列表顶部（在其状态分类中） */
-export function moveSessionToTop(ticketNo: string, sessionId: string) {
-  set((st) => {
-    const sessions = st.sessions[ticketNo] ?? [];
-    // 找到会话索引
-    const index = sessions.findIndex(s => s.id === sessionId);
-    if (index === -1) return st;
-    
-    const session = sessions[index];
-    // 移除会话
-    const newSessions = [...sessions.slice(0, index), ...sessions.slice(index + 1)];
-    // 根据状态确定插入位置（活跃会话在前，归档在后）
-    const activeCount = newSessions.filter(s => s.status === "active").length;
-    const insertPos = session.status === "active" ? 0 : activeCount;
-    // 插入到指定位置
-    const finalSessions = [...newSessions.slice(0, insertPos), session, ...newSessions.slice(insertPos)];
-    
-    return {
-      ...st,
-      sessions: {
-        ...st.sessions,
-        [ticketNo]: finalSessions
-      }
-    };
-  });
 }
 
 /* ─── 用量 / 任务清单 / 上下文占用（按工单键暂存，会话切换时重建） ─── */
@@ -479,6 +524,40 @@ export function switchSession(ticketNo: string, sessionId: string) {
   }));
 }
 
+/**
+ * 会话消亡后的端侧抹除（demo 删除、live 删除、列表收敛三条路径共用）：
+ * 从所有工单的置顶表剔除该会话，并删除分组归属映射——归属是一种「按 sessionId
+ * 键控的软数据」，会话删除后若不收敛，残留会让后端重建/重放的同 id 新会话被
+ * 静默归入旧分组，也会顺着分组持久化不断写进 localStorage。空入参是 no-op。
+ */
+export function dropSessionExtras(sessionIds: string[]) {
+  if (sessionIds.length === 0) return;
+  const kill = new Set(sessionIds);
+  set((st) => {
+    const sessionPinned = { ...st.sessionPinned };
+    let pinnedTouched = false;
+    for (const [no, ids] of Object.entries(sessionPinned)) {
+      const next = ids.filter((x) => !kill.has(x));
+      if (next.length !== ids.length) {
+        if (next.length > 0) sessionPinned[no] = next;
+        else delete sessionPinned[no];
+        pinnedTouched = true;
+      }
+    }
+    const sessionGroupMembers = { ...st.sessionGroupMembers };
+    let memberTouched = false;
+    for (const sid of kill) {
+      if (sid in sessionGroupMembers) {
+        delete sessionGroupMembers[sid];
+        memberTouched = true;
+      }
+    }
+    return memberTouched || pinnedTouched ? { sessionPinned, sessionGroupMembers } : st;
+  });
+  scheduleSessionGroupsPersist();
+  scheduleSessionPinnedPersist();
+}
+
 export function deleteSession(ticketNo: string, sessionId: string) {
   set((st) => {
     const sessions = (st.sessions[ticketNo] ?? []).filter((sess) => sess.id !== sessionId);
@@ -489,4 +568,6 @@ export function deleteSession(ticketNo: string, sessionId: string) {
       activeSessionId: { ...st.activeSessionId, [ticketNo]: newActiveId },
     };
   });
+  // 置顶与分组归属随会话消亡一并抹除（归属残留会让重建/重放的同 id 会话被静默归入旧分组）
+  dropSessionExtras([sessionId]);
 }

@@ -33,6 +33,7 @@ import type {
   VerdictInfo,
   QuoteChip,
   EvidenceBundle,
+  SessionGroup,
 } from "@/shared/types";
 import {
   DEMO_AGENTS,
@@ -50,6 +51,8 @@ import {
   loadGateSections,
   loadKanbanStages,
   loadPendingQuotes,
+  loadSessionGroups,
+  loadSessionPinned,
   loadTheme,
   loadVisibleStages,
 } from "./prefs";
@@ -150,6 +153,12 @@ export interface AppState {
   order: Record<string, number>;
   sessions: Record<string, ChatSession[]>;
   activeSessionId: Record<string, string>;
+  /** 会话分组表（key = 工单号；T-105 端侧软数据，localStorage 持久化，live 后端无分组 API）。 */
+  sessionGroups: Record<string, SessionGroup[]>;
+  /** 分组归属（key = sessionId → groupId）：独立于会话对象，随列表刷新不丢。 */
+  sessionGroupMembers: Record<string, string>;
+  /** 置顶会话（key = 工单号；有序 sessionId 数组，列表内置顶段优先展示）。 */
+  sessionPinned: Record<string, string[]>;
   /** Live model catalog per session (from the session's opencode serve). */
   sessionModels: Record<string, CatalogProvider[]>;
   /** Per-session live model / reasoning-effort selection (会话内实时切换). */
@@ -180,6 +189,8 @@ export interface AppState {
   /** 右侧面板三段的展开状态（localStorage 持久化）。 */
   gateSections: GateSections;
 }
+
+const persistedGroups = loadSessionGroups();
 
 export const appStore = create<AppState>(() => ({
   booted: false,
@@ -236,6 +247,9 @@ export const appStore = create<AppState>(() => ({
   order: {},
   sessions: {},
   activeSessionId: {},
+  sessionGroups: persistedGroups.groups,
+  sessionGroupMembers: persistedGroups.members,
+  sessionPinned: loadSessionPinned(),
   draftModelSel: {},
   composerDrafts: loadComposerDrafts(),
   pendingQuotes: loadPendingQuotes(),

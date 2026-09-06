@@ -8,7 +8,7 @@ import { isTodoTool, parseTodos } from "@/shared/todoUtils";
 import type { ChatItem } from "@/shared/types";
 import { mapHistoryMessage, mapSession, type RawMessage, type RawSession } from "./model";
 import { dropLiveTurn, applyReplyMetaDefaults } from "./chat";
-import { dropSessionPendings, refreshTicketBusy, setContextTokens, setSessionBusy, setTodos } from "./state";
+import { dropSessionExtras, dropSessionPendings, refreshTicketBusy, setContextTokens, setSessionBusy, setTodos } from "./state";
 
 export function ticketNoOfSession(id: string): string | null {
   for (const [no, list] of Object.entries(appStore.getState().sessions)) {
@@ -18,6 +18,7 @@ export function ticketNoOfSession(id: string): string | null {
 }
 
 export async function loadTicketSessions(no: string) {
+  const prevIds = new Set((appStore.getState().sessions[no] ?? []).map((s) => s.id));
   const data = await api<{ sessions: RawSession[] }>(`/api/tickets/${no}/sessions`);
   const list = (data.sessions ?? []).map((s) => mapSession(no, s));
   appStore.setState((st) => {
@@ -38,6 +39,10 @@ export async function loadTicketSessions(no: string) {
       activeSessionId: { ...st.activeSessionId, [no]: activeId },
     };
   });
+  // 列表收敛：本工单从上次列表里消失的会话，其置顶/分组归属随刷新抹除，
+  // 避免带外删除（他端/后端）后归属残留被同 id 重建会话静默继承
+  const gone = [...prevIds].filter((id) => !list.some((s) => s.id === id));
+  if (gone.length > 0) dropSessionExtras(gone);
 }
 
 /**
@@ -47,9 +52,13 @@ export async function loadTicketSessions(no: string) {
  */
 export async function refreshTicketSessionsMeta(no: string) {
   try {
+    const prevIds = new Set((appStore.getState().sessions[no] ?? []).map((s) => s.id));
     const data = await api<{ sessions: RawSession[] }>(`/api/tickets/${no}/sessions`);
     const list = (data.sessions ?? []).map((s) => mapSession(no, s));
     appStore.setState((st) => ({ sessions: { ...st.sessions, [no]: list } }));
+    // 与 loadTicketSessions 同口径的归属收敛（被动刷新路径也要收敛消失会话的残留）
+    const gone = [...prevIds].filter((id) => !list.some((s) => s.id === id));
+    if (gone.length > 0) dropSessionExtras(gone);
   } catch {
     /* 静默失败：下个常规动作还有一次刷新机会 */
   }
@@ -83,6 +92,8 @@ export async function deleteSessionLive(id: string, ticketNo: string) {
   setSessionBusy(id, false);
   // 会话删除后其未决权限/提问随会话消亡，工单列表的待决徽标同步注销
   dropSessionPendings(id);
+  // 置顶/分组归属一并抹除——live 与 demo 走同一条收敛路径，归属残留不让同 id 重建会话复用
+  dropSessionExtras([id]);
   await loadTicketSessions(ticketNo).catch(() => {});
   refreshTicketBusy(ticketNo);
 }

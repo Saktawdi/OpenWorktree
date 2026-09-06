@@ -744,6 +744,25 @@ body {
   animation: spin 0.8s linear infinite;
 }
 
+/* ── 会话列表（T-105）：运行中小圆点呼吸 ──
+   语义与工单列表的运行中特效一脉相承：只有会话的 Agent 流正在生成时，
+   指示点才呼吸（accent 色 + 同步呼吸的轻晕）；选中/挂载不构成运行态。 */
+.session-run-dot {
+  animation: sessionDotBreathe 2.2s ease-in-out infinite;
+}
+@keyframes sessionDotBreathe {
+  0%, 100% {
+    opacity: 1;
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-accent) 10%, transparent);
+  }
+  50% {
+    opacity: 0.35;
+    box-shadow:
+      0 0 0 2px color-mix(in srgb, var(--color-accent) 26%, transparent),
+      0 0 8px 1px color-mix(in srgb, var(--color-accent) 50%, transparent);
+  }
+}
+
 /* ═══════════════════════════════════════════════════════════
    7. TICKET LIST ATTENTION BADGES (T-120 增强)
    待决询问：琥珀内缘提示环 + 待回答/待授权徽标（agent 等用户）；

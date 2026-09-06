@@ -2,7 +2,7 @@
  * 本地偏好持久化（store）：localStorage 键的集中读写。
  * 键名与读取默认值都在这里登记，域内 setter 只调用对应 save/load。
  */
-import type { Stage, QuoteChip } from "@/shared/types";
+import type { Stage, QuoteChip, SessionGroup } from "@/shared/types";
 import { ALL_STAGES, KANBAN_DEFAULT_STAGES, KANBAN_LANE_COUNT, KANBAN_STAGE_ORDER } from "@/shared/format";
 import type { GateSections } from "./state";
 
@@ -15,6 +15,14 @@ const GATE_SECTIONS_KEY = "gate-sections";
 const COMPOSER_DRAFTS_KEY = "gate-composer-drafts";
 const PENDING_QUOTES_KEY = "gate-pending-quotes";
 const TERMINAL_CLOSE_ALL_KEY = "gate-terminal-close-all-confirm";
+const SESSION_GROUPS_KEY = "gate-session-groups";
+const SESSION_PINNED_KEY = "gate-session-pinned";
+
+/** 会话分组的落盘形态（T-105）：分组表 + 会话归属表（sessionId → groupId）。 */
+export interface PersistedSessionGroups {
+  groups: Record<string, SessionGroup[]>;
+  members: Record<string, string>;
+}
 
 export const DEFAULT_GATE_SECTIONS: GateSections = { info: true, pipeline: true, sessions: true };
 
@@ -204,5 +212,69 @@ export function saveTerminalCloseAllConfirmed(neverAsk: boolean) {
     localStorage.setItem(TERMINAL_CLOSE_ALL_KEY, neverAsk ? "1" : "0");
   } catch {
     /* ignore */
+  }
+}
+
+/* ─── 会话分组（T-105）：端侧软数据（live 后端无分组 API），损坏条目直接丢弃 ─── */
+
+/** 读取落盘的分组表 + 会话归属表；非法/损坏条目跳过，保证恢复后的形状总是完整。 */
+export function loadSessionGroups(): PersistedSessionGroups {
+  try {
+    const raw = typeof window !== "undefined" ? localStorage.getItem(SESSION_GROUPS_KEY) : null;
+    if (!raw) return { groups: {}, members: {} };
+    const parsed = JSON.parse(raw) as Partial<PersistedSessionGroups>;
+    const groups: Record<string, SessionGroup[]> = {};
+    for (const [no, list] of Object.entries(parsed.groups ?? {})) {
+      if (!Array.isArray(list)) continue;
+      const valid = list.filter(
+        (g): g is SessionGroup =>
+          !!g && typeof g === "object" && typeof g.id === "string" && g.id !== "" &&
+          typeof g.name === "string" && g.name.trim() !== "" && typeof g.color === "string" && g.color !== "",
+      );
+      if (valid.length > 0) groups[no] = valid;
+    }
+    const members: Record<string, string> = {};
+    for (const [sid, gid] of Object.entries(parsed.members ?? {})) {
+      if (typeof sid === "string" && sid !== "" && typeof gid === "string" && gid !== "") {
+        members[sid] = gid;
+      }
+    }
+    return { groups, members };
+  } catch {
+    return { groups: {}, members: {} };
+  }
+}
+
+export function saveSessionGroups(data: PersistedSessionGroups) {
+  try {
+    localStorage.setItem(SESSION_GROUPS_KEY, JSON.stringify(data));
+  } catch {
+    /* 存储不可用时降级为仅本窗口内保留 */
+  }
+}
+
+/** 读取落盘的置顶会话（key = 工单号；有序 sessionId 数组）。 */
+export function loadSessionPinned(): Record<string, string[]> {
+  try {
+    const raw = typeof window !== "undefined" ? localStorage.getItem(SESSION_PINNED_KEY) : null;
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const out: Record<string, string[]> = {};
+    for (const [no, v] of Object.entries(parsed)) {
+      if (!Array.isArray(v)) continue;
+      const ids = v.filter((x): x is string => typeof x === "string" && x !== "");
+      if (ids.length > 0) out[no] = ids;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+export function saveSessionPinned(pinned: Record<string, string[]>) {
+  try {
+    localStorage.setItem(SESSION_PINNED_KEY, JSON.stringify(pinned));
+  } catch {
+    /* 存储不可用时降级为仅本窗口内保留 */
   }
 }

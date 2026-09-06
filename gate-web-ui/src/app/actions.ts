@@ -38,12 +38,13 @@ import {
   clearDraftModelSel,
   createSessionGroup as createSessionGroupLocal,
   deleteSession as deleteSessionLocal,
+  deleteSessionGroup as deleteSessionGroupLocal,
   moveSessionToGroup as moveSessionToGroupLocal,
-  moveSessionToTop as moveSessionToTopLocal,
-  removeSessionGroup as removeSessionGroupLocal,
   renameSession as renameSessionLocal,
   restoreSession as restoreSessionLocal,
   setDraftModelSel,
+  setSessionPinned as setSessionPinnedLocal,
+  setSessionPinnedOrder as setSessionPinnedOrderLocal,
   startSessionDraft as startSessionDraftLocal,
   switchSession as switchSessionLocal,
   updateSessionGroup as updateSessionGroupLocal,
@@ -542,24 +543,35 @@ export const actions = {
     requestCancel(no);
     return Promise.resolve();
   },
-  /** 创建会话分组（本地态功能；live 后端暂无分组 API，仅本地生效） */
-  createSessionGroup(ticketNo: string, groupId: string, groupName: string, color: string) {
-    createSessionGroupLocal(ticketNo, groupId, groupName, color);
+  /* ─── 会话分组与置顶（T-105）：端侧软数据（live 后端暂无分组 API），demo/live 同一实现 ─── */
+  /** 创建分组（名称必填、颜色取调色板），返回新分组 id；供对话框在创建后直接移入会话。 */
+  createSessionGroup(ticketNo: string, name: string, color: string): Promise<string | null> {
+    if (!name.trim() || !color) return Promise.resolve(null);
+    return Promise.resolve(createSessionGroupLocal(ticketNo, name.trim(), color));
+  },
+  /** 更新分组（改名/换色）。 */
+  updateSessionGroup(ticketNo: string, groupId: string, patch: { name?: string; color?: string }) {
+    updateSessionGroupLocal(ticketNo, groupId, patch);
     return Promise.resolve(true);
   },
-  /** 将会话移入分组 */
-  moveSessionToGroup(ticketNo: string, sessionId: string, groupId: string, groupName: string) {
-    moveSessionToGroupLocal(ticketNo, sessionId, groupId, groupName);
+  /** 删除分组：组内会话回到未分组。 */
+  deleteSessionGroup(ticketNo: string, groupId: string) {
+    deleteSessionGroupLocal(ticketNo, groupId);
     return Promise.resolve(true);
   },
-  /** 删除会话分组（将会话从分组中移出） */
-  removeSessionGroup(ticketNo: string) {
-    removeSessionGroupLocal(ticketNo);
+  /** 会话移入分组（groupId 为 null/空串时移出分组）。 */
+  moveSessionToGroup(ticketNo: string, sessionId: string, groupId: string | null) {
+    moveSessionToGroupLocal(ticketNo, sessionId, groupId && groupId.trim() !== "" ? groupId : null);
     return Promise.resolve(true);
   },
-  /** 更新会话分组信息 */
-  updateSessionGroup(ticketNo: string, sessionId: string, groupId: string | null, groupName: string | null) {
-    updateSessionGroupLocal(ticketNo, sessionId, groupId, groupName);
+  /** 置顶 / 取消置顶：置顶会话在其分段内优先展示。 */
+  setSessionPinned(ticketNo: string, sessionId: string, pinned: boolean) {
+    setSessionPinnedLocal(ticketNo, sessionId, pinned);
+    return Promise.resolve(true);
+  },
+  /** 覆写某工单的置顶会话序列（渲染层分区编辑后的规范化写回）。 */
+  setSessionPinnedOrder(ticketNo: string, orderedIds: string[]) {
+    setSessionPinnedOrderLocal(ticketNo, orderedIds);
     return Promise.resolve(true);
   },
   /** 重命名会话：live 走 patchSessionLive(title)，demo 本地改 store */
@@ -570,15 +582,4 @@ export const actions = {
     renameSessionLocal(ticketNo, sessionId, newTitle);
     return Promise.resolve(true);
   },
-  /** 将会话移动到列表顶部 */
-  moveSessionToTop(ticketNo: string, sessionId: string) {
-    moveSessionToTopLocal(ticketNo, sessionId);
-    return Promise.resolve(true);
-  },
-  /** 打开移入分组对话框（占位：分组管理 UI 未落地，后续接入） */
-  moveSessionToGroupDialog(ticketNo: string, sessionId: string) {
-    void ticketNo;
-    void sessionId;
-    return Promise.resolve(false);
-  }
 };
