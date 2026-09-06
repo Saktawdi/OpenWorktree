@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { NotePencil, Trash } from "@phosphor-icons/react";
 import { actions } from "@/app/actions";
 import { openStageChangeConfirm, openTicketEditor } from "@/features/ticket";
@@ -19,8 +19,17 @@ export function TicketEditDialog() {
   const [labels, setLabels] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
 
+  // 仅在弹窗打开（editingNo 变化）时用 store 值播种表单。此后后台轮询（busy.ts 每 15s
+  // 补拉工单列表）与各类任务回刷都会整表重建 tickets 数组、换掉 ticket 对象引用；
+  // 若跟随重灌，正在编辑的内容就会被复原回 store 旧值（所有字段一起"自动复原"）。
+  const seededNoRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!ticket) return;
+    if (!editingNo) {
+      seededNoRef.current = null;
+      return;
+    }
+    if (!ticket || seededNoRef.current === editingNo) return;
+    seededNoRef.current = editingNo;
     setTitle(ticket.title);
     setPriority(ticket.priority);
     setDescription(ticket.description ?? "");
