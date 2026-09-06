@@ -403,62 +403,6 @@ export function createSession(ticketNo: string) {
   return id;
 }
 
-/** 创建会话分组 */
-export function createSessionGroup(ticketNo: string, groupId: string, groupName: string, color: string) {
-  // 更新该工单下所有会话的分组信息
-  set((st) => ({
-    sessions: {
-      ...st.sessions,
-      [ticketNo]: (st.sessions[ticketNo] ?? []).map(session => ({
-        ...session,
-        groupId,
-        groupName
-      })),
-    }
-  }));
-}
-
-/** 将会话移入分组 */
-export function moveSessionToGroup(ticketNo: string, sessionId: string, groupId: string, groupName: string) {
-  set((st) => ({
-    sessions: {
-      ...st.sessions,
-      [ticketNo]: (st.sessions[ticketNo] ?? []).map(session =>
-        session.id === sessionId
-          ? { ...session, groupId, groupName }
-          : session
-      ),
-    }
-  }));
-}
-
-/** 删除会话分组（将会话从分组中移出） */
-export function removeSessionGroup(ticketNo: string) {
-  set((st) => ({
-    sessions: {
-      ...st.sessions,
-      [ticketNo]: (st.sessions[ticketNo] ?? []).map(session => ({
-        ...session,
-        groupId: null,
-        groupName: null
-      })),
-    }
-  }));
-}
-
-/** 更新会话分组信息 */
-export function updateSessionGroup(ticketNo: string, sessionId: string, groupId: string | null, groupName: string | null) {
-  set((st) => ({
-    sessions: {
-      ...st.sessions,
-      [ticketNo]: (st.sessions[ticketNo] ?? []).map(session =>
-        session.id === sessionId
-          ? { ...session, groupId, groupName }
-          : session
-      ),
-    }
-  }));
-}
 
 /**
  * 「新建会话」进入空白草稿态：活跃指针置空（Composer 的 Agent 选择随之解锁），
