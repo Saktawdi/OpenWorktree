@@ -4,6 +4,25 @@
 >
 > 版本号规则（x.y.z）：每次改动自行判断更新类型——大更新 y+1，bug 修复/优化等小更新 z+1；同一未发行小节内多条改动逐次累加（距上次升版提交的每个改动各进一格）。
 
+## 0.2.16（未发行）
+
+### 新增
+
+- **会话列表功能增强（T-105）**：分组、右键菜单、拖拽排序、动效和呼吸指示器
+- **引用提示卡重设计**：固定尺寸省略有度 + 底部标注引用来源
+
+### 修复
+
+- **quick-quotes 插件激活报 "process is not defined"**：插件 vite 构建 `define` 补 `process.env.NODE_ENV → "production"`——依赖里的 Node 环境判定在浏览器宿主无此全局，激活即崩；构建期替换为字面量后死代码消除，产物不再引用 `process`
+- **WS 1011（native）**：覆盖 Jetty ByteArray/ByteBufferMessageSink——MethodType 引用比较（if_acmpeq）在 GraalVM native-image 不保证同一性，Javalin 声明 (Session,byte[],int,int) 消息方法→OPEN 急切建 binary sink→InvalidSignatureException→每条连接 1011；新增 gate-ws-patch 模块（同 FQN 覆盖类逐字取自 11.0.20 源码仅改 equals），native-build 两平台 CP 前插保证先命中
+- **冒烟脚本 ws_recv 裸 opcode 未掩 FIN 位**：hdr[0] 含 FIN 位（text=0x81/close=0x88），需 `&0x0F` 后再比较；WS 1011 修复后管线首次真正走到收帧路径才暴露此潜伏 bug
+- **多行引用胶囊的原文提示被相邻消息截断/常驻不收**——三处样式根因
+
+### 优化
+
+- vite dev 代理默认后端端口 18080→19090（本机常驻后端端口）
+- CI 冒烟诊断增强：断言失败时输出服务器 boot.log 尾部；native 运行时 WS 管线兜 Throwable 落日志
+
 ## 0.2.15（未发行）
 
 ### 新增
