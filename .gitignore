@@ -84,3 +84,14 @@ gate-web-ui/.sidecar-classpath/
 
 desktop/src-tauri/binaries/*.shim-backup
 packages/*/node_modules/
+
+# Java 相关
+META-INF/
+*.class
+
+# 可执行文件
+*.exe
+
+# 临时目录
+/io/
+/smoke-run/
