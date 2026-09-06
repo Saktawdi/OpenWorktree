@@ -106,6 +106,14 @@ public final class GateHarness implements AutoCloseable {
     }
 
     public GateHarness(String gitExecutable) {
+        this(gitExecutable, false);
+    }
+
+    /**
+     * {@code wireBaseSyncer=true} 时按生产（{@code GateRuntime}）装配接线 {@code CloneBaseSyncer}：
+     * 建票前导入工作区基线、基座同步等流程需要；默认关闭以保持既有用例的拓扑预期。
+     */
+    public GateHarness(String gitExecutable, boolean wireBaseSyncer) {
         this.gitExe = gitExecutable;
         try {
             this.root = Files.createTempDirectory("gate-test-");
@@ -179,7 +187,8 @@ public final class GateHarness implements AutoCloseable {
         this.gateService = new GateServiceImpl(config, snapshotCapture, commitPublisher, refObserver,
                 approvalStore, reviewEngineFactory, gatePolicy, tickets, presubmits, reviewResults, intents,
                 blobStore, auditLog, lockManager, txRunner, clock,
-                gate.ports.engine.PublishProbe.NOOP, null, this.projects, null, null, null,
+                gate.ports.engine.PublishProbe.NOOP, null, this.projects, null, null,
+                wireBaseSyncer ? new gate.adapters.git.GitCliBaseSyncer(git) : null,
                 this.topologyInitializer);
 
         // Build the topology: bare auth repo + seeded base + installed hook.

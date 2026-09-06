@@ -16,6 +16,7 @@ import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.regex.Pattern;
 
 /**
@@ -39,14 +40,24 @@ public final class TicketCreationHandler {
     private final GateConfig config;
     private final TopologyInitializer topologyInitializer;
     private final Clock clock;
+    private final gate.ports.git.CloneBaseSyncer cloneBaseSyncer;
+    private final gate.ports.store.AuditLog auditLog;
 
     public TicketCreationHandler(TicketRepository tickets, ProjectRepository projects, GateConfig config,
                                  TopologyInitializer topologyInitializer, Clock clock) {
+        this(tickets, projects, config, topologyInitializer, clock, null, null);
+    }
+
+    public TicketCreationHandler(TicketRepository tickets, ProjectRepository projects, GateConfig config,
+                                 TopologyInitializer topologyInitializer, Clock clock,
+                                 gate.ports.git.CloneBaseSyncer cloneBaseSyncer, gate.ports.store.AuditLog auditLog) {
         this.tickets = tickets;
         this.projects = projects;
         this.config = config;
         this.topologyInitializer = topologyInitializer;
         this.clock = clock;
+        this.cloneBaseSyncer = cloneBaseSyncer;
+        this.auditLog = auditLog;
     }
 
     public Ticket handle(CreateTicketCommand command) {
@@ -98,6 +109,7 @@ public final class TicketCreationHandler {
                     "auth repo for this ticket does not exist: " + auth.pathString()
                             + " (init it before creating tickets)");
         }
+        importWorkspaceBase(project, auth, primaryRef);
         if (!targetRef.equals(primaryRef)) {
             topologyInitializer.ensureBranch(auth, targetRef, primaryRef);
         }
@@ -115,6 +127,38 @@ public final class TicketCreationHandler {
     /** Next free {@code T-nnn}: one past the highest existing number, never below 101. */
     private String generateTicketNo() {
         return nextTicketNo(tickets);
+    }
+
+    /**
+     * 建票克隆前把注册工作区基分支的最新 tip 导入权威镜像（T-125 同款补环）。
+     *
+     * <p>不导入的话克隆基座停在注册/上次同步时的旧 tip：源仓库此后产生的新提交只有点
+     * 「同步基座」才进得来，新工单一建出来就落后 N 个提交。导入对工作区只读且 fail-open，
+     * 任何失败降级为审计备注，绝不阻断建票。
+     */
+    private void importWorkspaceBase(Project project, RepoRef auth, String primaryRef) {
+        if (cloneBaseSyncer == null || project == null) {
+            return;
+        }
+        try {
+            var imported = cloneBaseSyncer.importWorkspaceBase(
+                    RepoRef.of(java.nio.file.Path.of(project.workspacePath())), auth, primaryRef);
+            if (imported.kind() == gate.ports.git.CloneBaseSyncer.ImportKind.UP_TO_DATE || auditLog == null) {
+                return;
+            }
+            auditLog.append(gate.domain.audit.AuditEvent.of(clock.now(),
+                    imported.kind() == gate.ports.git.CloneBaseSyncer.ImportKind.SKIPPED
+                            ? "basesync.import_skipped" : "basesync.import",
+                    null, null,
+                    Map.of("trigger", "ticket_create",
+                            "project", project.id(),
+                            "base_ref", primaryRef,
+                            "kind", imported.kind().name().toLowerCase(Locale.ROOT),
+                            "tip", imported.tip() == null ? "" : imported.tip(),
+                            "reason", imported.skippedReason() == null ? "" : imported.skippedReason())));
+        } catch (Exception e) {
+            // fail-open：基线导入只是让克隆起点更新的优化，绝不阻断建票
+        }
     }
 
     /** Shared numbering pool for regular tickets and the quick-mode super ticket (V19). */

@@ -180,7 +180,7 @@ public final class GateServiceImpl implements GateService {
                         tickets, projects, config, cloneBaseSyncer, auditLog, clock);
         this.ticketCreationHandler = topologyInitializer == null ? null
                 : new gate.application.ticket.TicketCreationHandler(
-                        tickets, projects, config, topologyInitializer, clock);
+                        tickets, projects, config, topologyInitializer, clock, cloneBaseSyncer, auditLog);
     }
 
     @Override
