@@ -2815,11 +2815,32 @@
     "allDeclaredFields": true,
     "queryAllDeclaredMethods": true,
     "allPublicMethods": true,
+    "allDeclaredMethods": true,
     "queryAllDeclaredConstructors": true,
     "methods": [
       {
         "name": "<init>",
         "parameterTypes": []
+      },
+      {
+        "name": "onConnect",
+        "parameterTypes": ["org.eclipse.jetty.websocket.api.Session"]
+      },
+      {
+        "name": "onMessage",
+        "parameterTypes": ["org.eclipse.jetty.websocket.api.Session", "java.lang.String"]
+      },
+      {
+        "name": "onMessage",
+        "parameterTypes": ["org.eclipse.jetty.websocket.api.Session", "byte[]", "int", "int"]
+      },
+      {
+        "name": "onClose",
+        "parameterTypes": ["org.eclipse.jetty.websocket.api.Session", "int", "java.lang.String"]
+      },
+      {
+        "name": "onError",
+        "parameterTypes": ["org.eclipse.jetty.websocket.api.Session", "java.lang.Throwable"]
       }
     ]
   },
