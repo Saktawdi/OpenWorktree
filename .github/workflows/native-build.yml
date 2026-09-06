@@ -216,7 +216,9 @@ jobs:
                   c = sock.recv(ln - len(data))
                   assert c, "WS EOF while reading payload"
                   data += c
-              return hdr[0], data
+              # hdr[0] 是完整首字节（FIN+opcode），必须 & 0x0F 取裸 opcode：
+              # text=0x81、close=0x88，直接拿 hdr[0] 与 0x1/0x2/0x8 比较永远不匹配。
+              return hdr[0] & 0x0F, data
 
           # 无效 token 的 start：服务端必须回 error 帧（证明 WS 消息管线在 native 里活着）
           ws_send_text(s, json.dumps({"op": "start", "token": "smoke-invalid", "project": "x", "dir": "/"}))
