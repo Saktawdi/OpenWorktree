@@ -13,6 +13,11 @@ export default defineConfig({
   resolve: {
     alias: pluginReactAliases(),
   },
+  define: {
+    // 插件跑在浏览器宿主里，无 Node 全局：依赖里的 process.env.NODE_ENV 判定
+    // 必须在构建期替换为字面量，否则激活报 "process is not defined"。
+    "process.env.NODE_ENV": JSON.stringify(process.env.NODE_ENV ?? "production"),
+  },
   build: {
     lib: {
       entry: r("./src/index.tsx"),
