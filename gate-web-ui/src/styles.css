@@ -522,11 +522,13 @@ body {
     @apply grid place-items-center size-4 rounded-full text-faint cursor-pointer shrink-0
       transition-colors duration-150 hover:text-ink hover:bg-raised;
   }
-  /* 原文提示：悬停浮出；tipwrap 自带 6px 顶距桥接悬停（避免间隙处提示闪烁）。
+  /* 原文提示卡：固定尺寸——用户自己框选的内容自己知道，卡片只承担
+     "对上是哪段"的锚定，超出的内容行钳制省略（不再撑大/滚动/常驻）。
+     tipwrap 自带 6px 顶距桥接悬停（避免间隙处提示闪烁）。
      只挂 :hover 不挂 :focus-within——胶囊被点过（如选中复制）后 focus 常驻，
-     多行提示会一直叠在消息流上不收。 */
+     提示会一直叠在消息流上不收。 */
   .quote-chip-tipwrap {
-    @apply hidden absolute left-0 bottom-full z-[70] w-max pt-1.5;
+    @apply hidden absolute left-0 bottom-full z-[70] pt-1.5;
   }
   .quote-chip-tipr .quote-chip-tipwrap {
     @apply left-auto right-0;
@@ -535,11 +537,22 @@ body {
     @apply block;
   }
   .quote-chip-tip {
-    @apply w-max max-h-56 overflow-y-auto rounded-xl border border-edge
-      bg-overlay px-3 py-2 text-[12px] font-normal leading-relaxed text-ink
-      whitespace-pre-wrap break-words shadow-xl shadow-black/40;
-    /* min() 内逗号经 @apply 任意值易被 Tailwind 漏扫（hover:z-20 同因），此处用原生声明 */
-    max-width: min(420px, 72vw);
+    @apply block rounded-xl border border-edge bg-overlay px-3 py-2
+      text-[12px] font-normal leading-relaxed text-ink shadow-xl shadow-black/40;
+    width: 340px;
+    max-width: 72vw;
+  }
+  .quote-chip-tip-text {
+    @apply break-words;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+    line-clamp: 3;
+    overflow: hidden;
+    white-space: pre-wrap;
+  }
+  .quote-chip-tip-source {
+    @apply mt-1.5 flex items-center gap-1 border-t border-edge pt-1.5 text-[10.5px] text-faint whitespace-nowrap;
   }
   /* 引用胶囊的原文提示是行内 absolute 元素，跨行显示时会被相邻消息行的层叠上下文
      （animate-rise 的 transform 残留）截断：悬停时把整行提到最上层。 */

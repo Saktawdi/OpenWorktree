@@ -104,12 +104,12 @@ export function setPendingQuotes(ticketNo: string, chips: QuoteChip[]) {
 }
 
 /** 追加一条引用胶囊：超长截断并在原文里注明，避免极端大段选择撑爆消息。 */
-export function addPendingQuote(ticketNo: string, text: string) {
+export function addPendingQuote(ticketNo: string, text: string, source?: string) {
   const trimmed = text.trim();
   if (!trimmed) return;
   const body =
     trimmed.length > QUOTE_MAX_CHARS ? `${trimmed.slice(0, QUOTE_MAX_CHARS)}\n…（原文过长已截断）` : trimmed;
-  const chip: QuoteChip = { id: uid("q"), text: body };
+  const chip: QuoteChip = source ? { id: uid("q"), text: body, source } : { id: uid("q"), text: body };
   writePendingQuotes(ticketNo, [...(s().pendingQuotes[ticketNo] ?? []), chip]);
 }
 

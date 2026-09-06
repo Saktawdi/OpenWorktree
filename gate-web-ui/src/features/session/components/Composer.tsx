@@ -800,6 +800,7 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
                 <QuoteChip
                   key={q.id}
                   text={q.text}
+                  source={q.source}
                   onRemove={() => removePendingQuote(ticketNo, q.id)}
                 />
               ))}

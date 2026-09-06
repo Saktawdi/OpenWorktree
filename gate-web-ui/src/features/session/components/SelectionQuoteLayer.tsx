@@ -27,6 +27,8 @@ interface Anchor {
   top: number;
   below: boolean;
   text: string;
+  /** 划选来源标注（提示卡片底部「引用自 xxx」），addPendingQuote 落库用。 */
+  source: string;
 }
 
 /** 编辑宿主（输入框/富文本）里的划选属于内容编辑，不提供引用菜单。 */
@@ -35,6 +37,28 @@ function inEditableHost(target: EventTarget | null): boolean {
     target instanceof Element &&
     target.closest("textarea, input, [contenteditable='true'], [contenteditable='plaintext-only']")
   );
+}
+
+/** 划选来源的展示标注：优先按命中元素的特征容器，退回当前视图/页签。 */
+function describeSource(target: EventTarget | null): string {
+  if (target instanceof Element && target.closest("[data-chat-msg]")) {
+    return "会话消息";
+  }
+  const st = appStore.getState();
+  if (st.view === "workbench") {
+    const byTab: Record<string, string> = { chat: "会话", diff: "变更对比", findings: "审查发现" };
+    return byTab[st.centerTab] ?? "工作台";
+  }
+  const byView: Record<string, string> = {
+    kanban: "看板",
+    projects: "项目",
+    repo: "仓库视图",
+    agents: "智能体",
+    plugins: "插件",
+    settings: "设置",
+    "plugin-page": "插件页",
+  };
+  return byView[st.view] ?? "工作台";
 }
 
 export function SelectionQuoteLayer() {
@@ -85,6 +109,7 @@ export function SelectionQuoteLayer() {
         top: below ? rect.bottom + 6 : rect.top - 6,
         below,
         text: text.slice(0, QUOTE_MAX_CHARS),
+        source: describeSource(e.target),
       });
     };
 
@@ -144,7 +169,7 @@ export function SelectionQuoteLayer() {
   const addToComposer = (text: string) => {
     const no = quoteTarget();
     if (!no) return;
-    addPendingQuote(no, text);
+    addPendingQuote(no, text, anchor.source);
     showToast("已添加到对话框");
     focusComposer();
     dismiss();

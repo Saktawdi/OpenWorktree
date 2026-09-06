@@ -354,6 +354,8 @@ export interface PendingAttachment {
 export interface QuoteChip {
   id: string;
   text: string;
+  /** 划选来源的展示标注（如「会话消息」「变更对比」）：仅提示卡片底部显示，不入消息文本。 */
+  source?: string;
 }
 
 export interface DiffLine {

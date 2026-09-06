@@ -168,7 +168,11 @@ export function loadPendingQuotes(): Record<string, QuoteChip[]> {
       if (!Array.isArray(v)) continue;
       const chips = v.filter(
         (c): c is QuoteChip =>
-          !!c && typeof c === "object" && typeof (c as QuoteChip).id === "string" && typeof (c as QuoteChip).text === "string" && (c as QuoteChip).text.trim() !== "",
+          !!c &&
+          typeof c === "object" &&
+          typeof (c as QuoteChip).id === "string" &&
+          typeof (c as QuoteChip).text === "string" &&
+          (c as QuoteChip).text.trim() !== "",
       );
       if (chips.length > 0) out[no] = chips;
     }
