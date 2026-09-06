@@ -140,8 +140,15 @@ public final class LegacyLayoutMigration {
             while (!suffix.isEmpty() && (suffix.charAt(0) == '\\' || suffix.charAt(0) == '/')) {
                 suffix = suffix.substring(1);
             }
+            Path target = newAuthParent.resolve(suffix);
+            if (!Files.isDirectory(target)) {
+                throw new IllegalStateException(
+                        "auth mirror was not moved to its new home, refusing to rebase DB row: "
+                                + stored + " -> " + target
+                                + " (marker kept for retry; re-run the layout migration)");
+            }
             jdbc.update("UPDATE project SET auth_repo = ? WHERE id = ?",
-                    newAuthParent.resolve(suffix).toString(), row.get("id"));
+                    target.toString(), row.get("id"));
             changed++;
         }
         if (changed > 0) {

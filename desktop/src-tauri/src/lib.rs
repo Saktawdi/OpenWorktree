@@ -175,16 +175,28 @@ fn archive_tree(local_run: &Path, log: &Option<PathBuf>, what: &str) {
     }
 }
 
-/// 克隆 .git/config 的 origin 改写：旧 auth 父目录前缀 → 新重根 auth 目录（两种斜杠形式）。
+/// 克隆 .git/config 的 origin 改写：旧 auth 父目录前缀 → 新重根 auth 目录。
+/// Windows git 会把反斜杠写为转义形式（`C:\\Users\\…`），因此需要同时匹配
+/// 原生反斜杠、正斜杠、转义反斜杠三种拼写；任一种命中都改写，避免静默漏改。
 fn rewrite_clone_origins(clones_root: &Path, old_auth_parent: &Path, new_auth_dir: &Path, log: &Option<PathBuf>) {
     if !clones_root.is_dir() {
         return;
     }
     let old_fs = old_auth_parent.to_string_lossy();
     let old_fwd = old_fs.replace('\\', "/");
+    let old_esc = old_fs.replace('\\', "\\\\");
     let new_fwd = new_auth_dir.to_string_lossy().replace('\\', "/");
     let mut touched = 0usize;
-    fn walk(dir: &Path, old_fs: &str, old_fwd: &str, new_fwd: &str, touched: &mut usize, log: &Option<PathBuf>) {
+    let mut scanned = 0usize;
+    fn walk(
+        dir: &Path,
+        old_fs: &str,
+        old_fwd: &str,
+        old_esc: &str,
+        new_fwd: &str,
+        touched: &mut usize,
+        scanned: &mut usize,
+    ) {
         let Ok(entries) = std::fs::read_dir(dir) else { return };
         for entry in entries.flatten() {
             let p = entry.path();
@@ -194,7 +206,11 @@ fn rewrite_clone_origins(clones_root: &Path, old_auth_parent: &Path, new_auth_di
             if entry.file_name() == ".git" {
                 let cfg = p.join("config");
                 let Ok(text) = std::fs::read_to_string(&cfg) else { continue };
-                let rewritten = text.replace(&*old_fs, &*new_fwd).replace(&*old_fwd, &*new_fwd);
+                *scanned += 1;
+                let rewritten = text
+                    .replace(&*old_fs, &*new_fwd)
+                    .replace(&*old_fwd, &*new_fwd)
+                    .replace(&*old_esc, &*new_fwd);
                 if rewritten != text {
                     if std::fs::write(&cfg, rewritten).is_ok() {
                         *touched += 1;
@@ -202,12 +218,20 @@ fn rewrite_clone_origins(clones_root: &Path, old_auth_parent: &Path, new_auth_di
                 }
                 continue;
             }
-            walk(&p, old_fs, old_fwd, new_fwd, touched, log);
+            walk(&p, old_fs, old_fwd, old_esc, new_fwd, touched, scanned);
         }
     }
-    walk(clones_root, &old_fs, &old_fwd, &new_fwd, &mut touched, log);
+    walk(clones_root, &old_fs, &old_fwd, &old_esc, &new_fwd, &mut touched, &mut scanned);
     if touched > 0 {
         append_log(log, &format!("layout: rewrote auth origin in {touched} clone .git/config"));
+    } else if scanned > 0 {
+        append_log(
+            log,
+            &format!(
+                "layout: WARN scanned {scanned} clone .git/config but none referenced old auth parent {}",
+                old_auth_parent.display()
+            ),
+        );
     }
 }
 
@@ -293,6 +317,69 @@ fn bootstrap_layout(light: &Path, heavy: &Path, install: &Path, log: &Option<Pat
         }
     }
 
+    // auth 镜像（auth-*.git 项目镜像，含门禁级 auth.git）→ 重根。必须先于 gate-home/clones
+    // 搬迁并采用「失败即中止」：任一镜像搬不过去就整体中止——不写迁移标记与 gate.toml，
+    // 旧树保持原状、下次启动重试。否则后端会把 DB 的 project.auth_repo 重基到空目录
+    // （LegacyLayoutMigration），项目建单全线 "auth repo does not exist"（c6d4469 缺陷）。
+    let _ = std::fs::create_dir_all(heavy.join("auth"));
+    let _ = std::fs::create_dir_all(heavy.join("clones"));
+    let mut auth_total = 0usize;
+    let mut auth_ok = 0usize;
+    match std::fs::read_dir(&src) {
+        Ok(entries) => {
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
+                let is_auth = name == "auth.git"
+                        || (name.starts_with("auth-") && name.ends_with(".git"));
+                if !is_auth || !entry.path().is_dir() {
+                    continue;
+                }
+                auth_total += 1;
+                let dst = heavy.join("auth").join(&*name);
+                if move_dir(&entry.path(), &dst) {
+                    auth_ok += 1;
+                    append_log(
+                        log,
+                        &format!("layout: auth mirror moved {} -> {}", name, dst.display()),
+                    );
+                } else {
+                    append_log(
+                        log,
+                        &format!(
+                            "layout: WARN cannot move auth mirror {} -> {}",
+                            name,
+                            dst.display()
+                        ),
+                    );
+                }
+            }
+        }
+        Err(e) => {
+            append_log(
+                log,
+                &format!("layout: WARN cannot list legacy tree {}: {}", src.display(), e),
+            );
+            append_log(
+                log,
+                "layout: ABORT legacy layout migration: cannot enumerate legacy tree — no marker/config written, retry on next boot",
+            );
+            return;
+        }
+    }
+    if auth_total > 0 && auth_ok < auth_total {
+        append_log(
+            log,
+            &format!(
+                "layout: ABORT legacy layout migration: moved {auth_ok}/{auth_total} auth mirrors — no marker/config written, retry on next boot"
+            ),
+        );
+        return;
+    }
+    if auth_ok > 0 {
+        append_log(log, &format!("layout: auth mirrors moved into heavy root ({auth_ok})"));
+    }
+
     // gate-home（小数据）→ 轻根 local-run 下。
     let src_gate_home = src.join("gate-home");
     let dst_gate_home = local_run.join("gate-home");
@@ -310,9 +397,7 @@ fn bootstrap_layout(light: &Path, heavy: &Path, install: &Path, log: &Option<Pat
         }
     }
 
-    // clones 与 auth-*.git（大体积）→ 重根；随后克隆 origin 前缀改写。
-    let _ = std::fs::create_dir_all(heavy.join("auth"));
-    let _ = std::fs::create_dir_all(heavy.join("clones"));
+    // clones（大体积）→ 重根；随后克隆 origin 前缀改写。
     let src_clones = src.join("clones");
     if src_clones.is_dir() {
         if move_dir(&src_clones, &heavy.join("clones")) {
@@ -320,24 +405,6 @@ fn bootstrap_layout(light: &Path, heavy: &Path, install: &Path, log: &Option<Pat
         } else {
             append_log(log, "layout: WARN cannot move clones into heavy root");
         }
-    }
-    let mut auth_moved = false;
-    let Ok(entries) = std::fs::read_dir(&src) else {
-        append_log(log, "layout: WARN cannot list legacy tree");
-        write_layout_config(&local_run, heavy, log);
-        return;
-    };
-    for entry in entries.flatten() {
-        let name = entry.file_name();
-        let name = name.to_string_lossy();
-        if name.starts_with("auth-") && name.ends_with(".git") && entry.path().is_dir() {
-            if move_dir(&entry.path(), &heavy.join("auth").join(&*name)) {
-                auth_moved = true;
-            }
-        }
-    }
-    if auth_moved {
-        append_log(log, "layout: auth mirrors moved into heavy root");
     }
     rewrite_clone_origins(&heavy.join("clones"), &src, &heavy.join("auth"), log);
 

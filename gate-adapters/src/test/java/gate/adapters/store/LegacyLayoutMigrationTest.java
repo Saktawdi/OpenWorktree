@@ -57,6 +57,8 @@ class LegacyLayoutMigrationTest {
         jdbc.update("INSERT INTO project(id, name, workspace_path, auth_repo, created_at, updated_at) "
                 + "VALUES ('p1','Proj',?,'" + oldAuthParent + "/auth-p1.git','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')",
                 dir.resolve("user-workspace").toString());
+        // 壳先物理搬迁镜像、后写标记：新重根 auth 下必须有真实镜像目录，迁移才允许重基 DB。
+        Files.createDirectories(auth.resolve("auth-p1.git"));
 
         // 标记文件（壳落下）
         Path marker = newHome.resolveSibling("layout-migrate.json");
@@ -103,6 +105,38 @@ class LegacyLayoutMigrationTest {
         DataSource ds = SqliteDataSourceFactory.create(newHome.resolve("gate.db"));
         SqliteDataSourceFactory.migrate(ds);
         LegacyLayoutMigration.apply(config, new JdbcTemplate(ds));
+        assertTrue(Files.notExists(newHome.resolveSibling("layout-migrate.done.json")));
+    }
+
+    @Test
+    void refuses_rebase_when_auth_mirror_was_not_moved_physically(@TempDir Path dir) throws Exception {
+        Path newHome = dir.resolve("new").resolve("gate-home");
+        Path auth = dir.resolve("new").resolve("auth");
+        Files.createDirectories(newHome);
+        Path toml = dir.resolve("gate.toml");
+        Files.writeString(toml, "schema_version = 2\nproject = \"p\"\n"
+                + "auth_repo = \"" + auth.resolve("auth.git").toString().replace('\\', '/') + "\"\n"
+                + "clones_root = \"" + dir.resolve("new").resolve("clones").toString().replace('\\', '/') + "\"\n"
+                + "gate_home = \"" + newHome.toString().replace('\\', '/') + "\"\n");
+        GateConfig config = new TomlGateConfigLoader().load(toml);
+        DataSource ds = SqliteDataSourceFactory.create(newHome.resolve("gate.db"));
+        SqliteDataSourceFactory.migrate(ds);
+        JdbcTemplate jdbc = new JdbcTemplate(ds);
+        String oldAuthParent = dir.resolve("old").resolve("local-run").toString().replace('\\', '/');
+        // auth_repo 行指向旧树，但镜像目录并未被搬到新重根（模拟壳搬迁失败仍写了 marker）
+        jdbc.update("INSERT INTO project(id, name, workspace_path, auth_repo, created_at, updated_at) "
+                + "VALUES ('p1','Proj','" + dir.resolve("user-workspace").toString().replace('\\', '/')
+                + "','" + oldAuthParent + "/auth-p1.git','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')");
+        Path marker = newHome.resolveSibling("layout-migrate.json");
+        Files.writeString(marker, "{\"old_clones_root\":\"n/a\",\"old_auth_parent\":\"" + oldAuthParent
+                + "\"}", StandardCharsets.UTF_8);
+
+        LegacyLayoutMigration.apply(config, jdbc);
+
+        // 拒绝重基：DB 行保持旧路径，marker 保留待下次重试
+        assertEquals(oldAuthParent + "/auth-p1.git",
+                jdbc.queryForObject("SELECT auth_repo FROM project WHERE id = 'p1'", String.class));
+        assertTrue(Files.exists(marker));
         assertTrue(Files.notExists(newHome.resolveSibling("layout-migrate.done.json")));
     }
 }

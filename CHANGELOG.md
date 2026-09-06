@@ -14,6 +14,7 @@
 ### 修复
 
 - **quick-quotes 插件激活报 "process is not defined"**：插件 vite 构建 `define` 补 `process.env.NODE_ENV → "production"`——依赖里的 Node 环境判定在浏览器宿主无此全局，激活即崩；构建期替换为字面量后死代码消除，产物不再引用 `process`
+- **数据布局分根迁移的 auth 镜像静默漏搬（c6d4469 缺陷）**：壳侧 auth-*.git 搬迁失败既不落日志也不中止，仍写迁移标记 → 后端把 `project.auth_repo` 重基到空目录，后续项目建单全线 "auth repo does not exist"；现改为 auth 镜像先于 gate-home/clones 搬迁，任一失败即整体中止（不写 marker/gate.toml，下次启动重试）；后端侧增加兜底——重基前校验新路径镜像真实存在，缺失则拒绝改写并保留 marker；另修克隆 origin 改写对 git config 反斜杠转义（`\\`）不匹配导致的静默漏改
 - **WS 1011（native）**：覆盖 Jetty ByteArray/ByteBufferMessageSink——MethodType 引用比较（if_acmpeq）在 GraalVM native-image 不保证同一性，Javalin 声明 (Session,byte[],int,int) 消息方法→OPEN 急切建 binary sink→InvalidSignatureException→每条连接 1011；新增 gate-ws-patch 模块（同 FQN 覆盖类逐字取自 11.0.20 源码仅改 equals），native-build 两平台 CP 前插保证先命中
 - **冒烟脚本 ws_recv 裸 opcode 未掩 FIN 位**：hdr[0] 含 FIN 位（text=0x81/close=0x88），需 `&0x0F` 后再比较；WS 1011 修复后管线首次真正走到收帧路径才暴露此潜伏 bug
 - **多行引用胶囊的原文提示被相邻消息截断/常驻不收**——三处样式根因
