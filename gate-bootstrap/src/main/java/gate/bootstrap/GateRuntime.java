@@ -143,7 +143,7 @@ public final class GateRuntime {
         this.presubmitRepository = new JdbcPresubmitRepository(jdbc);
         this.ticketStageChangeRepository = new JdbcTicketStageChangeRepository(jdbc);
         this.reviewResultRepository = new JdbcReviewResultRepository(jdbc);
-        this.publishIntentRepository = new JdbcPublishIntentRepository(jdbc, config.authRepo());
+        this.publishIntentRepository = new JdbcPublishIntentRepository(jdbc, config.authRepo(), config.clonesRoot());
         this.providerRepository = new JdbcProviderRepository(jdbc);
         this.credentials = new JdbcCredentialRepository(jdbc);
 

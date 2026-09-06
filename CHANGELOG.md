@@ -16,6 +16,7 @@
 - **新建工单基座落后 N 个提交**：建票克隆自权威镜像，但人在注册工作区的提交只有点「同步基座」才导入镜像——新工单一建出来就是旧基座，首点同步即报"快进 N 个提交"。现建票前先把工作区基分支 tip 导入镜像（对工作区只读、fail-open：导入失败降级为审计备注，绝不阻断建票），克隆起点即源仓库最新提交
 - **编辑工单弹窗内容自动复原**：播种表单的 effect 依赖 ticket 对象引用，而后台轮询（busy 慢节拍补拉）与任务回刷都会整表重建 tickets 数组——弹窗开着时正在编辑的所有字段被复原回 store 旧值。现仅弹窗打开那一刻播种，此后不再跟随刷新重灌
 - **发布报 "Cannot run program git（目录名称无效）error 267"**：分根迁移后 `ticket.clone_path` 在 DB 存的是克隆根内相对路径，`publish_intent` 读取端（JOIN 原始列）未按克隆根重基回绝对路径，发布进程拿相对路径当 CWD 必炸；读取端补与 ticket 仓库同规则的重基（构造注入 `clonesRoot`）
+- **发布报 "Cannot run program git（目录名称无效）error 267"**：分根迁移后 `ticket.clone_path` 在 DB 存的是克隆根内相对路径，`publish_intent` 读取端（JOIN 原始列）未按克隆根重基回绝对路径，发布进程拿相对路径当 CWD 必炸；读取端补与 ticket 仓库同规则的重基（构造注入 `clonesRoot`）
 - **quick-quotes 插件激活报 "process is not defined"**：插件 vite 构建 `define` 补 `process.env.NODE_ENV → "production"`——依赖里的 Node 环境判定在浏览器宿主无此全局，激活即崩；构建期替换为字面量后死代码消除，产物不再引用 `process`
 - **数据布局分根迁移的 auth 镜像静默漏搬（c6d4469 缺陷）**：壳侧 auth-*.git 搬迁失败既不落日志也不中止，仍写迁移标记 → 后端把 `project.auth_repo` 重基到空目录，后续项目建单全线 "auth repo does not exist"；现改为 auth 镜像先于 gate-home/clones 搬迁，任一失败即整体中止（不写 marker/gate.toml，下次启动重试）；后端侧增加兜底——重基前校验新路径镜像真实存在，缺失则拒绝改写并保留 marker；另修克隆 origin 改写对 git config 反斜杠转义（`\\`）不匹配导致的静默漏改
 - **WS 1011（native）**：覆盖 Jetty ByteArray/ByteBufferMessageSink——MethodType 引用比较（if_acmpeq）在 GraalVM native-image 不保证同一性，Javalin 声明 (Session,byte[],int,int) 消息方法→OPEN 急切建 binary sink→InvalidSignatureException→每条连接 1011；新增 gate-ws-patch 模块（同 FQN 覆盖类逐字取自 11.0.20 源码仅改 equals），native-build 两平台 CP 前插保证先命中

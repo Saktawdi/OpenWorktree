@@ -103,7 +103,7 @@ public final class PersistentGate {
         this.tickets = new JdbcTicketRepository(jdbc);
         JdbcPresubmitRepository presubmits = new JdbcPresubmitRepository(jdbc);
         JdbcReviewResultRepository reviews = new JdbcReviewResultRepository(jdbc);
-        JdbcPublishIntentRepository intents = new JdbcPublishIntentRepository(jdbc, config.authRepo());
+        JdbcPublishIntentRepository intents = new JdbcPublishIntentRepository(jdbc, config.authRepo(), config.clonesRoot());
         JdbcProviderRepository providers = new JdbcProviderRepository(jdbc);
         if (providers.find("manual").isEmpty()) {
             providers.upsert(new ProviderRepository.ProviderRow(

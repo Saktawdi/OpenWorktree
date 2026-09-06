@@ -33,10 +33,16 @@ public final class JdbcPublishIntentRepository implements PublishIntentRepositor
 
     private final JdbcTemplate jdbc;
     private final Path authRepoPath;
+    private final Path clonesRoot;
 
     public JdbcPublishIntentRepository(JdbcTemplate jdbc, Path authRepoPath) {
+        this(jdbc, authRepoPath, null);
+    }
+
+    public JdbcPublishIntentRepository(JdbcTemplate jdbc, Path authRepoPath, Path clonesRoot) {
         this.jdbc = jdbc;
         this.authRepoPath = authRepoPath;
+        this.clonesRoot = clonesRoot == null ? null : clonesRoot.toAbsolutePath().normalize();
     }
 
     private RowMapper<PublishIntent> mapper() {
@@ -58,8 +64,22 @@ public final class JdbcPublishIntentRepository implements PublishIntentRepositor
                 rs.getString("observed_ref_after"),
                 Instant.parse(rs.getString("created_at")),
                 rs.getString("finished_at") == null ? null : Instant.parse(rs.getString("finished_at")),
-                RepoRef.of(Path.of(rs.getString("clone_path"))),
+                // t.clone_path 在 DB 里存的是克隆根内的相对路径（JdbcTicketRepository.storePath），
+                // 必须与读取端同规则重基回绝对路径；发布进程拿它当 CWD，相对路径必炸（error 267）。
+                RepoRef.of(Path.of(loadClonePath(rs.getString("clone_path")))),
                 RepoRef.of(authRepoPath));
+    }
+
+    /** 与 {@link JdbcTicketRepository} 的 loadPath 同规则：相对路径按当前克隆根解析回绝对路径。 */
+    private String loadClonePath(String value) {
+        if (value == null || clonesRoot == null) {
+            return value;
+        }
+        Path p = Path.of(value);
+        if (p.isAbsolute()) {
+            return value;
+        }
+        return clonesRoot.resolve(value.replace('/', java.io.File.separatorChar)).toString();
     }
 
     private static final String SELECT = """

@@ -173,7 +173,7 @@ public final class GateHarness implements AutoCloseable {
         this.presubmits = presubmits;
         ReviewResultRepository reviewResults = new JdbcReviewResultRepository(jdbc);
         this.reviewResults = reviewResults;
-        this.intents = new JdbcPublishIntentRepository(jdbc, config.authRepo());
+        this.intents = new JdbcPublishIntentRepository(jdbc, config.authRepo(), config.clonesRoot());
         ProviderRepository providers = new JdbcProviderRepository(jdbc);
         this.providers = providers;
         this.clock = new SystemClock();
