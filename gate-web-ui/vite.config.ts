@@ -3,7 +3,7 @@ import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "node:url";
 
-const backend = process.env.VITE_BACKEND_URL || "http://127.0.0.1:18080";
+const backend = process.env.VITE_BACKEND_URL || "http://127.0.0.1:19090";
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
