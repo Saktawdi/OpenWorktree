@@ -529,4 +529,66 @@ export const actions = {
     requestCancel(no);
     return Promise.resolve();
   },
+  /** 创建会话分组 */
+  createSessionGroup(ticketNo: string, groupId: string, groupName: string, color: string) {
+    if (appStore.getState().mode === "live") {
+      // TODO: 实现live模式的分组创建
+      return Promise.resolve();
+    }
+    createSessionGroup(ticketNo, groupId, groupName, color);
+    return Promise.resolve(true);
+  },
+  /** 将会话移入分组 */
+  moveSessionToGroup(ticketNo: string, sessionId: string, groupId: string, groupName: string) {
+    if (appStore.getState().mode === "live") {
+      // TODO: 实现live模式的会话移入分组
+      return Promise.resolve();
+    }
+    moveSessionToGroup(ticketNo, sessionId, groupId, groupName);
+    return Promise.resolve(true);
+  },
+  /** 删除会话分组（将会话从分组中移出） */
+  removeSessionGroup(ticketNo: string) {
+    if (appStore.getState().mode === "live") {
+      // TODO: 实现live模式的删除会话分组
+      return Promise.resolve();
+    }
+    removeSessionGroup(ticketNo);
+    return Promise.resolve(true);
+  },
+  /** 更新会话分组信息 */
+  updateSessionGroup(ticketNo: string, sessionId: string, groupId: string | null, groupName: string | null) {
+    if (appStore.getState().mode === "live") {
+      // TODO: 实现live模式的更新会话分组信息
+      return Promise.resolve();
+    }
+    updateSessionGroup(ticketNo, sessionId, groupId, groupName);
+    return Promise.resolve(true);
+  },
+  /** 重命名会话 */
+  renameSession(ticketNo: string, sessionId: string, newTitle: string) {
+    if (appStore.getState().mode === "live") {
+      // TODO: 实现live模式的重命名会话
+      return Promise.resolve();
+    }
+    renameSession(ticketNo, sessionId, newTitle);
+    return Promise.resolve(true);
+  },
+  /** 将会话移动到列表顶部 */
+  moveSessionToTop(ticketNo: string, sessionId: string) {
+    if (appStore.getState().mode === "live") {
+      // TODO: 实现live模式的将会话移动到列表顶部
+      return Promise.resolve();
+    }
+    moveSessionToTop(ticketNo, sessionId);
+    return Promise.resolve(true);
+  },
+  /** 打开移入分组对话框 */
+  moveSessionToGroupDialog(ticketNo: string, sessionId: string) {
+    // 这里我们需要打开一个对话框让用户选择或创建分组
+    // 由于这是UI交互，我们这里只做一个占位实现
+    // 实际的对话框实现应该在UI层完成
+    console.log(`Opening move to group dialog for session ${sessionId} in ticket ${ticketNo}`);
+    return Promise.resolve(true);
+  }
 };

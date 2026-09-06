@@ -1,10 +1,11 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useRef } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import {
   Archive,
   ArrowUUpLeft,
   Chats,
   CircleNotch,
+  Folder,
   LockKey,
   Plus,
   Trash,
@@ -14,6 +15,9 @@ import { NO_SESSIONS, useApp } from "@/store";
 import { setGateSection } from "@/features/gate/state";
 import type { ChatSession } from "@/shared/types";
 import { CopyButton } from "@/shared/components/ui";
+import { DndContext, closestCenter, DragOverlay, useDraggable, useDragOverlay, useSensors, closestToPointer, PointerSensor, SortableSensor, VerticalListSortingStrategy, activate, DragEndEvent } from "@dnd-kit/core";
+import { CSS } from "@dnd-kit/utilities";
+import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable";
 
 /**
  * 会话列表段（collapsible）：活跃/归档两 tab + 新建会话草稿。
@@ -75,10 +79,78 @@ function SessionList({ ticketNo, locked = false }: { ticketNo: string; locked?: 
   const activeSessionId = useApp((s) => s.activeSessionId[ticketNo]);
   const creating = useApp((s) => s.creatingSession[ticketNo] ?? false);
   const [tab, setTab] = useState<"active" | "archived">("active");
+  const [dragOverlay, setDragOverlay] = useState<React.ReactElement | null>(null);
+  const dragOverlayRef = useRef(null);
+  const { setDragOverlay: setDragOverlayFn } = useDragOverlay({
+    dragOverlay: (overlaid) => setDragOverlay(overlaid),
+  });
 
   const activeSessions = useMemo(() => sessions.filter((s) => s.status === "active"), [sessions]);
   const archivedSessions = useMemo(() => sessions.filter((s) => s.status === "archived"), [sessions]);
   const displayed = tab === "active" ? activeSessions : archivedSessions;
+
+  const sensors = useSensors(PointerSensor, SortableSensor);
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    
+    if (over && active.id !== over.id) {
+      const activeIndex = displayed.findIndex(session => session.id === active.id as string);
+      const overIndex = displayed.findIndex(session => session.id === over.id as string);
+      
+      if (activeIndex >= 0 && overIndex >= 0) {
+        // Create a new array with the items reordered
+        const newDisplayed = [...displayed];
+        const [movedItem] = newDisplayed.splice(activeIndex, 1);
+        newDisplayed.splice(overIndex, 0, movedItem);
+        
+        // Update the session order in state
+        // We need to update the sessions in the store to reflect the new order
+        const newSessions = [...sessions];
+        // Reorder the sessions array to match the new displayed order
+        const newOrder = [...newDisplayed];
+        if (tab === "active") {
+          // For active tab, we need to update the active sessions order
+          const activeSessionsInState = sessions.filter(s => s.status === "active");
+          const archivedSessionsInState = sessions.filter(s => s.status === "archived");
+          
+          // Reorder active sessions
+          const reorderedActive = newOrder.map(id => 
+            activeSessionsInState.find(s => s.id === id)
+          ).filter((item): item is ChatSession => item !== undefined);
+          
+          newSessions.splice(
+            0, 
+            activeSessionsInState.length, 
+            ...reorderedActive
+          );
+        } else {
+          // For archived tab, we need to update the archived sessions order
+          const activeSessionsInState = sessions.filter(s => s.status === "active");
+          const archivedSessionsInState = sessions.filter(s => s.status === "archived");
+          
+          // Reorder archived sessions
+          const reorderedArchived = newOrder.map(id => 
+            archivedSessionsInState.find(s => s.id === id)
+          ).filter((item): item is ChatSession => item !== undefined);
+          
+          newSessions.splice(
+            activeSessionsInState.length, 
+            archivedSessionsInState.length, 
+            ...reorderedArchived
+          );
+        }
+        
+        // Update the state with the new session order
+        set((st) => ({
+          sessions: {
+            ...st.sessions,
+            [ticketNo]: newSessions
+          }
+        }));
+      }
+    }
+  };
 
   const handleCreate = () => {
     if (locked) return;
@@ -166,17 +238,31 @@ function SessionList({ ticketNo, locked = false }: { ticketNo: string; locked?: 
             )}
           </div>
         ) : (
-          <div className="space-y-1">
-            {displayed.map((sess) => (
-              <SessionItem
-                key={sess.id}
-                session={sess}
-                isActive={sess.id === activeSessionId}
-                ticketNo={ticketNo}
-                locked={locked}
-              />
-            ))}
-          </div>
+          <DndContext 
+            collisionDetection={closestCenter} 
+            sensors={sensors}
+            onDragEnd={handleDragEnd}
+          >
+            {dragOverlay && (
+              <DragOverlay>{dragOverlay}</DragOverlay>
+            )}
+            <SortableContext 
+              items={displayed.map(s => s.id)} 
+              strategy={verticalListSortingStrategy}
+            >
+              <div className="space-y-1">
+                {displayed.map((sess) => (
+                  <SessionItem
+                    key={sess.id}
+                    session={sess}
+                    isActive={sess.id === activeSessionId}
+                    ticketNo={ticketNo}
+                    locked={locked}
+                  />
+                ))}
+              </div>
+            </SortableContext>
+          </DndContext>
         )}
       </div>
 
@@ -205,8 +291,18 @@ function SessionItem({
   locked?: boolean;
 }) {
   const [showActions, setShowActions] = useState(false);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   // 会话绑定的协作 Agent（创建时固化）：claude 紫 / opencode 蓝色点，与 Composer 选择器一致。
   const agent = useApp((s) => s.agents.find((a) => a.id === session.agentConfigId));
+
+  const handleContextMenu = (e: React.MouseEvent) => {
+    e.preventDefault();
+    setContextMenu({ x: e.clientX, y: e.clientY });
+  };
+
+  const handleCloseContextMenu = () => {
+    setContextMenu(null);
+  };
 
   return (
     <div
@@ -221,12 +317,18 @@ function SessionItem({
         if (locked) return;
         actions.switchSession(ticketNo, session.id);
       }}
+      onContextMenu={handleContextMenu}
       onMouseEnter={() => setShowActions(true)}
       onMouseLeave={() => setShowActions(false)}
     >
+      {/* 呼吸效果的活动指示器 */}
       <span
         className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-          isActive ? "bg-accent" : session.status === "archived" ? "bg-faint" : "bg-dim"
+          isActive
+            ? "bg-accent animate-breathe"
+            : session.status === "archived"
+            ? "bg-faint"
+            : "bg-dim"
         }`}
       />
       <div className="flex-1 min-w-0">
@@ -293,6 +395,78 @@ function SessionItem({
           >
             <Trash size={11} />
           </button>
+        </div>
+      )}
+      {/* 右键菜单 */}
+      {contextMenu && !locked && (
+        <div
+          className="absolute z-50 bg-white rounded-lg border border-edge-shadow shadow-lg px-2 py-1"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+          onClick={handleCloseContextMenu}
+          onContextMenu={handleCloseContextMenu}
+        >
+          <div className="flex items-center gap-2 px-3 py-1.5 text-sm text-dim hover:bg-raised/50 cursor-pointer" onClick={(e) => {
+            e.stopPropagation();
+            handleCloseContextMenu();
+            // 重命名会话
+            // 这里需要调用一个重命名函数，我们需要在state.ts中添加重命名功能
+            actions.renameSession(ticketNo, session.id);
+          }}>
+            <span className="w-4 h-4 flex-shrink-0">
+              {/* 编辑图标 */}
+              <CircleNotch size={12} className="text-faint/50" />
+            </span>
+            重命名
+          </div>
+          <div className="flex items-center gap-2 px-3 py-1.5 text-sm text-dim hover:bg-raised/50 cursor-pointer" onClick={(e) => {
+            e.stopPropagation();
+            handleCloseContextMenu();
+            // 删除会话
+            actions.deleteSession(ticketNo, session.id);
+          }}>
+            <span className="w-4 h-4 flex-shrink-0">
+              <Trash size={10} className="text-danger/50" />
+            </span>
+            删除
+          </div>
+          <div className="flex items-center gap-2 px-3 py-1.5 text-sm text-dim hover:bg-raised/50 cursor-pointer" onClick={(e) => {
+            e.stopPropagation();
+            handleCloseContextMenu();
+            // 复制会话 ID
+            navigator.clipboard.writeText(session.id);
+          }}>
+            <span className="w-4 h-4 flex-shrink-0">
+              <CopyButton text={session.id} label="复制会话 ID" size={10} />
+            </span>
+            复制会话 ID
+          </div>
+          <div className="flex items-center gap-2 px-3 py-1.5 text-sm text-dim hover:bg-raised/50 cursor-pointer" onClick={(e) => {
+            e.stopPropagation();
+            handleCloseContextMenu();
+            // 置顶会话（这里我们可以将会话移动到列表顶部）
+            // 为了实现置顶，我们需要将会话移动到列表的开始位置
+            actions.moveSessionToTop(ticketNo, session.id);
+          }}>
+            <span className="w-4 h-4 flex-shrink-0">
+              {/* 置顶图标 */}
+              <ArrowUUpLeft size={10} className="text-faint/50" />
+            </span>
+            置顶
+          </div>
+          {/* 移入分组功能 */}
+          <div className="flex items-center gap-2 px-3 py-1.5 text-sm text-dim hover:bg-raised/50 cursor-pointer" onClick={(e) => {
+            e.stopPropagation();
+            handleCloseContextMenu();
+            // 移入分组 - 这里需要一个子菜单或对话框来选择分组
+            // 由于时间限制，我们先实现一个简单的版本
+            actions.moveSessionToGroupDialog(ticketNo, session.id);
+          }}>
+            <span className="w-4 h-4 flex-shrink-0">
+              {/* 文件夹图标 */}
+              <Folder size={10} className="text-faint/50" />
+            </span>
+            移入分组
+          </div>
         </div>
       )}
     </div>

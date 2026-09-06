@@ -174,6 +174,106 @@ export function dropSessionPendings(sessionId: string) {
   });
 }
 
+/* ─── 会话分组管理 ─── */
+
+/** 创建会话分组 */
+export function createSessionGroup(ticketNo: string, groupId: string, groupName: string, color: string) {
+  // 更新该工单下所有会话的分组信息
+  set((st) => ({
+    sessions: {
+      ...st.sessions,
+      [ticketNo]: (st.sessions[ticketNo] ?? []).map(session => ({
+        ...session,
+        groupId,
+        groupName
+      })),
+    }
+  }));
+}
+
+/** 将会话移入分组 */
+export function moveSessionToGroup(ticketNo: string, sessionId: string, groupId: string, groupName: string) {
+  set((st) => ({
+    sessions: {
+      ...st.sessions,
+      [ticketNo]: (st.sessions[ticketNo] ?? []).map(session =>
+        session.id === sessionId
+          ? { ...session, groupId, groupName }
+          : session
+      ),
+    }
+  }));
+}
+
+/** 删除会话分组（将会话从分组中移出） */
+export function removeSessionGroup(ticketNo: string) {
+  set((st) => ({
+    sessions: {
+      ...st.sessions,
+      [ticketNo]: (st.sessions[ticketNo] ?? []).map(session => ({
+        ...session,
+        groupId: null,
+        groupName: null
+      })),
+    }
+  }));
+}
+
+/** 更新会话分组信息 */
+export function updateSessionGroup(ticketNo: string, sessionId: string, groupId: string | null, groupName: string | null) {
+  set((st) => ({
+    sessions: {
+      ...st.sessions,
+      [ticketNo]: (st.sessions[ticketNo] ?? []).map(session =>
+        session.id === sessionId
+          ? { ...session, groupId, groupName }
+          : session
+      ),
+    }
+  }));
+}
+
+/** 重命名会话标题 */
+export function renameSession(ticketNo: string, sessionId: string, newTitle: string) {
+  set((st) => ({
+    sessions: {
+      ...st.sessions,
+      [ticketNo]: (st.sessions[ticketNo] ?? []).map(session =>
+        session.id === sessionId
+          ? { ...session, title: newTitle }
+          : session
+      ),
+    }
+  }));
+}
+
+/** 将会话移动到列表顶部（在其状态分类中） */
+export function moveSessionToTop(ticketNo: string, sessionId: string) {
+  set((st) => {
+    const sessions = st.sessions[ticketNo] ?? [];
+    // 找到会话索引
+    const index = sessions.findIndex(s => s.id === sessionId);
+    if (index === -1) return st;
+    
+    const session = sessions[index];
+    // 移除会话
+    const newSessions = [...sessions.slice(0, index), ...sessions.slice(index + 1)];
+    // 根据状态确定插入位置（活跃会话在前，归档在后）
+    const activeCount = newSessions.filter(s => s.status === "active").length;
+    const insertPos = session.status === "active" ? 0 : activeCount;
+    // 插入到指定位置
+    const finalSessions = [...newSessions.slice(0, insertPos), session, ...newSessions.slice(insertPos)];
+    
+    return {
+      ...st,
+      sessions: {
+        ...st.sessions,
+        [ticketNo]: finalSessions
+      }
+    };
+  });
+}
+
 /* ─── 用量 / 任务清单 / 上下文占用（按工单键暂存，会话切换时重建） ─── */
 
 export function addUsage(no: string, promptTokens: number, completionTokens: number) {
@@ -244,6 +344,63 @@ export function createSession(ticketNo: string) {
     agentConfigId: session.agentConfigId ?? null,
   });
   return id;
+}
+
+/** 创建会话分组 */
+export function createSessionGroup(ticketNo: string, groupId: string, groupName: string, color: string) {
+  // 更新该工单下所有会话的分组信息
+  set((st) => ({
+    sessions: {
+      ...st.sessions,
+      [ticketNo]: (st.sessions[ticketNo] ?? []).map(session => ({
+        ...session,
+        groupId,
+        groupName
+      })),
+    }
+  }));
+}
+
+/** 将会话移入分组 */
+export function moveSessionToGroup(ticketNo: string, sessionId: string, groupId: string, groupName: string) {
+  set((st) => ({
+    sessions: {
+      ...st.sessions,
+      [ticketNo]: (st.sessions[ticketNo] ?? []).map(session =>
+        session.id === sessionId
+          ? { ...session, groupId, groupName }
+          : session
+      ),
+    }
+  }));
+}
+
+/** 删除会话分组（将会话从分组中移出） */
+export function removeSessionGroup(ticketNo: string) {
+  set((st) => ({
+    sessions: {
+      ...st.sessions,
+      [ticketNo]: (st.sessions[ticketNo] ?? []).map(session => ({
+        ...session,
+        groupId: null,
+        groupName: null
+      })),
+    }
+  }));
+}
+
+/** 更新会话分组信息 */
+export function updateSessionGroup(ticketNo: string, sessionId: string, groupId: string | null, groupName: string | null) {
+  set((st) => ({
+    sessions: {
+      ...st.sessions,
+      [ticketNo]: (st.sessions[ticketNo] ?? []).map(session =>
+        session.id === sessionId
+          ? { ...session, groupId, groupName }
+          : session
+      ),
+    }
+  }));
 }
 
 /**
