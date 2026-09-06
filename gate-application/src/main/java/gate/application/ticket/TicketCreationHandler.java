@@ -13,27 +13,27 @@ import gate.ports.store.ProjectRepository;
 import gate.ports.store.TicketRepository;
 import gate.application.project.ProjectAuthResolver;
 import java.nio.file.Files;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.regex.Pattern;
 
 /**
- * Creates a ticket: validates the request, cuts the ticket branch from the topology's primary ref
- * (server-side, same bootstrap nature as the seed) and materializes the independent clone.
+ * Creates a ticket: validates the request against the current state, cuts the ticket branch from
+ * the topology's primary ref (server-side, same bootstrap nature as the seed) and materializes the
+ * independent clone.
  *
  * <p>One creation path serves both the web console and the agent-facing MCP {@code ticket_create}
- * tool, so the validation rules (stage/priority/labels/target-branch) and the auto numbering
- * (next {@code T-nnn}, base 101) cannot drift between the two entry points.
+ * tool, so the validation rules and the auto numbering (next {@code T-nnn}, base 101) cannot drift
+ * between the two entry points. Field-level rules (required title, priority/stage/labels enums,
+ * branch format) live in {@link TicketRequestParser}; this handler keeps only what needs the
+ * <em>state</em>: duplicate ticket_no, project existence, topology wiring, auth repo presence and
+ * clone IO (T-108 — validation failures and domain failures stay distinguishable).
  *
  * <p>Project resolution follows {@link ProjectAuthResolver#forNewTicket}: a bound project clones
  * from its own auth repo (the T-107 fix), everything else falls back to the gate-level topology.
  * {@code projects} may be null in legacy wirings, which then only supports unaffiliated tickets.
  */
 public final class TicketCreationHandler {
-
-    private static final Pattern SINGLE_SEGMENT = Pattern.compile("[A-Za-z0-9._-]+");
 
     private final TicketRepository tickets;
     private final ProjectRepository projects;
@@ -65,26 +65,12 @@ public final class TicketCreationHandler {
             throw new GateException(GateErrorCode.GATE_ERROR_CONFIG,
                     "ticket creation is not wired into this GateService instance");
         }
-        String requestedNo = normalize(command.ticketNo());
-        String title = command.title() == null ? "" : command.title();
-        String ticketNo = requestedNo != null ? requestedNo : generateTicketNo();
+        CreateTicketCommand cmd = TicketRequestParser.normalize(command);
+        String ticketNo = cmd.ticketNo() != null ? cmd.ticketNo() : generateTicketNo();
         if (tickets.find(ticketNo).isPresent()) {
             throw new GateException(GateErrorCode.USAGE, "ticket already exists: " + ticketNo);
         }
-        TicketStage stage = TicketStage.IN_PROGRESS;
-        if (command.stage() != null) {
-            TicketStage parsed = parseStage(command.stage());
-            if (parsed != TicketStage.PENDING && parsed != TicketStage.IN_PROGRESS) {
-                throw new GateException(GateErrorCode.USAGE,
-                        "new ticket stage must be PENDING or IN_PROGRESS, got " + command.stage());
-            }
-            stage = parsed;
-        }
-        String priority = parsePriority(command.priority());
-        String description = normalize(command.description());
-        String note = normalize(command.note());
-        List<String> labels = parseLabels(command.labels());
-        String projectId = normalize(command.projectId());
+        String projectId = cmd.projectId();
         Project project = null;
         if (projectId != null) {
             if (projects == null) {
@@ -96,13 +82,12 @@ public final class TicketCreationHandler {
             project = projects.find(pid).orElseThrow(() -> new GateException(
                     GateErrorCode.USAGE, "no such project: " + pid));
         }
-        String agentConfigId = normalize(command.agentConfigId());
 
         // Project tickets clone from the project's own auth repo; only unaffiliated tickets use
         // the gate-level topology (ProjectAuthResolver — cross-project clones caused T-107).
         var topology = new ProjectAuthResolver(projects, config).forNewTicket(project);
         String primaryRef = topology.targetRef();
-        String targetRef = resolveTargetRef(command.targetBranch(), ticketNo);
+        String targetRef = "refs/heads/" + (cmd.targetBranch() != null ? cmd.targetBranch() : ticketNo);
         RepoRef auth = topology.authRepo();
         if (!Files.exists(auth.path())) {
             throw new GateException(GateErrorCode.USAGE,
@@ -116,10 +101,12 @@ public final class TicketCreationHandler {
         var clone = topologyInitializer.createClone(auth, targetRef,
                 config.clonesRoot().resolve(ticketNo));
 
-        Ticket t = new Ticket(ticketNo, title, targetRef, clone.pathString(),
+        TicketStage stage = cmd.stage() == null ? TicketStage.IN_PROGRESS
+                : TicketStage.valueOf(cmd.stage());
+        Ticket t = new Ticket(ticketNo, cmd.title(), targetRef, clone.pathString(),
                 null, null, "manual", "human", stage, clock.now(), clock.now(),
-                null, null, agentConfigId, priority, projectId,
-                description, note, labels);
+                null, null, cmd.agentConfigId(), cmd.priority(), projectId,
+                cmd.description(), cmd.note(), cmd.labels());
         tickets.insert(t);
         return t;
     }
@@ -175,86 +162,5 @@ public final class TicketCreationHandler {
             next++;
         }
         return "T-" + next;
-    }
-
-    /**
-     * The ticket's own branch: the requested branch when given (single segment, no
-     * trailing ".lock"), else the ticket number — mirroring the web controller's rules.
-     */
-    private static String resolveTargetRef(String requestedBranch, String ticketNo) {
-        String name;
-        if (requestedBranch == null || requestedBranch.isBlank()) {
-            name = ticketNo;
-        } else {
-            name = requestedBranch.trim();
-            if (name.startsWith("refs/heads/")) {
-                name = name.substring("refs/heads/".length());
-            }
-        }
-        if (name.isEmpty() || name.equals(".") || name.equals("..") || name.endsWith(".lock")
-                || !SINGLE_SEGMENT.matcher(name).matches() || name.length() > 80) {
-            throw new GateException(GateErrorCode.USAGE,
-                    "target_branch must match [A-Za-z0-9._-]+ (single segment, no slash): "
-                            + requestedBranch);
-        }
-        return "refs/heads/" + name;
-    }
-
-    private static String normalize(String raw) {
-        if (raw == null || raw.isBlank()) {
-            return null;
-        }
-        return raw.trim();
-    }
-
-    /** One of {@code Ticket.PRIORITIES} (case-insensitive) or null. */
-    public static String parsePriority(String raw) {
-        if (raw == null) {
-            return null;
-        }
-        String priority = raw.trim().toUpperCase(Locale.ROOT);
-        if (!Ticket.PRIORITIES.contains(priority)) {
-            throw new GateException(GateErrorCode.USAGE,
-                    "priority must be one of " + Ticket.PRIORITIES + " or null");
-        }
-        return priority;
-    }
-
-    /** Trimmed, de-duplicated, size-capped label list; blank entries are dropped. */
-    public static List<String> parseLabels(List<String> raw) {
-        if (raw == null) {
-            return List.of();
-        }
-        List<String> labels = new ArrayList<>();
-        for (String item : raw) {
-            if (item == null) {
-                throw new GateException(GateErrorCode.USAGE, "tag must not be null");
-            }
-            String label = item.trim();
-            if (label.isEmpty() || labels.contains(label)) {
-                continue;
-            }
-            if (label.length() > Ticket.MAX_LABEL_LENGTH) {
-                throw new GateException(GateErrorCode.USAGE,
-                        "label longer than " + Ticket.MAX_LABEL_LENGTH + " chars");
-            }
-            labels.add(label);
-        }
-        if (labels.size() > Ticket.MAX_LABELS) {
-            throw new GateException(GateErrorCode.USAGE, "at most " + Ticket.MAX_LABELS + " labels");
-        }
-        return labels;
-    }
-
-    /** Any {@link TicketStage} name (case-insensitive), blank rejected. */
-    public static TicketStage parseStage(String raw) {
-        if (raw == null || raw.isBlank()) {
-            throw new GateException(GateErrorCode.USAGE, "stage must not be blank");
-        }
-        try {
-            return TicketStage.valueOf(raw.trim().toUpperCase(Locale.ROOT));
-        } catch (IllegalArgumentException e) {
-            throw new GateException(GateErrorCode.USAGE, "no such stage: " + raw);
-        }
     }
 }

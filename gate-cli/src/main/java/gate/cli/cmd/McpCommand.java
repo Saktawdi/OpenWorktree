@@ -55,7 +55,11 @@ public final class McpCommand implements Runnable {
                     c.presubmitRepository(), c.reviewResultRepository(),
                     c.blobStore(), c.providerRepository(), c.config(),
                     c.ticketRepository());
-            McpServer server = new McpServer(dispatcher, domainToken);
+            // Failed MCP calls land in adapters.log (component gate-mcp) — same trail the backend
+            // writes, so agent-side failures stay auditable (T-108).
+            gate.adapters.io.AdapterLog callLog = gate.adapters.io.AdapterLog.at(
+                    c.config().gateHome().resolve("adapters.log"));
+            McpServer server = new McpServer(dispatcher, domainToken, callLog);
             // 与 McpServeApp 同理：stdio 上的 MCP 客户端期望 UTF-8，Windows 控制台默认
             // 字符集（GBK）会把工具结果里的中文写成乱码；写入侧强制 UTF-8。
             PrintStream utf8Out = new PrintStream(System.out, true, java.nio.charset.StandardCharsets.UTF_8);

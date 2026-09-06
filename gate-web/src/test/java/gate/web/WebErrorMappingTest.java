@@ -77,6 +77,27 @@ class WebErrorMappingTest {
     }
 
     @Test
+    void invalid_priority_on_ticket_create_lists_the_broken_field_in_detail() throws Exception {
+        // T-108: validation failures carry a per-field detail list (field, expected, actual) so
+        // the caller can fix the request instead of guessing from prose.
+        HttpResponse<String> res = post("/api/tickets", "{\"title\":\"t\",\"priority\":\"PX\"}");
+        assertEquals(400, res.statusCode(), res.body());
+        assertTrue(res.body().contains("\"error\":\"USAGE\""), res.body());
+        assertTrue(res.body().contains("\"detail\":[\"priority: invalid value"), res.body());
+        assertTrue(res.body().contains("P0, P1, P2, P3"), res.body());
+        assertTrue(res.body().contains("PX"), res.body());
+    }
+
+    @Test
+    void missing_title_on_ticket_create_lists_the_broken_field_in_detail() throws Exception {
+        HttpResponse<String> res = post("/api/tickets", "{\"priority\":\"P1\"}");
+        assertEquals(400, res.statusCode(), res.body());
+        assertTrue(res.body().contains("\"error\":\"USAGE\""), res.body());
+        assertTrue(res.body().contains("title: missing required parameter"), res.body());
+        assertTrue(res.body().contains("non-blank string"), res.body());
+    }
+
+    @Test
     void empty_diff_presubmit_maps_to_422_precondition() throws Exception {
         post("/api/tickets", "{\"ticket_no\":\"EMPTY-1\",\"title\":\"t\"}");
         // Nothing changed in the clone → tree == base tree → REJECT_PRECONDITION (§4.4 → 422).

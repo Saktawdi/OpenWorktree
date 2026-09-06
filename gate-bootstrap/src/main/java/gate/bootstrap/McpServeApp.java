@@ -1,6 +1,7 @@
 package gate.bootstrap;
 
 import gate.adapters.config.TomlGateConfigLoader;
+import gate.adapters.io.AdapterLog;
 import gate.adapters.mcp.McpServer;
 import gate.adapters.mcp.McpToolDispatcher;
 import gate.domain.config.GateConfig;
@@ -81,7 +82,10 @@ public final class McpServeApp {
                 runtime.presubmitRepository(), runtime.reviewResultRepository(),
                 runtime.blobStore(), runtime.providerRepository(), runtime.config(),
                 runtime.ticketRepository());
-        new McpServer(dispatcher, token).run(in, out, err);
+        // Failed MCP calls land in the same adapters.log the backend writes (component gate-mcp),
+        // so agent-side failures are auditable in the gate's own first-party trail (T-108).
+        AdapterLog callLog = AdapterLog.at(config.gateHome().resolve("adapters.log"));
+        new McpServer(dispatcher, token, callLog).run(in, out, err);
     }
 
     private static Path parseConfigPath(List<String> args) {
