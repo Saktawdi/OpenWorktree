@@ -2,7 +2,7 @@
  * 本地偏好持久化（store）：localStorage 键的集中读写。
  * 键名与读取默认值都在这里登记，域内 setter 只调用对应 save/load。
  */
-import type { Stage } from "@/shared/types";
+import type { Stage, QuoteChip } from "@/shared/types";
 import { ALL_STAGES, KANBAN_DEFAULT_STAGES, KANBAN_LANE_COUNT, KANBAN_STAGE_ORDER } from "@/shared/format";
 import type { GateSections } from "./state";
 
@@ -13,6 +13,7 @@ const KANBAN_STAGES_KEY = "gate-kanban-stages";
 const GATE_PANEL_KEY = "gate-panel-collapsed";
 const GATE_SECTIONS_KEY = "gate-sections";
 const COMPOSER_DRAFTS_KEY = "gate-composer-drafts";
+const PENDING_QUOTES_KEY = "gate-pending-quotes";
 const TERMINAL_CLOSE_ALL_KEY = "gate-terminal-close-all-confirm";
 
 export const DEFAULT_GATE_SECTIONS: GateSections = { info: true, pipeline: true, sessions: true };
@@ -153,6 +154,35 @@ export function saveComposerDrafts(drafts: Record<string, string>) {
     localStorage.setItem(COMPOSER_DRAFTS_KEY, JSON.stringify(drafts));
   } catch {
     /* 配额满或隐私模式等存储不可用场景：草稿降级为仅本窗口内保留 */
+  }
+}
+
+/** 读取本地持久化的引用片段胶囊（按工单号键）；损坏/非法条目直接丢弃。 */
+export function loadPendingQuotes(): Record<string, QuoteChip[]> {
+  try {
+    const raw = typeof window !== "undefined" ? localStorage.getItem(PENDING_QUOTES_KEY) : null;
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const out: Record<string, QuoteChip[]> = {};
+    for (const [no, v] of Object.entries(parsed)) {
+      if (!Array.isArray(v)) continue;
+      const chips = v.filter(
+        (c): c is QuoteChip =>
+          !!c && typeof c === "object" && typeof (c as QuoteChip).id === "string" && typeof (c as QuoteChip).text === "string" && (c as QuoteChip).text.trim() !== "",
+      );
+      if (chips.length > 0) out[no] = chips;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+export function savePendingQuotes(quotes: Record<string, QuoteChip[]>) {
+  try {
+    localStorage.setItem(PENDING_QUOTES_KEY, JSON.stringify(quotes));
+  } catch {
+    /* 存储不可用时降级为仅本窗口内保留 */
   }
 }
 

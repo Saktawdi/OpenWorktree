@@ -13,6 +13,7 @@ import { PluginsPage } from "@/app/plugins/components/PluginsPage";
 import { PluginPageHost } from "@/app/plugins/components/PluginPageHost";
 import { ConnectionDialog } from "@/app/components/ConnectionDialog";
 import { StageChangeConfirmDialog } from "@/features/ticket/components/StageChangeConfirmDialog";
+import { SelectionQuoteLayer } from "@/features/session";
 import { Toast } from "@/shared/components/Toast";
 
 export default function App() {
@@ -49,6 +50,7 @@ export default function App() {
       <ConnectionDialog />
       <StageChangeConfirmDialog />
       <TerminalWorkbench />
+      <SelectionQuoteLayer />
       <Toast />
     </div>
   );

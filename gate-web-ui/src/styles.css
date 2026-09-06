@@ -498,6 +498,54 @@ body {
     @apply size-9 rounded-lg object-cover border border-edge shrink-0;
   }
 
+  /* ── 引用片段胶囊（划选文字 → 添加到对话框；发送后在用户气泡里还原） ── */
+  .quote-chip {
+    @apply relative inline-flex max-w-full items-center gap-1 h-6.5 pl-2 pr-1 rounded-full
+      border border-info/25 bg-info/10 text-[11.5px] font-medium text-ink
+      transition-colors duration-150 select-none;
+  }
+  .quote-chip:hover,
+  .quote-chip:focus-within {
+    @apply border-info/50 bg-info/15;
+  }
+  .quote-chip-icon {
+    @apply text-info shrink-0;
+  }
+  .quote-chip-preview {
+    @apply min-w-0 truncate text-left cursor-default;
+    max-width: 240px;
+  }
+  .quote-chip-preview:focus {
+    outline: none;
+  }
+  .quote-chip-x {
+    @apply grid place-items-center size-4 rounded-full text-faint cursor-pointer shrink-0
+      transition-colors duration-150 hover:text-ink hover:bg-raised;
+  }
+  /* 原文提示：悬停/键盘聚焦（focus-within）浮出；tipwrap 自带 6px 顶距桥接悬停 */
+  .quote-chip-tipwrap {
+    @apply hidden absolute left-0 bottom-full z-[70] w-max pt-1.5;
+  }
+  .quote-chip-tipr .quote-chip-tipwrap {
+    @apply left-auto right-0;
+  }
+  .quote-chip:hover .quote-chip-tipwrap,
+  .quote-chip:focus-within .quote-chip-tipwrap {
+    @apply block;
+  }
+  .quote-chip-tip {
+    @apply w-max max-w-[min(420px,72vw)] max-h-56 overflow-y-auto rounded-xl border border-edge
+      bg-overlay px-3 py-2 text-[12px] font-normal leading-relaxed text-ink
+      whitespace-pre-wrap break-words shadow-xl shadow-black/40;
+  }
+
+  /* ── 划选动作菜单（SelectionQuoteLayer：内置「添加到对话框」+ 插件 selection.menu） ── */
+  .menu-action {
+    @apply flex items-center gap-1.5 h-8 px-2.5 rounded-lg text-[12px] font-medium text-dim
+      whitespace-nowrap cursor-pointer transition-colors duration-150
+      hover:text-ink hover:bg-raised;
+  }
+
   /* ── Markdown Body ── */
   .md-body { min-width: 0; overflow-wrap: anywhere; }
   .md-body > *:first-child { margin-top: 0; }

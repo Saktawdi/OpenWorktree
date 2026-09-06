@@ -6,6 +6,7 @@ import gate.domain.session.AgentCli;
 import gate.domain.session.AgentConfig;
 import gate.domain.session.PermissionRequest;
 import gate.domain.session.Session;
+import gate.domain.ticket.Ticket;
 import gate.ports.store.AgentConfigRepository;
 import gate.ports.session.AgentSessionPort;
 import gate.ports.infra.Clock;
@@ -21,9 +22,19 @@ import io.javalin.Javalin;
 import io.javalin.http.Context;
 import io.javalin.http.HttpStatus;
 import io.javalin.http.sse.SseClient;
+import java.awt.Graphics2D;
+import java.awt.RenderingHints;
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Instant;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -31,6 +42,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import javax.imageio.ImageIO;
 
 /**
  * Agent Session & Configuration Controller.
@@ -41,6 +53,20 @@ public final class SessionController implements WebController {
     private static final int MAX_ATTACHMENTS = 10;
     private static final java.util.Set<String> IMAGE_MIMES =
             java.util.Set.of("image/png", "image/jpeg", "image/gif", "image/webp");
+    /**
+     * 会话图片缩略图的克隆工作区落点（Ticket.clonePath 下）：发送时把缩略图写到
+     * .gate/chat-images/，用户消息文本追加 [图片引用 #n] 引用行——不落库、不改
+     * schema，历史重载经 messageJson 解析引用行还原缩略图；.gate/ 追加进克隆本地
+     * 的 .git/info/exclude（不动工作区文件，不污染 git status / 变更对比）。
+     */
+    private static final String CHAT_IMAGE_DIR = ".gate/chat-images";
+    /** 缩略图最长边（px）：气泡与灯箱足够清晰，避免原图（可达数 MB）反复进历史接口。 */
+    private static final int CHAT_IMAGE_MAX_EDGE = 1024;
+    private static final Map<String, String> CHAT_IMAGE_EXT_BY_MIME = Map.of(
+            "image/png", "png", "image/jpeg", "jpg", "image/gif", "gif", "image/webp", "webp");
+    private static final Map<String, String> CHAT_IMAGE_MIME_BY_EXT = Map.of(
+            "png", "image/png", "jpg", "image/jpeg", "jpeg", "image/jpeg",
+            "gif", "image/gif", "webp", "image/webp");
     /**
      * 推理强度档位（claude 会话目录随每个模型下发）：claude --effort 接受
      */
@@ -85,6 +111,7 @@ public final class SessionController implements WebController {
         // Ticket-bound sessions
         app.get("/api/tickets/{ticketNo}/sessions", this::listTicketSessions);
         app.post("/api/tickets/{ticketNo}/sessions", this::createTicketSession);
+        app.get("/api/tickets/{ticketNo}/chat-images/{file}", this::chatImage);
 
         // Sessions (Global)
         app.get("/api/sessions/{id}", this::getSession);
@@ -294,9 +321,8 @@ public final class SessionController implements WebController {
 
     public void sendMessage(Context ctx) {
         String sessionId = ctx.pathParam("id");
-        if (sessionRepository.find(sessionId).isEmpty()) {
-            throw new GateException(GateErrorCode.USAGE, "no such session: " + sessionId);
-        }
+        Session session = sessionRepository.find(sessionId)
+                .orElseThrow(() -> new GateException(GateErrorCode.USAGE, "no such session: " + sessionId));
         Map<String, Object> req = Json.parseObject(ctx.body());
         String message = str(req, "message");
         List<AgentSessionPort.Attachment> attachments = parseAttachments(req);
@@ -304,12 +330,164 @@ public final class SessionController implements WebController {
             throw new GateException(GateErrorCode.USAGE, "message is required");
         }
         applyModelOverrideIfPresent(sessionId, req);
+        // 缩略图写进工单克隆 .gate/chat-images/（不落库），消息文本追加引用行：
+        // 历史重载据此在用户气泡还原缩略图；Agent 也由此得知缩略图在工作区的位置。
+        List<String> imagePaths = saveChatThumbnails(session, attachments);
+        String outgoing = appendChatImageRefs(message == null ? "" : message, imagePaths);
         String taskId = agentSessionPort.sendMessage(
-                new AgentSessionPort.SendRequest(sessionId, message == null ? "" : message, true, attachments));
+                new AgentSessionPort.SendRequest(sessionId, outgoing, true, attachments));
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("task_id", taskId);
+        if (!imagePaths.isEmpty()) {
+            body.put("images", imagePaths);
+        }
         ctx.status(HttpStatus.ACCEPTED);
         ctx.json(body);
+    }
+
+    /** 读取工单克隆内 .gate/chat-images/ 下的缩略图（带鉴权；文件名白名单 + 路径收敛防穿越）。 */
+    public void chatImage(Context ctx) {
+        String ticketNo = ctx.pathParam("ticketNo");
+        String file = ctx.pathParam("file");
+        if (!file.matches("[A-Za-z0-9._-]+")) {
+            throw new GateException(GateErrorCode.USAGE, "bad chat image name");
+        }
+        int dot = file.lastIndexOf('.');
+        String ext = dot < 0 ? "" : file.substring(dot + 1).toLowerCase(Locale.ROOT);
+        String mime = CHAT_IMAGE_MIME_BY_EXT.get(ext);
+        if (mime == null) {
+            throw new GateException(GateErrorCode.USAGE, "bad chat image extension");
+        }
+        Ticket ticket = tickets.find(ticketNo)
+                .orElseThrow(() -> new GateException(GateErrorCode.USAGE, "no such ticket: " + ticketNo));
+        Path base = Path.of(ticket.clonePath()).resolve(CHAT_IMAGE_DIR).normalize();
+        Path target = base.resolve(file).normalize();
+        if (!target.startsWith(base) || !Files.isRegularFile(target)) {
+            throw new GateException(GateErrorCode.USAGE, "no such chat image");
+        }
+        ctx.contentType(mime);
+        try {
+            ctx.result(Files.newInputStream(target));
+        } catch (IOException e) {
+            throw new GateException(GateErrorCode.GATE_ERROR_IO, "read chat image failed: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 图片附件缩略图落盘到工单克隆 .gate/chat-images/（尽力而为，失败不阻断发送）：
+     * 最长边超 1024px 的用 ImageIO 缩放（webp 等解不动的原样保存）；目录追加进
+     * .git/info/exclude，不污染 git status。返回引用行用的相对路径列表。
+     */
+    private List<String> saveChatThumbnails(Session session, List<AgentSessionPort.Attachment> attachments) {
+        List<String> saved = new ArrayList<>();
+        if (attachments == null || attachments.isEmpty()) {
+            return saved;
+        }
+        try {
+            Path clone = Path.of(session.clonePath());
+            Path dir = clone.resolve(CHAT_IMAGE_DIR);
+            Files.createDirectories(dir);
+            excludeChatImageDir(clone);
+            String stamp = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss")
+                    .withZone(ZoneId.systemDefault()).format(clock.now());
+            int n = 0;
+            for (AgentSessionPort.Attachment att : attachments) {
+                String ext = CHAT_IMAGE_EXT_BY_MIME.get(att.mime());
+                if (ext == null) {
+                    continue;
+                }
+                byte[] raw;
+                try {
+                    raw = Base64.getDecoder().decode(att.dataBase64().trim());
+                } catch (IllegalArgumentException e) {
+                    continue;
+                }
+                n++;
+                String name = stamp + "-" + Long.toString(System.nanoTime(), 36) + "-"
+                        + sanitizeImageName(att.filename(), n) + "." + ext;
+                Files.write(dir.resolve(name), downscale(raw, att.mime()));
+                saved.add(CHAT_IMAGE_DIR + "/" + name);
+            }
+        } catch (Exception e) {
+            System.err.println("[chat-image] save thumbnail failed: " + e);
+        }
+        return saved;
+    }
+
+    /** 引用行追加在消息文本尾部：历史与 Agent 同源可见，格式 [图片引用 #n] <相对路径>。 */
+    private static String appendChatImageRefs(String message, List<String> imagePaths) {
+        if (imagePaths.isEmpty()) {
+            return message;
+        }
+        StringBuilder sb = new StringBuilder(message == null ? "" : message);
+        for (int i = 0; i < imagePaths.size(); i++) {
+            if (sb.length() > 0) {
+                sb.append('\n');
+            }
+            sb.append("[图片引用 #").append(i + 1).append("] ").append(imagePaths.get(i));
+        }
+        return sb.toString();
+    }
+
+    /** 文件名主干白名单化（保留可读性，防路径穿越由端点侧二次校验兜底）。 */
+    private static String sanitizeImageName(String filename, int idx) {
+        String base = filename == null ? "" : filename;
+        int dot = base.lastIndexOf('.');
+        if (dot > 0) {
+            base = base.substring(0, dot);
+        }
+        base = base.replaceAll("[^A-Za-z0-9._-]", "_");
+        if (base.isBlank() || "_".equals(base)) {
+            base = "image-" + idx;
+        }
+        return base.length() > 32 ? base.substring(0, 32) : base;
+    }
+
+    /** 最长边超限时等比缩放；ImageIO 解不动（如 webp）或写回失败时原样返回。 */
+    private static byte[] downscale(byte[] raw, String mime) {
+        try {
+            BufferedImage src = ImageIO.read(new ByteArrayInputStream(raw));
+            if (src == null) {
+                return raw;
+            }
+            int w = src.getWidth();
+            int h = src.getHeight();
+            if (w <= CHAT_IMAGE_MAX_EDGE && h <= CHAT_IMAGE_MAX_EDGE) {
+                return raw;
+            }
+            double scale = Math.min((double) CHAT_IMAGE_MAX_EDGE / w, (double) CHAT_IMAGE_MAX_EDGE / h);
+            int tw = Math.max(1, (int) Math.round(w * scale));
+            int th = Math.max(1, (int) Math.round(h * scale));
+            boolean jpeg = "image/jpeg".equals(mime);
+            BufferedImage dst = new BufferedImage(tw, th,
+                    jpeg ? BufferedImage.TYPE_INT_RGB : BufferedImage.TYPE_INT_ARGB);
+            Graphics2D g = dst.createGraphics();
+            g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+            g.drawImage(src, 0, 0, tw, th, null);
+            g.dispose();
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            ImageIO.write(dst, jpeg ? "jpg" : "png", out);
+            return out.toByteArray();
+        } catch (Exception e) {
+            return raw;
+        }
+    }
+
+    /** .gate/ 写进克隆本地 .git/info/exclude：不改工作区文件、不进 git status。 */
+    private static void excludeChatImageDir(Path clone) {
+        try {
+            Path exclude = clone.resolve(".git").resolve("info").resolve("exclude");
+            if (!Files.isWritable(exclude)) {
+                return;
+            }
+            String content = Files.readString(exclude);
+            if (!content.contains(".gate/")) {
+                String sep = content.isEmpty() || content.endsWith("\n") ? "" : "\n";
+                Files.writeString(exclude, content + sep + ".gate/\n");
+            }
+        } catch (Exception e) {
+            System.err.println("[chat-image] update git exclude failed: " + e);
+        }
     }
 
     public void abortSession(Context ctx) {

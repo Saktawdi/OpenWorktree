@@ -175,9 +175,23 @@ function resolveToolIcon(name: string): import("@/shared/types").ToolIconKind {
   return "terminal";
 }
 
+/** 后端在发送时写入消息文本的缩略图引用行（存于工单克隆 .gate/chat-images/）。 */
+const CHAT_IMAGE_REF_RE = /^\[图片引用 #\d+\] (\S+)$/gm;
+
 export function mapHistoryMessage(m: RawMessage): ChatItem | null {
   if (m.role === "USER") {
-    return { kind: "user", id: m.id, text: m.content, ts: Date.parse(m.timestamp) };
+    // 引用行 → images（工作区相对路径，气泡经带鉴权的 chat-images 端点还原），
+    // 并从展示文本中剥离——引用行的使命是定位文件，不该以文本形式出现在气泡里。
+    const images: string[] = [];
+    const text = m.content
+      .replace(CHAT_IMAGE_REF_RE, (_all, p1: string) => {
+        images.push(p1);
+        return "";
+      })
+      .trim();
+    const item: ChatItem = { kind: "user", id: m.id, text, ts: Date.parse(m.timestamp) };
+    if (images.length > 0) item.images = images;
+    return item;
   }
   if (m.role === "ASSISTANT") {
     return {

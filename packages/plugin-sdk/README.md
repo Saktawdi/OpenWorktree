@@ -37,11 +37,13 @@ export default defineConfig({ resolve: { alias: pluginReactAliases() }, /* … *
 | API | 区域 | 形态 | 说明 |
 |---|---|---|---|
 | `ctx.registerChatInputAction(c)` | `composer.chips` | 动作型 | 输入区上方快捷 chip；`when(state)` 显隐 + `run(api, state)`。**原生 chip 不在注册表**，插件贡献永远追加在原生段之后（不可遮蔽） |
+| `ctx.registerSelectionAction(c)` | `selection.menu` | 动作型 | 划选页面文字弹出菜单的动作（如「添加到 xxx」）。**内置「添加到对话框」不在注册表**，插件动作追加在其后；`when({ text })` 按划选文本显隐，`run(api, text)` 里可 `api.addToComposer(text) / insertText(text) / toast(text)` |
 | `ctx.registerPanelWidget(w)` | `settings.plugins` | 渲染型 | 设置中心「插件」分区的面板挂件 |
 | `ctx.registerPage(p)` | `nav.pages` | 渲染型 | 顶栏导航整页（`order` 升序、缺省 100）；插件禁用/重载时宿主自动关闭打开中的页面 |
 
 动作型区域的 `ChatInputState` 快照：`ticketNo / mode / busy / terminal / stage / diffs / findingsCount / restartCount`。
 `ChatActionApi`：`insertText / sendPrompt / presubmit / returnWithFindings / toast`。
+划选菜单 `run(api, text)` 的 `SelectionActionApi`：`addToComposer / insertText / toast`。
 
 ### 事件总线（`ctx.on`）
 

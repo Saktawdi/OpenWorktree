@@ -19,12 +19,15 @@ import type {
   ChatInputActionContribution,
   PageContribution,
   PanelWidgetContribution,
+  SelectionActionContribution,
 } from "./types";
 
 /** 区域名 → 该区域贡献物的契约类型。新增区域在此登记。 */
 export interface SlotContributionMap {
   /** 对话输入区上方的插件快捷 chip（原生 chip 不在此列，归 Composer 域自管）。 */
   "composer.chips": ChatInputActionContribution;
+  /** 划选页面文字弹出菜单的插件动作（原生「添加到对话框」不在此列，归宿主自管）。 */
+  "selection.menu": SelectionActionContribution;
   /** 顶栏「插件」管理页面的面板挂件（如快捷语录管理面板）。 */
   "settings.plugins": PanelWidgetContribution;
   /** 顶栏导航的插件整页（页面体惰性挂载，禁用/重载时优雅关闭）。 */
@@ -39,6 +42,7 @@ export type RenderSlotName = {
 }[SlotName];
 
 export const SLOT_COMPOSER_CHIPS = "composer.chips" as const;
+export const SLOT_SELECTION_MENU = "selection.menu" as const;
 export const SLOT_SETTINGS_PLUGINS = "settings.plugins" as const;
 export const SLOT_NAV_PAGES = "nav.pages" as const;
 

@@ -3,8 +3,9 @@
  * 用量、任务清单与上下文占用。聊天条目与回合见 chat.ts。
  */
 import { appStore } from "@/store";
-import { saveComposerDrafts } from "@/store/prefs";
-import type { CatalogProvider, ChatSession, SessionModelSel, TodoItem } from "@/shared/types";
+import { saveComposerDrafts, savePendingQuotes } from "@/store/prefs";
+import type { CatalogProvider, ChatSession, QuoteChip, SessionModelSel, TodoItem } from "@/shared/types";
+import { QUOTE_MAX_CHARS } from "@/shared/quotes";
 import { uid } from "@/shared/format";
 import { emitPluginEvent } from "@/app/plugins/events";
 
@@ -70,6 +71,62 @@ export function clearComposerDraft(ticketNo: string) {
   delete drafts[ticketNo];
   set({ composerDrafts: drafts });
   scheduleComposerDraftPersist();
+}
+
+/* ─── 引用片段胶囊（划选页面文字 → 添加到对话框；按工单键暂存 + localStorage 落盘） ─── */
+
+let pendingQuotesTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** 延迟落盘引用胶囊：增删合并写，避免连点时反复刷 localStorage。 */
+function schedulePendingQuotesPersist() {
+  if (pendingQuotesTimer) clearTimeout(pendingQuotesTimer);
+  pendingQuotesTimer = setTimeout(() => {
+    pendingQuotesTimer = null;
+    try {
+      savePendingQuotes(appStore.getState().pendingQuotes);
+    } catch {
+      /* ignore */
+    }
+  }, 250);
+}
+
+function writePendingQuotes(ticketNo: string, chips: QuoteChip[]) {
+  const pendingQuotes = { ...s().pendingQuotes };
+  if (chips.length === 0) delete pendingQuotes[ticketNo];
+  else pendingQuotes[ticketNo] = chips;
+  set({ pendingQuotes });
+  schedulePendingQuotesPersist();
+}
+
+/** 整表覆盖某工单的引用胶囊（发送失败回滚用）。 */
+export function setPendingQuotes(ticketNo: string, chips: QuoteChip[]) {
+  writePendingQuotes(ticketNo, chips);
+}
+
+/** 追加一条引用胶囊：超长截断并在原文里注明，避免极端大段选择撑爆消息。 */
+export function addPendingQuote(ticketNo: string, text: string) {
+  const trimmed = text.trim();
+  if (!trimmed) return;
+  const body =
+    trimmed.length > QUOTE_MAX_CHARS ? `${trimmed.slice(0, QUOTE_MAX_CHARS)}\n…（原文过长已截断）` : trimmed;
+  const chip: QuoteChip = { id: uid("q"), text: body };
+  writePendingQuotes(ticketNo, [...(s().pendingQuotes[ticketNo] ?? []), chip]);
+}
+
+/** 移除某条引用胶囊（胶囊上的 × 按钮）。 */
+export function removePendingQuote(ticketNo: string, quoteId: string) {
+  const chips = s().pendingQuotes[ticketNo];
+  if (!chips?.some((c) => c.id === quoteId)) return;
+  writePendingQuotes(
+    ticketNo,
+    chips.filter((c) => c.id !== quoteId),
+  );
+}
+
+/** 清空某工单的引用胶囊（发送成功/工单进入终态后调用）。 */
+export function clearPendingQuotes(ticketNo: string) {
+  if (!s().pendingQuotes[ticketNo]) return;
+  writePendingQuotes(ticketNo, []);
 }
 
 /** 草稿发送期间的创建遮罩标记（SessionList 显示「正在创建会话…」）。 */

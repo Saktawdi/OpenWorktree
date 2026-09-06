@@ -141,7 +141,7 @@ async function runTodoWrite(
   return done;
 }
 
-export async function demoSendPrompt(no: string, userText: string) {
+export async function demoSendPrompt(no: string, userText: string, images: string[] = []) {
   const st0 = appStore.getState();
   if (st0.busy[no]) return;
   // 草稿态（无当前会话）时首条消息创建新会话并固化所选 agent，与 live 模式行为一致。
@@ -150,7 +150,7 @@ export async function demoSendPrompt(no: string, userText: string) {
   appStore.setState({ cancelSeq: { ...st0.cancelSeq, [no]: seq } });
   // 工单重新进入运行状态：上一次的"会话已结束"提醒随之失效
   clearSessionEnded(no);
-  pushUserMessage(no, userText);
+  pushUserMessage(no, userText, images);
   setBusy(no, true);
   try {
     const freshSandbox = no === "T-104" && (st0.diffs[no]?.length ?? 0) === 0;

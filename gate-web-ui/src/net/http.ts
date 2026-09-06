@@ -29,6 +29,18 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
 
 export { api };
 
+/**
+ * 拉取二进制资源（如会话图片缩略图）并转为 object URL 供 <img> 使用：
+ * <img src> 无法携带 Authorization 头，统一走这里。调用方负责 URL.revokeObjectURL。
+ */
+export async function fetchBlobUrl(path: string): Promise<string> {
+  const res = await fetch(path, { headers: authHeaders() });
+  if (!res.ok) {
+    throw new Error(`fetch ${path}: ${res.status}`);
+  }
+  return URL.createObjectURL(await res.blob());
+}
+
 export async function detectBackend(): Promise<"ok" | "unauth" | "error"> {
   try {
     const res = await fetch("/api/status", { headers: authHeaders() });

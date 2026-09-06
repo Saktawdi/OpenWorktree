@@ -16,10 +16,27 @@ export function pushChatItem(no: string, item: ChatItem) {
   }));
 }
 
-export function pushUserMessage(no: string, text: string): ChatItem {
+export function pushUserMessage(no: string, text: string, images?: string[]): ChatItem {
   const item: ChatItem = { kind: "user", id: uid("u"), text, ts: Date.now() };
+  if (images && images.length > 0) item.images = images;
   pushChatItem(no, item);
   return item;
+}
+
+/**
+ * 用后端落盘的缩略图路径替换乐观渲染的 data URL（发送响应返回后调用）：
+ * 数据源从内存切到克隆工作区文件，此后历史重载也能按引用行解析出同一路径。
+ */
+export function attachUserImages(no: string, id: string, images: string[]) {
+  if (images.length === 0) return;
+  set((st) => ({
+    chats: {
+      ...st.chats,
+      [no]: (st.chats[no] ?? []).map((m) =>
+        m.kind === "user" && m.id === id ? { ...m, images } : m,
+      ),
+    },
+  }));
 }
 
 export function pushSystemMessage(

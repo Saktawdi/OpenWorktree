@@ -4,6 +4,7 @@ export {
   wipePersisted,
   readSnapshotRaw,
   NO_CHAT,
+  NO_QUOTES,
   NO_DIFF,
   NO_FINDINGS,
   NO_SESSIONS,

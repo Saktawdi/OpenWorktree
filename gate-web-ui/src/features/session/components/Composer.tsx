@@ -10,6 +10,7 @@ import {
   LockKey,
   MagnifyingGlass,
   PaperPlaneRight,
+  Quotes,
   ShieldCheck,
   Sparkle,
   Stop,
@@ -19,16 +20,22 @@ import {
 } from "@phosphor-icons/react";
 import type { Icon } from "@phosphor-icons/react";
 import { actions } from "@/app/actions";
-import { appStore, NO_CHAT, showToast, useApp } from "@/store";
+import { appStore, NO_CHAT, NO_QUOTES, showToast, useApp } from "@/store";
 import { ChatActionChips } from "@/app/plugins/components/ChatActionChips";
 import {
   clearComposerDraft,
   clearDraftModelSel,
+  clearPendingQuotes,
   draftCatalogFromOc,
+  registerComposerBridge,
+  removePendingQuote,
   setComposerDraft,
+  setPendingQuotes,
 } from "@/features/session";
 import { setAgentId } from "@/features/agent";
 import { formatTokens, variantLabel } from "@/shared/format";
+import { quotePreview, wrapQuote } from "@/shared/quotes";
+import { QuoteChip } from "@/shared/components/QuoteChip";
 import {
   extractAbsolutePath,
   isAttachableImage,
@@ -527,6 +534,8 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
   // 草稿文本收进全局 store（按工单键自动保存 + localStorage 落盘）：
   // 切 tab/工单/页面再回来时原样还原，发送成功或工单终态时自动清除。
   const text = useApp((s) => s.composerDrafts[ticketNo] ?? "");
+  // 引用片段胶囊（划选文字 → 添加到对话框）：同样按工单键暂存，随下一条消息发出。
+  const pendingQuotes = useApp((s) => s.pendingQuotes[ticketNo] ?? NO_QUOTES);
   const { sel, providers, currentVariants, imageSupported, isClaude, agentProviderId } =
     useEffectiveSel(ticketNo);
 
@@ -546,10 +555,13 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
   const terminal = stage === "DONE" || stage === "CANCELLED";
   const cancelled = stage === "CANCELLED";
 
-  // 工单进入终态后输入框锁定，遗留草稿永远发不出去：清除自动保存，避免以后切回时
-  // 在禁用输入框里看到无法再发送的幽灵文本。
+  // 工单进入终态后输入框锁定，遗留草稿永远发不出去：清除自动保存（含引用胶囊），
+  // 避免以后切回时在禁用输入框里看到无法再发送的幽灵内容。
   useEffect(() => {
-    if (terminal) clearComposerDraft(ticketNo);
+    if (terminal) {
+      clearComposerDraft(ticketNo);
+      clearPendingQuotes(ticketNo);
+    }
   }, [terminal, ticketNo]);
 
   /** 在光标处插入文本（粘贴引用/绝对路径），插入后把光标移到插入文本之后。 */
@@ -566,6 +578,15 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
       el.setSelectionRange(start + insert.length, start + insert.length);
     });
   };
+
+  /* 输入桥注册：划选菜单/插件动作从这里获得「往当前工单输入框插文本/聚焦」的能力。 */
+  useEffect(() => {
+    return registerComposerBridge({
+      insert: (t) => insertAtCursor(t),
+      focus: () => taRef.current?.focus(),
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ticketNo, text]);
 
   const addPendingImages = async (files: File[]) => {
     for (const file of files) {
@@ -653,16 +674,23 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
 
   const send = () => {
     const t = text.trim();
-    if ((!t && pendingAttachments.length === 0) || busy || terminal) return;
+    if ((!t && pendingQuotes.length === 0 && pendingAttachments.length === 0) || busy || terminal)
+      return;
+    // 引用胶囊内联进消息纯文本（⟦引用⟧…⟦/引用⟧ 标记，Agent 读到的是原文）；
+    // 发送失败时整包还原（草稿/胶囊/附件），用户改完直接重发。
+    const composed = t + pendingQuotes.map((q) => `\n${wrapQuote(q.text)}`).join("");
     const prevText = t;
+    const prevQuotes = pendingQuotes;
     const prevAttachments = pendingAttachments;
     clearComposerDraft(ticketNo);
+    setPendingQuotes(ticketNo, []);
     setPendingAttachments([]);
-    void Promise.resolve(actions.sendPrompt(ticketNo, t, prevAttachments)).then((ok) => {
+    void Promise.resolve(actions.sendPrompt(ticketNo, composed, prevAttachments)).then((ok) => {
       // 草稿建会话失败（如端口占用）：还原输入与附件，错误卡片已给出原因，
       // 用户改完直接重发即可，不必重新打字。
       if (ok === false) {
         setComposerDraft(ticketNo, prevText);
+        setPendingQuotes(ticketNo, prevQuotes);
         setPendingAttachments(prevAttachments);
       }
     });
@@ -766,6 +794,17 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
               )}
             </div>
           )}
+          {pendingQuotes.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 px-3 pt-2.5">
+              {pendingQuotes.map((q) => (
+                <QuoteChip
+                  key={q.id}
+                  text={q.text}
+                  onRemove={() => removePendingQuote(ticketNo, q.id)}
+                />
+              ))}
+            </div>
+          )}
           <textarea
             ref={taRef}
             value={text}
@@ -842,9 +881,18 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
             ) : (
               <button
                 className="composer-send"
-                title={pendingAttachments.length > 0 ? "发送（含图片附件）" : "发送"}
+                title={
+                  pendingQuotes.length > 0
+                    ? "发送（含引用片段）"
+                    : pendingAttachments.length > 0
+                      ? "发送（含图片附件）"
+                      : "发送"
+                }
                 aria-label="发送"
-                disabled={(!text.trim() && pendingAttachments.length === 0) || terminal}
+                disabled={
+                  (!text.trim() && pendingQuotes.length === 0 && pendingAttachments.length === 0) ||
+                  terminal
+                }
                 onClick={send}
               >
                 <PaperPlaneRight size={15} weight="fill" />

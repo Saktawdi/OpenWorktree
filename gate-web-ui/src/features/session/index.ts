@@ -24,6 +24,7 @@ export {
 export { liveSendPrompt, abortLive } from "./stream";
 export { draftCatalogFromOc } from "./model";
 export type { PermissionResponse } from "./model";
+export { focusComposer, insertIntoComposer, registerComposerBridge } from "./composerBridge";
 export {
   setSessionModels,
   setSessionModelSel,
@@ -31,6 +32,10 @@ export {
   clearDraftModelSel,
   setComposerDraft,
   clearComposerDraft,
+  setPendingQuotes,
+  addPendingQuote,
+  removePendingQuote,
+  clearPendingQuotes,
   setCreatingSession,
   setBusy,
   setSessionBusy,
@@ -55,6 +60,7 @@ export {
 export {
   pushChatItem,
   pushUserMessage,
+  attachUserImages,
   pushSystemMessage,
   removeChatItem,
   pushAssistantPlaceholder,
@@ -74,6 +80,7 @@ export {
 } from "./chat";
 export { ChatStream } from "./components/ChatStream";
 export { Composer } from "./components/Composer";
+export { SelectionQuoteLayer } from "./components/SelectionQuoteLayer";
 export { SessionRail } from "./components/SessionRail";
 export { PermissionCard } from "./components/PermissionCard";
 export { QuestionCard } from "./components/QuestionCard";

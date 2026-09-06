@@ -253,7 +253,19 @@ export interface QuestionRequestView {
 export type QuestionStatus = "pending" | "answered" | "rejected";
 
 export type ChatItem =
-  | { kind: "user"; id: string; text: string; ts: number }
+  | {
+      kind: "user";
+      id: string;
+      text: string;
+      ts: number;
+      /**
+       * 随消息发送的图片（发送时从 Composer 附件乐观带入）：条目是 data: URL
+       * （本窗口内存，发送瞬间即时渲染）或克隆工作区相对路径（.gate/chat-images/x，
+       * 后端落盘后随发送响应回填，历史重载经引用行解析得到）——气泡据此渲染
+       * 缩略图，后端历史文本本身不含图片数据。
+       */
+      images?: string[];
+    }
   | {
       kind: "assistant";
       id: string;
@@ -298,6 +310,8 @@ export interface ChatSession {
   overrideProvider?: string | null;
   overrideModel?: string | null;
   overrideVariant?: string | null;
+  /** 会话所属的分组ID，null表示未分组 */
+  groupId?: string | null;
 }
 
 /** One model entry of the live opencode catalog (GET /api/sessions/{id}/models). */
@@ -334,6 +348,12 @@ export interface PendingAttachment {
   mime: string;
   dataBase64: string;
   dataUrl: string;
+}
+
+/** 引用片段胶囊（划选页面文字 → 添加到对话框）：text 保留原始选中文本，发送时内联进消息。 */
+export interface QuoteChip {
+  id: string;
+  text: string;
 }
 
 export interface DiffLine {

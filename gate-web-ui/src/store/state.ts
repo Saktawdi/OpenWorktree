@@ -31,6 +31,7 @@ import type {
   TodoItem,
   UsageView,
   VerdictInfo,
+  QuoteChip,
 } from "@/shared/types";
 import {
   DEMO_AGENTS,
@@ -47,6 +48,7 @@ import {
   loadGatePanelCollapsed,
   loadGateSections,
   loadKanbanStages,
+  loadPendingQuotes,
   loadTheme,
   loadVisibleStages,
 } from "./prefs";
@@ -127,6 +129,8 @@ export interface AppState {
   draftModelSel: Record<string, SessionModelSel>;
   /** 输入框草稿自动保存（按工单号键）：切 tab/工单/页面后回来自动还原，发送成功或工单终态时清除。 */
   composerDrafts: Record<string, string>;
+  /** 引用片段胶囊（按工单号键）：划选页面文字「添加到对话框」后暂存，随下一条消息发送。 */
+  pendingQuotes: Record<string, QuoteChip[]>;
   /** OpenCode 配置文件的 provider 列表（live 从后端读写文件，demo 为示例数据）。 */
   ocProviders: OpenCodeProvider[];
   ocConfigPath: string | null;
@@ -227,6 +231,7 @@ export const appStore = create<AppState>(() => ({
   activeSessionId: {},
   draftModelSel: {},
   composerDrafts: loadComposerDrafts(),
+  pendingQuotes: loadPendingQuotes(),
   sessionModels: {},
   sessionModelSel: {},
   liveTurns: {},
@@ -248,6 +253,7 @@ export function useApp<T>(selector: (st: AppState) => T): T {
 }
 
 export const NO_CHAT: ChatItem[] = [];
+export const NO_QUOTES: QuoteChip[] = [];
 export const NO_DIFF: DiffFile[] = [];
 export const NO_FINDINGS: Finding[] = [];
 export const NO_SESSIONS: ChatSession[] = [];

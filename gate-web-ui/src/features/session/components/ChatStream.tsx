@@ -1,4 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type { RefObject } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import {
@@ -22,11 +23,14 @@ import {
   X,
 } from "@phosphor-icons/react";
 import { NO_CHAT, useApp } from "@/store";
+import { fetchBlobUrl } from "@/net";
 import type { ChatItem, ToolCallView, ToolIconKind } from "@/shared/types";
 import { hhmmss, variantLabel } from "@/shared/format";
+import { parseQuotedText, stripQuoteMarkers } from "@/shared/quotes";
 import { PermissionCard } from "@/features/session/components/PermissionCard";
 import { QuestionCard } from "@/features/session/components/QuestionCard";
 import { Markdown } from "@/shared/components/Markdown";
+import { QuoteChip } from "@/shared/components/QuoteChip";
 import { CopyButton } from "@/shared/components/ui";
 
 const TOOL_ICONS: Record<ToolIconKind, typeof TerminalWindow> = {
@@ -42,8 +46,128 @@ const TOOL_ICONS: Record<ToolIconKind, typeof TerminalWindow> = {
   todo: ListChecks,
 };
 
-function splitToolArgs(tool: ToolCallView): { toolName: string; argsPart: string } {
-  // todo 类工具行：api 层已把 argsSummary 写成紧凑摘要（避免整段 todos JSON 刷屏）。
+/** 用户消息里的图片缩略图：data URL 直接渲染；工作区路径经带鉴权的端点取 object URL。 */
+function ChatImage({
+  ticketNo,
+  src,
+  onZoom,
+}: {
+  ticketNo: string;
+  src: string;
+  onZoom: (src: string) => void;
+}) {
+  const [url, setUrl] = useState<string | null>(src.startsWith("data:") ? src : null);
+  useEffect(() => {
+    if (src.startsWith("data:")) {
+      setUrl(src);
+      return;
+    }
+    let alive = true;
+    let made: string | null = null;
+    const name = src.split("/").pop() ?? src;
+    fetchBlobUrl(`/api/tickets/${ticketNo}/chat-images/${encodeURIComponent(name)}`)
+      .then((u) => {
+        if (alive) {
+          made = u;
+          setUrl(u);
+        } else {
+          URL.revokeObjectURL(u);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+      if (made) URL.revokeObjectURL(made);
+    };
+  }, [src, ticketNo]);
+  if (!url) {
+    return <span className="inline-block h-28 w-40 animate-pulse rounded-lg border border-edge bg-sunken" />;
+  }
+  return (
+    <img
+      src={url}
+      alt="随消息发送的图片"
+      className="max-h-56 max-w-[280px] cursor-zoom-in rounded-lg border border-edge object-contain"
+      onClick={() => onZoom(url)}
+    />
+  );
+}
+
+/** 灯箱：点击/Esc 关闭，展示可得的最高清版本（后端存的是 ≤1024px 缩略图）。 */
+function ImageLightbox({ src, onClose }: { src: string; onClose: () => void }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[95] grid place-items-center bg-black/80 p-6 cursor-zoom-out"
+      onClick={onClose}
+    >
+      <img
+        src={src}
+        alt="图片预览"
+        className="max-h-[92vh] max-w-[92vw] rounded-xl border border-edge shadow-2xl"
+      />
+    </div>,
+    document.body,
+  );
+}
+
+/** 用户消息正文：引用标记（⟦引用⟧…⟦/引用⟧）还原为胶囊；图片缩略图置顶；其余文本照旧走 Markdown。 */
+function UserMessageBody({
+  ticketNo,
+  text,
+  images,
+}: {
+  ticketNo: string;
+  text: string;
+  images?: string[];
+}) {
+  const [zoom, setZoom] = useState<string | null>(null);
+  const hasImages = !!images && images.length > 0;
+  // 有图可渲时，文本里的 [图片 #n] / [图片引用 #n] 引用行完成使命，不再重复展示
+  const display = hasImages
+    ? text
+        .split("\n")
+        .filter((l) => !/^\[图片(引用)? #\d+\]/.test(l.trim()))
+        .join("\n")
+        .trim()
+    : text;
+  const segments = useMemo(() => parseQuotedText(display), [display]);
+  return (
+    <div className="space-y-1.5">
+      {hasImages && (
+        <div className="flex flex-wrap justify-end gap-1.5">
+          {images!.map((src, i) => (
+            <ChatImage key={i} ticketNo={ticketNo} src={src} onZoom={setZoom} />
+          ))}
+        </div>
+      )}
+      {segments
+        ? segments.map((seg, i) =>
+            seg.kind === "quote" ? (
+              <div key={i} className="flex justify-end">
+                <QuoteChip text={seg.text} tipRight />
+              </div>
+            ) : (
+              seg.text.trim() && (
+                <Markdown key={i} className="md-body">
+                  {seg.text}
+                </Markdown>
+              )
+            ),
+          )
+        : display && <Markdown className="md-body">{display}</Markdown>}
+      {zoom && <ImageLightbox src={zoom} onClose={() => setZoom(null)} />}
+    </div>
+  );
+}
+
+function splitToolArgs(tool: ToolCallView): { toolName: string; argsPart: string } {  // todo 类工具行：api 层已把 argsSummary 写成紧凑摘要（避免整段 todos JSON 刷屏）。
   if (tool.icon === "todo") {
     return { toolName: tool.name || tool.toolName || "任务清单", argsPart: tool.argsSummary };
   }
@@ -459,7 +583,7 @@ function ChatRail({
                         style={{ width: bubbleW }}
                       >
                         <div className="line-clamp-4 text-[12px] leading-relaxed text-ink whitespace-pre-wrap break-words">
-                          {m.text}
+                          {stripQuoteMarkers(m.text)}
                         </div>
                       </motion.div>
                     )}
@@ -522,7 +646,7 @@ export function ChatStream({ ticketNo }: { ticketNo: string }) {
             item.kind === "user" ? (
               <div key={item.id} data-chat-msg={item.id} className="flex justify-end animate-rise">
                 <div className="max-w-[82%] rounded-xl rounded-tr-sm border border-edge bg-raised px-3.5 py-2 text-[13.5px] leading-relaxed">
-                  <Markdown className="md-body">{item.text}</Markdown>
+                  <UserMessageBody ticketNo={ticketNo} text={item.text} images={item.images} />
                 </div>
               </div>
             ) : item.kind === "assistant" ? (

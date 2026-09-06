@@ -26,6 +26,7 @@ import {
   setTodos,
 } from "./state";
 import {
+  attachUserImages,
   finishLiveTurn,
   pushPermissionRequest,
   pushQuestionRequest,
@@ -76,7 +77,11 @@ export async function liveSendPrompt(
   if (sessionId && st.sessionBusy[sessionId]) return true;
   // 工单重新进入运行状态：上一次的"会话已结束"提醒随之失效
   clearSessionEnded(no);
-  const userItem = pushUserMessage(no, userText);
+  const userItem = pushUserMessage(
+    no,
+    userText,
+    attachments.filter((a) => a.mime.startsWith("image/")).map((a) => a.dataUrl),
+  );
   setBusy(no, true);
   let sid: string | null = sessionId || null;
   // 草稿首条消息：建会话（空首句，仅启动 serve）→ 写入草稿的模型/推理覆盖 →
@@ -105,7 +110,7 @@ export async function liveSendPrompt(
       void loadSessionCatalog(no, sid);
     }
     const sel = appStore.getState().sessionModelSel[sid];
-    await api(`/api/sessions/${sid}/messages`, {
+    const sent = await api<{ task_id: string; images?: string[] }>(`/api/sessions/${sid}/messages`, {
       method: "POST",
       body: JSON.stringify({
         message: userText,
@@ -119,6 +124,9 @@ export async function liveSendPrompt(
         variant: sel?.variant ?? undefined,
       }),
     });
+    // 后端已把缩略图落盘到克隆 .gate/chat-images/：用可持久化的工作区路径
+    // 替换乐观 data URL，此后历史重载按同一引用行解析出一致的数据源。
+    if (sent.images?.length) attachUserImages(no, userItem.id, sent.images);
     // 遮罩只覆盖「建会话→写覆盖→发消息」三步：后端受理消息即返回，回合从此开始
     // 流式输出，必须现在就撤；finally 要等整个回合结束才执行，只留给异常路径兜底。
     setCreatingSession(no, false);

@@ -79,9 +79,14 @@ import type { AgentConfig, OpenCodeProvider, PendingAttachment, Project, Ticket 
 
 export const actions = {
   sendPrompt(no: string, text: string, attachments: PendingAttachment[] = []) {
-    // text 已含 Composer 插入的 [图片 #n] 引用；live 走 attachments 数组，demo 仅展示引用。
+    // text 已含 Composer 插入的 [图片 #n] 引用；live 走 attachments 数组，
+    // demo 无后端，图片以 data URL 直接进气泡（不入克隆工作区）。
     if (appStore.getState().mode === "live") return liveSendPrompt(no, text, attachments);
-    return demo.demoSendPrompt(no, text);
+    return demo.demoSendPrompt(
+      no,
+      text,
+      attachments.filter((a) => a.mime.startsWith("image/")).map((a) => a.dataUrl),
+    );
   },
   returnWithFindings(no: string) {
     const st = appStore.getState();

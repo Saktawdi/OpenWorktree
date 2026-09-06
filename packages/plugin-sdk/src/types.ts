@@ -58,6 +58,30 @@ export interface ChatInputActionContribution {
   run(api: ChatActionApi, state: ChatInputState): void;
 }
 
+/** 宿主开放给划选菜单动作的能力面（apiVersion=1 增量能力）。 */
+export interface SelectionActionApi {
+  /** 把文本作为引用胶囊加进当前工单对话框（与内置「添加到对话框」同一落点）。 */
+  addToComposer(text: string): void;
+  /** 在当前工单输入框光标处插入文本（无输入框时静默忽略）。 */
+  insertText(text: string): void;
+  toast(text: string): void;
+}
+
+/** 划选文字弹出菜单的动作贡献点（selection.menu 区域，如「添加到 xxx」）。 */
+export interface SelectionActionContribution {
+  id: string;
+  label: string;
+  /** 宿主图标白名单内的 Phosphor 图标名（宿主 icons.tsx）；缺省 PlusCircle。 */
+  icon?: string;
+  /**
+   * 依据划选文本决定显隐；缺省恒显示。抛异常按隐藏处理（坏插件不污染菜单）。
+   * state.text 为划选的原始文本（首尾空白已保留原样，仅用于判断，入参即全文）。
+   */
+  when?(state: { text: string }): boolean;
+  /** text 为划选的原始文本。 */
+  run(api: SelectionActionApi, text: string): void;
+}
+
 /** 渲染进宿主 React 树的面板挂件（设置中心「插件」分区展示）。 */
 export interface PanelWidgetContribution {
   id: string;
@@ -125,6 +149,8 @@ export interface PluginContext {
   registerPanelWidget(widget: PanelWidgetContribution): Disposable;
   /** 注册整页视图：顶栏导航追加入口 + 全页渲染（apiVersion=1 增量能力）。 */
   registerPage(page: PageContribution): Disposable;
+  /** 注册划选文字弹出菜单的动作（selection.menu 区域，如「添加到 xxx」；apiVersion=1 增量能力）。 */
+  registerSelectionAction(action: SelectionActionContribution): Disposable;
   readonly kv: PluginKv | null;
   /** 注入 Web Token 的同源 /api/ 请求（manifest 声明 net 权限时可用）。 */
   hostFetch<T>(path: string, init?: HostFetchRequest): Promise<T>;

@@ -83,6 +83,7 @@ export function activate(ctx) {
 | API | 落点 |
 |---|---|
 | `ctx.registerChatInputAction({ id, label, icon?, when?, run })` | 对话输入区上方快捷 chip；`when(state)` 按工单上下文（diffs/findings/restartCount/stage/busy…）决定显隐；`run(api, state)` 里可 `api.insertText / sendPrompt / presubmit / returnWithFindings / toast`。**原生 chip 由宿主自管**，插件贡献追加在其后 |
+| `ctx.registerSelectionAction({ id, label, icon?, when?, run })` | 划选页面文字弹出菜单的动作（内置「添加到对话框」之后）；`when({ text })` 按划选文本显隐，`run(api, text)` 里可 `api.addToComposer(text) / insertText(text) / toast(text)` |
 | `ctx.registerPanelWidget({ id, title?, render })` | 设置中心「插件」分区的管理面板（`render()` 返回 React 节点） |
 | `ctx.registerPage({ id, title, icon?, order?, render })` | 顶栏导航整页（order 升序、缺省 100）；插件禁用/重载时宿主自动关闭该页 |
 | `ctx.on(event, handler)` | 事件总线订阅（`ticket.stage-changed` / `session.created` / `session.ended` / `plugin.*`；no replay，详见 SDK README） |

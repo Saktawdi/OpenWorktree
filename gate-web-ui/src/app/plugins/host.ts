@@ -27,7 +27,7 @@ import {
   setCatalog,
 } from "./state";
 import { emitPluginEvent, onPluginEvent } from "./events";
-import { SLOT_COMPOSER_CHIPS, SLOT_NAV_PAGES, SLOT_SETTINGS_PLUGINS } from "./slots";
+import { SLOT_COMPOSER_CHIPS, SLOT_NAV_PAGES, SLOT_SELECTION_MENU, SLOT_SETTINGS_PLUGINS } from "./slots";
 import type {
   Disposable,
   HostFetchRequest,
@@ -38,6 +38,7 @@ import type {
   PluginEntryModule,
   PluginKv,
   PluginListItem,
+  SelectionActionContribution,
 } from "./types";
 
 interface ActivePlugin {
@@ -234,6 +235,11 @@ function buildContext(info: PluginListItem, disposers: Disposable[]): PluginCont
     },
     registerPage(page: PageContribution) {
       const dispose = registerContribution(info.id, SLOT_NAV_PAGES, page);
+      disposers.push(dispose);
+      return dispose;
+    },
+    registerSelectionAction(action: SelectionActionContribution) {
+      const dispose = registerContribution(info.id, SLOT_SELECTION_MENU, action);
       disposers.push(dispose);
       return dispose;
     },

@@ -1,6 +1,7 @@
 /**
  * 快捷语录插件入口。
- * 职责：KV 装载/种子/原生条目迁移/防抖保存，语录 → composer chips 的注册与重注册，管理面板挂件。
+ * 职责：KV 装载/种子/原生条目迁移/防抖保存，语录 → composer chips 的注册与重注册，
+ * 划选菜单动作（selection.menu）示例，管理面板挂件。
  */
 import "./styles.css";
 import type { PluginContext } from "@gate/plugin-sdk";
@@ -82,11 +83,25 @@ export function activate(ctx: PluginContext) {
     ),
   });
 
+  /* 划选动作示例（selection.menu 区域）：「引用并追问」——把划选文字作为引用胶囊
+   * 加入对话框，并自动补一句追问，演示宿主划选菜单的插件扩展点。 */
+  const disposeSelection = ctx.registerSelectionAction({
+    id: "quote-and-ask",
+    label: "引用并追问",
+    icon: "ChatText",
+    run(api, text) {
+      api.addToComposer(text);
+      api.insertText("\n请结合上面的引用展开说明：");
+      api.toast("已加入引用与追问");
+    },
+  });
+
   return () => {
     disposed = true;
     unsubscribe();
     chipDisposers.forEach((d) => d());
     if (saveTimer) clearTimeout(saveTimer);
     disposeWidget();
+    disposeSelection();
   };
 }
