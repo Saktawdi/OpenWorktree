@@ -312,6 +312,8 @@ export interface ChatSession {
   overrideVariant?: string | null;
   /** 会话所属的分组ID，null表示未分组 */
   groupId?: string | null;
+  /** 会话所属的分组名称 */
+  groupName?: string | null;
 }
 
 /** One model entry of the live opencode catalog (GET /api/sessions/{id}/models). */
