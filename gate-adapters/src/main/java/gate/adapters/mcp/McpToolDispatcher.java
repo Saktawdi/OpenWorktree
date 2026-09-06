@@ -6,7 +6,10 @@ import gate.application.publish.PublishCommand;
 import gate.application.publish.PublishResult;
 import gate.application.review.ReviewCommand;
 import gate.application.review.ReviewResult;
+import gate.application.ticket.CreateTicketCommand;
+import gate.application.ticket.TicketRequestParser;
 import gate.domain.config.GateConfig;
+import gate.domain.error.FieldError;
 import gate.domain.error.GateException;
 import gate.domain.git.ObjectId;
 import gate.domain.git.RepoRef;
@@ -76,7 +79,8 @@ public final class McpToolDispatcher {
     public Map<String, Object> dispatch(String toolName, Map<String, Object> arguments, String token) {
         McpToolRegistry.ToolDef tool = McpToolRegistry.find(toolName)
                 .orElseThrow(() -> new ToolException(McpJsonRpc.METHOD_NOT_FOUND,
-                        "unknown tool: " + toolName));
+                        "unknown tool: " + toolName,
+                        Map.of("layer", "protocol", "tool", toolName)));
 
         Domain domain = credentials.validate(token);
 
@@ -105,7 +109,8 @@ public final class McpToolDispatcher {
             case "config_show" -> configShow();
             case "provider_list" -> providerList();
             default -> throw new ToolException(McpJsonRpc.METHOD_NOT_FOUND,
-                    "unknown tool: " + toolName);
+                    "unknown tool: " + toolName,
+                    Map.of("layer", "protocol", "tool", toolName));
         };
     }
 
@@ -132,24 +137,23 @@ public final class McpToolDispatcher {
     // --- tool implementations ---
 
     private Map<String, Object> ticketCreate(Map<String, Object> args, Domain domain) {
-        List<String> labels = null;
-        Object rawLabels = args.get("labels");
-        if (rawLabels instanceof List<?> list) {
-            labels = list.stream().map(String::valueOf).toList();
-        } else if (rawLabels != null) {
-            throw new ToolException(McpJsonRpc.INVALID_PARAMS, "labels must be an array of strings");
-        }
-        String projectId = projectScope(domain, strArg(args, "project_id"));
-        gate.domain.ticket.Ticket t = gateService.createTicket(new gate.application.ticket.CreateTicketCommand(
-                strArg(args, "ticket_no"),
-                requiredStr(args, "title"),
+        // Field-level validation (missing/type/enum/format) happens here, in the same parser the
+        // web API uses — one rule set for both entry points (T-108). Any violation throws a
+        // GateValidationException whose message and error.data name every broken field.
+        CreateTicketCommand parsed = TicketRequestParser.parse(args, TicketRequestParser.MCP_KEYS);
+        String projectId = projectScope(domain, parsed.projectId());
+        // agent_config_id is a web-only binding (it decides which agent CLI a session spawns) and
+        // must never be settable through the agent-facing MCP tool.
+        gate.domain.ticket.Ticket t = gateService.createTicket(new CreateTicketCommand(
+                parsed.ticketNo(),
+                parsed.title(),
                 projectId,
-                strArg(args, "target_branch"),
-                null,
-                strArg(args, "priority"),
-                strArg(args, "description"),
-                strArg(args, "note"),
-                labels,
+                parsed.targetBranch(),
+                parsed.stage(),
+                parsed.priority(),
+                parsed.description(),
+                parsed.note(),
+                parsed.labels(),
                 null));
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("ticket_no", t.ticketNo());
@@ -211,7 +215,7 @@ public final class McpToolDispatcher {
     }
 
     private Map<String, Object> presubmitCreate(Map<String, Object> args) {
-        String ticketNo = requiredStr(args, "ticket_no");
+        String ticketNo = ticketNoArg("presubmit_create", args);
         PresubmitResult r = gateService.presubmit(new PresubmitCommand(ticketNo));
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("ticket_no", r.ticketNo());
@@ -227,12 +231,15 @@ public final class McpToolDispatcher {
     }
 
     private Map<String, Object> presubmitGetDiff(Map<String, Object> args) {
-        String ticketNo = requiredStr(args, "ticket_no");
-        Integer round = intArg(args, "round");
+        String tool = "presubmit_get_diff";
+        String ticketNo = ticketNoArg(tool, args);
+        Integer round = roundArg(tool, args);
         var row = (round == null ? presubmits.findLatest(ticketNo) : presubmits.find(ticketNo, round))
                 .orElseThrow(() -> new ToolException(McpJsonRpc.INVALID_PARAMS,
                         "no presubmit round for " + ticketNo
-                                + (round == null ? "" : "/" + round)));
+                                + (round == null ? "" : "/" + round),
+                        domainData(tool, "no presubmit round for " + ticketNo
+                                + (round == null ? "" : "/" + round))));
         byte[] diff = blobStore.get(new BlobRef(row.diffBlobPath(), row.diffBytes(), row.diffSha256()));
         String diffText = new String(diff, StandardCharsets.UTF_8);
         Map<String, Object> result = new LinkedHashMap<>();
@@ -245,16 +252,21 @@ public final class McpToolDispatcher {
     }
 
     private Map<String, Object> reviewResultGet(Map<String, Object> args) {
-        String ticketNo = requiredStr(args, "ticket_no");
-        Integer round = intArg(args, "round");
+        String tool = "review_result_get";
+        String ticketNo = ticketNoArg(tool, args);
+        Integer round = roundArg(tool, args);
         var presubmitRow = (round == null
                 ? presubmits.findLatest(ticketNo) : presubmits.find(ticketNo, round))
                 .orElseThrow(() -> new ToolException(McpJsonRpc.INVALID_PARAMS,
                         "no presubmit round for " + ticketNo
-                                + (round == null ? "" : "/" + round)));
+                                + (round == null ? "" : "/" + round),
+                        domainData(tool, "no presubmit round for " + ticketNo
+                                + (round == null ? "" : "/" + round))));
         var reviewRow = reviewResults.findLatestForPresubmit(presubmitRow.id())
                 .orElseThrow(() -> new ToolException(McpJsonRpc.INVALID_PARAMS,
-                        "no review result for " + ticketNo + " round " + presubmitRow.reviewRound()));
+                        "no review result for " + ticketNo + " round " + presubmitRow.reviewRound(),
+                        domainData(tool, "no review result for " + ticketNo
+                                + " round " + presubmitRow.reviewRound())));
 
         byte[] findingsBytes = blobStore.get(new BlobRef(reviewRow.findingsBlobPath(), 0, "0".repeat(64)));
         String findingsJson = new String(findingsBytes, StandardCharsets.UTF_8);
@@ -271,8 +283,9 @@ public final class McpToolDispatcher {
     }
 
     private Map<String, Object> reviewRun(Map<String, Object> args) {
-        String ticketNo = requiredStr(args, "ticket_no");
-        Integer round = intArg(args, "round");
+        String tool = "review_run";
+        String ticketNo = ticketNoArg(tool, args);
+        Integer round = roundArg(tool, args);
         ReviewResult r = gateService.review(ReviewCommand.forEngine(ticketNo, round));
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("ticket_no", r.ticketNo());
@@ -286,8 +299,9 @@ public final class McpToolDispatcher {
     }
 
     private Map<String, Object> commitAndPublish(Map<String, Object> args) {
-        String ticketNo = requiredStr(args, "ticket_no");
-        Integer round = intArg(args, "round");
+        String tool = "commit_and_publish";
+        String ticketNo = ticketNoArg(tool, args);
+        Integer round = roundArg(tool, args);
         PublishResult r = gateService.publish(new PublishCommand(ticketNo, round));
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("ticket_no", r.ticketNo());
@@ -330,12 +344,53 @@ public final class McpToolDispatcher {
 
     // --- helpers ---
 
-    private static String requiredStr(Map<String, Object> args, String key) {
-        Object v = args.get(key);
+    /**
+     * Required {@code ticket_no} for the ticket-bound tools. Reports missing / blank / wrong-type
+     * as a structured {@link ToolException} naming the field and the accepted shape (T-108).
+     */
+    private static String ticketNoArg(String tool, Map<String, Object> args) {
+        List<FieldError> problems = new ArrayList<>();
+        Object v = args.get("ticket_no");
         if (v == null) {
-            throw new ToolException(McpJsonRpc.INVALID_PARAMS, "missing required parameter: " + key);
+            problems.add(new FieldError("ticket_no", "missing required parameter", "non-blank string", null));
+        } else if (!(v instanceof String s)) {
+            problems.add(new FieldError("ticket_no", "wrong JSON type", "string", jsonType(v)));
+        } else if (s.isBlank()) {
+            problems.add(new FieldError("ticket_no", "must not be blank", "non-blank string", null));
         }
-        return String.valueOf(v);
+        if (!problems.isEmpty()) {
+            throw validation(tool, problems);
+        }
+        return ((String) v).trim();
+    }
+
+    /** Optional {@code round}: must be an integral JSON number or a decimal-string integer. */
+    private static Integer roundArg(String tool, Map<String, Object> args) {
+        Object v = args.get("round");
+        if (v == null) {
+            return null;
+        }
+        if (v instanceof String s) {
+            try {
+                return Integer.parseInt(s.trim());
+            } catch (NumberFormatException e) {
+                throw validation(tool, List.of(new FieldError("round",
+                        "must be an integer", "integer", s)));
+            }
+        }
+        if (v instanceof Long || v instanceof Integer) {
+            return ((Number) v).intValue();
+        }
+        if (v instanceof Number n) {
+            double d = n.doubleValue();
+            if (d == Math.rint(d) && !Double.isInfinite(d)) {
+                return (int) d;
+            }
+            throw validation(tool, List.of(new FieldError("round",
+                    "must be an integer", "integer", String.valueOf(v))));
+        }
+        throw validation(tool, List.of(new FieldError("round",
+                "wrong JSON type", "integer", jsonType(v))));
     }
 
     private static String strArg(Map<String, Object> args, String key) {
@@ -343,19 +398,47 @@ public final class McpToolDispatcher {
         return v == null ? null : String.valueOf(v);
     }
 
-    private static Integer intArg(Map<String, Object> args, String key) {
-        Object v = args.get(key);
+    private static String jsonType(Object v) {
         if (v == null) {
-            return null;
+            return "null";
         }
-        if (v instanceof Number n) {
-            return n.intValue();
+        if (v instanceof String) {
+            return "string";
         }
-        try {
-            return Integer.parseInt(String.valueOf(v));
-        } catch (NumberFormatException e) {
-            throw new ToolException(McpJsonRpc.INVALID_PARAMS, key + " must be an integer");
+        if (v instanceof Boolean) {
+            return "boolean";
         }
+        if (v instanceof Number) {
+            return "number";
+        }
+        if (v instanceof Map<?, ?>) {
+            return "object";
+        }
+        if (v instanceof List<?>) {
+            return "array";
+        }
+        return v.getClass().getSimpleName();
+    }
+
+    /** Builds a parameter-validation ToolException carrying the structured problem list. */
+    private static ToolException validation(String tool, List<FieldError> problems) {
+        List<FieldError> copy = List.copyOf(problems);
+        String detail = copy.stream().map(FieldError::render).collect(java.util.stream.Collectors.joining("; "));
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("layer", "validation");
+        data.put("tool", tool);
+        data.put("fields", copy.stream().map(FieldError::toMap).toList());
+        return new ToolException(McpJsonRpc.INVALID_PARAMS,
+                "invalid " + tool + " arguments: " + detail, data);
+    }
+
+    /** Domain/state failure data (e.g. "no presubmit round"): not a fixable parameter problem. */
+    private static Map<String, Object> domainData(String tool, String reason) {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("layer", "domain");
+        data.put("tool", tool);
+        data.put("reason", reason);
+        return data;
     }
 
     /** Thrown when a credential's domain is insufficient for the requested tool. */
@@ -376,15 +459,29 @@ public final class McpToolDispatcher {
     /** Thrown for tool-level errors (bad params, unknown tool, business logic failures). */
     public static final class ToolException extends RuntimeException {
         final int rpcCode;
+        final Map<String, Object> data;
 
         ToolException(int rpcCode, String message) {
-            super(message);
-            this.rpcCode = rpcCode;
+            this(rpcCode, message, null, null);
         }
 
         ToolException(int rpcCode, String message, Throwable cause) {
+            this(rpcCode, message, cause, null);
+        }
+
+        ToolException(int rpcCode, String message, Map<String, Object> data) {
+            this(rpcCode, message, null, data);
+        }
+
+        ToolException(int rpcCode, String message, Throwable cause, Map<String, Object> data) {
             super(message, cause);
             this.rpcCode = rpcCode;
+            this.data = data;
+        }
+
+        /** Structured payload for JSON-RPC {@code error.data}; may be null. */
+        public Map<String, Object> data() {
+            return data;
         }
     }
 }

@@ -150,13 +150,14 @@ class McpEndToEndTest {
                 harness.gitCli().line(RepoRef.of(java.nio.file.Path.of(created.clonePath())), "rev-parse", "HEAD").trim());
     }
 
-    /** ticket_create requires a title. */
+    /** ticket_create requires a title — the error names the field (T-108 structured feedback). */
     @Test
     void ticket_create_without_title_is_rejected() {
         String r = call(agentServer, "ticket_create", "{}");
         assertTrue(r.contains("\"error\""), "missing title must be a JSON-RPC error: " + r);
         assertTrue(r.contains("-32602"), "invalid params must map to -32602: " + r);
-        assertTrue(r.contains("missing required parameter: title"), r);
+        assertTrue(r.contains("title: missing required parameter"), r);
+        assertTrue(r.contains("\"layer\":\"validation\""), r);
     }
 
     // --- helpers ---

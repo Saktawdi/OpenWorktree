@@ -171,40 +171,34 @@ public final class TicketController implements WebController {
 
     private Map<String, Object> createTicket(String requestBody, String scopedProjectId) {
         Map<String, Object> req = Json.parseObject(requestBody);
-        String requestedProjectId = str(req, "project_id");
-        if (requestedProjectId != null && requestedProjectId.isBlank()) {
-            requestedProjectId = null;
-        }
+        // Same parser the MCP ticket_create tool uses — one rule set for both entry points (T-108).
+        // Validation failures (missing/blank/wrong-type/out-of-range fields) carry a structured
+        // detail list naming every broken field via the standard error envelope.
+        var parsed = gate.application.ticket.TicketRequestParser.parse(
+                req, gate.application.ticket.TicketRequestParser.WEB_KEYS);
+        String requestedProjectId = parsed.projectId();
         if (scopedProjectId != null && requestedProjectId != null
                 && !scopedProjectId.equals(requestedProjectId)) {
             throw new GateException(GateErrorCode.USAGE,
                     "project_id does not match the project ticket board");
         }
         String projectId = scopedProjectId != null ? scopedProjectId : requestedProjectId;
-        String requestedBranch = null;
-        if (req.containsKey("target_branch") || req.containsKey("target_ref")) {
-            Object raw = req.get("target_branch") != null ? req.get("target_branch") : req.get("target_ref");
-            requestedBranch = raw == null ? null : String.valueOf(raw);
-        }
-        String agentConfigId = str(req, "agent_config_id");
-        if (agentConfigId != null && agentConfigId.isBlank()) {
-            agentConfigId = null;
-        }
+        String agentConfigId = parsed.agentConfigId();
         if (agentConfigId != null && agentConfigs.find(agentConfigId).isEmpty()) {
             throw new GateException(GateErrorCode.USAGE, "no such agent config: " + agentConfigId);
         }
         // One creation path with the MCP ticket_create tool — validation, auto numbering and the
         // clone materialization cannot drift between the two entry points.
         Ticket t = gateService.createTicket(new gate.application.ticket.CreateTicketCommand(
-                str(req, "ticket_no"),
-                str(req, "title") == null ? "" : str(req, "title"),
+                parsed.ticketNo(),
+                parsed.title(),
                 projectId,
-                requestedBranch,
-                str(req, "stage"),
-                parsePriority(req),
-                optionalText(req, "description"),
-                optionalText(req, "note"),
-                req.containsKey("labels") ? parseTicketLabels(req) : List.of(),
+                parsed.targetBranch(),
+                parsed.stage(),
+                parsed.priority(),
+                parsed.description(),
+                parsed.note(),
+                parsed.labels(),
                 agentConfigId));
         return ticketJson(t, projectNameIndex());
     }

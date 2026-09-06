@@ -1,13 +1,16 @@
 package gate.web;
 
 import gate.domain.config.GateConfig;
+import gate.domain.error.FieldError;
 import gate.domain.error.GateErrorCode;
 import gate.domain.error.GateException;
+import gate.domain.error.GateValidationException;
 import gate.web.security.AuthFilter;
 import gate.web.util.HttpStatus;
 import gate.web.util.Json;
 import io.javalin.Javalin;
 import java.io.InputStream;
+import java.util.List;
 import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -62,7 +65,12 @@ public final class WebServer implements AutoCloseable {
             int code = HttpStatus.forGateError(e.code());
             ctx.status(code);
             ctx.contentType("application/json; charset=utf-8");
-            ctx.result(Json.error(e.code().code(), e.code().name(), e.getMessage(), null));
+            // T-108: validation failures carry one detail entry per broken field (name, expected
+            // format, actual value) so clients can fix the request instead of guessing.
+            List<String> detail = e instanceof GateValidationException gve
+                    ? gve.fieldErrors().stream().map(FieldError::render).toList()
+                    : null;
+            ctx.result(Json.error(e.code().code(), e.code().name(), e.getMessage(), detail));
         });
 
         app.exception(io.javalin.http.HttpResponseException.class, (e, ctx) -> {
