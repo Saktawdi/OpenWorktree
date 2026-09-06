@@ -4362,7 +4362,7 @@
     "name": "org.eclipse.jetty.websocket.core.internal.messages.AbstractMessageSink",
     "allDeclaredFields": true,
     "queryAllDeclaredMethods": true,
-    "queryAllDeclaredConstructors": true,
+    "allDeclaredConstructors": true,
     "methods": [
       {
         "name": "<init>",
@@ -4374,7 +4374,7 @@
     "name": "org.eclipse.jetty.websocket.core.internal.messages.ByteArrayMessageSink",
     "allDeclaredFields": true,
     "queryAllDeclaredMethods": true,
-    "queryAllDeclaredConstructors": true,
+    "allDeclaredConstructors": true,
     "methods": [
       {
         "name": "<init>",
@@ -4386,7 +4386,7 @@
     "name": "org.eclipse.jetty.websocket.core.internal.messages.ByteBufferMessageSink",
     "allDeclaredFields": true,
     "queryAllDeclaredMethods": true,
-    "queryAllDeclaredConstructors": true,
+    "allDeclaredConstructors": true,
     "methods": [
       {
         "name": "<init>",
@@ -4398,7 +4398,7 @@
     "name": "org.eclipse.jetty.websocket.core.internal.messages.DispatchedMessageSink",
     "allDeclaredFields": true,
     "queryAllDeclaredMethods": true,
-    "queryAllDeclaredConstructors": true,
+    "allDeclaredConstructors": true,
     "methods": [
       {
         "name": "<init>",
@@ -4410,7 +4410,7 @@
     "name": "org.eclipse.jetty.websocket.core.internal.messages.InputStreamMessageSink",
     "allDeclaredFields": true,
     "queryAllDeclaredMethods": true,
-    "queryAllDeclaredConstructors": true,
+    "allDeclaredConstructors": true,
     "methods": [
       {
         "name": "<init>",
@@ -4422,7 +4422,7 @@
     "name": "org.eclipse.jetty.websocket.core.internal.messages.MessageInputStream",
     "allDeclaredFields": true,
     "queryAllDeclaredMethods": true,
-    "queryAllDeclaredConstructors": true,
+    "allDeclaredConstructors": true,
     "methods": [
       {
         "name": "<init>",
@@ -4434,7 +4434,7 @@
     "name": "org.eclipse.jetty.websocket.core.internal.messages.MessageOutputStream",
     "allDeclaredFields": true,
     "queryAllDeclaredMethods": true,
-    "queryAllDeclaredConstructors": true,
+    "allDeclaredConstructors": true,
     "methods": [
       {
         "name": "<init>",
@@ -4446,7 +4446,7 @@
     "name": "org.eclipse.jetty.websocket.core.internal.messages.MessageReader",
     "allDeclaredFields": true,
     "queryAllDeclaredMethods": true,
-    "queryAllDeclaredConstructors": true,
+    "allDeclaredConstructors": true,
     "methods": [
       {
         "name": "<init>",
@@ -4458,7 +4458,7 @@
     "name": "org.eclipse.jetty.websocket.core.internal.messages.MessageSink",
     "allDeclaredFields": true,
     "queryAllDeclaredMethods": true,
-    "queryAllDeclaredConstructors": true,
+    "allDeclaredConstructors": true,
     "methods": [
       {
         "name": "<init>",
@@ -4470,7 +4470,7 @@
     "name": "org.eclipse.jetty.websocket.core.internal.messages.MessageWriter",
     "allDeclaredFields": true,
     "queryAllDeclaredMethods": true,
-    "queryAllDeclaredConstructors": true,
+    "allDeclaredConstructors": true,
     "methods": [
       {
         "name": "<init>",
@@ -4482,7 +4482,7 @@
     "name": "org.eclipse.jetty.websocket.core.internal.messages.PartialByteArrayMessageSink",
     "allDeclaredFields": true,
     "queryAllDeclaredMethods": true,
-    "queryAllDeclaredConstructors": true,
+    "allDeclaredConstructors": true,
     "methods": [
       {
         "name": "<init>",
@@ -4494,7 +4494,7 @@
     "name": "org.eclipse.jetty.websocket.core.internal.messages.PartialByteBufferMessageSink",
     "allDeclaredFields": true,
     "queryAllDeclaredMethods": true,
-    "queryAllDeclaredConstructors": true,
+    "allDeclaredConstructors": true,
     "methods": [
       {
         "name": "<init>",
@@ -4506,7 +4506,7 @@
     "name": "org.eclipse.jetty.websocket.core.internal.messages.PartialStringMessageSink",
     "allDeclaredFields": true,
     "queryAllDeclaredMethods": true,
-    "queryAllDeclaredConstructors": true,
+    "allDeclaredConstructors": true,
     "methods": [
       {
         "name": "<init>",
@@ -4518,7 +4518,7 @@
     "name": "org.eclipse.jetty.websocket.core.internal.messages.ReaderMessageSink",
     "allDeclaredFields": true,
     "queryAllDeclaredMethods": true,
-    "queryAllDeclaredConstructors": true,
+    "allDeclaredConstructors": true,
     "methods": [
       {
         "name": "<init>",
@@ -4530,7 +4530,7 @@
     "name": "org.eclipse.jetty.websocket.core.internal.messages.StringMessageSink",
     "allDeclaredFields": true,
     "queryAllDeclaredMethods": true,
-    "queryAllDeclaredConstructors": true,
+    "allDeclaredConstructors": true,
     "methods": [
       {
         "name": "<init>",
