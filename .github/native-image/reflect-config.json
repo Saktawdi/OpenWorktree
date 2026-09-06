@@ -2814,6 +2814,7 @@
     "name": "io.javalin.websocket.WsConnection",
     "allDeclaredFields": true,
     "queryAllDeclaredMethods": true,
+    "allPublicMethods": true,
     "queryAllDeclaredConstructors": true,
     "methods": [
       {
