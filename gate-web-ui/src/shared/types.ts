@@ -341,10 +341,18 @@ export interface ChatSession {
   overrideProvider?: string | null;
   overrideModel?: string | null;
   overrideVariant?: string | null;
-  /** 会话所属的分组ID，null表示未分组 */
-  groupId?: string | null;
-  /** 会话所属的分组名称 */
-  groupName?: string | null;
+}
+
+/**
+ * 会话分组（T-105）：端侧数据结构（live 后端暂无分组 API）。
+ * 分组归属不在会话对象上，而在 store 的 sessionGroupMembers（sessionId → groupId），
+ * 会话列表由后端刷新覆盖时归属不丢。
+ */
+export interface SessionGroup {
+  id: string;
+  name: string;
+  /** 分组色（十六进制，UI 点色点/头色使用） */
+  color: string;
 }
 
 /** One model entry of the live opencode catalog (GET /api/sessions/{id}/models). */
