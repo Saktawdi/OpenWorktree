@@ -35,6 +35,7 @@ COPY gate-adapters/pom.xml gate-adapters/pom.xml
 COPY gate-bootstrap/pom.xml gate-bootstrap/pom.xml
 COPY gate-cli/pom.xml gate-cli/pom.xml
 COPY gate-web/pom.xml gate-web/pom.xml
+COPY gate-ws-patch/pom.xml gate-ws-patch/pom.xml
 RUN mvn -B -q dependency:resolve || true
 
 COPY gate-domain gate-domain
@@ -44,6 +45,7 @@ COPY gate-adapters gate-adapters
 COPY gate-bootstrap gate-bootstrap
 COPY gate-cli gate-cli
 COPY gate-web gate-web
+COPY gate-ws-patch gate-ws-patch
 RUN mvn -B -DskipTests install
 
 # 运行时类路径 = gate-web 的全部传递依赖 jar（含各 gate-* 模块 jar：
