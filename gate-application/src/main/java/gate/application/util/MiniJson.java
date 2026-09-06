@@ -205,4 +205,65 @@ public final class MiniJson {
             throw new IllegalArgumentException("expected '" + c + "' but got '" + actual + "' at " + (i - 1));
         }
     }
+
+    /* ─── 序列化（会话时间线的 tool input 等 Map/List 值）─── */
+
+    /** Serialises Maps/Lists/Strings/Numbers/Booleans/null back to compact JSON. */
+    public static String write(Object value) {
+        StringBuilder sb = new StringBuilder();
+        writeValue(sb, value);
+        return sb.toString();
+    }
+
+    private static void writeValue(StringBuilder sb, Object v) {
+        if (v == null) {
+            sb.append("null");
+        } else if (v instanceof String s) {
+            sb.append('"');
+            for (int i = 0; i < s.length(); i++) {
+                char c = s.charAt(i);
+                switch (c) {
+                    case '"' -> sb.append("\\\"");
+                    case '\\' -> sb.append("\\\\");
+                    case '\n' -> sb.append("\\n");
+                    case '\r' -> sb.append("\\r");
+                    case '\t' -> sb.append("\\t");
+                    default -> {
+                        if (c < 0x20) {
+                            sb.append(String.format("\\u%04x", (int) c));
+                        } else {
+                            sb.append(c);
+                        }
+                    }
+                }
+            }
+            sb.append('"');
+        } else if (v instanceof Number || v instanceof Boolean) {
+            sb.append(v);
+        } else if (v instanceof Map<?, ?> m) {
+            sb.append('{');
+            boolean first = true;
+            for (Map.Entry<?, ?> e : m.entrySet()) {
+                if (!first) {
+                    sb.append(',');
+                }
+                first = false;
+                writeValue(sb, String.valueOf(e.getKey()));
+                sb.append(':');
+                writeValue(sb, e.getValue());
+            }
+            sb.append('}');
+        } else if (v instanceof List<?> l) {
+            sb.append('[');
+            for (int i = 0; i < l.size(); i++) {
+                if (i > 0) {
+                    sb.append(',');
+                }
+                writeValue(sb, l.get(i));
+            }
+            sb.append(']');
+        } else {
+            writeValue(sb, String.valueOf(v));
+        }
+    }
 }

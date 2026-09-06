@@ -185,6 +185,33 @@ export interface ToolCallView {
   status: ToolStatus;
 }
 
+/**
+ * 回合时间线分段（ZCode 式 chronology）：assistant 回合按真实到达序交错
+ * 思考/文本/工具，`tools`/`thinking`/`text` 平铺字段保留为兼容视图。
+ * parts 缺省（旧行/live 早期）时渲染层回退平铺字段。
+ */
+export type TimelinePart =
+  | { type: "text"; text: string }
+  | {
+      type: "thinking";
+      text: string;
+      /** live 时段的开始/结束时刻（ms），"思考 · 持续 N 秒" 数据源；历史分段无。 */
+      startedAt?: number;
+      endedAt?: number;
+    }
+  | {
+      type: "tool";
+      /** 上游 callID，live 更新按其原位 upsert。 */
+      id?: string;
+      name: string;
+      arguments_json: string;
+      result_json?: string | null;
+      /** live 渲染用：该调用当前状态；历史回放恒为 ok。 */
+      status?: ToolStatus;
+      /** 渲染缓存：与 tools 兼容视图同对象（icon/紧凑摘要/IN·OUT 明细）。 */
+      view?: ToolCallView;
+    };
+
 /** One entry of the agent's task list (todowrite 工具的 todos 数组元素). */
 export interface TodoItem {
   id?: string;
@@ -274,6 +301,10 @@ export type ChatItem =
       thinking?: ThinkingView;
       tools: ToolCallView[];
       ts: number;
+      /** 回合时间线（到达序分段）；缺省时渲染层回退 thinking+tools+text 平铺视图。 */
+      parts?: TimelinePart[];
+      /** 回合结束时刻（ms）；缺省用 ts，"已工作 x" 的时长数据源。 */
+      endedAt?: number;
       /** 完成本回复的模型/智能体名称（openchamber 式底部标注）。 */
       agent?: string | null;
       /** 推理等级（reasoning-effort，如 high/medium/low）；可能为空。 */

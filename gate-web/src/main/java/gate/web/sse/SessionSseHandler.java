@@ -217,6 +217,25 @@ public final class SessionSseHandler {
             tcs.add(tm);
         }
         m.put("tool_calls", tcs);
+        m.put("parts", partsJson(msg));
         return m;
+    }
+
+    /** 时间线分段（text/thinking/tool，chronological）；旧行为空表。 */
+    private static List<Map<String, Object>> partsJson(SessionMessage msg) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (gate.domain.session.TurnPart p : msg.parts()) {
+            Map<String, Object> pm = new LinkedHashMap<>();
+            pm.put("type", p.type());
+            if (p.isTool()) {
+                pm.put("name", p.name());
+                pm.put("arguments_json", p.argumentsJson());
+                pm.put("result_json", p.resultJson());
+            } else {
+                pm.put("text", p.text());
+            }
+            out.add(pm);
+        }
+        return out;
     }
 }

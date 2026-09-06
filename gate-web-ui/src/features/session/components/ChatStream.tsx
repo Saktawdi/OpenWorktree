@@ -24,8 +24,10 @@ import {
 } from "@phosphor-icons/react";
 import { NO_CHAT, useApp } from "@/store";
 import { fetchBlobUrl } from "@/net";
-import type { ChatItem, ToolCallView, ToolIconKind } from "@/shared/types";
+import type { ChatItem, TimelinePart, ToolCallView, ToolIconKind } from "@/shared/types";
 import { hhmmss, variantLabel } from "@/shared/format";
+import { friendlyToolName, isTodoTool, todoArgsSummary, compactToolArgs, compactToolResult } from "@/shared/todoUtils";
+import { resolveToolIcon } from "@/features/session/model";
 import { parseQuotedText, stripQuoteMarkers } from "@/shared/quotes";
 import { PermissionCard } from "@/features/session/components/PermissionCard";
 import { QuestionCard } from "@/features/session/components/QuestionCard";
@@ -168,21 +170,185 @@ function UserMessageBody({
 }
 
 function splitToolArgs(tool: ToolCallView): { toolName: string; argsPart: string } {  // todo 类工具行：api 层已把 argsSummary 写成紧凑摘要（避免整段 todos JSON 刷屏）。
+  const label = tool.name || tool.toolName || "工具调用";
   if (tool.icon === "todo") {
-    return { toolName: tool.name || tool.toolName || "任务清单", argsPart: tool.argsSummary };
+    return { toolName: label, argsPart: tool.argsSummary };
   }
-  if (tool.toolName) {
-    const rawArgs = tool.args !== undefined ? tool.args : tool.argsSummary.slice(tool.toolName.length);
-    return { toolName: tool.name || tool.toolName, argsPart: rawArgs };
+  // argsSummary 自 V20 起统一为紧凑单行摘要（compactToolArgs）；完整 JSON 留在展开的 IN 区。
+  // 兼容历史旧格式（toolName+全量 JSON 前缀）的行仍走正则剥离。
+  if (tool.toolName && tool.argsSummary.startsWith(tool.toolName)) {
+    return { toolName: label, argsPart: tool.argsSummary.slice(tool.toolName.length) };
   }
-  // 兼容未单独拆出 toolName 的历史旧数据：如 "bash{\"command\":\"...\"}" 或 "read_file ..."
-  const summary = tool.argsSummary || tool.name || "";
-  const match = summary.match(/^([a-zA-Z0-9_\-.:]+)([\s({[].*|$)/);
-  if (match) {
-    return { toolName: match[1], argsPart: match[2] || "" };
-  }
-  return { toolName: summary, argsPart: "" };
+  return { toolName: label, argsPart: tool.argsSummary };
 }
+
+/** 时间线思考段（ZCode 式单行）：完成后折叠为"思考 · 持续 N 秒"，流式段显示呼吸点。 */
+const ThinkingRow = memo(function ThinkingRow({
+  part,
+  streamingItem,
+}: {
+  part: Extract<TimelinePart, { type: "thinking" }>;
+  streamingItem: boolean;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const done = streamingItem ? !!part.endedAt : true;
+  const seconds =
+    part.startedAt && part.endedAt
+      ? Math.max(1, Math.round((part.endedAt - part.startedAt) / 1000))
+      : null;
+  return (
+    <div className="rounded-lg border border-edge bg-sunken overflow-hidden">
+      <button
+        className="w-full flex items-center gap-2 px-3 h-8 text-[12px] text-dim hover:text-ink transition-colors cursor-pointer"
+        onClick={() => setExpanded(!expanded)}
+      >
+        <Brain size={14} className="text-info" weight={done ? "regular" : "fill"} />
+        <span>{done ? "思考" : "思考中"}</span>
+        {done ? (
+          seconds != null && <span className="text-faint">持续了 {seconds} 秒</span>
+        ) : (
+          <span className="w-1.5 h-1.5 rounded-full bg-info animate-breathe" />
+        )}
+        <span className="flex-1" />
+        {expanded ? <CaretDown size={12} /> : <CaretRight size={12} />}
+      </button>
+      {expanded && (
+        <div className="px-3 pb-2.5 text-[12.5px] leading-relaxed text-faint whitespace-pre-wrap">
+          {part.text}
+        </div>
+      )}
+    </div>
+  );
+});
+
+/** 时间线里的工具行：优先复用兼容视图（共享紧凑摘要与 IN/OUT 明细）。 */
+const ToolPartRow = memo(function ToolPartRow({
+  part,
+}: {
+  part: Extract<TimelinePart, { type: "tool" }>;
+}) {
+  const tool = part.view ?? derivePartToolView(part);
+  return <ToolRow tool={tool} />;
+});
+
+function derivePartToolView(part: Extract<TimelinePart, { type: "tool" }>): ToolCallView {
+  const todo = isTodoTool(part.name);
+  return {
+    id: part.id ?? `part-${part.name}-${part.arguments_json.length}`,
+    name: friendlyToolName(part.name),
+    toolName: part.name,
+    args: part.arguments_json,
+    icon: todo ? "todo" : resolveToolIcon(part.name),
+    argsSummary: todo ? todoArgsSummary(part.arguments_json) : compactToolArgs(part.name, part.arguments_json),
+    resultSummary: compactToolResult(part.result_json),
+    resultDetail: part.result_json ?? undefined,
+    status: part.status ?? "ok",
+  };
+}
+
+/** 时长格式化："52 分 46 秒" / "46 秒"；0 或缺省返回 null（调用方改用步数表述）。 */
+function formatDuration(ms: number): string | null {
+  if (!(ms > 0)) return null;
+  const total = Math.round(ms / 1000);
+  if (total < 60) return `${total} 秒`;
+  return `${Math.floor(total / 60)} 分 ${total % 60} 秒`;
+}
+
+/**
+ * ZCode 式回合时间线：思考/文本/工具按到达序交错；长回合完成后折叠为
+ * "已工作 X 分 Y 秒"汇总条（点击展开全过程），最终汇报文本常驻其下。
+ */
+function tailText(parts: TimelinePart[], lastActionIdx: number): TimelinePart[] {
+  return lastActionIdx >= 0 ? parts.slice(lastActionIdx + 1) : parts;
+}
+
+const TimelineBody = memo(function TimelineBody({
+  item,
+}: {
+  item: Extract<ChatItem, { kind: "assistant" }>;
+}) {
+  const parts = item.parts!;
+  const [expanded, setExpanded] = useState(item.streaming);
+  const [, tick] = useState(0);
+
+  // 流式期间每秒重渲染一次，驱动"已工作 X 秒"计时；回合结束后停表。
+  useEffect(() => {
+    if (!item.streaming) return;
+    setExpanded(true);
+    const t = setInterval(() => tick((x) => x + 1), 1000);
+    return () => clearInterval(t);
+  }, [item.streaming]);
+
+  const steps = parts.filter((p) => p.type !== "text").length;
+  const toolCount = parts.filter((p) => p.type === "tool").length;
+  const durationMs = (item.endedAt ?? (item.streaming ? Date.now() : item.ts)) - item.ts;
+  // 最终汇报 = 最后一个非文本段之后的全部文本段；长回合折叠时它仍常驻可见。
+  let lastActionIdx = -1;
+  parts.forEach((p, i) => {
+    if (p.type !== "text") lastActionIdx = i;
+  });
+  const collapsible = !item.streaming && steps >= 8;
+  const expandedAll = !collapsible || expanded;
+  const duration = formatDuration(durationMs);
+
+  const renderPart = (p: TimelinePart, i: number) => {
+    if (p.type === "tool") {
+      return (
+        <div key={`t${i}`} className="rounded-lg border border-edge bg-panel overflow-hidden">
+          <ToolPartRow part={p} />
+        </div>
+      );
+    }
+    if (p.type === "thinking") {
+      return <ThinkingRow key={`k${i}`} part={p} streamingItem={item.streaming} />;
+    }
+    return (
+      <div key={`x${i}`} className="text-[13.5px] leading-relaxed text-ink">
+        <Markdown className="md-body">{p.text}</Markdown>
+        {item.streaming && i === parts.length - 1 && (
+          <span className="inline-block w-[7px] h-[15px] bg-accent animate-blink align-middle ml-0.5" />
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <div className="space-y-2">
+      {(item.streaming || collapsible) && (
+        <button
+          className="w-full flex items-center gap-2 px-3 h-8 rounded-lg border border-edge bg-sunken text-[12px] text-dim hover:text-ink transition-colors cursor-pointer"
+          onClick={() => collapsible && setExpanded(!expanded)}
+        >
+          {item.streaming ? (
+            <>
+              <span className="text-faint">已工作</span>
+              <span className="tabular-nums text-ink">{formatDuration(durationMs) ?? "0 秒"}</span>
+              <span className="w-1.5 h-1.5 rounded-full bg-accent animate-breathe" />
+            </>
+          ) : (
+            <>
+              <span className="text-faint">已工作</span>
+              <span className="tabular-nums">{duration ?? "—"}</span>
+              {toolCount > 0 && <span className="text-faint">· {toolCount} 次工具调用</span>}
+              <span className="flex-1" />
+              <span className="text-faint">{expanded ? "收起过程" : "展开过程"}</span>
+              {collapsible && (expanded ? <CaretDown size={12} /> : <CaretRight size={12} />)}
+            </>
+          )}
+        </button>
+      )}
+      {expandedAll
+        ? parts.map(renderPart)
+        : tailText(parts, lastActionIdx).map((p, i) =>
+            p.type === "text" ? (
+              <div key={`tail${i}`} className="text-[13.5px] leading-relaxed text-ink">
+                <Markdown className="md-body">{p.text}</Markdown>
+              </div>
+            ) : null,
+          )}
+    </div>
+  );
+});
 
 const ThinkingBlock = memo(function ThinkingBlock({
   thinking,
@@ -340,6 +506,8 @@ const AssistantMessage = memo(function AssistantMessage({
 }: {
   item: Extract<ChatItem, { kind: "assistant" }>;
 }) {
+  // V20：有时间线走 ZCode 式分段渲染；旧行/极端缺省回退平铺（思考块+工具堆+正文）。
+  const timeline = !!item.parts && item.parts.length > 0;
   return (
     <div className="group/msg animate-rise">
       <div className="flex items-center gap-2 mb-1.5">
@@ -351,21 +519,27 @@ const AssistantMessage = memo(function AssistantMessage({
         <span className="font-mono text-[10.5px] text-faint">{hhmmss(item.ts)}</span>
       </div>
       <div className="ml-8 space-y-2">
-        {item.thinking && <ThinkingBlock thinking={item.thinking} />}
-        {item.tools.length > 0 && (
-          <div className="rounded-lg border border-edge bg-panel divide-y divide-edge overflow-hidden">
-            {item.tools.map((t) => (
-              <ToolRow key={t.id} tool={t} />
-            ))}
-          </div>
-        )}
-        {(item.text || item.streaming) && (
-          <div className="text-[13.5px] leading-relaxed text-ink">
-            {item.text && <Markdown className="md-body">{item.text}</Markdown>}
-            {item.streaming && (
-              <span className="inline-block w-[7px] h-[15px] bg-accent animate-blink align-middle ml-0.5" />
+        {timeline ? (
+          <TimelineBody item={item} />
+        ) : (
+          <>
+            {item.thinking && <ThinkingBlock thinking={item.thinking} />}
+            {item.tools.length > 0 && (
+              <div className="rounded-lg border border-edge bg-panel divide-y divide-edge overflow-hidden">
+                {item.tools.map((t) => (
+                  <ToolRow key={t.id} tool={t} />
+                ))}
+              </div>
             )}
-          </div>
+            {(item.text || item.streaming) && (
+              <div className="text-[13.5px] leading-relaxed text-ink">
+                {item.text && <Markdown className="md-body">{item.text}</Markdown>}
+                {item.streaming && (
+                  <span className="inline-block w-[7px] h-[15px] bg-accent animate-blink align-middle ml-0.5" />
+                )}
+              </div>
+            )}
+          </>
         )}
         <AssistantFooter item={item} />
       </div>

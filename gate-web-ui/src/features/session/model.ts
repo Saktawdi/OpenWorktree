@@ -10,7 +10,7 @@ import type {
   PermissionRequestView,
   QuestionRequestView,
 } from "@/shared/types";
-import { friendlyToolName, isTodoTool, parseTodos } from "@/shared/todoUtils";
+import { friendlyToolName, isTodoTool, parseTodos, todoArgsSummary as todoArgsSummaryImpl, compactToolArgs, compactToolResult } from "@/shared/todoUtils";
 
 function sessionTimeLabel(at?: number): string {
   const t = at == null ? new Date() : new Date(at);
@@ -149,7 +149,7 @@ export interface RawMessage {
   timestamp: string;
 }
 
-function resolveToolIcon(name: string): import("@/shared/types").ToolIconKind {
+export function resolveToolIcon(name: string): import("@/shared/types").ToolIconKind {
   const n = name.toLowerCase().trim();
   if (n.includes("bash") || n.includes("exec") || n.includes("shell") || n.includes("terminal") || n.includes("cmd")) {
     return "terminal";
@@ -178,6 +178,54 @@ function resolveToolIcon(name: string): import("@/shared/types").ToolIconKind {
 /** 后端在发送时写入消息文本的缩略图引用行（存于工单克隆 .gate/chat-images/）。 */
 const CHAT_IMAGE_REF_RE = /^\[图片引用 #\d+\] (\S+)$/gm;
 
+/** 后端 V20 时间线分段（GET /messages 的 parts 数组行格式）。 */
+export interface RawTurnPart {
+  type?: string;
+  text?: string;
+  name?: string;
+  arguments_json?: string;
+  result_json?: string | null;
+}
+
+function timelinePartIcon(toolName: string, todo: boolean): import("@/shared/types").ToolIconKind {
+  return todo ? ("todo" as const) : resolveToolIcon(toolName);
+}
+
+/**
+ * V20 时间线 → ChatItem.parts：按到达序重建思考/文本/工具分段。
+ * 工具行同时并入 tools（兼容视图），时间线引用同一视图对象（共享渲染缓存）。
+ */
+function partsFromRaw(rawParts: RawTurnPart[] | undefined | null, tools: import("@/shared/types").ToolCallView[], msgId: string): import("@/shared/types").TimelinePart[] | undefined {
+  if (!rawParts || rawParts.length === 0) return undefined;
+  const out: import("@/shared/types").TimelinePart[] = [];
+  let toolIdx = 0;
+  for (const p of rawParts) {
+    if (p.type === "tool") {
+      const toolName = p.name || "unknown";
+      const todo = isTodoTool(toolName);
+      const argsJson = p.arguments_json ?? "";
+      const tool: import("@/shared/types").ToolCallView = {
+        id: `${msgId}-p${toolIdx++}`,
+        name: friendlyToolName(toolName),
+        toolName,
+        args: argsJson,
+        icon: timelinePartIcon(toolName, todo),
+        argsSummary: todo ? todoArgsSummary(argsJson) : compactToolArgs(toolName, argsJson),
+        resultSummary: compactToolResult(p.result_json),
+        resultDetail: p.result_json ?? undefined,
+        status: "ok",
+      };
+      tools.push(tool);
+      out.push({ type: "tool", id: tool.id, name: toolName, arguments_json: argsJson, result_json: p.result_json ?? null, status: "ok", view: tool });
+    } else if (p.type === "thinking") {
+      if ((p.text ?? "").trim()) out.push({ type: "thinking", text: p.text ?? "" });
+    } else {
+      if ((p.text ?? "").trim()) out.push({ type: "text", text: p.text ?? "" });
+    }
+  }
+  return out.length > 0 ? out : undefined;
+}
+
 export function mapHistoryMessage(m: RawMessage): ChatItem | null {
   if (m.role === "USER") {
     // 引用行 → images（工作区相对路径，气泡经带鉴权的 chat-images 端点还原），
@@ -194,41 +242,44 @@ export function mapHistoryMessage(m: RawMessage): ChatItem | null {
     return item;
   }
   if (m.role === "ASSISTANT") {
-    return {
-      kind: "assistant",
-      id: m.id,
-      text: m.content,
-      streaming: false,
-      tools: (m.tool_calls ?? []).map((tc, i) => {
+    const tools: import("@/shared/types").ToolCallView[] = [];
+    // V20：优先时间线（内部并入 tools）；旧行（无 parts）回退平铺映射。
+    const parts = partsFromRaw((m as RawMessage & { parts?: RawTurnPart[] }).parts, tools, m.id);
+    if (!parts) {
+      (m.tool_calls ?? []).forEach((tc, i) => {
         const toolName = tc.name || "";
         const args = tc.arguments_json ?? "";
         const todo = isTodoTool(toolName);
-        return {
+        tools.push({
           id: `${m.id}-${i}`,
           name: friendlyToolName(toolName),
           toolName,
           args,
           icon: todo ? ("todo" as const) : resolveToolIcon(toolName),
-          // Match the live-streamed row: tool name followed by its full arguments JSON
-          // (todo rows use the compact summary instead of the full todos JSON).
-          argsSummary: todo ? todoArgsSummary(args) : `${toolName}${args}`,
-          resultSummary: tc.result_json?.slice(0, 80),
+          argsSummary: todo ? todoArgsSummary(args) : compactToolArgs(toolName, args),
+          resultSummary: compactToolResult(tc.result_json),
           resultDetail: tc.result_json,
           status: "ok" as const,
-        };
-      }),
+        });
+      });
+    }
+    return {
+      kind: "assistant",
+      id: m.id,
+      text: m.content,
+      streaming: false,
+      tools,
+      parts,
+      endedAt: Date.parse(m.timestamp),
       ts: Date.parse(m.timestamp),
     };
   }
   return null;
 }
 
-/** todo 类工具行参数列的简短摘要（避免整段 JSON 刷屏）。 */
+/** todo 类工具行参数列的简短摘要（避免整段 JSON 刷屏）——实现见 todoUtils。 */
 export function todoArgsSummary(argsJson?: string): string {
-  const todos = parseTodos(argsJson);
-  if (!todos) return "任务清单";
-  const done = todos.filter((t) => t.status === "completed").length;
-  return `${todos.length} 项任务 · 已完成 ${done}`;
+  return todoArgsSummaryImpl(argsJson);
 }
 
 /* ─── 模型目录（会话 serve 的 /models 行格式） ─── */

@@ -16,6 +16,7 @@ import gate.domain.session.SessionMessage;
 import gate.domain.session.SessionStatus;
 import gate.domain.session.SessionStreamChunk;
 import gate.domain.session.SessionUsage;
+import gate.domain.session.TurnPart;
 import gate.domain.session.ToolCall;
 import gate.domain.task.GateTask;
 import gate.domain.task.GateTaskStatus;
@@ -977,6 +978,7 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                     synchronized (up.turnTools) {
                         up.turnTools.clear();
                     }
+                    up.turnParts.clear();
                     up.turnUsage = null;
                     up.turnHasNewContent = false;
                 }
@@ -1150,6 +1152,10 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
         // transitions stream in and drained into the persisted ASSISTANT row on completion,
         // so reloading a session re-renders 工具调用 instead of degrading to plain text.
         final Map<String, LinkedHashMap<String, ToolCallState>> toolsByMessage = new ConcurrentHashMap<>();
+        // ZCode 式时间线草稿：messageId -> (槽键 -> 槽)。槽键前缀定序（t: 文本 / r: 思考 /
+        // 工具 callID），LinkedHashMap 保到达序；text 是快照 replace、thinking 增量 append、
+        // tool 原位更新终态。步完成（mergeStepIntoTurn）按序 drain 成 TurnPart 进 turnParts。
+        final Map<String, LinkedHashMap<String, PartSlot>> partsByMessage = new ConcurrentHashMap<>();
         final java.util.Set<String> mergedMessages = ConcurrentHashMap.newKeySet();
         // Roles are announced via message.updated before a message's parts stream in; user-message
         // parts echo the prompt verbatim and must never surface as assistant content chunks.
@@ -1160,6 +1166,10 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
         // turn goes idle — instead of one noisy bubble per intermediate CoT step.
         final StringBuilder turnText = new StringBuilder();
         final List<TurnTool> turnTools = java.util.Collections.synchronizedList(new ArrayList<>());
+        // ZCode 式时间线分段：reasoning/text/tool 按真实到达序累积，落库后历史可整段
+        // 重放（思考折叠块 + 文本段 + 工具行交错），不再是"思考一坨、工具一堆、文本垫底"。
+        // 读写者与 turnText 相同（reader 合并 / superseded 重置 / flush 落库），一律持 turnLock。
+        final List<TurnPart> turnParts = new ArrayList<>();
         volatile SessionUsage turnUsage;
         volatile boolean turnHasNewContent;
         volatile boolean stopped;
@@ -1351,6 +1361,8 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                     if (messageId != null) {
                         messageParts.computeIfAbsent(messageId, k -> new LinkedHashMap<>())
                                 .put(partId, full);
+                        // 时间线草稿与快照同形（replace-not-append）：final 文本按 partId 原位更新。
+                        draft(messageId, "t:" + partId, "text").text = new StringBuilder(full);
                     }
                     if (!chunk.isEmpty()) {
                         emitChunk(sessionId, new SessionStreamChunk.ContentChunk(sessionId, chunk, now));
@@ -1368,6 +1380,11 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                 if (!chunk.isEmpty()) {
                     partSeen.put(partId, full.length());
                     emitChunk(sessionId, new SessionStreamChunk.ThinkingChunk(sessionId, chunk, now));
+                    // 思考正文此前只进 SSE、不落库，历史里整块蒸发；现在进 per-message
+                    // 有序草稿，随步合并进时间线（与 text/tool 同容器按到达序交错）。
+                    if (messageId != null) {
+                        draft(messageId, "r:" + partId, "thinking").text.append(chunk);
+                    }
                 }
             } else if ("tool".equals(partType)) {
                 String callId = str(part.get("callID"));
@@ -1389,6 +1406,21 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                 // Journal the call so the persisted turn reply keeps tool cards after reload.
                 upsertTurnTool(callId == null ? partId : callId,
                         toolName == null ? "unknown" : toolName, inputJson, output, status);
+                // 时间线草稿：同一 callID 原位更新（state 快照反复重发），首次到达决定顺序。
+                // messageId 缺失时跳过草稿（平铺 toolCalls 视图仍经 upsertTurnTool 保留）。
+                String draftKey = callId == null ? partId : callId;
+                if (draftKey != null && messageId != null) {
+                    PartSlot slot = toolDraft(messageId, draftKey);
+                    if (toolName != null && !toolName.isBlank()) {
+                        slot.name = toolName;
+                    }
+                    if (inputJson != null) {
+                        slot.inputJson = inputJson;
+                    }
+                    if (output != null) {
+                        slot.output = output;
+                    }
+                }
                 turnHasNewContent = true;
             } else if ("step-finish".equals(partType)) {                SessionUsage usage = usageFromTokens(part.get("tokens"));
                 if (usage != null) {
@@ -1457,10 +1489,34 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                         }
                     }
                 }
+                // 时间线：按该消息内草稿槽的到达序 drain（思考/文本/工具交错保序），
+                // 空文本/空槽丢弃；文本沿用 joinedContent 的相邻同文折叠（opencode 在步
+                // 完成时用新 partId 重发全文，是回声不是新内容）。
+                LinkedHashMap<String, PartSlot> slots = partsByMessage.remove(messageId);
+                if (slots != null) {
+                    String prevText = null;
+                    for (PartSlot slot : slots.values()) {
+                        if ("tool".equals(slot.kind)) {
+                            turnParts.add(TurnPart.tool(slot.name, slot.inputJson,
+                                    slot.output == null || slot.output.isBlank() ? null : slot.output));
+                        } else if (slot.text.length() > 0) {
+                            String t = slot.text.toString();
+                            if ("text".equals(slot.kind) && t.equals(prevText)) {
+                                continue;
+                            }
+                            turnParts.add("thinking".equals(slot.kind)
+                                    ? TurnPart.thinking(t)
+                                    : TurnPart.text(t));
+                            if ("text".equals(slot.kind)) {
+                                prevText = t;
+                            }
+                        }
+                    }
+                }
                 if (stepUsage != null) {
                     turnUsage = (turnUsage == null ? SessionUsage.EMPTY : turnUsage).add(stepUsage);
                 }
-                if (!content.isEmpty() || !stepTools.isEmpty() || stepUsage != null) {
+                if (!content.isEmpty() || !stepTools.isEmpty() || stepUsage != null || (slots != null && !slots.isEmpty())) {
                     turnHasNewContent = true;
                     assistantPersistedSinceSend = true;
                 }
@@ -1488,6 +1544,7 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
             // step 合并并发。DB I/O（insertMessage / usage 回写）放到锁外，避免持锁阻塞。
             final String content;
             final List<ToolCall> tools = new ArrayList<>();
+            final List<TurnPart> parts = new ArrayList<>();
             final SessionUsage usage;
             synchronized (turnLock) {
                 // Drain steps that never reached their message.updated(completed) merge: an aborted
@@ -1503,6 +1560,11 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                         mergeStepIntoTurn(messageId, null);
                     }
                 }
+                for (String messageId : List.copyOf(partsByMessage.keySet())) {
+                    if (!userMessages.contains(messageId)) {
+                        mergeStepIntoTurn(messageId, null);
+                    }
+                }
                 if (!turnHasNewContent) {
                     return;
                 }
@@ -1513,6 +1575,8 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                     }
                     turnTools.clear();
                 }
+                parts.addAll(turnParts);
+                turnParts.clear();
                 usage = turnUsage;
                 turnText.setLength(0);
                 turnUsage = null;
@@ -1520,7 +1584,7 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                 assistantPersistedSinceSend = true;
             }
             sessions.insertMessage(new SessionMessage(UUID.randomUUID().toString(),
-                    sessionId, Role.ASSISTANT, content, tools, usage, degraded, clock.now()));
+                    sessionId, Role.ASSISTANT, content, tools, usage, degraded, clock.now(), parts));
             log.info("opencode", degraded ? "turn.persisted-degraded" : "turn.persisted",
                     "sessionId", sessionId, "reason", reason,
                     "chars", content.length(), "toolCalls", tools.size());
@@ -1717,31 +1781,6 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
             }
         }
 
-        /** Upsert one tool call's latest state; reader-thread confined, ordered by first sight. */
-        private void trackToolCall(String messageId, String key, String toolName,
-                                   Map<String, Object> state, String output) {
-            if (messageId == null || userMessages.contains(messageId)) {
-                return;
-            }
-            LinkedHashMap<String, ToolCallState> calls =
-                    toolsByMessage.computeIfAbsent(messageId, k -> new LinkedHashMap<>());
-            ToolCallState st = calls.get(key);
-            if (st == null) {
-                st = new ToolCallState();
-                calls.put(key, st);
-            }
-            if (toolName != null && !toolName.isBlank()) {
-                st.name = toolName;
-            }
-            Object input = state.get("input");
-            if (input != null) {
-                st.argumentsJson = jsonValue(input);
-            }
-            if (output != null) {
-                st.resultJson = output;
-            }
-        }
-
         private List<ToolCall> drainToolCalls(String messageId) {
             LinkedHashMap<String, ToolCallState> calls = toolsByMessage.remove(messageId);
             if (calls == null || calls.isEmpty()) {
@@ -1752,6 +1791,22 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                 out.add(new ToolCall(st.name, st.argumentsJson, st.resultJson));
             }
             return out;
+        }
+
+        /** 时间线草稿槽：首次到达即定序，后续更新原位替换（文本快照/思考增量/工具终态）。 */
+        private PartSlot draft(String messageId, String key, String kind) {
+            LinkedHashMap<String, PartSlot> slots =
+                    partsByMessage.computeIfAbsent(messageId, k -> new LinkedHashMap<>());
+            PartSlot slot = slots.get(key);
+            if (slot == null) {
+                slot = new PartSlot(kind);
+                slots.put(key, slot);
+            }
+            return slot;
+        }
+
+        private PartSlot toolDraft(String messageId, String callId) {
+            return draft(messageId, callId, "tool");
         }
 
         /**
@@ -1782,6 +1837,23 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
         String name = "unknown";
         String argumentsJson = "";
         String resultJson;
+    }
+
+    /**
+     * One timeline draft slot ({@code partsByMessage} value): kind is "text" (snapshot text,
+     * replace-not-append), "thinking" (delta-appended) or "tool" (name/input/output upserted
+     * to the final state as part updates stream in). Confined to the reader thread.
+     */
+    static final class PartSlot {
+        final String kind;
+        StringBuilder text = new StringBuilder();
+        String name;
+        String inputJson;
+        String output;
+
+        PartSlot(String kind) {
+            this.kind = kind;
+        }
     }
 
     private void ensureUpstream(String sessionId, int port, String cliSessionId) {

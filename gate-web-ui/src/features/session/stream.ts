@@ -6,11 +6,12 @@
 import { api } from "@/net";
 import { appStore, showToast } from "@/store";
 import type { PendingAttachment, ToolIconKind } from "@/shared/types";
-import { friendlyToolName, isTodoTool, parseTodos } from "@/shared/todoUtils";
+import { friendlyToolName, isTodoTool, parseTodos, todoArgsSummary, compactToolArgs, compactToolResult } from "@/shared/todoUtils";
+import type { TimelinePart, ToolCallView } from "@/shared/types";
 import { emitPluginEvent } from "@/app/plugins/events";
 import { loadTicketSessions, refreshTicketSessionsMeta, syncSessionTodos } from "./api";
 import { loadSessionCatalog, switchSessionModelLive } from "./catalog";
-import { mapPermissionAsk, mapQuestionAsk, todoArgsSummary } from "./model";
+import { mapPermissionAsk, mapQuestionAsk } from "./model";
 import {
   addUsage,
   clearDraftModelSel,
@@ -164,6 +165,91 @@ function scheduleDiffRefresh(no: string) {
 
 const FILE_EDIT_TOOLS = ["edit", "write", "patch", "multiedit"];
 
+/* ─── live 回合时间线（parts）维护 ───
+ * parts 是 chronology 事实来源：thinking/text/tool 按到达序交错；
+ * tools 平铺数组保留为兼容视图（旧渲染路径与 todo 侧栏依赖它）。
+ */
+
+function lastThinkingIndex(parts: TimelinePart[] | undefined): number {
+  if (!parts || parts.length === 0) return -1;
+  const last = parts[parts.length - 1];
+  return last.type === "thinking" ? parts.length - 1 : -1;
+}
+
+/** thinking_delta 到达：延续最后一段未封口思考（末位恰为 thinking），否则开新段。 */
+function upsertThinkingPart(
+  parts: TimelinePart[] | undefined,
+  prevThinkingDone: boolean,
+  delta: string,
+  now: number,
+): TimelinePart[] {
+  const list = parts ?? [];
+  const idx = prevThinkingDone ? -1 : lastThinkingIndex(list);
+  if (idx >= 0) {
+    const seg = list[idx] as Extract<TimelinePart, { type: "thinking" }>;
+    const next = list.slice();
+    next[idx] = {
+      type: "thinking",
+      text: seg.text + delta,
+      startedAt: seg.startedAt ?? now,
+      endedAt: undefined,
+    };
+    return next;
+  }
+  return [...list, { type: "thinking", text: delta, startedAt: now, endedAt: undefined }];
+}
+
+/** 正文 token 到来：封口末段未封口思考（记录 endedAt）；无未封口段时原样返回。 */
+function sealThinkingPart(parts: TimelinePart[] | undefined, now: number): TimelinePart[] | undefined {
+  if (!parts || parts.length === 0) return parts;
+  const idx = lastThinkingIndex(parts);
+  if (idx < 0) return parts;
+  const seg = parts[idx] as Extract<TimelinePart, { type: "thinking" }>;
+  if (seg.endedAt) return parts;
+  const next = parts.slice();
+  next[idx] = { ...seg, endedAt: now };
+  return next;
+}
+
+/** 工具 upsert：按 callID 原位更新（参数快照/终态输出），不存在则按到达序追加。 */
+function upsertToolPart(
+  parts: TimelinePart[] | undefined,
+  callId: string,
+  toolName: string,
+  args: string,
+  resultText: string,
+  status: ToolCallView["status"],
+  view: ToolCallView,
+): TimelinePart[] {
+  const list = parts ?? [];
+  const idx = list.findIndex((p) => p.type === "tool" && p.id === callId);
+  const part: Extract<TimelinePart, { type: "tool" }> = {
+    type: "tool",
+    id: callId,
+    name: toolName,
+    arguments_json: args,
+    result_json: resultText || null,
+    status,
+    view,
+  };
+  if (idx >= 0) {
+    const next = list.slice();
+    next[idx] = part;
+    return next;
+  }
+  return [...list, part];
+}
+
+/** 回合收尾：全部工具段定格 ok（终态 FAILED 保留 error），thinking 已在 token/done 封口。 */
+function finalizeParts(parts: TimelinePart[] | undefined): TimelinePart[] | undefined {
+  if (!parts || parts.length === 0) return parts;
+  return parts.map((p) =>
+    p.type === "tool"
+      ? { ...p, status: p.status === "error" ? ("error" as const) : ("ok" as const) }
+      : p,
+  );
+}
+
 function resolveToolIcon(name: string): ToolIconKind {
   const n = name.toLowerCase().trim();
   if (n.includes("bash") || n.includes("exec") || n.includes("shell") || n.includes("terminal") || n.includes("cmd")) {
@@ -222,22 +308,29 @@ async function consumeSessionStream(no: string, sessionId: string) {
     es.addEventListener("token", (ev) => {
       arm();
       const d = JSON.parse((ev as MessageEvent).data);
+      const now = Date.now();
       updateLiveTurn(sessionId, (a) => ({
         ...a,
         text: a.text + (d.text_delta ?? ""),
         thinking: a.thinking && !a.thinking.done ? { ...a.thinking, done: true } : a.thinking,
+        // 思考段封口：正文 token 到来即该段思考结束（历史回放据此显示"持续 N 秒"）
+        parts: sealThinkingPart(a.parts, now),
       }));
     });
     es.addEventListener("thinking", (ev) => {
       arm();
       const d = JSON.parse((ev as MessageEvent).data);
+      const now = Date.now();
       updateLiveTurn(sessionId, (a) => ({
         ...a,
         thinking: {
           text: (a.thinking?.text ?? "") + (d.thinking_delta ?? ""),
-          startedAt: a.thinking?.startedAt ?? Date.now(),
+          startedAt: a.thinking?.startedAt ?? now,
           done: false,
         },
+        // 时间线：当前思考段（可能已是本回合第 N 段）原位累积；段结束（token 到来）时
+        // 由 token 处理器封口 endedAt。
+        parts: upsertThinkingPart(a.parts, a.thinking?.done === true, d.thinking_delta ?? "", now),
       }));
     });
     es.addEventListener("tool_call", (ev) => {
@@ -284,44 +377,46 @@ async function consumeSessionStream(no: string, sessionId: string) {
         const todos = parseTodos(entry.args);
         if (todos) setTodos(no, todos);
       }
-      const argsSummary = todo ? todoArgsSummary(entry.args) : `${entry.name}${entry.args}`;
+      const argsSummary = todo
+        ? todoArgsSummary(entry.args)
+        : compactToolArgs(entry.name, entry.args);
+      const liveStatus: ToolCallView["status"] =
+        d.status === "SUCCESS" ? "ok" : d.status === "FAILED" ? "error" : "running";
       updateLiveTurn(sessionId, (a) => {
         const existing = a.tools.find((t) => t.id === d.call_id);
+        let nextTools;
+        let view: ToolCallView;
         if (existing) {
-          return {
-            ...a,
-            tools: a.tools.map((t) =>
-              t.id === d.call_id
-                ? {
-                    ...t,
-                    name: friendlyToolName(entry.name),
-                    icon: todo ? ("todo" as const) : t.icon,
-                    args: entry.args,
-                    argsSummary,
-                    resultSummary: resultText ? resultText.slice(0, 80) : t.resultSummary,
-                    resultDetail: resultText || t.resultDetail,
-                    status: d.status === "SUCCESS" ? "ok" : d.status === "FAILED" ? "error" : "running",
-                  }
-                : t,
-            ),
+          view = {
+            ...existing,
+            name: friendlyToolName(entry.name),
+            icon: todo ? ("todo" as const) : existing.icon,
+            args: entry.args,
+            argsSummary,
+            resultSummary: compactToolResult(resultText) ?? existing.resultSummary,
+            resultDetail: resultText || existing.resultDetail,
+            status: liveStatus,
           };
+          nextTools = a.tools.map((t) => (t.id === d.call_id ? view : t));
+        } else {
+          view = {
+            id: d.call_id,
+            name: friendlyToolName(toolName),
+            toolName,
+            args: entry.args,
+            icon: todo ? ("todo" as const) : resolveToolIcon(toolName),
+            argsSummary,
+            resultSummary: compactToolResult(resultText),
+            resultDetail: resultText || undefined,
+            status: liveStatus,
+          };
+          nextTools = [...a.tools, view];
         }
         return {
           ...a,
-          tools: [
-            ...a.tools,
-            {
-              id: d.call_id,
-              name: friendlyToolName(toolName),
-              toolName,
-              args: entry.args,
-              icon: todo ? ("todo" as const) : resolveToolIcon(toolName),
-              argsSummary,
-              resultSummary: resultText ? resultText.slice(0, 80) : undefined,
-              resultDetail: resultText || undefined,
-              status: "running" as const,
-            },
-          ],
+          tools: nextTools,
+          // 时间线与兼容视图共享同一 view 对象（渲染缓存 + 原位状态更新）
+          parts: upsertToolPart(a.parts, d.call_id, toolName, entry.args, resultText, liveStatus, view),
         };
       });
     });
@@ -385,6 +480,11 @@ async function consumeSessionStream(no: string, sessionId: string) {
     es.addEventListener("done", () => {
       // T-120 增强：回合结束提醒（用户中止的会话按"已中断"呈现）。
       markSessionEnded(no, abortingSessions.has(sessionId) ? "failed" : "done", sessionId);
+      // 时间线定格：工具段终态化（最后一拍 RUNNING→ok），思考段封口。
+      updateLiveTurn(sessionId, (a) => ({
+        ...a,
+        parts: finalizeParts(sealThinkingPart(a.parts, Date.now())),
+      }));
       // 后端此刻已把 opencode 的自动生成标题写库（session.updated → sessions.update）。
       // 只刷新列表数据，不动 activeSessionId，避免把用户在查看的会话顶走。
       void refreshTicketSessionsMeta(no);

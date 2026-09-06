@@ -227,6 +227,7 @@ export function finishAssistant(
   patchAssistant(no, id, (a) => ({
     ...a,
     streaming: false,
+    endedAt: a.endedAt ?? Date.now(),
     agent: meta?.agent ?? a.agent ?? fallback.agent,
     variant: meta?.variant ?? a.variant ?? fallback.variant,
     thinking: a.thinking ? { ...a.thinking, done: true } : a.thinking,
@@ -282,6 +283,7 @@ export function finishLiveTurn(sessionId: string) {
     const item: Extract<ChatItem, { kind: "assistant" }> = {
       ...cur.item,
       streaming: false,
+      endedAt: cur.item.endedAt ?? Date.now(),
       thinking: cur.item.thinking ? { ...cur.item.thinking, done: true } : cur.item.thinking,
     };
     const liveTurns = { ...st.liveTurns };

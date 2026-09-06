@@ -14,6 +14,8 @@ import java.util.List;
  * @param usage     per-message usage; null for non-LLM messages
  * @param degraded  usage parse failure marker
  * @param timestamp creation time
+ * @param parts     chronological turn segments (text/thinking/tool) for assistant turns;
+ *                  empty when the row predates parts or carries no timeline (USER/ERROR)
  */
 public record SessionMessage(
         String id,
@@ -23,7 +25,8 @@ public record SessionMessage(
         List<ToolCall> toolCalls,
         SessionUsage usage,
         boolean degraded,
-        Instant timestamp) {
+        Instant timestamp,
+        List<TurnPart> parts) {
 
     public SessionMessage {
         if (id == null || id.isBlank()) {
@@ -39,8 +42,16 @@ public record SessionMessage(
             content = "";
         }
         toolCalls = toolCalls == null ? List.of() : List.copyOf(toolCalls);
+        parts = parts == null ? List.of() : List.copyOf(parts);
         if (timestamp == null) {
             throw new IllegalArgumentException("timestamp must not be null");
         }
+    }
+
+    /** Legacy shape (pre-timeline rows and callers that do not build a timeline). */
+    public SessionMessage(String id, String sessionId, Role role, String content,
+                          List<ToolCall> toolCalls, SessionUsage usage, boolean degraded,
+                          Instant timestamp) {
+        this(id, sessionId, role, content, toolCalls, usage, degraded, timestamp, List.of());
     }
 }

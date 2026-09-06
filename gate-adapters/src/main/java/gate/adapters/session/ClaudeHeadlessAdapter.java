@@ -12,6 +12,7 @@ import gate.domain.session.SessionMessage;
 import gate.domain.session.SessionStatus;
 import gate.domain.session.SessionStreamChunk;
 import gate.domain.session.SessionUsage;
+import gate.domain.session.TurnPart;
 import gate.domain.session.PermissionRequest;
 import gate.domain.task.GateTask;
 import gate.domain.task.GateTaskStatus;
@@ -272,7 +273,10 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
             } else {
                 List<String> texts = parsed.assistantTexts();
                 for (int i = 0; i < texts.size(); i++) {
+                    // 一轮 run 只落一条 assistant：时间线（parts）与 usage 都挂最后一条，
+                    // 前面多条仅出现在多回合 run（rounds within one process）。
                     insertAssistantMessage(sessionId, texts.get(i),
+                            i == texts.size() - 1 ? parsed.parts() : List.of(),
                             i == texts.size() - 1 ? parsed.usage() : null, parsed.degraded(), now);
                 }
             }
@@ -484,7 +488,10 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
             } else if (!parsed.assistantTexts().isEmpty()) {
                 List<String> texts = parsed.assistantTexts();
                 for (int i = 0; i < texts.size(); i++) {
+                    // 时间线（parts）与 usage 都挂最后一条 assistant；前面多条仅在
+                    // 单个进程产出多回合时出现。
                     insertAssistantMessage(session.id(), texts.get(i),
+                            i == texts.size() - 1 ? parsed.parts() : List.of(),
                             i == texts.size() - 1 ? parsed.usage() : null, parsed.degraded(), now);
                 }
                 if (parsed.usage() != null) {
@@ -663,9 +670,10 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
                 text == null ? "" : text, List.of(), null, false, at));
     }
 
-    private void insertAssistantMessage(String sessionId, String text, SessionUsage usage, boolean degraded, Instant at) {
+    private void insertAssistantMessage(String sessionId, String text, List<TurnPart> parts,
+                                        SessionUsage usage, boolean degraded, Instant at) {
         sessions.insertMessage(new SessionMessage(UUID.randomUUID().toString(), sessionId, Role.ASSISTANT,
-                text, List.of(), usage, degraded, at));
+                text, List.of(), usage, degraded, at, parts));
     }
 
     private void insertErrorMessage(String sessionId, String text, Instant at) {
@@ -680,12 +688,13 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
      */
     private static ParsedOutput parseStream(String stdout) {
         List<String> assistantTexts = new ArrayList<>();
+        List<TurnPart> parts = new ArrayList<>();
         String sessionId = null;
         SessionUsage usage = null;
         String errorText = null;
         boolean degraded = false;
         if (stdout == null || stdout.isBlank()) {
-            return new ParsedOutput(null, assistantTexts, null, true, null);
+            return new ParsedOutput(null, assistantTexts, null, true, null, List.of());
         }
         try {
             for (String line : stdout.split("\\R")) {
@@ -706,11 +715,55 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
                     String text = extractText(obj.get("message"), null);
                     if (text != null && !text.isBlank()) {
                         assistantTexts.add(text);
+                        parts.add(TurnPart.text(text));
                     }
+                    // 时间线：同一 assistant 行里的 thinking / tool_use 块按到达序入列，
+                    // 工具的终态输出在对应 user 行（tool_result）到达时回填到最近一个空槽。
                     if (obj.get("message") instanceof Map<?, ?> mm) {
+                        Object contentObj = cast(mm).get("content");
+                        if (contentObj instanceof List<?> blocks) {
+                            for (Object b : blocks) {
+                                if (!(b instanceof Map<?, ?> bm)) {
+                                    continue;
+                                }
+                                Map<String, Object> block = cast(bm);
+                                switch (String.valueOf(block.get("type"))) {
+                                    case "thinking" -> {
+                                        if (block.get("thinking") instanceof String t && !t.isBlank()) {
+                                            parts.add(TurnPart.thinking(t));
+                                        }
+                                    }
+                                    case "tool_use" -> parts.add(TurnPart.tool(
+                                            String.valueOf(block.getOrDefault("name", "unknown")),
+                                            block.get("input") == null ? "{}" : MiniJson.write(block.get("input")),
+                                            null));
+                                    default -> {
+                                    }
+                                }
+                            }
+                        }
                         SessionUsage messageUsage = extractUsage(cast(mm).get("usage"));
                         if (messageUsage != null) {
                             usage = messageUsage;
+                        }
+                    }
+                } else if ("user".equals(type)) {
+                    // tool_result 行：把输出回填到时间线里最近的未填输出工具槽。
+                    if (obj.get("message") instanceof Map<?, ?> mm
+                            && cast(mm).get("content") instanceof List<?> blocks) {
+                        for (Object b : blocks) {
+                            if (!(b instanceof Map<?, ?> bm)
+                                    || !"tool_result".equals(String.valueOf(cast(bm).get("type")))) {
+                                continue;
+                            }
+                            String output = stringifyToolResult(cast(bm).get("content"));
+                            for (int i = parts.size() - 1; i >= 0; i--) {
+                                TurnPart p = parts.get(i);
+                                if (p.isTool() && (p.resultJson() == null || p.resultJson().isBlank())) {
+                                    parts.set(i, TurnPart.tool(p.name(), p.argumentsJson(), output));
+                                    break;
+                                }
+                            }
                         }
                     }
                 } else if ("result".equals(type)) {
@@ -726,7 +779,27 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
         } catch (Exception e) {
             degraded = true;
         }
-        return new ParsedOutput(sessionId, assistantTexts, usage, degraded, errorText);
+        return new ParsedOutput(sessionId, assistantTexts, usage, degraded, errorText, parts);
+    }
+
+    /** tool_result.content 可能是字符串或块数组；归一成纯文本供 OUT 展示。 */
+    private static String stringifyToolResult(Object content) {
+        if (content instanceof String s) {
+            return s;
+        }
+        if (content instanceof List<?> blocks) {
+            StringBuilder sb = new StringBuilder();
+            for (Object b : blocks) {
+                if (b instanceof Map<?, ?> bm && bm.get("text") instanceof String t) {
+                    if (sb.length() > 0) {
+                        sb.append('\n');
+                    }
+                    sb.append(t);
+                }
+            }
+            return sb.toString();
+        }
+        return content == null ? null : String.valueOf(content);
     }
 
     /** claude/兼容网关的 usage 形状归一：input/output 优先，缺 total 时以 input+output 补齐。 */
@@ -826,6 +899,6 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
     }
 
     private record ParsedOutput(String sessionId, List<String> assistantTexts, SessionUsage usage,
-                                boolean degraded, String errorText) {
+                                boolean degraded, String errorText, List<TurnPart> parts) {
     }
 }

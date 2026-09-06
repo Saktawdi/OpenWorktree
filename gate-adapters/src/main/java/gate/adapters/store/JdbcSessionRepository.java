@@ -9,6 +9,7 @@ import gate.domain.session.SessionMessage;
 import gate.domain.session.SessionStatus;
 import gate.domain.session.SessionUsage;
 import gate.domain.session.ToolCall;
+import gate.domain.session.TurnPart;
 import gate.ports.store.BlobStore;
 import gate.ports.store.SessionRepository;
 import java.nio.charset.StandardCharsets;
@@ -170,15 +171,16 @@ public final class JdbcSessionRepository implements SessionRepository {
         byte[] contentBytes = message.content() == null ? new byte[0] : message.content().getBytes(StandardCharsets.UTF_8);
         BlobRef ref = blobs.put(contentBytes, "session/" + message.sessionId() + "/" + message.id() + ".txt");
         String toolJson = writeToolCalls(message.toolCalls());
+        String partsJson = writeParts(message.parts());
         SessionUsage u = message.usage();
         jdbc.update("""
                 INSERT INTO session_message(id, session_id, role, content_blob, content_bytes,
-                                            tool_calls_blob, prompt_tokens, completion_tokens,
-                                            total_tokens, degraded, created_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?)
+                                            tool_calls_blob, parts_blob, prompt_tokens,
+                                            completion_tokens, total_tokens, degraded, created_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 message.id(), message.sessionId(), message.role().name(), ref.relPath(), ref.bytes(),
-                toolJson, u == null ? null : u.promptTokens(), u == null ? null : u.completionTokens(),
+                toolJson, partsJson, u == null ? null : u.promptTokens(), u == null ? null : u.completionTokens(),
                 u == null ? null : u.totalTokens(), message.degraded() ? 1 : 0,
                 message.timestamp().toString());
     }
@@ -198,6 +200,13 @@ public final class JdbcSessionRepository implements SessionRepository {
             Long total = rs.getObject("total_tokens") == null ? null : rs.getLong("total_tokens");
             SessionUsage usage = prompt == null && completion == null && total == null
                     ? null : new SessionUsage(prompt, completion, total);
+            // V20 之前落库的行没有该列（SELECT * 拿不到），按空时间线回退两段式渲染。
+            List<TurnPart> parts;
+            try {
+                parts = parseParts(rs.getString("parts_blob"));
+            } catch (Exception columnAbsent) {
+                parts = List.of();
+            }
             return new SessionMessage(
                     id,
                     sessionId,
@@ -206,7 +215,8 @@ public final class JdbcSessionRepository implements SessionRepository {
                     parseToolCalls(rs.getString("tool_calls_blob")),
                     usage,
                     rs.getInt("degraded") != 0,
-                    Instant.parse(rs.getString("created_at")));
+                    Instant.parse(rs.getString("created_at")),
+                    parts);
         }, sessionId);
     }
 
@@ -260,6 +270,58 @@ public final class JdbcSessionRepository implements SessionRepository {
                 m.put("result_json", c.resultJson());
                 out.add(m);
             }
+        }
+        return write(out);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<TurnPart> parseParts(String json) {
+        if (json == null || json.isBlank()) {
+            return List.of();
+        }
+        try {
+            Object parsed = MiniJson.parse(json);
+            if (parsed instanceof List<?> list) {
+                List<TurnPart> out = new ArrayList<>();
+                for (Object o : list) {
+                    if (o instanceof Map<?, ?> m) {
+                        Map<String, Object> mm = (Map<String, Object>) m;
+                        String type = String.valueOf(mm.get("type"));
+                        if ("tool".equals(type)) {
+                            out.add(TurnPart.tool(
+                                    String.valueOf(mm.get("name")),
+                                    String.valueOf(mm.getOrDefault("arguments_json", "")),
+                                    mm.get("result_json") == null ? null : String.valueOf(mm.get("result_json"))));
+                        } else {
+                            // text / thinking（未知类型按文本容错，保住其余分段的顺序）
+                            out.add(TurnPart.text(String.valueOf(mm.getOrDefault("text", ""))));
+                        }
+                    }
+                }
+                return out;
+            }
+        } catch (Exception ignored) {
+            // malformed parts are not fatal — the row still has the flat view
+        }
+        return List.of();
+    }
+
+    private static String writeParts(List<TurnPart> parts) {
+        if (parts == null || parts.isEmpty()) {
+            return null;
+        }
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (TurnPart p : parts) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("type", p.type());
+            if (p.isTool()) {
+                m.put("name", p.name());
+                m.put("arguments_json", p.argumentsJson());
+                m.put("result_json", p.resultJson());
+            } else {
+                m.put("text", p.text());
+            }
+            out.add(m);
         }
         return write(out);
     }

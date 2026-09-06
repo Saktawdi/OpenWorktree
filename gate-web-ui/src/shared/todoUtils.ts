@@ -95,3 +95,85 @@ export function friendlyToolName(name: string | undefined): string {
   if (n === "task") return "子任务";
   return name;
 }
+
+/** todo 类工具行参数列的简短摘要（避免整段 JSON 刷屏）。 */
+export function todoArgsSummary(argsJson?: string): string {
+  const todos = parseTodos(argsJson);
+  if (!todos) return "任务清单";
+  const done = todos.filter((t) => t.status === "completed").length;
+  return `${todos.length} 项任务 · 已完成 ${done}`;
+}
+
+const COMPACT_MAX = 96;
+
+function truncate(text: string, max = COMPACT_MAX): string {
+  const oneLine = text.replace(/\s+/g, " ").trim();
+  return oneLine.length > max ? oneLine.slice(0, max - 1) + "…" : oneLine;
+}
+
+/**
+ * 工具行参数列的紧凑摘要（ZCode 式单行）：bash 只留命令原文，read/edit 留路径，
+ * grep/glob 留 pattern——完整 JSON 仍保留在展开的 IN 区。解析失败回退单行截断。
+ */
+export function compactToolArgs(toolName: string | undefined, argsJson: string | undefined): string {
+  const args = (argsJson ?? "").trim();
+  if (!args) return "";
+  const n = (toolName ?? "").toLowerCase();
+  let o: Record<string, unknown> | null = null;
+  try {
+    const parsed = JSON.parse(args);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      o = parsed as Record<string, unknown>;
+    }
+  } catch {
+    o = null;
+  }
+  const str = (k: string): string => {
+    const v = o?.[k];
+    return typeof v === "string" ? v : "";
+  };
+  if (o) {
+    if (n === "bash" || n === "shell" || n.includes("exec") || n.includes("command")) {
+      const cmd = str("command") || str("cmd");
+      if (cmd) return truncate(cmd);
+    }
+    if (n.includes("grep") || n.includes("search")) {
+      const pattern = str("pattern") || str("query") || str("regex");
+      if (pattern) return truncate(pattern);
+    }
+    if (n.includes("webfetch") || n.includes("fetch") || n.includes("url")) {
+      const url = str("url");
+      if (url) return truncate(url);
+    }
+    if (n.includes("task")) {
+      const desc = str("description") || str("prompt");
+      if (desc) return truncate(desc);
+    }
+    // 路径族：read/edit/write/glob/ls 等以文件为主体的工具
+    const path = str("file_path") || str("path") || str("notebook_path") || str("dir");
+    if (path) {
+      const pattern = str("pattern");
+      const include = str("include");
+      const extra = pattern || include;
+      return truncate(extra ? `${path} · ${extra}` : path);
+    }
+    // 无匹配字段：取第一个字符串值兜底，仍比整段 JSON 可读
+    for (const v of Object.values(o)) {
+      if (typeof v === "string" && v.trim()) return truncate(v);
+    }
+  }
+  return truncate(args);
+}
+
+/**
+ * 工具行右侧结果提示：仅当输出首行足够短（ZCode 式 "No files found"/"Found 27 matches"），
+ * 多行长输出不预告（展开看 OUT）。
+ */
+export function compactToolResult(resultJson: string | undefined | null): string | undefined {
+  const raw = (resultJson ?? "").trim();
+  if (!raw) return undefined;
+  const firstLine = raw.split("\n", 1)[0] ?? raw;
+  const oneLine = firstLine.replace(/\s+/g, " ").trim();
+  if (!oneLine || oneLine.length > 72) return undefined;
+  return oneLine.length < raw.length ? oneLine + "…" : oneLine;
+}

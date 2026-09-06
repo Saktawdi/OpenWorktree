@@ -974,6 +974,20 @@ public final class SessionController implements WebController {
             calls.add(cm);
         }
         out.put("tool_calls", calls);
+        List<Map<String, Object>> parts = new ArrayList<>();
+        for (gate.domain.session.TurnPart p : m.parts()) {
+            Map<String, Object> pm = new LinkedHashMap<>();
+            pm.put("type", p.type());
+            if (p.isTool()) {
+                pm.put("name", p.name());
+                pm.put("arguments_json", p.argumentsJson());
+                pm.put("result_json", p.resultJson());
+            } else {
+                pm.put("text", p.text());
+            }
+            parts.add(pm);
+        }
+        out.put("parts", parts);
         if (m.usage() == null) {
             out.put("usage", null);
         } else {
