@@ -2424,10 +2424,32 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                 pb.environment().remove(key);
             }
             pb.redirectErrorStream(true);
-            pb.redirectOutput(ProcessBuilder.Redirect.DISCARD);
+            // serve 遗言落盘：此前 DISCARD 把 stdout/stderr 全部丢弃，进程死亡（崩溃/OOM/
+            // 被杀）后无任何尸检线索。改为追加到 gate-home/serve-logs/serve-<port>.log——
+            // opencode 崩溃栈、Node OOM、端口冲突等原因都留在文件里可查。日志目录从
+            // gateToml（= gate-home/gate.toml）的父目录推导，无需改构造签名；测试装配
+            // gateToml=null 时退回系统临时目录。追加模式保留跨重启的多次遗言。
+            Path serveLog = serveLogPath(port);
+            try {
+                java.nio.file.Files.createDirectories(serveLog.getParent());
+            } catch (java.io.IOException ignored) {
+                // 日志文件建不出来时退回 DISCARD，不阻断 spawn
+            }
+            pb.redirectOutput(ProcessBuilder.Redirect.appendTo(serveLog.toFile()));
             Process p = pb.start();
             serveProcesses.put(port, p);
             pidRegistry.record(p.pid());
+            // onExit 钩子：进程退出（正常/被杀/崩溃）即落一条带 exit code 的记录——
+            // 与 serve-<port>.log 的遗言互为尸检证据；code!=0 走 warn 级别。
+            p.onExit().thenAccept(ph -> {
+                int code = ph.exitValue();
+                if (code == 0) {
+                    log.info("opencode", "serve.exited", "port", port, "pid", p.pid(), "exitCode", code);
+                } else {
+                    log.warn("opencode", "serve.exited", "port", port, "pid", p.pid(),
+                            "exitCode", code, "logFile", serveLog.toString());
+                }
+            });
             log.info("opencode", "serve.spawned", "port", port,
                     "pid", p.pid(), "clonePath", clonePath);
         } catch (IOException e) {
@@ -2435,6 +2457,18 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
             throw new GateException(GateErrorCode.GATE_ERROR_IO,
                     "cannot spawn opencode serve on port " + port, e);
         }
+    }
+
+    /**
+     * serve 进程 stdout/stderr 的遗言文件（追加模式）：gate-home/serve-logs/serve-&lt;port&gt;.log。
+     * 目录从 gateToml（= gate-home/gate.toml）的父目录推导，装配零改动；测试装配
+     * gateToml=null 时退回系统临时目录（遗言仍有处可去，只是不在 gate-home）。
+     */
+    private Path serveLogPath(int port) {
+        Path base = gateToml != null && gateToml.getParent() != null
+                ? gateToml.getParent()
+                : java.nio.file.Path.of(System.getProperty("java.io.tmpdir"), "gate-serve-logs");
+        return base.resolve("serve-logs").resolve("serve-" + port + ".log");
     }
 
     /**
