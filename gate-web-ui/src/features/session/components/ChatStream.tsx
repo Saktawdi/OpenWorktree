@@ -644,7 +644,12 @@ export function ChatStream({ ticketNo }: { ticketNo: string }) {
         <div className="max-w-[760px] mx-auto space-y-4">
           {chat.map((item) =>
             item.kind === "user" ? (
-              <div key={item.id} data-chat-msg={item.id} className="flex justify-end animate-rise">
+              /* quote-line 见 styles.css：引用胶囊的原文提示跨行显示时需要整行提层 */
+              <div
+                key={item.id}
+                data-chat-msg={item.id}
+                className="chat-msg-line relative flex justify-end animate-rise"
+              >
                 <div className="max-w-[82%] rounded-xl rounded-tr-sm border border-edge bg-raised px-3.5 py-2 text-[13.5px] leading-relaxed">
                   <UserMessageBody ticketNo={ticketNo} text={item.text} images={item.images} />
                 </div>

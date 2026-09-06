@@ -522,21 +522,29 @@ body {
     @apply grid place-items-center size-4 rounded-full text-faint cursor-pointer shrink-0
       transition-colors duration-150 hover:text-ink hover:bg-raised;
   }
-  /* 原文提示：悬停/键盘聚焦（focus-within）浮出；tipwrap 自带 6px 顶距桥接悬停 */
+  /* 原文提示：悬停浮出；tipwrap 自带 6px 顶距桥接悬停（避免间隙处提示闪烁）。
+     只挂 :hover 不挂 :focus-within——胶囊被点过（如选中复制）后 focus 常驻，
+     多行提示会一直叠在消息流上不收。 */
   .quote-chip-tipwrap {
     @apply hidden absolute left-0 bottom-full z-[70] w-max pt-1.5;
   }
   .quote-chip-tipr .quote-chip-tipwrap {
     @apply left-auto right-0;
   }
-  .quote-chip:hover .quote-chip-tipwrap,
-  .quote-chip:focus-within .quote-chip-tipwrap {
+  .quote-chip:hover .quote-chip-tipwrap {
     @apply block;
   }
   .quote-chip-tip {
-    @apply w-max max-w-[min(420px,72vw)] max-h-56 overflow-y-auto rounded-xl border border-edge
+    @apply w-max max-h-56 overflow-y-auto rounded-xl border border-edge
       bg-overlay px-3 py-2 text-[12px] font-normal leading-relaxed text-ink
       whitespace-pre-wrap break-words shadow-xl shadow-black/40;
+    /* min() 内逗号经 @apply 任意值易被 Tailwind 漏扫（hover:z-20 同因），此处用原生声明 */
+    max-width: min(420px, 72vw);
+  }
+  /* 引用胶囊的原文提示是行内 absolute 元素，跨行显示时会被相邻消息行的层叠上下文
+     （animate-rise 的 transform 残留）截断：悬停时把整行提到最上层。 */
+  .chat-msg-line:hover {
+    z-index: 20;
   }
 
   /* ── 划选动作菜单（SelectionQuoteLayer：内置「添加到对话框」+ 插件 selection.menu） ── */

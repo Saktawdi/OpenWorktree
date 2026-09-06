@@ -21,9 +21,7 @@ export function QuoteChip({
   return (
     <span className={`quote-chip${tipRight ? " quote-chip-tipr" : ""}`}>
       <Quotes size={11} weight="fill" className="quote-chip-icon" />
-      <span className="quote-chip-preview" tabIndex={0}>
-        {quotePreview(text)}
-      </span>
+      <span className="quote-chip-preview">{quotePreview(text)}</span>
       {onRemove && (
         <button
           type="button"
