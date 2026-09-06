@@ -18,6 +18,12 @@ WORKDIR /ui
 # start-local.bat 的 `npm install --no-package-lock` 同一策略：按当前
 # 平台重新解析，amd64/arm64 构建均可用。
 COPY gate-web-ui/package.json ./
+# @gate/plugin-sdk 是 file: 兄弟目录依赖（仓库根 packages/plugin-sdk），镜像里必须
+# 先把它放到 /ui 的同级位置，否则 npm install 静默断链、tsc 报 TS2307（同
+# native-build a119e51 的教训：file: 软链不递归，SDK 内还需自装 react 类型供
+# types.ts 的 import("react") 解析）。
+COPY packages/plugin-sdk /packages/plugin-sdk
+RUN cd /packages/plugin-sdk && npm install --no-audit --no-fund
 RUN npm install --no-audit --no-fund
 COPY gate-web-ui/ ./
 RUN npm run build
