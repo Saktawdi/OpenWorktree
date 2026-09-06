@@ -135,6 +135,18 @@ public final class TerminalController implements WebController {
     }
 
     private void onMessage(WsMessageContext ctx) {
+        // 管线兜底收 Throwable（含 Error）：native 镜像缺运行时元数据时抛的是
+        // NoClassDefFoundError 这类 Error，不接住就是"零日志静默断连"，CI 冒烟
+        // 只能看到客户端侧 EOF，永远定位不到是哪一环炸了。
+        try {
+            dispatchMessage(ctx);
+        } catch (Throwable t) {
+            LOG.error("terminal ws pipeline failure: {}", t.toString(), t);
+            sendErrorThenClose(ctx, "terminal pipeline failure: " + t);
+        }
+    }
+
+    private void dispatchMessage(WsMessageContext ctx) {
         Map<String, Object> msg;
         try {
             msg = Json.parseObject(ctx.message());
@@ -209,6 +221,10 @@ public final class TerminalController implements WebController {
     }
 
     private void onError(WsErrorContext ctx) {
+        // Jetty 侧的异常此前被整只吞掉——WS 管线在 native 里出问题时这里是唯一的
+        // 现场证据，必须 ERROR 级落日志（配合 CI 冒烟的 boot.log dump）。
+        Throwable error = ctx.error();
+        LOG.error("terminal ws error on connection: {}", error == null ? "unknown" : error.toString(), error);
         TerminalSession session = SESSIONS.remove(ctx);
         if (session != null) {
             session.close();
@@ -219,7 +235,7 @@ public final class TerminalController implements WebController {
         try {
             ctx.send(Json.write(Map.of("op", "error", "message", message)));
         } catch (Exception e) {
-            LOG.debug("terminal send failed: {}", e.getMessage());
+            LOG.warn("terminal send failed: {}", e.toString());
         }
     }
 
@@ -239,7 +255,7 @@ public final class TerminalController implements WebController {
         try {
             ctx.send(Json.write(payload));
         } catch (Exception e) {
-            LOG.debug("terminal send failed: {}", e.getMessage());
+            LOG.warn("terminal send failed: {}", e.toString());
         }
     }
 
@@ -474,7 +490,7 @@ public final class TerminalController implements WebController {
             try {
                 ctx.send(Json.write(payload));
             } catch (Exception e) {
-                LOG.debug("terminal send failed: {}", e.getMessage());
+                LOG.warn("terminal send failed: {}", e.toString());
             }
         }
     }

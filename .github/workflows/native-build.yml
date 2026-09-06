@@ -153,8 +153,12 @@ jobs:
               bin_name, exe = "ow-linux-x86_64", os.path.join("..", "ow-linux-x86_64")
           os.makedirs("smoke-run", exist_ok=True)
           os.chdir("smoke-run")
+          # 服务端日志提级到 debug（运行时 -D，native 可执行文件支持）：
+          # sendError/onError 的失败现场此前只在 debug 级，info 下零输出。
+          args = [exe, "-Dorg.slf4j.simpleLogger.defaultLogLevel=debug",
+                  "-Dorg.slf4j.simpleLogger.log.org.eclipse.jetty=debug"]
           with open("boot.log", "w") as log:
-              proc = subprocess.Popen([exe], stdout=log, stderr=log)
+              proc = subprocess.Popen(args, stdout=log, stderr=log)
           token = None
           for _ in range(240):
               try:
