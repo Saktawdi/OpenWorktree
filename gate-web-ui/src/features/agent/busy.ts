@@ -5,6 +5,7 @@
 import { api } from "@/net";
 import { appStore } from "@/store";
 import { loadTickets } from "@/features/ticket/api";
+import { loadSessionPermissions, loadSessionQuestions } from "@/features/session/permissions";
 import { syncSessionTodos } from "@/features/session/api";
 
 interface RawBusyAgent {
@@ -73,6 +74,22 @@ let busyPollVisibilityAttached = false;
 const TICKETS_REFETCH_MS = 15000;
 let lastTicketsFetch = 0;
 
+/**
+ * 运行中会话的待决权限/提问恢复拉取（15s 慢节拍，与工单补拉同一拍）：
+ * permission_asked 只经 SSE 实时推送——SSE 断流/页面刷新期间到达的询问，此前
+ * 只有点击工单 item 才会经 REST 恢复成卡片（用户看着"待授权"徽标却没有可点的
+ * 卡片）。运行集合拍时对所有 busy 会话补拉一次；pushPermissionRequest 内部按
+ * id 去重，重复拉取无副作用。
+ */
+function hydratePendingAsks(sessions: Array<{ session_id: string; ticket_no: string | null }>) {
+  for (const r of sessions) {
+    const no = r.ticket_no;
+    if (!no) continue;
+    void loadSessionPermissions(no, r.session_id).catch(() => {});
+    void loadSessionQuestions(no, r.session_id).catch(() => {});
+  }
+}
+
 function handleBusyVisibility() {
   // 切回可见时立即拉一次（含工单列表：后台 agent 可能在不可见期间建了票）
   if (document.hidden) return;
@@ -117,6 +134,10 @@ export function startAgentBusyPolling() {
     if (Date.now() - lastTicketsFetch >= TICKETS_REFETCH_MS) {
       lastTicketsFetch = Date.now();
       void loadTickets().catch(() => {});
+      // 同一慢节拍：补拉运行中会话的待决权限/提问卡片（不依赖用户点工单 item）
+      const st = appStore.getState();
+      const busy = st.runningAgents.sessions;
+      if (busy.length > 0) hydratePendingAsks(busy);
     }
   }, 3000);
 }

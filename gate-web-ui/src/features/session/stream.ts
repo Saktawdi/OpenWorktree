@@ -10,6 +10,7 @@ import { friendlyToolName, isTodoTool, parseTodos, todoArgsSummary, compactToolA
 import type { TimelinePart, ToolCallView } from "@/shared/types";
 import { emitPluginEvent } from "@/app/plugins/events";
 import { loadTicketSessions, refreshTicketSessionsMeta, syncSessionTodos } from "./api";
+import { loadSessionPermissions, loadSessionQuestions } from "./permissions";
 import { loadSessionCatalog, switchSessionModelLive } from "./catalog";
 import { mapPermissionAsk, mapQuestionAsk } from "./model";
 import {
@@ -277,26 +278,88 @@ function resolveToolIcon(name: string): ToolIconKind {
 }
 
 async function consumeSessionStream(no: string, sessionId: string) {
-  const token = appStore.getState().token;
-  const url = `/api/sessions/${sessionId}/events${token ? `?token=${encodeURIComponent(token)}` : ""}`;
-  const es = new EventSource(url);
   startLiveTurn(no, sessionId);
   // Per-call argument accumulation: argument_delta fragments concatenate into the
   // full arguments JSON, which todo tools parse into the sidebar task list.
   const argsBuf = new Map<string, { name: string; args: string }>();
 
-  await new Promise<void>((resolve) => {
+  // 断流重连循环（此前一次 error 即关流弃疗，agent 回合一跑数十分钟，网络一抖
+  // 实时视图与授权卡片全丢）。网络级断流先查运行集：会话仍在跑 → 补拉 pending
+  // （断流窗口内到达的授权/提问不丢）后重开事件流；已空闲 → 按正常完成收场。
+  // 连续 5 次重连收不到任何事件才放弃（后端进程不可达的兜底，防无限循环）。
+  let networkFailures = 0;
+  try {
+    for (;;) {
+      const r = await consumeSessionEvents(no, sessionId, argsBuf);
+      if (r.outcome !== "network") break;
+      if (r.sawEvents) networkFailures = 0;
+      networkFailures++;
+      const stillRunning = await isSessionBusy(sessionId);
+      if (!stillRunning) {
+        // 回合已在服务端收尾并落库：不打"已中断"标记，按正常完成补齐收尾刷新。
+        markSessionEnded(no, abortingSessions.has(sessionId) ? "failed" : "done", sessionId);
+        void syncSessionTodos(no, sessionId);
+        void loadTicketDiff(no);
+        void refreshTicket(no);
+        break;
+      }
+      if (networkFailures >= 5) {
+        markSessionEnded(no, "failed", sessionId);
+        updateLiveTurn(sessionId, (a) => ({ ...a, streaming: false }));
+        pushSystemMessage(
+          no,
+          "会话连接中断（多次重连失败）。回合仍在服务端运行，重新打开工单可恢复视图与交互。",
+          "warn",
+        );
+        break;
+      }
+      await sleep(2000);
+      void loadSessionPermissions(no, sessionId);
+      void loadSessionQuestions(no, sessionId);
+    }
+  } finally {
+    finishLiveTurn(sessionId);
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+/** 查运行集：会话是否仍在后端执行（断流重连的决策依据；查询失败按仍在跑处理）。 */
+async function isSessionBusy(sessionId: string): Promise<boolean> {
+  try {
+    const d = await api<{ running: Array<{ session_id: string }> }>("/api/agents/busy");
+    return (d.running ?? []).some((x) => x.session_id === sessionId);
+  } catch {
+    return true;
+  }
+}
+
+/** 单次事件流连接：结局为 done（回合完成帧）/ terminal（后端错误帧）/ network（连接级断流）。 */
+async function consumeSessionEvents(
+  no: string,
+  sessionId: string,
+  argsBuf: Map<string, { name: string; args: string }>,
+): Promise<{ outcome: "done" | "terminal" | "network"; sawEvents: boolean }> {
+  const token = appStore.getState().token;
+  const url = `/api/sessions/${sessionId}/events${token ? `?token=${encodeURIComponent(token)}` : ""}`;
+  const es = new EventSource(url);
+  let sawEvents = false;
+
+  const outcome = await new Promise<"done" | "terminal" | "network">((resolve) => {
     // 看门狗只在 30 分钟无任何事件时判流悬挂（原固定 5 分钟截断会误杀长工具回合）。
     let watchdog: ReturnType<typeof setTimeout> | null = null;
-    const finish = () => {
+    const settle = (reason: "done" | "terminal" | "network") => {
       if (watchdog) clearTimeout(watchdog);
-      abortingSessions.delete(sessionId);
+      if (reason !== "network") abortingSessions.delete(sessionId);
       es.close();
-      resolve();
+      resolve(reason);
     };
     const arm = () => {
+      sawEvents = true;
       if (watchdog) clearTimeout(watchdog);
-      watchdog = setTimeout(finish, 1_800_000);
+      watchdog = setTimeout(() => settle("network"), 1_800_000);
     };
     arm();
     es.addEventListener("message", (ev) => {
@@ -497,30 +560,35 @@ async function consumeSessionStream(no: string, sessionId: string) {
       // 回合结束任务清单收敛：后端此刻已整回合落库（flushTurn → done），以历史回算
       // 一次——流式事件若有遗漏/断流，侧栏任务环仍与持久化数据最终一致。
       void syncSessionTodos(no, sessionId);
-      finish();
+      settle("done");
     });
     es.addEventListener("error", (ev) => {
-      let msg = "会话连接中断";
+      // 事件级 error（后端显式错误帧，带 JSON body）= 回合失败，终局；
+      // 连接级断流（EventSource 自动重连失败也走 error，无 data）= network，交由
+      // 外层循环查运行集后重连——不再一次断流就弃疗。
       const data = (ev as MessageEvent).data;
-      if (data) {
-        try {
-          const d = JSON.parse(data);
-          if (d.error_message) {
-            let detail = String(d.error_message);
-            try {
-              const inner = JSON.parse(detail);
-              if (inner?.data?.message) detail = inner.data.message;
-              else if (inner?.message) detail = inner.message;
-            } catch {
-              /* 非结构化错误体，原样展示 */
-            }
-            msg = `Agent 出错：${detail}`;
-          } else if (d.error_code) {
-            msg = `Agent 出错：${d.error_code}`;
+      if (!data) {
+        settle("network");
+        return;
+      }
+      let msg = "会话连接中断";
+      try {
+        const d = JSON.parse(data);
+        if (d.error_message) {
+          let detail = String(d.error_message);
+          try {
+            const inner = JSON.parse(detail);
+            if (inner?.data?.message) detail = inner.data.message;
+            else if (inner?.message) detail = inner.message;
+          } catch {
+            /* 非结构化错误体，原样展示 */
           }
-        } catch {
-          /* ignore */
+          msg = `Agent 出错：${detail}`;
+        } else if (d.error_code) {
+          msg = `Agent 出错：${d.error_code}`;
         }
+      } catch {
+        /* ignore */
       }
       // T-120 增强：意外失败中止也属于"会话结束"，工单列表按"已中断"提醒。
       markSessionEnded(no, "failed", sessionId);
@@ -532,17 +600,12 @@ async function consumeSessionStream(no: string, sessionId: string) {
       //   轮询快照、以及轮询随页面隐藏暂停的窗口）；
       // - 仍在运行 → 不碰，等 busy 轮询的「运行→空闲」transition 兜底收敛。
       setTimeout(() => {
-        void api<{ running: Array<{ session_id: string }> }>("/api/agents/busy")
-          .then((d) => {
-            const stillRunning = (d.running ?? []).some((r) => r.session_id === sessionId);
-            if (!stillRunning) void syncSessionTodos(no, sessionId);
-          })
-          .catch(() => {
-            /* 核对失败：保持现状，等轮询 transition 兜底 */
-          });
+        void isSessionBusy(sessionId).then((stillRunning) => {
+          if (!stillRunning) void syncSessionTodos(no, sessionId);
+        });
       }, 2000);
-      finish();
+      settle("terminal");
     });
   });
-  finishLiveTurn(sessionId);
+  return { outcome, sawEvents };
 }

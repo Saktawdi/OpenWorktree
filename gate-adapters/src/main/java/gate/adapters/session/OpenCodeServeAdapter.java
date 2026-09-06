@@ -407,27 +407,82 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
 
     @Override
     public void respondPermission(String sessionId, String permissionId, String response) {
-        Integer port = sessionPorts.get(sessionId);
-        if (port == null) {
-            throw new GateException(GateErrorCode.USAGE, "session has no opencode endpoint");
-        }
-        HttpResponse<String> resp;
-        try {
-            resp = post("http://127.0.0.1:" + port + "/permission/" + permissionId + "/reply",
-                    "{\"reply\":\"" + response + "\"}", PERMISSION_HTTP_TIMEOUT);
-        } catch (Exception e) {
-            throw new GateException(GateErrorCode.GATE_ERROR_IO,
-                    "opencode permission reply failed: " + permissionId, e);
-        }
-        if (resp.statusCode() == 404) {
-            // Already answered (e.g. the auto-allow won the race); treat as resolved.
-            log.info("opencode", "permission.already-resolved", "sessionId", sessionId,
-                    "permissionId", permissionId);
-        } else if (resp.statusCode() / 100 != 2) {
-            throw new GateException(GateErrorCode.GATE_ERROR_IO,
-                    "opencode permission reply failed: HTTP " + resp.statusCode() + " " + resp.body());
-        }
+        postWithRecovery(sessionId, "/permission/" + permissionId + "/reply",
+                "{\"reply\":\"" + response + "\"}", "permission reply", permissionId,
+                resp -> {
+                    if (resp.statusCode() == 404) {
+                        // Already answered (e.g. the auto-allow won the race); treat as resolved.
+                        log.info("opencode", "permission.already-resolved", "sessionId", sessionId,
+                                "permissionId", permissionId);
+                        return;
+                    }
+                    if (resp.statusCode() / 100 != 2) {
+                        throw new GateException(GateErrorCode.GATE_ERROR_IO,
+                                "opencode permission reply failed: HTTP " + resp.statusCode() + " " + resp.body());
+                    }
+                });
         removePending(sessionId, permissionId);
+    }
+
+    /**
+     * 带 serve 自愈的 opencode HTTP 应答：权限/提问卡片可能挂很久，期间 serve 进程死亡
+     * （崩溃/被杀/端口失联）会让旧端口永久失效——此前直接抛 "opencode permission reply
+     * failed"，卡片从此卡死只能重发消息。现改为 POST 前探活，失败时按 send 路径同一套
+     * {@link #ensureServe} 懒复活（新端口、重接上游流）后重试一次；仍失败才抛错。
+     */
+    private void postWithRecovery(String sessionId, String path, String body, String what,
+                                  String ref, java.util.function.Consumer<HttpResponse<String>> check) {
+        Integer port = sessionPorts.get(sessionId);
+        HttpResponse<String> resp = null;
+        Exception postError = null;
+        if (port != null) {
+            try {
+                resp = post("http://127.0.0.1:" + port + path, body, PERMISSION_HTTP_TIMEOUT);
+            } catch (Exception e) {
+                postError = e;
+            }
+        }
+        if (resp == null) {
+            // 端口缺失或 POST 失败：serve 大概率已死。失效端口先清理（否则 ensureServe
+            // 会盲返回旧端口，重试等于没修），再按 send 路径同一套懒复活拉起新 serve
+            // 后重试一次；复活本身失败则把原始错误上抛，语义与旧行为一致。
+            try {
+                if (port != null && !serveHealthy(port)) {
+                    log.warn("opencode", "reply.serve-dead-heal", "sessionId", sessionId,
+                            "port", port);
+                    stopUpstream(sessionId);
+                    killProcess(port);
+                    ports.release(port);
+                    sessionPorts.remove(sessionId);
+                }
+                int fresh = ensureServe(sessionId);
+                resp = post("http://127.0.0.1:" + fresh + path, body, PERMISSION_HTTP_TIMEOUT);
+            } catch (Exception e) {
+                if (postError != null) {
+                    throw new GateException(GateErrorCode.GATE_ERROR_IO,
+                            "opencode " + what + " failed: " + ref
+                                    + " (serve unreachable and recovery failed: "
+                                    + e.getMessage() + ")", postError);
+                }
+                throw e instanceof GateException ge ? ge
+                        : new GateException(GateErrorCode.GATE_ERROR_IO,
+                                "opencode " + what + " failed: " + ref, e);
+            }
+        }
+        check.accept(resp);
+    }
+
+    /** 端口快速探活（/health，500ms）：连接拒绝 = 进程已死，其余一律视为存活。 */
+    private boolean serveHealthy(int port) {
+        try {
+            HttpResponse<String> resp = http.send(
+                    HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/health"))
+                            .timeout(Duration.ofMillis(500)).GET().build(),
+                    HttpResponse.BodyHandlers.ofString());
+            return resp.statusCode() == 200;
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     @Override
@@ -527,52 +582,36 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
 
     @Override
     public void respondQuestion(String sessionId, String requestId, List<List<String>> answers) {
-        Integer port = sessionPorts.get(sessionId);
-        if (port == null) {
-            throw new GateException(GateErrorCode.USAGE, "session has no opencode endpoint");
-        }
         List<String> encoded = new ArrayList<>();
         for (List<String> picked : answers == null ? List.<List<String>>of() : answers) {
             encoded.add(jsonValue(picked == null ? List.of() : picked));
         }
         String body = "{\"answers\":[" + String.join(",", encoded) + "]}";
-        HttpResponse<String> resp;
-        try {
-            resp = post("http://127.0.0.1:" + port + "/question/" + requestId + "/reply",
-                    body, PERMISSION_HTTP_TIMEOUT);
-        } catch (Exception e) {
-            throw new GateException(GateErrorCode.GATE_ERROR_IO,
-                    "opencode question reply failed: " + requestId, e);
-        }
-        if (resp.statusCode() == 404) {
-            // Already answered/rejected elsewhere; treat as resolved.
-            log.info("opencode", "question.already-resolved", "sessionId", sessionId,
-                    "requestId", requestId);
-        } else if (resp.statusCode() / 100 != 2) {
-            throw new GateException(GateErrorCode.GATE_ERROR_IO,
-                    "opencode question reply failed: HTTP " + resp.statusCode() + " " + resp.body());
-        }
+        postWithRecovery(sessionId, "/question/" + requestId + "/reply", body, "question reply",
+                requestId, resp -> {
+                    if (resp.statusCode() == 404) {
+                        // Already answered/rejected elsewhere; treat as resolved.
+                        log.info("opencode", "question.already-resolved", "sessionId", sessionId,
+                                "requestId", requestId);
+                        return;
+                    }
+                    if (resp.statusCode() / 100 != 2) {
+                        throw new GateException(GateErrorCode.GATE_ERROR_IO,
+                                "opencode question reply failed: HTTP " + resp.statusCode() + " " + resp.body());
+                    }
+                });
         removePendingQuestion(sessionId, requestId);
     }
 
     @Override
     public void rejectQuestion(String sessionId, String requestId) {
-        Integer port = sessionPorts.get(sessionId);
-        if (port == null) {
-            throw new GateException(GateErrorCode.USAGE, "session has no opencode endpoint");
-        }
-        HttpResponse<String> resp;
-        try {
-            resp = post("http://127.0.0.1:" + port + "/question/" + requestId + "/reject",
-                    "{}", PERMISSION_HTTP_TIMEOUT);
-        } catch (Exception e) {
-            throw new GateException(GateErrorCode.GATE_ERROR_IO,
-                    "opencode question reject failed: " + requestId, e);
-        }
-        if (resp.statusCode() != 404 && resp.statusCode() / 100 != 2) {
-            throw new GateException(GateErrorCode.GATE_ERROR_IO,
-                    "opencode question reject failed: HTTP " + resp.statusCode() + " " + resp.body());
-        }
+        postWithRecovery(sessionId, "/question/" + requestId + "/reject", "{}", "question reject",
+                requestId, resp -> {
+                    if (resp.statusCode() != 404 && resp.statusCode() / 100 != 2) {
+                        throw new GateException(GateErrorCode.GATE_ERROR_IO,
+                                "opencode question reject failed: HTTP " + resp.statusCode() + " " + resp.body());
+                    }
+                });
         removePendingQuestion(sessionId, requestId);
     }
 
