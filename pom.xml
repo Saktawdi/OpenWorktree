@@ -27,6 +27,8 @@
     <module>gate-bootstrap</module>
     <module>gate-cli</module>
     <module>gate-web</module>
+    <!-- Jetty MessageSink 覆盖补丁（native-image MethodType 同一性），见模块 pom 注释 -->
+    <module>gate-ws-patch</module>
   </modules>
 
   <properties>

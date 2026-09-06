@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  gate-ws-patch: Jetty websocket MessageSink 覆盖补丁（GraalVM native-image 专用）。
+
+  背景：Jetty 11.0.20 的 ByteArrayMessageSink / ByteBufferMessageSink 构造器用
+  `!=`（字节码 if_acmpeq）对 MethodType 做【引用同一性】比较。HotSpot 对 MethodType
+  做全表规范化（同构必同对象），而 GraalVM native-image 不保证这一同一性——于是
+  native 下构造 sink 直接抛 InvalidSignatureException（"Invalid MethodHandle
+  void([B, int, int) - expected void([B, int, int)"，两侧 toString 完全相同）。
+  Javalin 5.6.3 的 WsConnection 声明了 (Session,byte[],int,int) 的 @OnWebSocketMessage
+  方法，Jetty 在 WS OPEN 阶段会急切创建 binary sink → 每条 WS 连接 1011 断连。
+
+  修法：本模块产出同 FQN 的覆盖类（源码逐字取自 Jetty 11.0.20 websocket-core-common，
+  仅把引用比较改为 equals()），构建时把本模块 target/classes 放在 classpath 最前，
+  类加载先命中覆盖类。JVM 模式下 equals 语义与原代码等价（规范化下同构必同对象，
+  equals 本就通过），行为无变化；native 模式下修复 1011。
+  .github/native-image 的反射注册按 FQN 记录，覆盖类自动继承，无需再登记。
+
+  依赖一律 provided：只借 Jetty 类型签名编译，绝不把 Jetty 再传递进任何 classpath
+  （gate-web 也不依赖本模块；native-build.yml 显式把本模块 classes 插到 CP 最前）。
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>gate</groupId>
+    <artifactId>gate-parent</artifactId>
+    <version>${revision}</version>
+  </parent>
+  <artifactId>gate-ws-patch</artifactId>
+  <name>gate-ws-patch</name>
+
+  <properties>
+    <!-- 与 gate-web 的 Jetty 钉版保持一致（升级 Jetty 时必须同升并复核本补丁仍适用）。 -->
+    <jetty.version>11.0.20</jetty.version>
+  </properties>
+
+  <dependencies>
+    <dependency>
+      <groupId>org.eclipse.jetty.websocket</groupId>
+      <artifactId>websocket-core-common</artifactId>
+      <version>${jetty.version}</version>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.eclipse.jetty</groupId>
+      <artifactId>jetty-io</artifactId>
+      <version>${jetty.version}</version>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.eclipse.jetty</groupId>
+      <artifactId>jetty-util</artifactId>
+      <version>${jetty.version}</version>
+      <scope>provided</scope>
+    </dependency>
+  </dependencies>
+</project>

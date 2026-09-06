@@ -22,6 +22,7 @@ on:
       - 'gate-bootstrap/**'
       - 'gate-cli/**'
       - 'gate-web/**'
+      - 'gate-ws-patch/**'
       - 'gate-web-ui/src/**'
       - 'gate-web-ui/package.json'
       - 'desktop/**'
@@ -91,7 +92,9 @@ jobs:
         if: runner.os == 'Linux'
         shell: bash
         run: |
-          CP="gate-domain/target/classes:gate-ports/target/classes:gate-application/target/classes:gate-adapters/target/classes:gate-bootstrap/target/classes:gate-web/target/classes:ui-root:$(ls gate-web/target/dependency/*.jar | grep -vE 'junit|archunit|opentest4j|apiguardian' | tr '\n' ':')"
+          # gate-ws-patch 必须在 CP 最前：其同 FQN 覆盖类（MethodType 引用比较改 equals，
+          # 修 native 下 WS OPEN 1011）要先于 websocket-core-common-11.0.20.jar 被类加载命中。
+          CP="gate-ws-patch/target/classes:gate-domain/target/classes:gate-ports/target/classes:gate-application/target/classes:gate-adapters/target/classes:gate-bootstrap/target/classes:gate-web/target/classes:ui-root:$(ls gate-web/target/dependency/*.jar | grep -vE 'junit|archunit|opentest4j|apiguardian' | tr '\n' ':')"
           native-image --no-fallback \
             -H:+ReportExceptionStackTraces \
             -H:ConfigurationFileDirectories=.github/native-image \
@@ -109,7 +112,8 @@ jobs:
         if: runner.os == 'Windows'
         shell: bash
         run: |
-          CP="gate-domain/target/classes;gate-ports/target/classes;gate-application/target/classes;gate-adapters/target/classes;gate-bootstrap/target/classes;gate-web/target/classes;ui-root;$(ls gate-web/target/dependency/*.jar | grep -vE 'junit|archunit|opentest4j|apiguardian' | tr '\n' ';')"
+          # 同 Linux 步骤：gate-ws-patch 覆盖类须在 CP 最前（先于 websocket-core-common 命中）。
+          CP="gate-ws-patch/target/classes;gate-domain/target/classes;gate-ports/target/classes;gate-application/target/classes;gate-adapters/target/classes;gate-bootstrap/target/classes;gate-web/target/classes;ui-root;$(ls gate-web/target/dependency/*.jar | grep -vE 'junit|archunit|opentest4j|apiguardian' | tr '\n' ';')"
           # git-bash 不做 PATHEXT 解析：裸 native-image 解析不到 native-image.cmd，必须带扩展名
           native-image.cmd --no-fallback \
             -H:+ReportExceptionStackTraces \
