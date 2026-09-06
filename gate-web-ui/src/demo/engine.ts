@@ -508,6 +508,7 @@ export async function demoPresubmit(no: string) {
     });
     setStage(no, "PRESUBMITTED");
     pushSystemMessage(no, `第 ${round} 轮快照已锁定 · 指纹 ${treeHash.slice(0, 10)}…${treeHash.slice(-6)} · 所见即所审`, "success");
+    void import("@/features/gate/api").then((m) => m.loadEvidence(no));
   } finally {
     setTask(no, null);
     setGateBusy(no, false);
@@ -548,6 +549,7 @@ export async function demoReview(no: string) {
       setStage(no, "REJECTED");
       pushSystemMessage(no, `第 ${round} 轮审查驳回 · ${FINDINGS_R1.length} 项发现已回注会话`, "warn");
       setCenterTab("findings");
+      void import("@/features/gate/api").then((m) => m.loadEvidence(no));
     } else {
       setFindings(no, []);
       setVerdict(no, {
@@ -560,6 +562,7 @@ export async function demoReview(no: string) {
       setStage(no, "READY_TO_PUBLISH");
       pushSystemMessage(no, `第 ${round} 轮审查通过 · 发布授权已签发，所审即所发`, "success");
       setCenterTab("findings");
+      void import("@/features/gate/api").then((m) => m.loadEvidence(no));
     }
   } finally {
     setTask(no, null);
@@ -600,6 +603,7 @@ export async function demoPublish(no: string) {
     setStage(no, "DONE");
     pushSystemMessage(no, `已原子发布至主分支 main · 提交 ${commitSha.slice(0, 8)} · 快照指纹核验一致`, "success");
     showToast("发布成功，主分支已更新");
+    void import("@/features/gate/api").then((m) => m.loadEvidence(no));
   } finally {
     setTask(no, null);
     setGateBusy(no, false);

@@ -4,8 +4,18 @@
  */
 import { api } from "@/net";
 import { appStore } from "@/store";
-import type { Finding, Severity, Snapshot, VerdictInfo } from "@/shared/types";
-import { setFindings, setVerdict } from "./state";
+import type {
+  EvidenceBundle,
+  EvidenceFailure,
+  EvidencePublishIntent,
+  EvidenceReport,
+  EvidenceRound,
+  Finding,
+  Severity,
+  Snapshot,
+  VerdictInfo,
+} from "@/shared/types";
+import { setEvidence, setFindings, setVerdict } from "./state";
 
 /**
  * 拉取引擎配置（/api/config 的 engine_configured + engine 节）：
@@ -65,6 +75,10 @@ interface RawReviewResult {
   review_round: number;
   degraded?: boolean;
   findings: string;
+  /** 判决理由（审计回读；旧后端/旧工单缺省）。 */
+  reason?: string | null;
+  /** 判决的结构化依据（offending findings / missing paths / byte/line 数）。 */
+  detail?: string[] | null;
 }
 
 /**
@@ -137,10 +151,11 @@ async function applyReviewResult(no: string) {
   setFindings(no, parseFindings(rr.findings));
   const verdict: VerdictInfo = {
     verdict: rr.verdict as "PASS" | "REJECT" | "REQUIRES_HUMAN",
-    reason: verdictReason(rr.verdict),
+    reason: rr.reason || verdictReason(rr.verdict),
     engineId: rr.engine_id,
     round: rr.review_round,
     degraded: rr.degraded === true,
+    detail: rr.detail ?? [],
   };
   setVerdict(no, verdict);
 }
@@ -150,5 +165,149 @@ export async function loadReviewState(no: string) {
     await applyReviewResult(no);
   } catch {
     /* 尚无审查结果时静默返回 */
+  }
+}
+
+
+/* ── 证据链（GET /api/tickets/{no}/evidence 聚合投影） ── */
+
+/** snake_case 聚合响应的原样形状（字段映射集中在 mapEvidenceBundle）。 */
+interface RawEvidenceBundle {
+  ticket_no: string;
+  created_at?: string | null;
+  chain: { ok: boolean; total_lines: number; broken_at_line: number };
+  rounds: Array<{
+    review_round: number;
+    tree_hash: string;
+    base_commit: string;
+    target_ref: string;
+    diff_bytes: number;
+    diff_sha256: string;
+    created_at: string;
+    evidence: EvidenceReport | EvidenceFailure | { kind: "unreadable" } | null;
+    changed_paths: string[];
+    review?: {
+      verdict: string;
+      engine_id: string;
+      engine_version?: string;
+      model_name?: string;
+      covered_ok: boolean;
+      degraded: boolean;
+      created_at: string;
+      cost?: Record<string, number | null> | null;
+    };
+    decision?: { verdict: string; reason: string; detail?: string[] } | null;
+  }>;
+  stage_changes: Array<{
+    round: number;
+    from_stage: string;
+    to_stage: string;
+    kind: string;
+    reason: string;
+    created_at: string | null;
+  }>;
+  publish_intents: Array<{
+    review_round: number;
+    tree_hash: string;
+    base_commit: string;
+    target_ref: string;
+    commit_sha: string | null;
+    status: string;
+    ref_before: string | null;
+    ref_after: string | null;
+    created_at: string;
+    finished_at: string | null;
+    approval_id: string | null;
+    approval_consumed?: boolean;
+  }>;
+  audit_events: Array<Record<string, unknown>>;
+  audit_events_total: number;
+  audit_truncated: boolean;
+}
+
+function mapEvidenceBundle(raw: RawEvidenceBundle): EvidenceBundle {
+  const rounds: EvidenceRound[] = (raw.rounds ?? []).map((r) => ({
+    reviewRound: r.review_round,
+    treeHash: r.tree_hash,
+    baseCommit: r.base_commit,
+    targetRef: r.target_ref,
+    diffBytes: r.diff_bytes,
+    diffSha256: r.diff_sha256,
+    createdAt: r.created_at,
+    changedPaths: r.changed_paths ?? [],
+    evidence: r.evidence,
+    review: r.review
+      ? {
+          verdict: r.review.verdict as "PASS" | "REJECT" | "REQUIRES_HUMAN",
+          engineId: r.review.engine_id,
+          engineVersion: r.review.engine_version,
+          modelName: r.review.model_name,
+          coveredOk: r.review.covered_ok,
+          degraded: r.review.degraded,
+          createdAt: r.review.created_at,
+          cost: r.review.cost
+            ? {
+                promptTokens: r.review.cost.prompt_tokens ?? null,
+                completionTokens: r.review.cost.completion_tokens ?? null,
+                totalTokens: r.review.cost.total_tokens ?? null,
+                reviewWallMs: r.review.cost.review_wall_ms ?? null,
+              }
+            : null,
+        }
+      : undefined,
+    decision: r.decision
+      ? { verdict: r.decision.verdict, reason: r.decision.reason ?? "", detail: r.decision.detail ?? [] }
+      : null,
+  }));
+  return {
+    ticketNo: raw.ticket_no,
+    createdAt: raw.created_at ?? null,
+    chain: {
+      ok: raw.chain.ok,
+      totalLines: raw.chain.total_lines,
+      brokenAtLine: raw.chain.broken_at_line,
+    },
+    rounds,
+    stageChanges: (raw.stage_changes ?? []).map((s) => ({
+      round: s.round,
+      fromStage: s.from_stage,
+      toStage: s.to_stage,
+      kind: s.kind as "restart" | "force_complete" | "cancel",
+      reason: s.reason,
+      createdAt: s.created_at,
+    })),
+    publishIntents: (raw.publish_intents ?? []).map((p) => ({
+      reviewRound: p.review_round,
+      treeHash: p.tree_hash,
+      baseCommit: p.base_commit,
+      targetRef: p.target_ref,
+      commitSha: p.commit_sha,
+      status: p.status as EvidencePublishIntent["status"],
+      refBefore: p.ref_before,
+      refAfter: p.ref_after,
+      createdAt: p.created_at,
+      finishedAt: p.finished_at,
+      approvalId: p.approval_id,
+      approvalConsumed: p.approval_consumed,
+    })),
+    auditEvents: (raw.audit_events ?? []) as unknown as EvidenceBundle["auditEvents"],
+    auditEventsTotal: raw.audit_events_total ?? 0,
+    auditTruncated: raw.audit_truncated === true,
+  };
+}
+
+/** 拉取并写入证据链聚合数据；失败置 null（UI 显示加载失败态，不弹 toast 打扰）。
+ *  demo 模式无后端：由 demoEvidence 从 store 事实投影同一形状的数据（带 demo 水印标记）。 */
+export async function loadEvidence(no: string) {
+  if (appStore.getState().mode === "demo") {
+    const { buildDemoEvidence } = await import("./demoEvidence");
+    setEvidence(no, buildDemoEvidence(no));
+    return;
+  }
+  try {
+    const raw = await api<RawEvidenceBundle>(`/api/tickets/${no}/evidence`);
+    setEvidence(no, mapEvidenceBundle(raw));
+  } catch {
+    setEvidence(no, null);
   }
 }

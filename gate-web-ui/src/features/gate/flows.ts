@@ -9,7 +9,7 @@ import { refreshTicket } from "@/features/ticket/api";
 import { setStage } from "@/features/ticket/state";
 import { pushSystemMessage } from "@/features/session/chat";
 import { addSnapshot, setFindings, setGateBusy, setOutcome, setReviewError, setTask, setVerdict } from "./state";
-import { loadReviewState } from "./api";
+import { loadEvidence, loadReviewState } from "./api";
 
 export async function livePresubmit(no: string) {
   setGateBusy(no, true);
@@ -35,7 +35,7 @@ export async function livePresubmit(no: string) {
       changedPaths: r.changed_paths,
       capturedAt: Date.now(),
     });
-    await refreshTicket(no);
+    await Promise.all([refreshTicket(no), loadEvidence(no)]);
     pushSystemMessage(no, `第 ${r.review_round} 轮快照已锁定 · 指纹 ${r.tree_hash.slice(0, 10)}…`, "success");
   } catch (e) {
     showToast(`预提审失败：${(e as Error).message}`);
@@ -141,7 +141,7 @@ export async function liveReview(no: string, opts?: { humanPass?: boolean; note?
     }
     setTask(no, { kind: "review", percent: 100, label: "判决完成", done: true });
     await sleep(300);
-    await loadReviewState(no);
+    await Promise.all([loadReviewState(no), loadEvidence(no)]);
     await refreshTicket(no);
     if (opts?.humanPass === true) pushSystemMessage(no, "人工核准通过 · 发布授权已签发", "success");
     if (opts?.humanPass === false) pushSystemMessage(no, "人工驳回 · 请根据审查意见修复后重新提审", "warn");
@@ -196,7 +196,7 @@ export async function livePublish(no: string) {
     } catch {
       /* 忽略结果解析失败 */
     }
-    await refreshTicket(no);
+    await Promise.all([refreshTicket(no), loadEvidence(no)]);
     if (outcome.ok) showToast("发布成功，主分支已更新");
   } catch (e) {
     showToast(`发布失败：${(e as Error).message}`);

@@ -35,6 +35,7 @@ import gate.ports.store.ReviewResultRepository;
 import gate.ports.git.SnapshotCapture;
 import gate.ports.store.TicketRepository;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -230,12 +231,23 @@ public final class ReviewHandler {
             return null;
         });
 
+        // decision.detail carries the structured basis (offending findings, missing paths, byte/line
+        // numbers); without it the evidence chain can only show the bare reason. Bounded to 16
+        // entries — it rides on the audit line, not a dedicated store.
+        java.util.LinkedHashMap<String, String> reviewFields = new java.util.LinkedHashMap<>();
+        reviewFields.put("tree", row.treeHash().hex());
+        reviewFields.put("dangling", dangling.hex());
+        reviewFields.put("engine", descriptor.engineId());
+        reviewFields.put("reason", decision.reason());
+        List<String> details = decision.detail();
+        for (int i = 0; i < Math.min(details.size(), 16); i++) {
+            reviewFields.put("detail." + i, details.get(i));
+        }
+        if (details.size() > 16) {
+            reviewFields.put("detail.truncated", String.valueOf(details.size()));
+        }
         auditLog.append(AuditEvent.of(clock.now(), "review." + decision.verdict().name().toLowerCase(java.util.Locale.ROOT),
-                ticket.ticketNo(), row.reviewRound(), Map.of(
-                        "tree", row.treeHash().hex(),
-                        "dangling", dangling.hex(),
-                        "engine", descriptor.engineId(),
-                        "reason", decision.reason())));
+                ticket.ticketNo(), row.reviewRound(), reviewFields));
 
         return new ReviewResult(ticket.ticketNo(), row.reviewRound(), row.treeHash().hex(), dangling.hex(),
                 decision.verdict(), decision.reason(), decision.detail());

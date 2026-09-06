@@ -61,25 +61,43 @@ public final class HashChainAuditLog implements AuditLog {
 
     /** Verifies chain continuity from genesis. Used by tests and by {@code gate audit verify}. */
     public boolean verifyChain() {
+        return verifyChainReport().ok();
+    }
+
+    /** Result of {@link #verifyChainReport()}. */
+    public record ChainReport(boolean ok, int totalLines, int brokenAtLine) {
+        public static final ChainReport EMPTY = new ChainReport(true, 0, -1);
+    }
+
+    /**
+     * Chain verification with a precise first-break position, for the evidence UI: {@code
+     * brokenAtLine} is the 1-based line number whose {@code prev_hash} first fails to match the
+     * previous record's hash (or whose own hash fails to recompute); {@code -1} when the whole
+     * chain is intact. Detection, not prevention — the report only locates the break.
+     */
+    public ChainReport verifyChainReport() {
         List<String> lines = readLines();
         String expectedPrev = GENESIS;
-        for (String line : lines) {
+        for (int i = 0; i < lines.size(); i++) {
+            String line = lines.get(i);
             String prev = extract(line, "prev_hash");
             String hash = extract(line, "hash");
-            if (!expectedPrev.equals(prev)) {
-                return false;
+            boolean broken = !expectedPrev.equals(prev);
+            if (!broken) {
+                int payloadStart = line.indexOf("\"at\":");
+                if (payloadStart < 0) {
+                    broken = true;
+                } else {
+                    String payload = "{" + line.substring(payloadStart);
+                    broken = !sha256(prev + payload).equals(hash);
+                }
             }
-            int payloadStart = line.indexOf("\"at\":");
-            if (payloadStart < 0) {
-                return false;
-            }
-            String payload = "{" + line.substring(payloadStart);
-            if (!sha256(prev + payload).equals(hash)) {
-                return false;
+            if (broken) {
+                return new ChainReport(false, lines.size(), i + 1);
             }
             expectedPrev = hash;
         }
-        return true;
+        return new ChainReport(true, lines.size(), -1);
     }
 
     public List<String> readLines() {

@@ -1,7 +1,7 @@
 /**
  * 门禁域（gate）公共出口：审查引擎/快照/判决 API、门禁流程、状态与面板组件。
  */
-export { loadEngineConfig, loadPresubmits, loadReviewState } from "./api";
+export { loadEngineConfig, loadPresubmits, loadReviewState, loadEvidence } from "./api";
 export { livePresubmit, liveSyncBase, liveReview, livePublish } from "./flows";
 export {
   setGateBusy,
@@ -9,6 +9,7 @@ export {
   addSnapshot,
   setFindings,
   setVerdict,
+  setEvidence,
   setOutcome,
   setReviewError,
   setGatePanelCollapsed,

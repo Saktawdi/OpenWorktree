@@ -6,6 +6,7 @@ import { jumpToFinding, NO_FINDINGS, useApp } from "@/store";
 import type { Finding } from "@/shared/types";
 import { ManualReviewDialog } from "@/features/gate";
 import { SeverityChip } from "@/shared/components/ui";
+import { DecisionCard } from "./decisionCard";
 
 function FindingCard({ finding, index }: { finding: Finding; index: number }) {
   return (
@@ -234,6 +235,14 @@ export function FindingsView({ ticketNo }: { ticketNo: string }) {
   return (
     <div className="flex-1 min-h-0 overflow-y-auto px-5 py-4">
       <div className="max-w-[720px] mx-auto space-y-3">
+        {verdict && !engineFailedRound && (
+          <DecisionCard
+            ticketNo={ticketNo}
+            verdict={verdict}
+            tone={verdict.verdict === "PASS" ? "pass" : verdict.verdict === "REQUIRES_HUMAN" ? "human" : "reject"}
+            findingsCount={findings.length}
+          />
+        )}
         {engineFailedRound && <EngineRetryStrip ticketNo={ticketNo} />}
         <div className="flex items-center gap-2 pb-1">
           <span className="text-[12.5px] text-dim">共 {findings.length} 项发现</span>

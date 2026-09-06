@@ -77,6 +77,7 @@ public final class WebComponents {
     private final RuntimeInfoService runtimeInfo;
     private final gate.ports.store.TicketStageChangeRepository ticketStageChangeRepository;
     private final gate.ports.store.AuditLog auditLog;
+    private final GateRuntime runtime;
 
     public WebComponents(GateConfig config, String gitExecutable) {
         this(config, gitExecutable, null, null);
@@ -93,6 +94,7 @@ public final class WebComponents {
                     "gate-web requires a [web] section in gate.toml; none was found");
         }
         GateRuntime runtime = new GateRuntime(config, gitExecutable);
+        this.runtime = runtime;
         this.config = runtime.config();
         this.clock = runtime.clock();
         this.startedAt = this.clock.now();
@@ -248,6 +250,7 @@ public final class WebComponents {
 
     public gate.ports.store.TicketStageChangeRepository ticketStageChangeRepository() { return ticketStageChangeRepository; }
     public gate.ports.store.AuditLog auditLog() { return auditLog; }
+    public gate.ports.store.ApprovalStore approvalStore() { return runtime.approvalStore(); }
 
     public synchronized void close() {
         if (closed) {

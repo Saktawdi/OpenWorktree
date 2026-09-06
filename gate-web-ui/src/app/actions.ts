@@ -105,14 +105,14 @@ export const actions = {
   reviewAi(no: string) {
     return appStore.getState().mode === "live" ? liveReview(no) : demo.demoReview(no);
   },
-  /** 人工审查：弹窗确认"已审阅"后以人工判决落盘（human_pass=true）。 */
-  reviewHuman(no: string) {
+  /** 人工审查：弹窗确认"已审阅"并填写必填理由后，以人工判决落盘（human_pass=true）。 */
+  reviewHuman(no: string, note?: string) {
     if (appStore.getState().mode === "live") {
-      return liveReview(no, { humanPass: true, note: "人工审查通过（确认已审阅）" });
+      return liveReview(no, { humanPass: true, note: note?.trim() || "人工审查通过（未填写理由）" });
     }
     setVerdict(no, {
       verdict: "PASS",
-      reason: "人工审查通过（确认已审阅）",
+      reason: note?.trim() || "人工审查通过（确认已审阅）",
       engineId: "human/override",
       round: appStore.getState().snapshots[no]?.length ?? 1,
       authorizationId: "manual-" + Date.now().toString(36),
@@ -380,6 +380,8 @@ export const actions = {
     appStore.setState({ view: "workbench" });
     if (appStore.getState().mode === "live") return selectTicketLive(no);
     selectTicket(no);
+    // demo 模式也投影证据链（带水印标记），保证第四个 tab 在演示下可用
+    void import("@/features/gate/api").then((m) => m.loadEvidence(no));
   },
   async connectLive(token: string) {
     const ok = await verifyToken(token);

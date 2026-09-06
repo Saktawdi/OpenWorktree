@@ -8,6 +8,7 @@ import { ChatStream } from "@/features/session/components/ChatStream";
 import { Composer } from "@/features/session/components/Composer";
 import { DiffView } from "@/shared/components/DiffView";
 import { FindingsView } from "@/features/gate/components/FindingsView";
+import { EvidenceView } from "@/features/gate/components/EvidenceView";
 import { GatePanel } from "@/features/gate";
 import { SessionRail } from "@/features/session/components/SessionRail";
 import { TicketEditDialog } from "@/features/ticket/components/TicketEditDialog";
@@ -139,7 +140,7 @@ function CenterTabs({ ticketNo }: { ticketNo: string }) {
     });
   };
 
-  const item = (key: "chat" | "diff" | "findings", label: string, badge?: number) => (
+  const item = (key: "chat" | "diff" | "findings" | "evidence", label: string, badge?: number) => (
     <button
       onClick={() => setCenterTab(key)}
       className={`relative h-full px-3 text-[12.5px] font-medium transition-colors cursor-pointer ${
@@ -169,6 +170,7 @@ function CenterTabs({ ticketNo }: { ticketNo: string }) {
       {item("chat", "会话")}
       {item("diff", "变更对比", diffCount)}
       {item("findings", "审查发现", findingsCount)}
+      {item("evidence", "证据链")}
       <span className="flex-1" />
       <SessionRail ticketNo={ticketNo} />
       <button
@@ -224,6 +226,7 @@ export function Workbench() {
         )}
         {tab === "diff" && <DiffView ticketNo={selectedNo} />}
         {tab === "findings" && <FindingsView ticketNo={selectedNo} />}
+        {tab === "evidence" && <EvidenceView ticketNo={selectedNo} />}
       </main>
       {/* 面板整栏收起/展开：宽度过渡（overflow-hidden 裁切内容），与右侧面板分段折叠同一套缓动；
           display:flex 让内部 aside 沿交叉轴撑满全高——否则面板塌陷为内容高度，底部操作区悬在中间 */}

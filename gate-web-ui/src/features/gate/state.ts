@@ -4,7 +4,7 @@
  */
 import { appStore, type AppState, type GateSections } from "@/store";
 import { saveGatePanelCollapsed, saveGateSections } from "@/store/prefs";
-import type { Finding, PublishOutcome, Snapshot, TaskProgress, VerdictInfo } from "@/shared/types";
+import type { EvidenceBundle, Finding, PublishOutcome, Snapshot, TaskProgress, VerdictInfo } from "@/shared/types";
 
 const set = appStore.setState;
 const s = () => appStore.getState();
@@ -41,6 +41,11 @@ export function setVerdict(no: string, verdict: VerdictInfo | null) {
     else next[no] = verdict;
     return { verdicts: next };
   });
+}
+
+/** 写入/清除证据链聚合数据（null = 未加载或加载失败）。 */
+export function setEvidence(no: string, bundle: EvidenceBundle | null) {
+  set((st) => ({ evidence: { ...st.evidence, [no]: bundle } }));
 }
 
 export function setOutcome(no: string, outcome: PublishOutcome) {

@@ -18,6 +18,8 @@ import gate.web.controller.TicketController;
 import gate.web.controller.WebController;
 import gate.web.plugin.PluginCatalog;
 import gate.web.plugin.PluginDataStore;
+import gate.web.controller.EvidenceController;
+import gate.web.service.AuditReader;
 import gate.web.service.SessionModelCatalog;
 import gate.web.service.OpenCodeConfigService;
 import gate.web.service.OpenCodeModelsApi;
@@ -44,7 +46,12 @@ public final class ApiRoutes implements WebController {
                         c.topologyInitializer(), c.config(), c.clock(), c.presubmitRepository(),
                         c.ticketStageChangeRepository(), c.auditLog(), c.gateService(), c.ticketLockManager()),
                 new PresubmitController(c.gateService(), c.ticketRepository(), c.presubmitRepository(),
-                        c.reviewResultRepository(), c.blobStore(), c.ticketLockManager(), c.git(), c.config()),
+                        c.reviewResultRepository(), c.blobStore(), c.ticketLockManager(), c.git(), c.config(),
+                        c.auditLog()),
+                new EvidenceController(c.ticketRepository(), c.presubmitRepository(),
+                        c.reviewResultRepository(), c.publishIntentRepository(),
+                        c.ticketStageChangeRepository(), c.approvalStore(), c.blobStore(),
+                        (gate.adapters.audit.HashChainAuditLog) c.auditLog()),
                 new TaskController(c.taskRegistry(), c.taskRunner()),
                 new ProviderController(c.providerRepository(), c.modelFetcher(), c.kmsService(), c.clock()),
                 new OpenCodeProviderController(new OpenCodeConfigService(), new OpenCodeModelsApi()),

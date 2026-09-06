@@ -1,8 +1,13 @@
+import { useState } from "react";
 import { SealCheck, ShieldCheck } from "@phosphor-icons/react";
 import { actions } from "@/app/actions";
 import { useBackdropClose } from "@/shared/components/ui";
 
-/** 人工审查确认弹窗（ReviewActions 触发；也被 FindingsView 复用）。 */
+/**
+ * 人工审查确认弹窗（ReviewActions 触发；也被 FindingsView 复用）。
+ * 理由必填（需求文档 §五.5）：人工核准是证据链上唯一"人说了算"的节点，
+ * 不记录基于什么判断，"谁批准了发布"就只能回答"某个人"。
+ */
 export function ManualReviewDialog({
   ticketNo,
   round,
@@ -14,6 +19,7 @@ export function ManualReviewDialog({
   busy: boolean;
   onClose: () => void;
 }) {
+  const [note, setNote] = useState("");
   const backdrop = useBackdropClose(busy ? undefined : onClose);
   return (
     <div
@@ -21,7 +27,7 @@ export function ManualReviewDialog({
       {...backdrop}
     >
       <div
-        className="w-[420px] card shadow-2xl shadow-black/60 animate-rise"
+        className="w-[440px] card shadow-2xl shadow-black/60 animate-rise"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center gap-2.5 px-5 h-12 border-b border-edge">
@@ -36,9 +42,19 @@ export function ManualReviewDialog({
           <div className="text-[13px] leading-relaxed text-dim">
             确认已人工审阅第 {round} 轮快照的全部变更？
           </div>
+          <div>
+            <div className="field-label">核准理由（必填，将记入证据链与审计日志）</div>
+            <textarea
+              className="textarea mt-1 h-[64px] resize-none"
+              placeholder="例如：coverage gap 涉及的文件均为测试夹具，已逐个人工审阅"
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              disabled={busy}
+            />
+          </div>
           <div className="rounded-lg bg-sunken border border-edge px-3 py-2.5 text-[12px] leading-relaxed text-faint">
             确认后本轮判决以人工核准为准，审查引擎不再参与；工单将进入「待发布」，
-            可直接一键安全发布。此操作会记入审计日志。
+            可直接一键安全发布。触发身份与理由会记入审计日志。
           </div>
         </div>
         <div className="flex justify-end gap-2 px-5 pb-4">
@@ -47,9 +63,10 @@ export function ManualReviewDialog({
           </button>
           <button
             className="btn btn-primary h-8 text-[12.5px]"
-            disabled={busy}
+            disabled={busy || note.trim().length === 0}
+            title={note.trim() ? undefined : "填写核准理由后才能确认"}
             onClick={() => {
-              actions.reviewHuman(ticketNo);
+              actions.reviewHuman(ticketNo, note.trim());
               onClose();
             }}
           >

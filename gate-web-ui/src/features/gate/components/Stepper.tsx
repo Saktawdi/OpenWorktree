@@ -2,8 +2,24 @@ import { Check, X } from "@phosphor-icons/react";
 import { shortHash } from "@/shared/format";
 import type { Snapshot } from "@/shared/types";
 
-/** 横向门禁流水线（编码→快照→审查→发布四节点）。 */
-export function Stepper({ stage, snap, commitSha }: { stage: string; snap?: Snapshot; commitSha?: string }) {
+/** 横向门禁流水线（编码→快照→审查→发布四节点）。
+ *  有内容的节点是可点击的证据锚点（需求文档 §三.入口2）：点"这个绿灯为什么绿"直达证据链对应轮次。 */
+export function Stepper({
+  stage,
+  snap,
+  commitSha,
+  ticketNo,
+}: {
+  stage: string;
+  snap?: Snapshot;
+  commitSha?: string;
+  ticketNo?: string;
+}) {
+  // 节点点击 → 证据链定位（懒 import 避免与 EvidenceView 循环依赖）
+  const gotoEvidence = (round: number) => {
+    if (!ticketNo) return;
+    void import("./EvidenceView").then((m) => m.focusEvidenceRound(ticketNo, round));
+  };
   const gated = ["PRESUBMITTED", "IN_REVIEW", "REJECTED", "READY_TO_PUBLISH", "NEEDS_HUMAN", "DONE"].includes(stage);
   const coded = gated || snap !== undefined;
   const reviewed = ["READY_TO_PUBLISH", "NEEDS_HUMAN", "DONE"].includes(stage);
@@ -47,10 +63,15 @@ export function Stepper({ stage, snap, commitSha }: { stage: string; snap?: Snap
       <div className="relative flex justify-between">
         {nodes.map((n) => {
           const s = st(n.index);
+          // 节点对应轮次：快照=最新轮，审查/发布同轮；无内容时不可点
+          const clickable = ticketNo !== undefined && ((n.index === 1 && snap) || (n.index === 2 && reviewed) || (n.index === 3 && commitSha));
+          const W = clickable ? "button" : "span";
           return (
-            <span
+            <W
               key={n.index}
-              className={`${circleBase} ${
+              title={clickable ? `在证据链中查看${n.label}` : undefined}
+              onClick={clickable ? () => gotoEvidence(snap?.round ?? 1) : undefined}
+              className={`${circleBase} ${clickable ? "cursor-pointer hover:scale-110 transition-transform" : ""} ${
                 s === "done"
                   ? "bg-accent-dim border-accent/50 text-accent"
                   : s === "active"
@@ -69,7 +90,7 @@ export function Stepper({ stage, snap, commitSha }: { stage: string; snap?: Snap
               ) : (
                 n.index + 1
               )}
-            </span>
+            </W>
           );
         })}
       </div>

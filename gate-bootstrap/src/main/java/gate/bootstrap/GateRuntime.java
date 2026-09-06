@@ -111,6 +111,7 @@ public final class GateRuntime {
     private final gate.ports.git.CloneBaseSyncer cloneBaseSyncer;
     private final AuditLog auditLog;
     private final gate.ports.store.TicketStageChangeRepository ticketStageChangeRepository;
+    private final ApprovalStore approvalStore;
 
     public GateRuntime(GateConfig config, String gitExecutable) {
         this.config = config;
@@ -122,7 +123,7 @@ public final class GateRuntime {
         SnapshotCapture snapshotCapture = new GitCliSnapshot(git, config.indexDir());
         CommitPublisher commitPublisher = new GitCliPublisher(git, config.indexDir());
         RefObserver refObserver = new GitCliRefObserver(git);
-        ApprovalStore approvalStore = new FsApprovalStore(config.approvalsDir());
+        this.approvalStore = new FsApprovalStore(config.approvalsDir());
         HookInstaller hookInstaller = new FileHookInstaller();
         this.topologyInitializer = new GitCliTopologyInitializer(git, hookInstaller,
                 config.targetRefWhitelist(), config.gateHome().resolve("tmp"));
@@ -192,6 +193,7 @@ public final class GateRuntime {
     public TicketRepository ticketRepository() { return ticketRepository; }
     public PresubmitRepository presubmitRepository() { return presubmitRepository; }
     public AuditLog auditLog() { return auditLog; }
+    public ApprovalStore approvalStore() { return approvalStore; }
     public gate.ports.store.TicketStageChangeRepository ticketStageChangeRepository() { return ticketStageChangeRepository; }
     public ReviewResultRepository reviewResultRepository() { return reviewResultRepository; }
     public PublishIntentRepository publishIntentRepository() { return publishIntentRepository; }

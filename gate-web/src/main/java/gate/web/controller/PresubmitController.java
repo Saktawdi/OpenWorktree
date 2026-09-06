@@ -43,11 +43,20 @@ public final class PresubmitController implements WebController {
     private final TicketLockManager ticketLockManager;
     private final GitCli git;
     private final GateConfig config;
+    private final gate.ports.store.AuditLog auditLog;
 
     public PresubmitController(GateService gateService, TicketRepository tickets,
                                PresubmitRepository presubmits, ReviewResultRepository reviewResults,
                                BlobStore blobStore, TicketLockManager ticketLockManager,
                                GitCli git, GateConfig config) {
+        this(gateService, tickets, presubmits, reviewResults, blobStore, ticketLockManager,
+                git, config, null);
+    }
+
+    public PresubmitController(GateService gateService, TicketRepository tickets,
+                               PresubmitRepository presubmits, ReviewResultRepository reviewResults,
+                               BlobStore blobStore, TicketLockManager ticketLockManager,
+                               GitCli git, GateConfig config, gate.ports.store.AuditLog auditLog) {
         this.gateService = gateService;
         this.tickets = tickets;
         this.presubmits = presubmits;
@@ -56,6 +65,7 @@ public final class PresubmitController implements WebController {
         this.ticketLockManager = ticketLockManager;
         this.git = git;
         this.config = config;
+        this.auditLog = auditLog;
     }
 
     @Override
@@ -168,6 +178,17 @@ public final class PresubmitController implements WebController {
         body.put("covered_ok", reviewRow.coveredOk());
         body.put("degraded", reviewRow.degraded());
         body.put("findings", new String(findingsBytes, StandardCharsets.UTF_8));
+        // 判决理由与其结构化依据只落在审计日志；这里从审计回读，让 Findings 页的
+        // 判决卡片能"解释自己"（coverage gap / diff 超限 / 引擎故障……）。旧工单可能
+        // 没有对应审计行，此时省略字段，前端回退到静态文案。
+        if (auditLog instanceof gate.adapters.audit.HashChainAuditLog chain) {
+            new gate.web.service.AuditReader(chain)
+                    .latestReviewDecision(ticketNo, presubmitRow.reviewRound())
+                    .ifPresent(d -> {
+                        body.put("reason", d.get("reason"));
+                        body.put("detail", d.get("detail"));
+                    });
+        }
         ctx.status(HttpStatus.OK);
         ctx.json(body);
     }

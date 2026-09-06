@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { ListChecks } from "@phosphor-icons/react";
 import { actions } from "@/app/actions";
@@ -6,6 +7,7 @@ import { setGateSection } from "@/features/gate/state";
 import type { Snapshot } from "@/shared/types";
 import { Stepper } from "./Stepper";
 import { TaskCard, TreeHashCard, VerdictBanner, OutcomeCard } from "./cards";
+import { ManualReviewDialog } from "./ManualReviewDialog";
 
 /** 门禁流水线段（Stepper + 快照/进度/判决/结果卡片 + NEEDS_HUMAN 双按钮）。 */
 export function GatePipeline({
@@ -30,6 +32,7 @@ export function GatePipeline({
   outcome?: { commitSha: string; refBefore: string; refAfter: string; targetRef: string; publishedAt: number };
 }) {
   const expanded = useApp((s) => s.gateSections.pipeline);
+  const [humanDialog, setHumanDialog] = useState(false);
 
   return (
     <div className="border-b border-edge">
@@ -59,7 +62,7 @@ export function GatePipeline({
             className="overflow-hidden"
           >
             <div className="px-4 pt-1 pb-3 space-y-3">
-              <Stepper stage={stage} snap={snap} commitSha={outcome?.commitSha} />
+              <Stepper stage={stage} snap={snap} commitSha={outcome?.commitSha} ticketNo={ticketNo} />
               {task && <TaskCard task={task} />}
               {snap && !task && <TreeHashCard snap={snap} />}
               {verdict && !task && (
@@ -71,7 +74,8 @@ export function GatePipeline({
                   <button
                     className="btn btn-primary h-9"
                     disabled={gateBusy}
-                    onClick={() => actions.overridePass(ticketNo)}
+                    onClick={() => setHumanDialog(true)}
+                    title="人工核准需填写理由（记入证据链）"
                   >
                     人工核准放行
                   </button>
@@ -88,6 +92,14 @@ export function GatePipeline({
           </motion.div>
         )}
       </AnimatePresence>
+      {humanDialog && (
+        <ManualReviewDialog
+          ticketNo={ticketNo}
+          round={round || 1}
+          busy={gateBusy}
+          onClose={() => setHumanDialog(false)}
+        />
+      )}
     </div>
   );
 }

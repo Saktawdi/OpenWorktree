@@ -32,6 +32,7 @@ import type {
   UsageView,
   VerdictInfo,
   QuoteChip,
+  EvidenceBundle,
 } from "@/shared/types";
 import {
   DEMO_AGENTS,
@@ -53,7 +54,7 @@ import {
   loadVisibleStages,
 } from "./prefs";
 
-export type CenterTab = "chat" | "diff" | "findings";
+export type CenterTab = "chat" | "diff" | "findings" | "evidence";
 
 export type Theme = "dark" | "light";
 
@@ -101,6 +102,10 @@ export interface AppState {
   snapshots: Record<string, Snapshot[]>;
   findings: Record<string, Finding[]>;
   verdicts: Record<string, VerdictInfo>;
+  /** 证据链聚合数据（key = 工单号）：证据链 tab 的数据源；null = 未加载/加载失败。 */
+  evidence: Record<string, EvidenceBundle | null>;
+  /** 证据链 tab 的定位锚：流水线节点点击后跳转并滚动到对应轮次。 */
+  evidenceFocus: { ticketNo: string; round: number; nonce: number } | null;
   tasks: Record<string, TaskProgress>;
   outcomes: Record<string, PublishOutcome>;
   /** 审查任务的失败原因（key = 工单号）：审查发现页的错误卡片与重试入口都读它。 */
@@ -200,6 +205,8 @@ export const appStore = create<AppState>(() => ({
   snapshots: {},
   findings: {},
   verdicts: {},
+  evidence: {},
+  evidenceFocus: null,
   tasks: {},
   outcomes: {},
   reviewErrors: {},
@@ -277,7 +284,7 @@ appStore.subscribe(() => {
   saveTimer = setTimeout(() => {
     try {
       const st = appStore.getState();
-      const data = JSON.stringify({ ...st, _v: 2, toast: null, connectOpen: false, highlight: null });
+      const data = JSON.stringify({ ...st, _v: 2, toast: null, connectOpen: false, highlight: null, evidenceFocus: null });
       sessionStorage.setItem(SNAPSHOT_KEY, data);
     } catch {
       /* 存储满或不可用时忽略 */

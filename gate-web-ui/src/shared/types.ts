@@ -409,6 +409,8 @@ export interface VerdictInfo {
   authorizationId?: string;
   /** true = 引擎未产出有效审查（超时/崩溃等基础设施故障）：可原地重试，不消耗轮次。 */
   degraded?: boolean;
+  /** 判决的结构化依据（offending findings / missing paths / byte/line 数），来自审计回读。 */
+  detail?: string[];
 }
 
 /** 审查引擎配置（GET /api/config 的 engine 节）；null = 未配置，AI 审查不可用。 */
@@ -446,6 +448,128 @@ export interface PublishOutcome {
   publishedAt: number;
   workspaceSyncStatus?: string | null;
   workspaceSyncNote?: string | null;
+}
+
+/* ── 证据链（GET /api/tickets/{no}/evidence 聚合投影 + demo 数据） ── */
+
+/** 哈希链完整性报告（后端 verifyChainReport）；brokenAtLine -1 = 完整。 */
+export interface EvidenceChainReport {
+  ok: boolean;
+  totalLines: number;
+  brokenAtLine: number;
+}
+
+/** 单轮审查的证据（快照行 + evidence.json blob + 审查结果行 + 该轮判决的审计视图）。 */
+export interface EvidenceRound {
+  reviewRound: number;
+  treeHash: string;
+  baseCommit: string;
+  targetRef: string;
+  diffBytes: number;
+  diffSha256: string;
+  createdAt: string;
+  changedPaths: string[];
+  /** EvidenceCodec 的两种对象形态（report/failure）；解析失败时为 unreadable 形态。 */
+  evidence: EvidenceReport | EvidenceFailure | { kind: "unreadable"; detail?: string } | null;
+  review?: {
+    verdict: "PASS" | "REJECT" | "REQUIRES_HUMAN";
+    engineId: string;
+    engineVersion?: string;
+    modelName?: string;
+    coveredOk: boolean;
+    degraded: boolean;
+    createdAt: string;
+    cost?: { promptTokens: number | null; completionTokens: number | null; totalTokens: number | null; reviewWallMs: number | null } | null;
+  };
+  /** 判决的人话解释 + 结构化依据（审计回读；旧工单可能缺省）。 */
+  decision?: { verdict: string; reason: string; detail: string[] } | null;
+}
+
+/** EvidenceCodec report 形态（findings 与 features/gate 的 Finding 对齐）。 */
+export interface EvidenceReport {
+  kind: "report";
+  engine_id?: string;
+  engine_version?: string;
+  provider_id?: string;
+  model_name?: string;
+  tree_hash?: string;
+  degraded?: boolean;
+  exit_code?: number;
+  prompt_tokens?: number | null;
+  completion_tokens?: number | null;
+  total_tokens?: number | null;
+  covered_paths?: string[];
+  findings?: Array<{
+    severity: string;
+    raw_severity?: string;
+    path: string;
+    line_start?: number;
+    line_end?: number;
+    rule_id?: string;
+    message: string;
+    suggestion?: string;
+  }>;
+}
+
+/** EvidenceCodec failure 形态：引擎未产出判决。 */
+export interface EvidenceFailure {
+  kind: "failure";
+  engine_id?: string;
+  failure_kind?: string;
+  detail?: string;
+  exit_code?: number;
+}
+
+/** 一次工单状态变更（与 StageChangeRecord 对齐，created_at 为 ISO 字符串）。 */
+export interface EvidenceStageChange {
+  round: number;
+  fromStage: string;
+  toStage: string;
+  kind: "restart" | "force_complete" | "cancel";
+  reason: string;
+  createdAt: string | null;
+}
+
+/** 一次发布意图（write-ahead 行：绑定四元组 + 推送结果）。 */
+export interface EvidencePublishIntent {
+  reviewRound: number;
+  treeHash: string;
+  baseCommit: string;
+  targetRef: string;
+  commitSha: string | null;
+  status: "PENDING" | "PUBLISHED" | "REJECTED" | "UNKNOWN" | "ABANDONED";
+  refBefore: string | null;
+  refAfter: string | null;
+  createdAt: string;
+  finishedAt: string | null;
+  approvalId: string | null;
+  approvalConsumed?: boolean;
+}
+
+/** 审计日志行（ticket 过滤后的投影；fields 随事件类型变化）。 */
+export interface EvidenceAuditEvent {
+  at: string;
+  kind: string;
+  ticket_no: string | null;
+  review_round: number | null;
+  fields: Record<string, string>;
+  prev_hash?: string;
+  hash?: string;
+}
+
+/** 证据链聚合响应（按 review round 分组的完整叙事）。 */
+export interface EvidenceBundle {
+  ticketNo: string;
+  createdAt: string | null;
+  chain: EvidenceChainReport;
+  rounds: EvidenceRound[];
+  stageChanges: EvidenceStageChange[];
+  publishIntents: EvidencePublishIntent[];
+  auditEvents: EvidenceAuditEvent[];
+  auditEventsTotal: number;
+  auditTruncated: boolean;
+  /** demo 模式标记：UI 据此显示水印（demo 数据是编的，不能冒充真实证据）。 */
+  demo?: boolean;
 }
 
 export interface AgentConfigOption {

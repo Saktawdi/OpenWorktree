@@ -8,7 +8,7 @@ import { clearSessionEnded } from "@/features/session/state";
 import { loadTicketSessions, loadSessionMessages } from "@/features/session/api";
 import { loadSessionCatalog } from "@/features/session/catalog";
 import { loadSessionPermissions, loadSessionQuestions } from "@/features/session/permissions";
-import { loadPresubmits, loadReviewState } from "@/features/gate/api";
+import { loadEvidence, loadPresubmits, loadReviewState } from "@/features/gate/api";
 
 export async function selectTicketLive(no: string) {
   // 打开工单即视为看见"会话已结束"提醒
@@ -34,5 +34,5 @@ export async function selectTicketLive(no: string) {
       /* 会话可能尚未创建 */
     }
   };
-  await Promise.all([loadDiff(), loadSessions(), loadPresubmits(no), loadReviewState(no)]);
+  await Promise.all([loadDiff(), loadSessions(), loadPresubmits(no), loadReviewState(no), loadEvidence(no)]);
 }
