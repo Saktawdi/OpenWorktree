@@ -250,7 +250,7 @@ function StageFilterButton() {
 }
 
 /** T-120：工单列表运行徽标 —— 会话运行中（均衡器）与 AI 审查运行中（旋转环）动效不同。 */
-function RunBadge({ kind }: { kind: "agent" | "review" }) {
+function RunBadge({ kind, count }: { kind: "agent" | "review"; count?: number }) {
   if (kind === "review") {
     return (
       <span className="run-badge run-badge-review" title="AI 审查运行中">
@@ -266,7 +266,7 @@ function RunBadge({ kind }: { kind: "agent" | "review" }) {
         <i />
         <i />
       </span>
-      运行中
+      {count !== undefined ? `${count} 运行中` : "运行中"}
     </span>
   );
 }
@@ -331,6 +331,8 @@ export function TicketList() {
   const selectedNo = useApp((s) => s.selectedNo);
   const diffs = useApp((s) => s.diffs);
   const busyMap = useApp((s) => s.busy);
+  const sessionBusy = useApp((s) => s.sessionBusy);
+  const sessions = useApp((s) => s.sessions);
   const gateBusyMap = useApp((s) => s.gateBusy);
   const sessionEnded = useApp((s) => s.sessionEnded);
   const reviewEnded = useApp((s) => s.reviewEnded);
@@ -416,7 +418,9 @@ export function TicketList() {
           const active = t.ticketNo === selectedNo;
           const hasDiff = (diffs[t.ticketNo] ?? NO_DIFF).length > 0;
           // T-120：会话运行中（任一会话在跑）与 AI 审查运行中分别以不同动效呈现
-          const sessionRunning = busyMap[t.ticketNo] ?? false;
+          const runningSessions = (sessions[t.ticketNo] ?? []).filter((sess) => sessionBusy[sess.id] === true);
+          const sessionRunningCount = runningSessions.length > 0 ? runningSessions.length : (busyMap[t.ticketNo] ? 1 : 0);
+          const sessionRunning = sessionRunningCount > 0;
           const reviewRunning = gateBusyMap[t.ticketNo] ?? false;
           const running = sessionRunning || reviewRunning;
           // T-120 增强：待决询问（question/permission）、会话结束与审查结果提醒
@@ -429,7 +433,7 @@ export function TicketList() {
               onClick={() => actions.openTicket(t.ticketNo)}
               className={`relative w-full text-left rounded-lg px-3 py-2.5 transition-colors cursor-pointer group ${
                 active ? "bg-raised" : "hover:bg-panel"
-              } ${sessionRunning ? "ticket-item-run-agent" : ""} ${asks ? "ticket-item-ask" : ""}`}
+              } ${asks ? "ticket-item-ask" : ""}`}
               whileHover={!active ? { x: 2 } : undefined}
               transition={{ type: "spring", stiffness: 400, damping: 25 }}
             >
@@ -483,7 +487,7 @@ export function TicketList() {
                 )}
                 {running && (
                   <span className="flex items-center gap-1.5">
-                    {sessionRunning && <RunBadge kind="agent" />}
+                    {sessionRunning && <RunBadge kind="agent" count={sessionRunningCount} />}
                     {reviewRunning && <RunBadge kind="review" />}
                   </span>
                 )}

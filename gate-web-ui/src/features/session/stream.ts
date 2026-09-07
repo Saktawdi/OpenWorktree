@@ -291,65 +291,77 @@ function resolveToolIcon(name: string): ToolIconKind {
   return "terminal";
 }
 
-async function consumeSessionStream(no: string, sessionId: string) {
-  startLiveTurn(no, sessionId);
-  // Per-call argument accumulation: argument_delta fragments concatenate into the
-  // full arguments JSON, which todo tools parse into the sidebar task list.
-  const argsBuf = new Map<string, { name: string; args: string }>();
+/** 本地正在进行 SSE 消费的会话集合（供 busy 轮询做精准的空值/状态保护） */
+const activeStreamingSessions = new Set<string>();
 
-  // 断流重连循环（此前一次 error 即关流弃疗，agent 回合一跑数十分钟，网络一抖
-  // 实时视图与授权卡片全丢）。网络级断流先查运行集：会话仍在跑 → 补拉 pending
-  // （断流窗口内到达的授权/提问不丢）后重开事件流；已空闲 → 按正常完成收场。
-  // 连续 5 次重连收不到任何事件才放弃（后端进程不可达的兜底，防无限循环）。
-  let networkFailures = 0;
-  // 本回合事件流是否异常断过（含最终走重连/收场的所有 network 出口）：断过的回合
-  // 浏览器侧必然缺事件——上游 reader 与浏览器 SSE 是两条独立链路，后端多半已收到
-  // 完整回合并落库，收场后必须用落库历史重建视图，否则残缺的流式占位被定格
-  // （用户实测：回复中途突然中断、中止按钮变发送按钮，opencode 侧实际有完整回复）。
-  let streamInterrupted = false;
+export function isSessionStreamingLocally(sessionId: string): boolean {
+  return activeStreamingSessions.has(sessionId);
+}
+
+async function consumeSessionStream(no: string, sessionId: string) {
+  activeStreamingSessions.add(sessionId);
   try {
-    for (;;) {
-      const r = await consumeSessionEvents(no, sessionId, argsBuf);
-      if (r.outcome !== "network") break;
-      streamInterrupted = true;
-      if (r.sawEvents) networkFailures = 0;
-      networkFailures++;
-      const stillRunning = await isSessionBusy(sessionId);
-      if (!stillRunning) {
-        // 回合已在服务端收尾并落库：不打"已中断"标记。先终结占位条目再用落库历史
-        // 重建视图——断流窗口内的正文/工具事件浏览器永远收不到，重建是唯一补全路径
-        // （finishLiveTurn 移出 liveTurns 后，loadSessionMessages 才能按纯历史回放）。
-        markSessionEnded(no, abortingSessions.has(sessionId) ? "failed" : "done", sessionId);
+    startLiveTurn(no, sessionId);
+    // Per-call argument accumulation: argument_delta fragments concatenate into the
+    // full arguments JSON, which todo tools parse into the sidebar task list.
+    const argsBuf = new Map<string, { name: string; args: string }>();
+
+    // 断流重连循环（此前一次 error 即关流弃疗，agent 回合一跑数十分钟，网络一抖
+    // 实时视图与授权卡片全丢）。网络级断流先查运行集：会话仍在跑 → 补拉 pending
+    // （断流窗口内到达的授权/提问不丢）后重开事件流；已空闲 → 按正常完成收场。
+    // 连续 5 次重连收不到任何事件才放弃（后端进程不可达的兜底，防无限循环）。
+    let networkFailures = 0;
+    // 本回合事件流是否异常断过（含最终走重连/收场的所有 network 出口）：断过的回合
+    // 浏览器侧必然缺事件——上游 reader 与浏览器 SSE 是两条独立链路，后端多半已收到
+    // 完整回合并落库，收场后必须用落库历史重建视图，否则残缺的流式占位被定格
+    // （用户实测：回复中途突然中断、中止按钮变发送按钮，opencode 侧实际有完整回复）。
+    let streamInterrupted = false;
+    try {
+      for (;;) {
+        const r = await consumeSessionEvents(no, sessionId, argsBuf);
+        if (r.outcome !== "network") break;
+        streamInterrupted = true;
+        if (r.sawEvents) networkFailures = 0;
+        networkFailures++;
+        const stillRunning = await isSessionBusy(sessionId);
+        if (!stillRunning) {
+          // 回合已在服务端收尾并落库：不打"已中断"标记。先终结占位条目再用落库历史
+          // 重建视图——断流窗口内的正文/工具事件浏览器永远收不到，重建是唯一补全路径
+          // （finishLiveTurn 移出 liveTurns 后，loadSessionMessages 才能按纯历史回放）。
+          markSessionEnded(no, abortingSessions.has(sessionId) ? "failed" : "done", sessionId);
+          finishLiveTurn(sessionId);
+          await loadSessionMessages(no, sessionId);
+          void syncSessionTodos(sessionId);
+          void loadTicketDiff(no);
+          void refreshTicket(no);
+          break;
+        }
+        if (networkFailures >= 5) {
+          markSessionEnded(no, "failed", sessionId);
+          updateLiveTurn(sessionId, (a) => ({ ...a, streaming: false }));
+          pushSystemMessage(
+            no,
+            "会话连接中断（多次重连失败）。回合仍在服务端运行，重新打开工单可恢复视图与交互。",
+            "warn",
+          );
+          break;
+        }
+        await sleep(2000);
+        void loadSessionPermissions(no, sessionId);
+        void loadSessionQuestions(no, sessionId);
+      }
+      // 正常 done/terminal 之外，凡断流过的回合（哪怕重连后接完）都不 trusts 占位条目：
+      // 断流窗口内丢失的正文/工具段必须以落库历史为准重建，占位补不出没收到的事件。
+      // 正常未断流的回合不动——finishLiveTurn 已把流式条目定格进 chats，重建反而抖动。
+      if (streamInterrupted) {
         finishLiveTurn(sessionId);
-        await loadSessionMessages(no, sessionId);
-        void syncSessionTodos(sessionId);
-        void loadTicketDiff(no);
-        void refreshTicket(no);
-        break;
+        await loadSessionMessages(no, sessionId).catch(() => {});
       }
-      if (networkFailures >= 5) {
-        markSessionEnded(no, "failed", sessionId);
-        updateLiveTurn(sessionId, (a) => ({ ...a, streaming: false }));
-        pushSystemMessage(
-          no,
-          "会话连接中断（多次重连失败）。回合仍在服务端运行，重新打开工单可恢复视图与交互。",
-          "warn",
-        );
-        break;
-      }
-      await sleep(2000);
-      void loadSessionPermissions(no, sessionId);
-      void loadSessionQuestions(no, sessionId);
-    }
-    // 正常 done/terminal 之外，凡断流过的回合（哪怕重连后接完）都不 trusts 占位条目：
-    // 断流窗口内丢失的正文/工具段必须以落库历史为准重建，占位补不出没收到的事件。
-    // 正常未断流的回合不动——finishLiveTurn 已把流式条目定格进 chats，重建反而抖动。
-    if (streamInterrupted) {
+    } finally {
       finishLiveTurn(sessionId);
-      await loadSessionMessages(no, sessionId).catch(() => {});
     }
   } finally {
-    finishLiveTurn(sessionId);
+    activeStreamingSessions.delete(sessionId);
   }
 }
 
