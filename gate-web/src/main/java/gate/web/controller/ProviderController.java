@@ -54,6 +54,7 @@ public final class ProviderController implements WebController {
         app.delete("/api/providers/{id}", this::delete);
         app.put("/api/providers/{id}/models", this::updateModels);
         app.post("/api/providers/{id}/models/fetch", this::fetchModels);
+        app.post("/api/providers/{id}/models/probe", this::probeModels);
         app.put("/api/providers/{id}/credential", this::setCredential);
         app.delete("/api/providers/{id}/credential", this::clearCredential);
     }
@@ -157,6 +158,24 @@ public final class ProviderController implements WebController {
         providers.replaceModels(id, models, clock.now());
         ctx.status(HttpStatus.OK);
         ctx.json(renderProviderDetail(id));
+    }
+
+    /**
+     * Probes the upstream model list without persisting it, allowing the UI to present
+     * a candidate selection list for user review and cherry-picking.
+     */
+    public void probeModels(Context ctx) {
+        String id = ctx.pathParam("id");
+        ProviderRepository.ProviderRow p = providers.find(id).orElseThrow(() ->
+                new GateException(GateErrorCode.USAGE, "no such provider: " + id));
+        if ("manual".equals(id)) {
+            throw new GateException(GateErrorCode.USAGE, "manual provider has no upstream");
+        }
+        List<String> models = modelFetcher.fetch(p);
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("models", models);
+        ctx.status(HttpStatus.OK);
+        ctx.json(body);
     }
 
     /**

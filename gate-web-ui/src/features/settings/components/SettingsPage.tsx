@@ -15,7 +15,7 @@ export function SettingsPage() {
 
   if (mode === "demo") {
     return (
-      <div className="flex-1 min-h-0 overflow-y-auto">
+      <div className="flex-1 min-h-0 overflow-y-auto scrollbar-none">
         <div className="max-w-[880px] mx-auto px-6 py-10">
           <div className="card p-10 text-center">
             <div className="w-12 h-12 rounded-xl bg-raised border border-edge grid place-items-center mx-auto">
@@ -31,7 +31,7 @@ export function SettingsPage() {
   }
 
   return (
-    <div className="flex-1 min-h-0 overflow-y-auto">
+    <div className="flex-1 min-h-0 overflow-y-auto scrollbar-none">
       <div className="max-w-[1080px] mx-auto px-6 py-5">
         <div className="md:grid md:grid-cols-[196px_minmax(0,1fr)] md:gap-5">
           <SettingsNav tab={tab} onChange={setTab} />

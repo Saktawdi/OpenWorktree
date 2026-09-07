@@ -17,7 +17,7 @@ export function AgentsPage() {
   const [ocModalOpen, setOcModalOpen] = useState(false);
 
   return (
-    <div className="flex-1 min-h-0 overflow-y-auto">
+    <div className="flex-1 min-h-0 overflow-y-auto scrollbar-none">
       <div className="max-w-[1080px] mx-auto px-6 py-5 space-y-6">
         <section>
           <div className="flex items-center gap-3 pb-3">

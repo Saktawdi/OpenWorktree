@@ -229,6 +229,19 @@ body {
   background: transparent;
 }
 
+/* ── 隐藏滚动条（顶级整页滚动容器专用） ──
+   内容居中（mx-auto）的整页在内容变长、滚动条突然出现/消失时会被挤压 ~8px，
+   整页内容横移一下。顶级页（插件/设置/项目/智能体等）信息密度低、有外部
+   空白留白，滚动位置靠滚轮/键盘即可，隐藏滚动条利大于弊。
+   注意：只用于整页滚动容器，不要用于聊天流/终端等局部区域。 */
+.scrollbar-none {
+  scrollbar-width: none;    /* Firefox */
+  -ms-overflow-style: none; /* 旧 Edge */
+}
+.scrollbar-none::-webkit-scrollbar {
+  display: none;            /* Chromium/Safari */
+}
+
 /* ── Focus ── */
 :focus-visible {
   outline: 2px solid color-mix(in srgb, var(--color-accent) 65%, transparent);

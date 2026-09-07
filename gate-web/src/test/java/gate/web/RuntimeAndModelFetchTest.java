@@ -108,6 +108,11 @@ class RuntimeAndModelFetchTest {
         assertTrue(fetched.body().contains("\"models\":[\"a-model\",\"z-model\"]"), fetched.body());
         assertTrue(fetched.body().contains("\"model_count\":2"), fetched.body());
 
+        // Probe endpoint returns models without modifying provider state
+        HttpResponse<String> probed = post("/api/providers/" + providerId + "/models/probe", "");
+        assertEquals(200, probed.statusCode(), probed.body());
+        assertTrue(probed.body().contains("\"models\":[\"a-model\",\"z-model\"]"), probed.body());
+
         HttpResponse<String> list = get("/api/providers");
         assertTrue(list.body().contains("\"a-model\""), list.body());
     }

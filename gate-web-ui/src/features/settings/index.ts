@@ -13,6 +13,7 @@ export {
   clearProviderCredential,
   updateProviderModels,
   fetchUpstreamModels,
+  probeUpstreamModels,
 } from "./api";
 export { fetchAppInfo, checkAppUpdate, fetchUpdateNotes } from "./app";
 export { SettingsPage } from "./components/SettingsPage";

@@ -1,6 +1,7 @@
 /**
  * 插件系统（app/plugins）：顶栏「插件」一级页面的核心面板。
- * 插件列表（启停/重载/错误展示）+ 各插件注册的面板挂件渲染区（管理界面都在这里）。
+ * 每个插件一张卡：插件信息（启停/重载/错误展示）与其挂件管理面板（settings.plugins
+ * 槽位）同卡分区呈现——面板是插件的一部分，不再是飘在列表后面的独立卡片。
  */
 import { useEffect, useState } from "react";
 import {
@@ -44,7 +45,7 @@ function statusView(p: PluginView): { label: string; cls: string } {
   return { label: "已停用", cls: "text-faint border-edge-strong bg-raised" };
 }
 
-function PluginRow({ plugin }: { plugin: PluginView }) {
+function PluginCard({ plugin }: { plugin: PluginView }) {
   const [busy, setBusy] = useState(false);
   const status = statusView(plugin);
   const enabled = plugin.status !== "off";
@@ -61,72 +62,71 @@ function PluginRow({ plugin }: { plugin: PluginView }) {
   };
 
   return (
-    <div className="card px-4 py-3.5 flex items-start gap-3">
-      <span className="w-8 h-8 rounded-lg bg-raised border border-edge grid place-items-center shrink-0">
-        <PuzzlePiece size={15} className={enabled ? "text-accent" : "text-faint"} />
-      </span>
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className={`text-[13px] font-semibold ${enabled ? "text-ink" : "text-dim"}`}>{plugin.name}</span>
-          <span className="chip border border-edge-strong bg-sunken text-faint font-mono text-[10.5px]">
-            v{plugin.version}
-          </span>
-          <span className={`chip border ${status.cls}`}>{status.label}</span>
-          <span className="flex-1" />
-          <button
-            className="icon-btn"
-            title="重载：停用后以最新产物重新加载（改了插件 dist 后点这里）"
-            aria-label={`重载插件 ${plugin.name}`}
-            disabled={busy}
-            onClick={withBusy(() => reloadPluginById(plugin.id))}
-          >
-            <ArrowClockwise size={14} />
-          </button>
-          <EnabledSwitch
-            on={enabled}
-            disabled={busy}
-            onToggle={withBusy(() => togglePlugin(plugin.id, !enabled))}
-          />
-        </div>
-        {plugin.description && (
-          <div className="mt-1 text-[12px] text-dim leading-relaxed">{plugin.description}</div>
-        )}
-        <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
-          <span className="font-mono text-[10.5px] text-faint">{plugin.id}</span>
-          {plugin.permissions.map((perm) => (
-            <span key={perm} className="chip border border-info/30 bg-info/10 text-info font-mono text-[10.5px]">
-              {perm}
+    <div className="card overflow-hidden">
+      <div className="px-4 py-3.5 flex items-start gap-3">
+        <span className="w-8 h-8 rounded-lg bg-raised border border-edge grid place-items-center shrink-0">
+          <PuzzlePiece size={15} className={enabled ? "text-accent" : "text-faint"} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className={`text-[13px] font-semibold ${enabled ? "text-ink" : "text-dim"}`}>{plugin.name}</span>
+            <span className="chip border border-edge-strong bg-sunken text-faint font-mono text-[10.5px]">
+              v{plugin.version}
             </span>
-          ))}
-        </div>
-        {plugin.error && (
-          <div className="mt-2 rounded-lg border border-danger/30 bg-danger-dim/30 px-2.5 py-2 text-[11.5px] text-danger break-all">
-            {plugin.error}
+            <span className={`chip border ${status.cls}`}>{status.label}</span>
+            <span className="flex-1" />
+            <button
+              className="icon-btn"
+              title="重载：停用后以最新产物重新加载（改了插件 dist 后点这里）"
+              aria-label={`重载插件 ${plugin.name}`}
+              disabled={busy}
+              onClick={withBusy(() => reloadPluginById(plugin.id))}
+            >
+              <ArrowClockwise size={14} />
+            </button>
+            <EnabledSwitch
+              on={enabled}
+              disabled={busy}
+              onToggle={withBusy(() => togglePlugin(plugin.id, !enabled))}
+            />
           </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-/** 插件挂件渲染区：settings.plugins 区域，每个挂件一格卡片（卡片 chrome 留在本区域侧）。 */
-function WidgetArea() {
-  return (
-    <PluginSlot
-      name="settings.plugins"
-      wrap={(node, { pluginId, contribution }) => {
-        const widget = contribution as PanelWidgetContribution;
-        return (
-          <div className="card overflow-hidden">
-            <div className="px-4 h-9 flex items-center gap-2 border-b border-edge bg-raised/40">
-              <PuzzlePiece size={12} className="text-faint" />
-              <span className="text-[12.5px] font-semibold">{widget.title ?? pluginId}</span>
+          {plugin.description && (
+            <div className="mt-1 text-[12px] text-dim leading-relaxed">{plugin.description}</div>
+          )}
+          <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
+            <span className="font-mono text-[10.5px] text-faint">{plugin.id}</span>
+            {plugin.permissions.map((perm) => (
+              <span key={perm} className="chip border border-info/30 bg-info/10 text-info font-mono text-[10.5px]">
+                {perm}
+              </span>
+            ))}
+          </div>
+          {plugin.error && (
+            <div className="mt-2 rounded-lg border border-danger/30 bg-danger-dim/30 px-2.5 py-2 text-[11.5px] text-danger break-all">
+              {plugin.error}
             </div>
-            <div className="p-4">{node}</div>
-          </div>
-        );
-      }}
-    />
+          )}
+        </div>
+      </div>
+      {/* 该插件的管理面板：与插件信息同卡，分区线上方是插件本体，下方是它的设置区。
+          插件停用/重载期间贡献点被移除，此区自动消失，卡片收合成纯信息条。 */}
+      <PluginSlot
+        name="settings.plugins"
+        pluginId={plugin.id}
+        wrap={(node, { contribution }) => {
+          const widget = contribution as PanelWidgetContribution;
+          return (
+            <div className="border-t border-edge px-4 py-3.5">
+              <div className="flex items-center gap-1.5 mb-3">
+                <PuzzlePiece size={11} className="text-faint shrink-0" />
+                <span className="text-[11px] font-medium text-faint">{widget.title ?? plugin.id}</span>
+              </div>
+              {node}
+            </div>
+          );
+        }}
+      />
+    </div>
   );
 }
 
@@ -165,18 +165,19 @@ export function PluginsBlock() {
 
   return (
     <div className="space-y-4">
-      <div className="card px-4 py-3 flex items-center gap-2.5">
-        <span className="w-8 h-8 rounded-lg bg-accent-dim border border-accent/30 grid place-items-center">
-          <PuzzlePiece size={15} className="text-accent" />
+      {/* 分节头：不占卡片——插件卡才是页面主角，头部只提供目录说明与统计/刷新 */}
+      <div className="flex items-center gap-2.5 px-1 pt-1">
+        <span className="w-9 h-9 rounded-lg bg-accent-dim border border-accent/30 grid place-items-center shrink-0">
+          <PuzzlePiece size={16} className="text-accent" />
         </span>
         <div className="min-w-0">
-          <div className="text-[13px] font-semibold">本地插件</div>
+          <div className="text-[13.5px] font-semibold">本地插件</div>
           <div className="text-[11.5px] text-faint">
             将插件目录拷入 <code className="font-mono">gate-home/plugins/</code> 后刷新即可发现
           </div>
         </div>
         <span className="flex-1" />
-        <span className="text-[11.5px] text-faint">
+        <span className="text-[11.5px] text-faint whitespace-nowrap">
           共 <span className="font-mono text-ink">{plugins.length}</span> 个 · 运行中{" "}
           <span className="font-mono text-accent">{plugins.filter((p) => p.status === "active").length}</span>
         </span>
@@ -204,10 +205,12 @@ export function PluginsBlock() {
           </div>
         </div>
       ) : (
-        plugins.map((p) => <PluginRow key={p.id} plugin={p} />)
+        <div className="space-y-3">
+          {plugins.map((p) => (
+            <PluginCard key={p.id} plugin={p} />
+          ))}
+        </div>
       )}
-
-      <WidgetArea />
     </div>
   );
 }

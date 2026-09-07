@@ -15,6 +15,8 @@ import type { RenderSlotName, SlotContributionMap } from "@/app/plugins/slots";
 interface PluginSlotProps<S extends RenderSlotName> {
   /** 目标区域名（slots.ts 的 SlotContributionMap 登记）。 */
   name: S;
+  /** 只渲染该插件的贡献物（如把管理面板嵌进所属插件卡片）；缺省渲染全部。 */
+  pluginId?: string;
   /** 每条贡献物的 region 级包装（卡片边框/标题栏等）；缺省直接渲染 render() 输出。 */
   wrap?: (
     node: ReactNode,
@@ -22,11 +24,11 @@ interface PluginSlotProps<S extends RenderSlotName> {
   ) => ReactNode;
 }
 
-export function PluginSlot<S extends RenderSlotName>({ name, wrap }: PluginSlotProps<S>) {
+export function PluginSlot<S extends RenderSlotName>({ name, pluginId, wrap }: PluginSlotProps<S>) {
   const contributions = usePlugins((s) => s.contributions);
   const items = useMemo(
-    () => contributions.filter((c) => c.slot === name),
-    [contributions, name],
+    () => contributions.filter((c) => c.slot === name && (pluginId === undefined || c.pluginId === pluginId)),
+    [contributions, name, pluginId],
   );
 
   if (items.length === 0) return null;

@@ -483,7 +483,7 @@ export function ProjectsPage() {
   };
 
   return (
-    <div className="flex-1 min-h-0 overflow-y-auto">
+    <div className="flex-1 min-h-0 overflow-y-auto scrollbar-none">
       <div className="max-w-[1080px] mx-auto px-6 py-5">
         <div className="flex flex-wrap items-center gap-2 pb-4">
           <span className="kicker">项目接入</span>

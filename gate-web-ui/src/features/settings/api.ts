@@ -60,3 +60,12 @@ export async function updateProviderModels(id: string, models: string[]): Promis
 export async function fetchUpstreamModels(id: string): Promise<LlmProvider> {
   return api<LlmProvider>(`/api/providers/${encodeURIComponent(id)}/models/fetch`, { method: "POST", body: "{}" });
 }
+
+/** 探测上游模型列表而不持久化落库，供用户在候选池中挑选。 */
+export async function probeUpstreamModels(id: string): Promise<string[]> {
+  const res = await api<{ models: string[] }>(`/api/providers/${encodeURIComponent(id)}/models/probe`, {
+    method: "POST",
+    body: "{}",
+  });
+  return res.models ?? [];
+}

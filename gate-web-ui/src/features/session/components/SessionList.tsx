@@ -606,7 +606,7 @@ function SegmentHeader({
   const g = seg.group;
   return (
     <div
-      className="flex items-center gap-1.5 px-2.5 py-1.5 cursor-pointer select-none rounded-md hover:bg-raised/60 transition-colors"
+      className="flex h-[26px] items-center gap-1.5 px-2.5 cursor-pointer select-none rounded-md hover:bg-raised/60 transition-colors"
       onClick={onToggle}
       role="button"
       title={collapsed ? "展开该分组" : "收起该分组"}
@@ -625,7 +625,10 @@ function SegmentHeader({
       <span className="font-mono text-[10px] text-faint/70">{count}</span>
       <span className="flex-1" />
       {g !== null && !locked && (
-        <span className="hidden group-hover/seg:flex items-center gap-0.5" onClick={(e) => e.stopPropagation()}>
+        <span
+          className="flex items-center gap-0.5 opacity-0 transition-opacity duration-150 group-hover/seg:opacity-100"
+          onClick={(e) => e.stopPropagation()}
+        >
           <button className="icon-btn !w-5 !h-5" title="编辑分组" aria-label="编辑分组" onClick={onEdit}>
             <NotePencil size={11} />
           </button>
