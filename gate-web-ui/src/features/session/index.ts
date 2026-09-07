@@ -9,6 +9,7 @@ export {
   loadSessionMessages,
   syncSessionTodos,
   ticketNoOfSession,
+  uploadChatFile,
 } from "./api";
 export {
   loadSessionCatalog,

@@ -42,10 +42,42 @@ function readAsDataUrl(file: File): Promise<string> {
   });
 }
 
+/** 缩略图最长边（px）：后端按 ≤1024px 原样落盘，放大不再二次处理。 */
+const THUMB_MAX_EDGE = 1024;
+
+/**
+ * 最长边超限的 png/jpeg 由浏览器 canvas 等比预缩（桌面 WebView2/浏览器均可用）：
+ * 后端 native-image 二进制里 java.desktop/ImageIO 不可用（T-112），缩放只能
+ * 前移到这一侧。解码失败/未超限/其他类型保持原样返回 null。
+ */
+async function downscaleImage(dataUrl: string, mime: string): Promise<string | null> {
+  if (mime !== "image/png" && mime !== "image/jpeg") return null;
+  if (typeof createImageBitmap !== "function") return null;
+  try {
+    const blob = await (await fetch(dataUrl)).blob();
+    const bitmap = await createImageBitmap(blob);
+    const edge = Math.max(bitmap.width, bitmap.height);
+    if (edge <= THUMB_MAX_EDGE) return null;
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round((bitmap.width * THUMB_MAX_EDGE) / edge));
+    canvas.height = Math.max(1, Math.round((bitmap.height * THUMB_MAX_EDGE) / edge));
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    const out = canvas.toDataURL(mime);
+    bitmap.close();
+    return out || null;
+  } catch {
+    return null;
+  }
+}
+
 export async function toPendingAttachment(file: File): Promise<PendingAttachment | null> {
   const mime = normalizeImageMime(file);
   if (!mime) return null;
-  const dataUrl = await readAsDataUrl(file);
+  let dataUrl = await readAsDataUrl(file);
+  // 长边超限的大图先在浏览器端缩小，后端原样落盘即可保持 ≤1024px 的历史约定。
+  dataUrl = (await downscaleImage(dataUrl, mime)) ?? dataUrl;
   const comma = dataUrl.indexOf(",");
   if (comma < 0) return null;
   attachmentSeq += 1;
@@ -56,6 +88,14 @@ export async function toPendingAttachment(file: File): Promise<PendingAttachment
     dataBase64: dataUrl.slice(comma + 1),
     dataUrl,
   };
+}
+
+/** 文件 → 纯 base64（去 data URL 前缀）：粘贴/拖入的非图片文件上传落盘用。 */
+export async function fileToBase64(file: File): Promise<string> {
+  const dataUrl = await readAsDataUrl(file);
+  const comma = dataUrl.indexOf(",");
+  if (comma < 0) throw new Error("读取文件失败");
+  return dataUrl.slice(comma + 1);
 }
 
 /** file:// URI → 普通绝对路径（Windows 盘符去前导斜杠）。 */

@@ -5,6 +5,7 @@
 import { api } from "@/net";
 import { appStore, showToast } from "@/store";
 import { isTodoTool, parseTodos } from "@/shared/todoUtils";
+import { fileToBase64 } from "@/shared/attachments";
 import type { ChatItem } from "@/shared/types";
 import { mapHistoryMessage, mapSession, type RawMessage, type RawSession } from "./model";
 import { dropLiveTurn, applyReplyMetaDefaults } from "./chat";
@@ -15,6 +16,19 @@ export function ticketNoOfSession(id: string): string | null {
     if (list.some((s) => s.id === id)) return no;
   }
   return null;
+}
+
+/**
+ * 粘贴/拖入的非图片文件上传：文件内容以 base64 交给后端落盘到工单克隆
+ * .gate/chat-files/，返回克隆内相对路径——会话 cwd 即克隆根，Agent 直接可读。
+ */
+export async function uploadChatFile(no: string, file: File): Promise<string> {
+  const dataBase64 = await fileToBase64(file);
+  const res = await api<{ path: string }>(`/api/tickets/${no}/chat-files`, {
+    method: "POST",
+    body: JSON.stringify({ filename: file.name, data_base64: dataBase64 }),
+  });
+  return res.path;
 }
 
 export async function loadTicketSessions(no: string) {

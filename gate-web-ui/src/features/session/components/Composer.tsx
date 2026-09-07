@@ -31,6 +31,7 @@ import {
   removePendingQuote,
   setComposerDraft,
   setPendingQuotes,
+  uploadChatFile,
 } from "@/features/session";
 import { setAgentId } from "@/features/agent";
 import { formatTokens, variantLabel } from "@/shared/format";
@@ -42,6 +43,18 @@ import {
   toPendingAttachment,
 } from "@/shared/attachments";
 import type { CatalogProvider, PendingAttachment, SessionModelSel } from "@/shared/types";
+
+/** 粘贴/拖入文件的大小上限（MB）：与后端 /chat-files 端点的落盘上限一致。 */
+const MAX_CHAT_FILE_MB = 50;
+
+/** clipboardData.getData 在部分 MIME/浏览器组合下会抛错：包一层，失败返回空串。 */
+function tryData(read: () => string): string {
+  try {
+    return read();
+  } catch {
+    return "";
+  }
+}
 
 function AgentPicker({ ticketNo }: { ticketNo: string }) {
   const agents = useApp((s) => s.agents);
@@ -599,9 +612,76 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
     }
   };
 
-  /* 粘贴（参考 OpenChamber ChatInput.handlePaste）：
+  /* 粘贴/拖入的文件统一路由（参考 OpenChamber ChatInput.handlePaste）：
    * · 图片 → 模型支持时暂存为附件并插入 [图片 #n] 引用；不支持则提示后丢弃；
-   * · 非图片文件 → 自动转为绝对路径文本（浏览器拿不到路径时给出指引）。 */
+   * · 非图片文件 → 载荷文本带绝对路径（资源管理器「复制文件地址」）直接插入；
+   *   是文件本体（浏览器拿不到路径）则上传落盘工单克隆，把路径插进光标处。 */
+  const handleIncomingFiles = async (files: File[], payloads: string[]) => {
+    const imageFiles = files.filter(isAttachableImage);
+
+    if (imageFiles.length > 0) {
+      // 需求①：判断当前选择模型是否支持输入 image。
+      if (live && sel && imageSupported === false) {
+        showToast(`当前模型 ${sel.providerId}/${sel.modelId} 不支持图片输入，已忽略 ${imageFiles.length} 张图片`);
+        return;
+      }
+      const caretStart = taRef.current?.selectionStart ?? text.length;
+      const caretEnd = taRef.current?.selectionEnd ?? caretStart;
+      let citations = "";
+      for (let i = 0; i < imageFiles.length; i++) {
+        if (i > 0 || text.slice(0, caretStart).trim().length > 0) citations += "\n\n";
+        citations += `[图片 #${pendingAttachments.length + i + 1}] ${imageFiles[i].name}`;
+      }
+      setComposerDraft(ticketNo, text.slice(0, caretStart) + citations + text.slice(caretEnd));
+      await addPendingImages(imageFiles);
+      return;
+    }
+
+    // 需求②：非图片文件 → 自动转为绝对路径。
+    const absPath = extractAbsolutePath(payloads);
+    if (absPath) {
+      insertAtCursor(absPath + " ");
+      showToast(`已将「${files[0].name}」转为绝对路径`);
+      return;
+    }
+    await insertChatFiles(files);
+  };
+
+  /* 非图片文件的本体上传：浏览器拿不到被复制文件的真实路径，与其留下占位提示，
+   * 不如把内容送到 Agent 的工作区（.gate/chat-files/，会话 cwd 即克隆根），
+   * 再把落盘相对路径插进光标处。demo 没有后端，维持占位提示。 */
+  const insertChatFiles = async (files: File[]) => {
+    if (!live) {
+      insertAtCursor(`[文件] ${files[0].name} `);
+      showToast("demo 模式没有后端：文件无法随消息送达 Agent，请切到 live 模式后重试");
+      return;
+    }
+    const paths: string[] = [];
+    const failed: string[] = [];
+    for (const file of files) {
+      if (file.size > MAX_CHAT_FILE_MB * 1024 * 1024) {
+        failed.push(`${file.name} 超过 ${MAX_CHAT_FILE_MB}MB 上限`);
+        continue;
+      }
+      try {
+        paths.push(await uploadChatFile(ticketNo, file));
+      } catch (e) {
+        failed.push(`${file.name}：${(e as Error).message}`);
+      }
+    }
+    if (paths.length > 0) insertAtCursor(paths.map((p) => p + " ").join(""));
+    if (paths.length > 0 && failed.length === 0) {
+      showToast(`已上传「${files[0].name}」到工单工作区并插入路径`);
+    } else if (failed.length > 0) {
+      if (paths.length === 0) insertAtCursor(`[文件] ${files[0].name} `);
+      showToast(
+        paths.length > 0
+          ? `已上传 ${paths.length}/${files.length} 个文件；失败：${failed[0]}`
+          : `文件上传失败：${failed[0]}`,
+      );
+    }
+  };
+
   const handlePaste = async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
     if (terminal) return;
     const dt = e.clipboardData;
@@ -619,54 +699,30 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
     const allFiles = Array.from(seen.values());
     if (allFiles.length === 0) return;
 
-    const imageFiles = allFiles.filter(isAttachableImage);
-
-    if (imageFiles.length > 0) {
-      // 需求①：判断当前选择模型是否支持输入 image。
-      if (live && sel && imageSupported === false) {
-        e.preventDefault();
-        showToast(`当前模型 ${sel.providerId}/${sel.modelId} 不支持图片输入，已忽略 ${imageFiles.length} 张图片`);
-        return;
-      }
-      e.preventDefault();
-      const caretStart = taRef.current?.selectionStart ?? text.length;
-      const caretEnd = taRef.current?.selectionEnd ?? caretStart;
-      let citations = "";
-      for (let i = 0; i < imageFiles.length; i++) {
-        if (i > 0 || text.slice(0, caretStart).trim().length > 0) citations += "\n\n";
-        citations += `[图片 #${pendingAttachments.length + i + 1}] ${imageFiles[i].name}`;
-      }
-      setComposerDraft(ticketNo, text.slice(0, caretStart) + citations + text.slice(caretEnd));
-      await addPendingImages(imageFiles);
-      return;
-    }
-
-    // 需求②：非图片文件 → 自动转为绝对路径。
+    // 剪贴板文本载荷（uri-list / plain）优先供路径解析；纯文本粘贴无文件时走默认行为。
     e.preventDefault();
-    const nonImage = allFiles[0];
-    const absPath = extractAbsolutePath([
-      (() => {
-        try {
-          return dt.getData("text/uri-list");
-        } catch {
-          return "";
-        }
-      })(),
-      (() => {
-        try {
-          return dt.getData("text/plain");
-        } catch {
-          return "";
-        }
-      })(),
+    await handleIncomingFiles(allFiles, [
+      tryData(() => dt.getData("text/uri-list")),
+      tryData(() => dt.getData("text/plain")),
     ]);
-    if (absPath) {
-      insertAtCursor(absPath + " ");
-      showToast(`已将「${nonImage.name}」转为绝对路径`);
-    } else {
-      insertAtCursor(`[文件] ${nonImage.name} `);
-      showToast("浏览器无法获取该文件的绝对路径：请直接拖拽文件到输入框，或在资源管理器中复制文件路径后粘贴");
-    }
+  };
+
+  /* 拖拽与粘贴同一条路由；提示语一直让用户「拖拽文件到输入框」，
+   * 但拖入此前从未被处理过——dragover 不拦下会整页导航到拖入的文件。 */
+  const handleDragOver = (e: React.DragEvent<HTMLTextAreaElement>) => {
+    e.preventDefault();
+  };
+
+  const handleDrop = (e: React.DragEvent<HTMLTextAreaElement>) => {
+    if (terminal) return;
+    e.preventDefault();
+    const dt = e.dataTransfer;
+    const files = Array.from(dt?.files ?? []);
+    if (files.length === 0) return;
+    void handleIncomingFiles(files, [
+      tryData(() => dt?.getData("text/uri-list") ?? ""),
+      tryData(() => dt?.getData("text/plain") ?? ""),
+    ]);
   };
 
   const removeAttachment = (id: string) =>
@@ -818,6 +874,8 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
               }
             }}
             onPaste={(e) => void handlePaste(e)}
+            onDragOver={handleDragOver}
+            onDrop={handleDrop}
             rows={1}
             placeholder={
               cancelled

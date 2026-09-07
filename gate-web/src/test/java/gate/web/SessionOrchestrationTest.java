@@ -139,7 +139,7 @@ class SessionOrchestrationTest {
         assertTrue(post("/api/sessions/" + sid + "/messages",
                 "{\"message\":\"x\",\"attachments\":[{\"mime\":\"image/png\"}]}").statusCode() >= 400);
 
-        // 合法图片附件：透传到端口，正文原样（引用文本由前端负责）。
+        // 合法图片附件：透传到端口；正文原样保留，引用行由服务端追加（saveChatThumbnails）。
         HttpResponse<String> ok = post("/api/sessions/" + sid + "/messages", """
                 {"message":"看图","attachments":[{"filename":"a.png","mime":"image/png","data_base64":"aGVsbG8="}]}
                 """);
@@ -147,7 +147,8 @@ class SessionOrchestrationTest {
         AgentSessionPort.SendRequest captured = FakeAgentSessionPort.lastSent;
         org.junit.jupiter.api.Assertions.assertNotNull(captured, "send must reach the port");
         assertEquals(sid, captured.sessionId());
-        assertEquals("看图", captured.message());
+        assertTrue(captured.message().startsWith("看图"), captured.message());
+        assertTrue(captured.message().contains("[图片引用 #1] .gate/chat-images/"), captured.message());
         assertEquals(1, captured.attachments().size());
         assertEquals("image/png", captured.attachments().get(0).mime());
         assertEquals("aGVsbG8=", captured.attachments().get(0).dataBase64());
