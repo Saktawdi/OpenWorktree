@@ -120,6 +120,7 @@ public final class SessionController implements WebController {
         app.patch("/api/sessions/{id}", this::patchSession);
         app.delete("/api/sessions/{id}", this::deleteSession);
         app.get("/api/sessions/{id}/messages", this::listMessages);
+        app.get("/api/sessions/{id}/todos", this::getTodos);
         app.post("/api/sessions/{id}/messages", this::sendMessage);
         app.post("/api/sessions/{id}/abort", this::abortSession);
         app.post("/api/sessions/{id}/model", this::setModel);
@@ -317,8 +318,36 @@ public final class SessionController implements WebController {
         }
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("messages", out);
+        // 任务清单随消息历史附带（V21）：前端切换会话时一次请求同时拿到清单，
+        // 不再全量扫历史反解最后一条 todowrite。无行（从未写过 todo）为空数组。
+        body.put("todos", todosJson(id));
         ctx.status(HttpStatus.OK);
         ctx.json(body);
+    }
+
+    /** 会话任务清单（V21）：单行快照 + lazy 回填，供轮询兜底与切会话附带查询。 */
+    public void getTodos(Context ctx) {
+        String id = ctx.pathParam("id");
+        if (sessionRepository.find(id).isEmpty()) {
+            throw new GateException(GateErrorCode.USAGE, "no such session: " + id);
+        }
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("todos", todosJson(id));
+        ctx.status(HttpStatus.OK);
+        ctx.json(body);
+    }
+
+    /** 快照 JSON 字符串 → 解析后的数组（无行/解析失败按空清单）。 */
+    private List<Object> todosJson(String sessionId) {
+        String json = sessionRepository.findTodos(sessionId).orElse(null);
+        if (json == null) {
+            return List.of();
+        }
+        try {
+            return Json.mapper().readValue(json, List.class);
+        } catch (Exception e) {
+            return List.of();
+        }
     }
 
     public void sendMessage(Context ctx) {

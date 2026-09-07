@@ -126,7 +126,7 @@ export interface AppState {
   /** 草稿态（会话未创建）下的创建遮罩标记：首条消息走「建会话→写覆盖→发消息」三步期间为 true。 */
   creatingSession: Record<string, boolean>;
   usage: Record<string, UsageView>;
-  /** 工单最新任务清单（todowrite 工具写入；侧栏环形图标的数据源）。 */
+  /** 会话最新任务清单（todowrite 快照；V21 起按会话 id 键控——串会话在键位上不可能发生）。 */
   todos: Record<string, TodoItem[]>;
   /** 会话上下文占用（最新一轮窗口 tokens + 模型上限）。 */
   context: Record<string, ContextUsageState>;

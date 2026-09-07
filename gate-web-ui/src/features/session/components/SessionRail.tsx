@@ -292,7 +292,9 @@ function ContextPanel({ items, ctx }: {
 }
 
 export function SessionRail({ ticketNo }: { ticketNo: string }) {
-  const todos = useApp((s) => s.todos[ticketNo]);
+  // 任务清单按会话 id 键控（V21）：读当前活跃会话的投影，草稿态（无会话）天然无清单。
+  const activeSessionId = useApp((s) => s.activeSessionId[ticketNo]);
+  const todos = useApp((s) => (activeSessionId ? s.todos[activeSessionId] : undefined));
   const ctx = useApp((s) => s.context[ticketNo]);
   const chat = useApp((s) => (s.selectedNo === ticketNo ? s.chats[ticketNo] : undefined) ?? NO_CHAT);
   const [openPanel, setOpenPanel] = useState<"todo" | "context" | null>(null);

@@ -5,7 +5,8 @@ const TODO_STATUSES: TodoItem["status"][] = ["pending", "in_progress", "complete
 /**
  * 解析 todowrite / todoread 工具参数或结果里的 todos 数组。
  * 兼容三种载体：直接数组、{todos: [...]}、结果 JSON 里嵌套数组。
- * 非法输入返回 null（调用方保持现有清单不变）。
+ * 非法输入返回 null（调用方保持现有清单不变）；空数组是合法输入（= 显式清空），
+ * 返回 [] 而非 null——「清空」与「解析失败」语义在此分野（V21 任务清单重构）。
  */
 export function parseTodos(raw: string | undefined | null): TodoItem[] | null {
   if (!raw) return null;
@@ -39,7 +40,9 @@ export function parseTodos(raw: string | undefined | null): TodoItem[] | null {
       const id = typeof e.id === "string" ? e.id : undefined;
       todos.push({ id, content, status, priority });
     }
-    return todos.length > 0 ? todos : null;
+    // 条目全非法的非空数组按残缺输入处理（不覆盖现有清单）；空数组本身是显式清空。
+    if (parsed.length > 0 && todos.length === 0) return null;
+    return todos;
   } catch {
     return null;
   }

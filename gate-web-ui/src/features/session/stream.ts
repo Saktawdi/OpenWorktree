@@ -13,6 +13,7 @@ import { loadSessionMessages, loadTicketSessions, refreshTicketSessionsMeta, syn
 import { loadSessionPermissions, loadSessionQuestions } from "./permissions";
 import { loadSessionCatalog, switchSessionModelLive } from "./catalog";
 import { mapPermissionAsk, mapQuestionAsk } from "./model";
+import { applyTodosSnapshot } from "./todos";
 import {
   addUsage,
   clearDraftModelSel,
@@ -25,7 +26,6 @@ import {
   setContextTokens,
   setCreatingSession,
   setSessionBusy,
-  setTodos,
 } from "./state";
 import {
   attachUserImages,
@@ -321,7 +321,7 @@ async function consumeSessionStream(no: string, sessionId: string) {
         markSessionEnded(no, abortingSessions.has(sessionId) ? "failed" : "done", sessionId);
         finishLiveTurn(sessionId);
         await loadSessionMessages(no, sessionId);
-        void syncSessionTodos(no, sessionId);
+        void syncSessionTodos(sessionId);
         void loadTicketDiff(no);
         void refreshTicket(no);
         break;
@@ -464,13 +464,14 @@ async function consumeSessionEvents(
       // 工具输出随终态事件携带（opencode 侧 RUNNING 时 result 为 null）。此前被丢弃，
       // 流式回合的工具行没有 resultDetail，最新一轮无法展开查看，只能等重拉历史。
       const resultText = typeof d.result === "string" && d.result ? d.result : "";
-      // todo 类工具在参数可解析为完整清单时即时回写侧栏任务清单，不再等终态——
-      // opencode 每次 part 更新都重发完整 input 快照，首次广播即可让任务环出现；
-      // Claude 残片累积未成形时解析失败自然跳过，终态快照到齐后同样即时生效。
-      // （历史遗留的终态门控会让任务清单在事件缺失/断流时拖到手动刷新才更新。）
+      // todo 类工具在参数可解析为完整清单时即时回写会话任务清单投影（按 sessionId
+      // 键控，V21），不再等终态——opencode 每次 part 更新都重发完整 input 快照，
+      // 首次广播即可让任务环出现；Claude 残片累积未成形时解析失败自然跳过，终态
+      // 快照到齐后同样即时生效。空数组=显式清空也覆盖（parseTodos 区分两种语义）。
+      // 后端快照表在适配器 journal 点同步落库，本投影只是先行一步的内存副本。
       if (todo) {
         const todos = parseTodos(entry.args);
-        if (todos) setTodos(no, todos);
+        if (todos) applyTodosSnapshot(sessionId, todos);
       }
       const argsSummary = todo
         ? todoArgsSummary(entry.args)
@@ -591,7 +592,7 @@ async function consumeSessionEvents(
       void loadPresubmits(no);
       // 回合结束任务清单收敛：后端此刻已整回合落库（flushTurn → done），以历史回算
       // 一次——流式事件若有遗漏/断流，侧栏任务环仍与持久化数据最终一致。
-      void syncSessionTodos(no, sessionId);
+      void syncSessionTodos(sessionId);
       settle("done");
     });
     es.addEventListener("error", (ev) => {
@@ -633,7 +634,7 @@ async function consumeSessionEvents(
       // - 仍在运行 → 不碰，等 busy 轮询的「运行→空闲」transition 兜底收敛。
       setTimeout(() => {
         void isSessionBusy(sessionId).then((stillRunning) => {
-          if (!stillRunning) void syncSessionTodos(no, sessionId);
+          if (!stillRunning) void syncSessionTodos(sessionId);
         });
       }, 2000);
       settle("terminal");

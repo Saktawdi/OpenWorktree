@@ -26,6 +26,7 @@ export { liveSendPrompt, abortLive } from "./stream";
 export { draftCatalogFromOc } from "./model";
 export type { PermissionResponse } from "./model";
 export { focusComposer, insertIntoComposer, registerComposerBridge } from "./composerBridge";
+export { applyTodosSnapshot, dropSessionTodos } from "./todos";
 export {
   setSessionModels,
   setSessionModelSel,
@@ -47,7 +48,6 @@ export {
   notePendingQuestion,
   dropSessionPendings,
   addUsage,
-  setTodos,
   setContextTokens,
   setContextLimit,
   createSession,

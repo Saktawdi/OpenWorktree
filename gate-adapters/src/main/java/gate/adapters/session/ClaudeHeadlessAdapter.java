@@ -392,9 +392,30 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
         private final String sessionId;
         private final Map<Integer, String> toolCallIds = new LinkedHashMap<>();
         private final Map<Integer, String> toolNames = new LinkedHashMap<>();
+        /** 按 index 累积 input_json_delta 分片；content_block_stop 时拼出完整参数用于 todo journal。 */
+        private final Map<Integer, StringBuilder> toolInputs = new LinkedHashMap<>();
 
         StreamEcho(String sessionId) {
             this.sessionId = sessionId;
+        }
+
+        /**
+         * V21 任务清单快照：todowrite 参数拼齐（content_block_stop）即 journal 到
+         * session_todo，不等整回合 idle 落库；空数组=显式清空也落。journal 失败只吞掉
+         * ——快照是派生数据（历史回填可补），绝不影响回合流。
+         */
+        private void journalTodoSnapshot(String name, String inputJson) {
+            if (!TodoSnapshots.isWriteTool(name)) {
+                return;
+            }
+            String canonical = TodoSnapshots.canonicalJson(inputJson);
+            if (canonical == null) {
+                return;
+            }
+            try {
+                sessions.upsertTodos(sessionId, canonical);
+            } catch (Exception ignored) {
+            }
         }
 
         void line(String line) {
@@ -429,6 +450,7 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
                                 String.valueOf(delta.get("thinking")), now));
                     } else if ("input_json_delta".equals(deltaType) && toolCallIds.containsKey(index)) {
                         String fragment = String.valueOf(delta.get("partial_json"));
+                        toolInputs.computeIfAbsent(index, k -> new StringBuilder()).append(fragment);
                         emitChunk(sessionId, new SessionStreamChunk.ToolCallChunk(sessionId,
                                 toolCallIds.get(index), toolNames.get(index), fragment, null, "RUNNING", now));
                     }
@@ -440,11 +462,16 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
                             String name = String.valueOf(block.getOrDefault("name", "unknown"));
                             toolCallIds.put(index, callId);
                             toolNames.put(index, name);
+                            toolInputs.remove(index);
                             emitChunk(sessionId, new SessionStreamChunk.ToolCallChunk(sessionId,
                                     callId, name, "{}", null, "RUNNING", now));
                         }
                     }
                 } else if ("content_block_stop".equals(eventType) && toolCallIds.containsKey(index)) {
+                    StringBuilder accumulated = toolInputs.remove(index);
+                    if (accumulated != null) {
+                        journalTodoSnapshot(toolNames.get(index), accumulated.toString());
+                    }
                     emitChunk(sessionId, new SessionStreamChunk.ToolCallChunk(sessionId,
                             toolCallIds.get(index), toolNames.get(index), "{}", null, "SUCCESS", now));
                 }

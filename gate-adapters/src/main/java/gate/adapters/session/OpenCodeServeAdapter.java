@@ -1260,6 +1260,27 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
             }
         }
 
+        /**
+         * V21 任务清单快照：todowrite 到达即 journal（不等整回合 idle 落库）。opencode 每次
+         * part 更新都重发完整 input 快照，幂等覆盖、last-write-wins；空数组=显式清空也落。
+         * journal 失败只记日志——快照是派生数据，绝不影响回合进行。
+         */
+        private void journalTodoSnapshot(String name, String inputJson) {
+            if (!TodoSnapshots.isWriteTool(name)) {
+                return;
+            }
+            String canonical = TodoSnapshots.canonicalJson(inputJson);
+            if (canonical == null) {
+                return;
+            }
+            try {
+                sessions.upsertTodos(sessionId, canonical);
+            } catch (Exception e) {
+                log.warn("opencode", "todo.journal-failed", "sessionId", sessionId,
+                        "error", e.getClass().getSimpleName());
+            }
+        }
+
         void closeBody() {
             InputStream body = currentBody;
             currentBody = null;
@@ -1445,6 +1466,7 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                 // Journal the call so the persisted turn reply keeps tool cards after reload.
                 upsertTurnTool(callId == null ? partId : callId,
                         toolName == null ? "unknown" : toolName, inputJson, output, status);
+                journalTodoSnapshot(toolName, inputJson);
                 // 时间线草稿：同一 callID 原位更新（state 快照反复重发），首次到达决定顺序。
                 // messageId 缺失时跳过草稿（平铺 toolCalls 视图仍经 upsertTurnTool 保留）。
                 String draftKey = callId == null ? partId : callId;

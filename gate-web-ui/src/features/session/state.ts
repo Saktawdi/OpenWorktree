@@ -4,10 +4,11 @@
  */
 import { appStore } from "@/store";
 import { saveComposerDrafts, savePendingQuotes, saveSessionGroups, saveSessionPinned } from "@/store/prefs";
-import type { CatalogProvider, ChatSession, QuoteChip, SessionModelSel, TodoItem } from "@/shared/types";
+import type { CatalogProvider, ChatSession, QuoteChip, SessionModelSel } from "@/shared/types";
 import { QUOTE_MAX_CHARS } from "@/shared/quotes";
 import { uid } from "@/shared/format";
 import { emitPluginEvent } from "@/app/plugins/events";
+import { dropSessionTodos } from "./todos";
 
 const set = appStore.setState;
 const s = () => appStore.getState();
@@ -376,7 +377,7 @@ export function renameSession(ticketNo: string, sessionId: string, newTitle: str
   }));
 }
 
-/* ─── 用量 / 任务清单 / 上下文占用（按工单键暂存，会话切换时重建） ─── */
+/* ─── 用量 / 上下文占用（按工单键暂存，会话切换时重建；任务清单已独立到 todos.ts） ─── */
 
 export function addUsage(no: string, promptTokens: number, completionTokens: number) {
   set((st) => {
@@ -391,11 +392,6 @@ export function addUsage(no: string, promptTokens: number, completionTokens: num
       },
     };
   });
-}
-
-/** 覆写工单任务清单（todowrite 每次调用都是全量数组）。 */
-export function setTodos(no: string, todos: TodoItem[]) {
-  set((st) => ({ todos: { ...st.todos, [no]: todos } }));
 }
 
 /** 回写最新一轮的上下文窗口占用（prompt+completion，非逐轮累加）。 */
@@ -453,7 +449,8 @@ export function createSession(ticketNo: string) {
  * 「新建会话」进入空白草稿态：活跃指针置空（Composer 的 Agent 选择随之解锁），
  * 聊天区替换为一条草稿提示；真正的会话在发出首条消息时才创建并固化 agent。
  * 草稿不占会话列表、不持久任何输入——切走再切回即丢弃。
- * 任务清单/上下文占用随草稿清空：二者按工单键暂存，残留会以旧会话的进度冒充草稿。
+ * 任务清单/上下文占用随草稿清空：清单投影按会话 id 键控（V21），草稿态本就没有
+ * 键位可命中，这里清上下文占用与活跃指针即可；清单残留由会话切换的附带查询覆盖。
  */
 export function startSessionDraft(ticketNo: string) {
   set((st) => {
@@ -461,7 +458,6 @@ export function startSessionDraft(ticketNo: string) {
     delete draftModelSel[ticketNo];
     return {
       activeSessionId: { ...st.activeSessionId, [ticketNo]: "" },
-      todos: { ...st.todos, [ticketNo]: [] },
       context: { ...st.context, [ticketNo]: { tokens: 0, limit: st.context[ticketNo]?.limit ?? null } },
       draftModelSel,
       chats: {
@@ -529,6 +525,7 @@ export function switchSession(ticketNo: string, sessionId: string) {
  * 从所有工单的置顶表剔除该会话，并删除分组归属映射——归属是一种「按 sessionId
  * 键控的软数据」，会话删除后若不收敛，残留会让后端重建/重放的同 id 新会话被
  * 静默归入旧分组，也会顺着分组持久化不断写进 localStorage。空入参是 no-op。
+ * 任务清单投影（todos.ts）同属按 sessionId 键控的会话软数据，一并抹除。
  */
 export function dropSessionExtras(sessionIds: string[]) {
   if (sessionIds.length === 0) return;
@@ -554,6 +551,7 @@ export function dropSessionExtras(sessionIds: string[]) {
     }
     return memberTouched || pinnedTouched ? { sessionPinned, sessionGroupMembers } : st;
   });
+  dropSessionTodos(sessionIds);
   scheduleSessionGroupsPersist();
   scheduleSessionPinnedPersist();
 }

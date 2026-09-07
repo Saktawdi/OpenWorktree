@@ -231,6 +231,54 @@ public final class JdbcSessionRepository implements SessionRepository {
     }
 
     // -------------------------------------------------------------------------------------------
+    // V21 session_todo：每会话一份任务清单快照（行存在 = 有清单，"[]" = 显式清空）。
+    // 删除会话由 FK ON DELETE CASCADE 清理，无需显式 delete 方法。
+    // -------------------------------------------------------------------------------------------
+
+    @Override
+    public void upsertTodos(String sessionId, String todosJson) {
+        if (todosJson == null) {
+            return;
+        }
+        jdbc.update("""
+                INSERT INTO session_todo(session_id, todos_json, updated_at) VALUES (?,?,?)
+                ON CONFLICT(session_id) DO UPDATE SET todos_json = excluded.todos_json,
+                                                      updated_at = excluded.updated_at
+                """, sessionId, todosJson, clockNow());
+    }
+
+    @Override
+    public Optional<String> findTodos(String sessionId) {
+        List<String> rows = jdbc.query("SELECT todos_json FROM session_todo WHERE session_id = ?",
+                (rs, n) -> rs.getString(1), sessionId);
+        if (!rows.isEmpty()) {
+            return Optional.of(rows.get(0));
+        }
+        // Lazy backfill：V21 之前的历史会话没有快照行，扫一次消息历史取最后一条合法
+        // todowrite 落行（tool_calls_blob 的 arguments_json 是内嵌 JSON 字符串，双层解析）。
+        // 一次成本，之后永久走快照；新会话（无历史）不落行、返回 empty。
+        List<String> blobs = jdbc.query("""
+                SELECT tool_calls_blob FROM session_message
+                WHERE session_id = ? AND tool_calls_blob IS NOT NULL
+                ORDER BY created_at DESC, id DESC
+                """, (rs, n) -> rs.getString(1), sessionId);
+        for (String blob : blobs) {
+            for (ToolCall tc : parseToolCalls(blob)) {
+                String canonical = gate.adapters.session.TodoSnapshots.canonicalJson(tc.argumentsJson());
+                if (canonical != null && gate.adapters.session.TodoSnapshots.isWriteTool(tc.name())) {
+                    upsertTodos(sessionId, canonical);
+                    return Optional.of(canonical);
+                }
+            }
+        }
+        return Optional.empty();
+    }
+
+    private static String clockNow() {
+        return java.time.Instant.now().toString();
+    }
+
+    // -------------------------------------------------------------------------------------------
     // Small JSON helpers (no new dependency).
     // -------------------------------------------------------------------------------------------
 

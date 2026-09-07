@@ -34,6 +34,22 @@ public interface SessionRepository {
 
     List<SessionMessage> findMessages(String sessionId);
 
+    /**
+     * Upserts the session's todo snapshot (V21 任务清单快照)：{@code todosJson} 为规范
+     * TodoItem[] JSON（空数组 "[]" = 显式清空）。每会话一行，last-write-wins。
+     */
+    default void upsertTodos(String sessionId, String todosJson) {
+        throw new UnsupportedOperationException("upsertTodos is not supported");
+    }
+
+    /**
+     * Returns the session's todo snapshot JSON (规范 TodoItem[])，无行返回 empty。
+     * 实现方可在此做 lazy 回填（扫历史最后一条 todowrite 落行后返回）。
+     */
+    default Optional<String> findTodos(String sessionId) {
+        return Optional.empty();
+    }
+
     /** Deletes the session row (workbench session-list removal). Messages must go first — FK. */
     void delete(String id);
 

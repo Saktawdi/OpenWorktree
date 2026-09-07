@@ -17,24 +17,22 @@ interface RawBusyAgent {
 
 /**
  * 后台运行会话的任务清单收敛（无 SSE 直连时的兜底）：
- * 只在「当前查看的会话从运行中转为空闲」的那一刻用服务端已落库历史回算一次任务
- * 清单——回合落库后最多延迟一拍自动对齐，兑现"不手动刷新也能出现/更新"。
- * 运行中绝不清零：本页没有 EventSource 时（刷新后/外部发起/事件断流），服务端
- * 历史要到整回合 idle 才落库，运行期间按历史重建只会把已显示的清单误清空
- * （agent 仍在输出中图标消失）；本地直连的会话由 SSE 实时回写，同样跳过。
+ * 只在「当前查看的会话从运行中转为空闲」的那一刻用服务端 session_todo 快照回算一次
+ * 任务清单（V21：轻端点单行查询，不再全量拉历史重扫）——最多延迟一拍自动对齐，
+ * 兑现"不手动刷新也能出现/更新"。运行中绝不清零：服务端快照随 tool 事件即时落库，
+ * 本页没有 EventSource 时（刷新后/外部发起/事件断流），兜底查询拿到的就是最新快照；
+ * 本地直连的会话由 SSE 实时回写，同样跳过。
  */
 let prevRunningSessionIds = new Set<string>();
 
 function syncSessionTodosOnRunEnd() {
   const st = appStore.getState();
-  if (st.mode !== "live" || st.conn !== "ok") return;
-  const no = st.selectedNo;
-  if (!no) return;
-  const sid = st.activeSessionId[no];
+  if (st.mode !== "live" || st.conn !== "ok" || !st.selectedNo) return;
+  const sid = st.activeSessionId[st.selectedNo];
   if (!sid || st.liveTurns[sid]) return;
   const runningNow = new Set(st.runningAgents.sessions.map((r) => r.session_id));
   if (!prevRunningSessionIds.has(sid) || runningNow.has(sid)) return;
-  void syncSessionTodos(no, sid);
+  void syncSessionTodos(sid);
 }
 
 export async function fetchBusyAgents(): Promise<void> {

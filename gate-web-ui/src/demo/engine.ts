@@ -1,5 +1,5 @@
 import { addSnapshot, setFindings, setGateBusy, setOutcome, setTask, setVerdict } from "@/features/gate";
-import { addUsage, clearSessionEnded, ensureCurrentSession, finishAssistant, markSessionEnded, patchAssistant, pushAssistantPlaceholder, pushSystemMessage, pushUserMessage, setBusy, setContextLimit, setContextTokens, setTodos } from "@/features/session";
+import { addUsage, applyTodosSnapshot, clearSessionEnded, ensureCurrentSession, finishAssistant, markSessionEnded, patchAssistant, pushAssistantPlaceholder, pushSystemMessage, pushUserMessage, setBusy, setContextLimit, setContextTokens } from "@/features/session";
 import { currentCancelSeq, setDiffs, setStage } from "@/features/ticket";
 import { setCenterTab, showToast, appStore } from "@/store";
 import type { ChatItem, DiffFile, Finding, ToolCallView, TodoItem } from "@/shared/types";
@@ -137,7 +137,9 @@ async function runTodoWrite(
     { summary, detail: JSON.stringify(todos, null, 2) },
     ok,
   );
-  if (done) setTodos(no, todos.map((t) => ({ ...t })));
+  // 清单投影按会话 id 键控（V21）：demo 从工单号解析出当前活跃会话。
+  const sessionId = appStore.getState().activeSessionId[no];
+  if (done && sessionId) applyTodosSnapshot(sessionId, todos.map((t) => ({ ...t })));
   return done;
 }
 
