@@ -200,7 +200,7 @@ function upsertThinkingPart(
   return [...list, { type: "thinking", text: delta, startedAt: now, endedAt: undefined }];
 }
 
-/** 正文 token 到来：封口末段未封口思考（记录 endedAt）；无未封口段时原样返回。 */
+/** 正文 token 到达：封口末段未封口思考（记录 endedAt）；无未封口段时原样返回。 */
 function sealThinkingPart(parts: TimelinePart[] | undefined, now: number): TimelinePart[] | undefined {
   if (!parts || parts.length === 0) return parts;
   const idx = lastThinkingIndex(parts);
@@ -210,6 +210,19 @@ function sealThinkingPart(parts: TimelinePart[] | undefined, now: number): Timel
   const next = parts.slice();
   next[idx] = { ...seg, endedAt: now };
   return next;
+}
+
+/** 正文增量接入时间线：末位是文本段则续写（含流式光标锚点），否则新开一段；空增量跳过。 */
+function appendTextPart(parts: TimelinePart[] | undefined, delta: string): TimelinePart[] {
+  const list = parts ?? [];
+  if (!delta) return list;
+  const last = list[list.length - 1];
+  if (last && last.type === "text") {
+    const next = list.slice();
+    next[list.length - 1] = { type: "text", text: last.text + delta };
+    return next;
+  }
+  return [...list, { type: "text", text: delta }];
 }
 
 /** 工具 upsert：按 callID 原位更新（参数快照/终态输出），不存在则按到达序追加。 */
@@ -393,8 +406,10 @@ async function consumeSessionEvents(
         ...a,
         text: a.text + (d.text_delta ?? ""),
         thinking: a.thinking && !a.thinking.done ? { ...a.thinking, done: true } : a.thinking,
-        // 思考段封口：正文 token 到来即该段思考结束（历史回放据此显示"持续 N 秒"）
-        parts: sealThinkingPart(a.parts, now),
+        // 时间线：先封口思考段（正文 token 到来即该段思考结束），再把正文增量接进
+        // 文本段（末位是文本则续写，否则开新段）——parts 是时间线渲染的事实来源，
+        // 漏掉这步 live 视图里所有正文段都会蒸发，重切入会话才从落库历史回来。
+        parts: appendTextPart(sealThinkingPart(a.parts, now), d.text_delta ?? ""),
       }));
     });
     es.addEventListener("thinking", (ev) => {

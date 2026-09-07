@@ -14,6 +14,7 @@
 
 - **桌面端粘贴图片+文字发送必 500、消息全局丢失（T-112）**：桌面版后端是 GraalVM native-image 二进制，不携带 awt 本地库，`javax.imageio.ImageIO` 类初始化直接失败（`UnsatisfiedLinkError: no awt` → 后续 `NoClassDefFoundError`）——抛出的是 Error，逃过了缩放/落盘两层 `catch (Exception)` 与 Javalin 的 Exception 处理器，直接 500；缩略图保存又发生在用户消息落库之前，整条发送在落盘前中止。修复：发送路径彻底移除 ImageIO 依赖（图片原样落盘，最长边的预缩放移到前端 canvas，`catch (Exception)` 放宽为 `catch (Throwable)` 兜底防类初始化类 Error 再逃逸）
 - **回复中途突然中断、视图缺段**：SSE 断流重连的「已收尾」收场分支此前只定格残缺占位，现改为按落库历史重建视图，补齐断流窗口内丢失的正文/工具段
+- **回合时间线 live 视图正文段蒸发**：token 事件只维护了兼容字段 `text` 与思考段封口，从未把正文增量写进 `parts` 时间线——流式期间所有正文段（含最终汇报）不可见，重切入会话才从落库历史回来（时间线渲染以 `parts` 为事实来源）。现正文 token 增量接入文本段（末位续写/否则新开），流式光标随段尾渲染
 
 ## 0.3.2（未发行）
 
