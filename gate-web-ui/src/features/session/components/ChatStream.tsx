@@ -183,6 +183,9 @@ function splitToolArgs(tool: ToolCallView): { toolName: string; argsPart: string
 }
 
 /** 时间线思考段（ZCode 式单行）：完成后折叠为"思考 · 持续 N 秒"，流式段显示呼吸点。 */
+/** 时间线思考段（ZCode 式单行）：折叠态带思考正文尾部预览并实时刷新（流式时最新
+ * 内容在尾部，每个增量都滑动窗口——用户看得到"模型正在输出"而不是怀疑卡死），
+ * 点击展开全文。 */
 const ThinkingRow = memo(function ThinkingRow({
   part,
   streamingItem,
@@ -196,6 +199,9 @@ const ThinkingRow = memo(function ThinkingRow({
     part.startedAt && part.endedAt
       ? Math.max(1, Math.round((part.endedAt - part.startedAt) / 1000))
       : null;
+  // 预览取尾部窗口（最新内容优先），压成单行；超窗加前导省略号
+  const flat = part.text.replace(/\s+/g, " ").trim();
+  const preview = flat.length > 56 ? "…" + flat.slice(-56) : flat;
   return (
     <div className="rounded-lg border border-edge bg-sunken overflow-hidden">
       <button
@@ -205,11 +211,21 @@ const ThinkingRow = memo(function ThinkingRow({
         <Brain size={14} className="text-info" weight={done ? "regular" : "fill"} />
         <span>{done ? "思考" : "思考中"}</span>
         {done ? (
-          seconds != null && <span className="text-faint">持续了 {seconds} 秒</span>
+          seconds != null && <span className="text-faint shrink-0">持续了 {seconds} 秒</span>
         ) : (
-          <span className="w-1.5 h-1.5 rounded-full bg-info animate-breathe" />
+          <span className="w-1.5 h-1.5 rounded-full bg-info animate-breathe shrink-0" />
         )}
-        <span className="flex-1" />
+        {!expanded && preview ? (
+          <span
+            className={`flex-1 min-w-0 truncate text-left text-[11.5px] ${
+              done ? "text-faint" : "text-dim"
+            }`}
+          >
+            {preview}
+          </span>
+        ) : (
+          <span className="flex-1" />
+        )}
         {expanded ? <CaretDown size={12} /> : <CaretRight size={12} />}
       </button>
       {expanded && (
