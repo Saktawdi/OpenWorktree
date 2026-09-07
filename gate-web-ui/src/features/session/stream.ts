@@ -74,7 +74,8 @@ export async function liveSendPrompt(
   const st = appStore.getState();
   // 目标永远是「当前查看的会话」（activeSessionId），不再有跨工单/跨会话的全局游标；
   // 同一会话生成中不允许并发追加，其他会话不受影响。
-  // userText 已含 [图片 #n] 引用（Composer 粘贴时插入），原样推送与发送。
+  // userText 已含发送时统一追加的 [图片 #n] 引用行（引用只占位 chip，不进输入框正文），
+  // 原样推送与发送。
   const sessionId = st.activeSessionId[no];
   if (sessionId && st.sessionBusy[sessionId]) return true;
   // 工单重新进入运行状态：上一次的"会话已结束"提醒随之失效

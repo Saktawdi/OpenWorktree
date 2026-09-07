@@ -134,7 +134,8 @@ export function extractAbsolutePath(payloads: string[]): string | null {
   return null;
 }
 
-/** 与后端一致的 [图片 #n] 引用文本；无附件时原样返回。 */
+/** 与后端一致的 [图片 #n] 引用文本；无附件时原样返回。发送时统一追加在消息尾部，
+ * 保证引用行独占一行——绝不与正文同行（同行引用会被误当正文的一部分，见下）。 */
 export function withImageCitations(text: string, attachments: PendingAttachment[]): string {
   if (attachments.length === 0) return text;
   let out = text;
@@ -143,4 +144,34 @@ export function withImageCitations(text: string, attachments: PendingAttachment[
     out += `[图片 #${i + 1}] ${attachments[i].filename}`;
   }
   return out;
+}
+
+/* 图片引用痕迹的匹配与剥离：
+ * · [图片引用 #n] <工作区相对路径>：后端发送时追加的落盘引用行（独占一行）；
+ * · [图片 #n] <文件名>：Composer 侧引用（现于发送时统一追加；历史消息里可能
+ *   与正文混在同一行——旧版直接插在光标处）。
+ * 剥离必须按 token 而不是按行丢弃：引用与正文同行时，行级过滤会把整行正文
+ * 一起吞掉，表现为“只发了图却没有文字”（正文其实已送达 Agent）。 */
+const IMAGE_CITE_TOKEN_RE =
+  /\[图片(?:引用)? #\d+\][ \t]*([A-Za-z0-9._\-]*[./\\][A-Za-z0-9._\-/]*)?/g;
+
+/**
+ * 剥离消息文本中的图片引用痕迹，返回 { 正文, 图片工作区路径 }：
+ * · 引用行/标记 → 从正文中移除（标记 + 紧随的路径/文件名 token；不含 . / \ 的
+ *   后续文字一律保留，CJK 正文不会被误吞）；
+ * · 含路径分隔符的 token 视为落盘引用（.gate/chat-images/…），收集进 images 供
+ *   气泡还原缩略图；裸文件名（[图片 #1] image.png）不是工作区路径，不收集。
+ * 历史回放（mapHistoryMessage）与实时气泡（UserMessageBody）共用，保证两个视图
+ * 对同一消息的渲染口径一致。
+ */
+export function stripImageCitations(text: string): { body: string; images: string[] } {
+  const images: string[] = [];
+  const body = text
+    .replace(IMAGE_CITE_TOKEN_RE, (_all, token?: string) => {
+      if (token && /[\\/]/.test(token) && !images.includes(token)) images.push(token);
+      return "";
+    })
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  return { body, images };
 }

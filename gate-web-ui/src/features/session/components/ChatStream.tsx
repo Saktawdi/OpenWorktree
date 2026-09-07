@@ -24,6 +24,7 @@ import {
 } from "@phosphor-icons/react";
 import { NO_CHAT, useApp } from "@/store";
 import { fetchBlobUrl } from "@/net";
+import { stripImageCitations } from "@/shared/attachments";
 import type { ChatItem, TimelinePart, ToolCallView, ToolIconKind } from "@/shared/types";
 import { hhmmss, variantLabel } from "@/shared/format";
 import { friendlyToolName, isTodoTool, todoArgsSummary, compactToolArgs, compactToolResult } from "@/shared/todoUtils";
@@ -59,9 +60,11 @@ function ChatImage({
   onZoom: (src: string) => void;
 }) {
   const [url, setUrl] = useState<string | null>(src.startsWith("data:") ? src : null);
+  const [failed, setFailed] = useState(false);
   useEffect(() => {
     if (src.startsWith("data:")) {
       setUrl(src);
+      setFailed(false);
       return;
     }
     let alive = true;
@@ -76,12 +79,26 @@ function ChatImage({
           URL.revokeObjectURL(u);
         }
       })
-      .catch(() => {});
+      .catch(() => {
+        if (alive) setFailed(true);
+      });
     return () => {
       alive = false;
       if (made) URL.revokeObjectURL(made);
     };
   }, [src, ticketNo]);
+  if (failed) {
+    // 落盘文件丢失/端点不可达：给出确定态，而非永远脉冲的加载骨架
+    return (
+      <span
+        className="inline-flex h-28 w-40 items-center justify-center gap-1.5 rounded-lg border border-edge bg-sunken text-[11px] text-faint"
+        title={`图片加载失败：${src}`}
+      >
+        <Warning size={14} weight="fill" />
+        图片已失效
+      </span>
+    );
+  }
   if (!url) {
     return <span className="inline-block h-28 w-40 animate-pulse rounded-lg border border-edge bg-sunken" />;
   }
@@ -131,14 +148,10 @@ function UserMessageBody({
 }) {
   const [zoom, setZoom] = useState<string | null>(null);
   const hasImages = !!images && images.length > 0;
-  // 有图可渲时，文本里的 [图片 #n] / [图片引用 #n] 引用行完成使命，不再重复展示
-  const display = hasImages
-    ? text
-        .split("\n")
-        .filter((l) => !/^\[图片(引用)? #\d+\]/.test(l.trim()))
-        .join("\n")
-        .trim()
-    : text;
+  // 图片引用痕迹（[图片引用 #n] 落盘引用行 / [图片 #n] 标记）无条件按 token 剥离：
+  // 引用与正文同行（输入未换行）时不能整行吞掉正文；有图无图（缩略图落盘失败、
+  // 历史回放路径差异）展示口径保持一致，不再出现“只发了图没文字”或引用文本漏出。
+  const display = useMemo(() => stripImageCitations(text).body, [text]);
   const segments = useMemo(() => parseQuotedText(display), [display]);
   return (
     <div className="space-y-1.5">
@@ -773,7 +786,9 @@ function ChatRail({
                         style={{ width: bubbleW }}
                       >
                         <div className="line-clamp-4 text-[12px] leading-relaxed text-ink whitespace-pre-wrap break-words">
-                          {stripQuoteMarkers(m.text)}
+                          {/* 预览与气泡同口径：剥掉引用胶囊标记与图片引用痕迹
+                              （乐观消息的引用行尚未被历史回放剥离） */}
+                          {stripImageCitations(stripQuoteMarkers(m.text)).body}
                         </div>
                       </motion.div>
                     )}

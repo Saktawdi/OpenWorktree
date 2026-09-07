@@ -41,6 +41,7 @@ import {
   extractAbsolutePath,
   isAttachableImage,
   toPendingAttachment,
+  withImageCitations,
 } from "@/shared/attachments";
 import type { CatalogProvider, PendingAttachment, SessionModelSel } from "@/shared/types";
 
@@ -613,7 +614,9 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
   };
 
   /* 粘贴/拖入的文件统一路由（参考 OpenChamber ChatInput.handlePaste）：
-   * · 图片 → 模型支持时暂存为附件并插入 [图片 #n] 引用；不支持则提示后丢弃；
+   * · 图片 → 模型支持时暂存为附件，输入框上方出现 chip 胶囊占位（引用胶囊同款），
+   *   不再往正文插 [图片 #n] 引用文本——引用行在发送时统一追加在消息尾部，
+   *   杜绝引用与正文同行导致的渲染吞字；不支持则提示后丢弃；
    * · 非图片文件 → 载荷文本带绝对路径（资源管理器「复制文件地址」）直接插入；
    *   是文件本体（浏览器拿不到路径）则上传落盘工单克隆，把路径插进光标处。 */
   const handleIncomingFiles = async (files: File[], payloads: string[]) => {
@@ -625,14 +628,6 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
         showToast(`当前模型 ${sel.providerId}/${sel.modelId} 不支持图片输入，已忽略 ${imageFiles.length} 张图片`);
         return;
       }
-      const caretStart = taRef.current?.selectionStart ?? text.length;
-      const caretEnd = taRef.current?.selectionEnd ?? caretStart;
-      let citations = "";
-      for (let i = 0; i < imageFiles.length; i++) {
-        if (i > 0 || text.slice(0, caretStart).trim().length > 0) citations += "\n\n";
-        citations += `[图片 #${pendingAttachments.length + i + 1}] ${imageFiles[i].name}`;
-      }
-      setComposerDraft(ticketNo, text.slice(0, caretStart) + citations + text.slice(caretEnd));
       await addPendingImages(imageFiles);
       return;
     }
@@ -733,8 +728,12 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
     if ((!t && pendingQuotes.length === 0 && pendingAttachments.length === 0) || busy || terminal)
       return;
     // 引用胶囊内联进消息纯文本（⟦引用⟧…⟦/引用⟧ 标记，Agent 读到的是原文）；
+    // 图片附件在此统一追加 [图片 #n] 引用行（独占一行、永远不与正文同行）：
+    // Agent/后端由此得知缩略图对应关系，气泡渲染侧再按标记还原成胶囊/缩略图。
     // 发送失败时整包还原（草稿/胶囊/附件），用户改完直接重发。
-    const composed = t + pendingQuotes.map((q) => `\n${wrapQuote(q.text)}`).join("");
+    const composed =
+      withImageCitations(t, pendingAttachments) +
+      pendingQuotes.map((q) => `\n${wrapQuote(q.text)}`).join("");
     const prevText = t;
     const prevQuotes = pendingQuotes;
     const prevAttachments = pendingAttachments;

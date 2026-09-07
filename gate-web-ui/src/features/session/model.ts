@@ -11,6 +11,7 @@ import type {
   QuestionRequestView,
 } from "@/shared/types";
 import { friendlyToolName, isTodoTool, parseTodos, todoArgsSummary as todoArgsSummaryImpl, compactToolArgs, compactToolResult } from "@/shared/todoUtils";
+import { stripImageCitations } from "@/shared/attachments";
 
 function sessionTimeLabel(at?: number): string {
   const t = at == null ? new Date() : new Date(at);
@@ -175,9 +176,6 @@ export function resolveToolIcon(name: string): import("@/shared/types").ToolIcon
   return "terminal";
 }
 
-/** 后端在发送时写入消息文本的缩略图引用行（存于工单克隆 .gate/chat-images/）。 */
-const CHAT_IMAGE_REF_RE = /^\[图片引用 #\d+\] (\S+)$/gm;
-
 /** 后端 V20 时间线分段（GET /messages 的 parts 数组行格式）。 */
 export interface RawTurnPart {
   type?: string;
@@ -226,18 +224,17 @@ function partsFromRaw(rawParts: RawTurnPart[] | undefined | null, tools: import(
   return out.length > 0 ? out : undefined;
 }
 
+/**
+ * 历史用户消息 → 气泡数据：图片引用痕迹（后端 [图片引用 #n] <路径> 引用行、
+ * [图片 #n] <文件名> 标记）按 token 剥离出 images 与干净正文。token 级剥离保证
+ * 引用与正文同行（输入未换行的历史消息）时正文不被整行吞掉，且与实时气泡
+ * （UserMessageBody 同一 stripImageCitations）渲染口径一致——重切入会话不再
+ * 出现实时/历史两种显示。
+ */
 export function mapHistoryMessage(m: RawMessage): ChatItem | null {
   if (m.role === "USER") {
-    // 引用行 → images（工作区相对路径，气泡经带鉴权的 chat-images 端点还原），
-    // 并从展示文本中剥离——引用行的使命是定位文件，不该以文本形式出现在气泡里。
-    const images: string[] = [];
-    const text = m.content
-      .replace(CHAT_IMAGE_REF_RE, (_all, p1: string) => {
-        images.push(p1);
-        return "";
-      })
-      .trim();
-    const item: ChatItem = { kind: "user", id: m.id, text, ts: Date.parse(m.timestamp) };
+    const { body, images } = stripImageCitations(m.content);
+    const item: ChatItem = { kind: "user", id: m.id, text: body, ts: Date.parse(m.timestamp) };
     if (images.length > 0) item.images = images;
     return item;
   }
