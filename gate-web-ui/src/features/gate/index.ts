@@ -14,7 +14,8 @@ export {
   setReviewError,
   setGatePanelCollapsed,
   setGateSection,
-  collapseGateSectionsForPresubmit,
+  markReviewEnded,
+  clearReviewEnded,
 } from "./state";
 export { GatePanel } from "./components/GatePanel";
 export { ManualReviewDialog } from "./components/ManualReviewDialog";

@@ -304,6 +304,27 @@ function EndBadge({ kind }: { kind: "done" | "failed" }) {
   );
 }
 
+/** 审查结果徽标 —— 判决落盘后的列表位提醒：通过/需人工为绿「已审查」，驳回为红「驳回」。 */
+function ReviewBadge({ verdict }: { verdict: "PASS" | "REJECT" | "REQUIRES_HUMAN" }) {
+  if (verdict === "REJECT") {
+    return (
+      <span className="run-badge run-badge-end-failed" title="审查驳回：存在阻断项，详见审查发现页">
+        <WarningCircle size={9} weight="bold" />
+        驳回
+      </span>
+    );
+  }
+  return (
+    <span
+      className="run-badge run-badge-end-done"
+      title={verdict === "PASS" ? "审查通过 · 发布授权已签发" : "审查完成 · 需人工核准后放行"}
+    >
+      <CheckCircle size={9} weight="bold" />
+      已审查
+    </span>
+  );
+}
+
 export function TicketList() {
   const ticketsAll = useApp((s) => s.tickets);
   const activeProjectId = useApp((s) => s.activeProjectId);
@@ -312,6 +333,7 @@ export function TicketList() {
   const busyMap = useApp((s) => s.busy);
   const gateBusyMap = useApp((s) => s.gateBusy);
   const sessionEnded = useApp((s) => s.sessionEnded);
+  const reviewEnded = useApp((s) => s.reviewEnded);
   const pendingPermissions = useApp((s) => s.pendingPermissions);
   const pendingQuestions = useApp((s) => s.pendingQuestions);
   const orderMap = useApp((s) => s.order);
@@ -397,9 +419,10 @@ export function TicketList() {
           const sessionRunning = busyMap[t.ticketNo] ?? false;
           const reviewRunning = gateBusyMap[t.ticketNo] ?? false;
           const running = sessionRunning || reviewRunning;
-          // T-120 增强：待决询问（question/permission）与会话结束提醒
+          // T-120 增强：待决询问（question/permission）、会话结束与审查结果提醒
           const asks = pendingAsks.get(t.ticketNo);
           const ended = !running ? sessionEnded[t.ticketNo]?.kind : undefined;
+          const reviewed = !running ? reviewEnded[t.ticketNo]?.verdict : undefined;
           return (
             <motion.button
               key={t.ticketNo}
@@ -446,7 +469,7 @@ export function TicketList() {
                     快速模式
                   </span>
                 )}
-                {hasDiff && !running && !ended && !asks && (
+                {hasDiff && !running && !ended && !reviewed && !asks && (
                   <>
                     <span className="text-edge-strong">·</span>
                     <span>有变更</span>
@@ -465,6 +488,7 @@ export function TicketList() {
                   </span>
                 )}
                 {ended && <EndBadge kind={ended} />}
+                {reviewed && <ReviewBadge verdict={reviewed} />}
                 <span className="ml-auto shrink-0">{relativeTime(t.updatedAt)}</span>
               </div>
             </motion.button>

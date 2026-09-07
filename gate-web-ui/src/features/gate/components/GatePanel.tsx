@@ -1,9 +1,7 @@
-import { useEffect } from "react";
 import { motion } from "motion/react";
 import { ArrowClockwise, ArrowCounterClockwise, Check, LockKey, RocketLaunch } from "@phosphor-icons/react";
 import { actions } from "@/app/actions";
 import { useApp } from "@/store";
-import { collapseGateSectionsForPresubmit } from "@/features/gate/state";
 import { openRestartDialog, openStageChangeConfirm } from "@/features/ticket/state";
 import { SessionSection } from "@/features/session/components/SessionList";
 import { Spinner } from "@/shared/components/ui";
@@ -32,11 +30,6 @@ export function GatePanel({ ticketNo }: { ticketNo: string }) {
 
   const snap = snaps?.[snaps.length - 1];
   const round = snaps?.length ?? 0;
-
-  // 进入预提审（快照已锁定）时自动收叠工单信息与会话列表，把纵向空间让给快照/判决卡片。
-  useEffect(() => {
-    if (stage === "PRESUBMITTED") collapseGateSectionsForPresubmit();
-  }, [stage, ticketNo]);
 
   let action: { label: string; icon: React.ReactNode; onClick?: () => void; disabled?: boolean; hint?: string; primary?: boolean } | null = null;
 

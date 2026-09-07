@@ -3,18 +3,20 @@
  * 都是对后端异步任务（/presubmit、/review、/publish）的编排 + 进度回写。
  */
 import { api, pollTask } from "@/net";
-import { setCenterTab, showToast } from "@/store/ui";
+import { appStore } from "@/store";
+import { showToast } from "@/store/ui";
 import { sleep } from "@/shared/format";
 import { refreshTicket } from "@/features/ticket/api";
 import { setStage } from "@/features/ticket/state";
 import { pushSystemMessage } from "@/features/session/chat";
-import { addSnapshot, setFindings, setGateBusy, setOutcome, setReviewError, setTask, setVerdict } from "./state";
+import { addSnapshot, clearReviewEnded, markReviewEnded, setFindings, setGateBusy, setOutcome, setReviewError, setTask, setVerdict } from "./state";
 import { loadEvidence, loadReviewState } from "./api";
 
 export async function livePresubmit(no: string) {
   setGateBusy(no, true);
   setFindings(no, []);
   setVerdict(no, null);
+  clearReviewEnded(no);
   try {
     setTask(no, { kind: "presubmit", percent: 50, label: "正在锁定快照", done: false });
     const r = await api<{
@@ -108,6 +110,7 @@ export async function liveReview(no: string, opts?: { humanPass?: boolean; note?
   setGateBusy(no, true);
   setStage(no, "IN_REVIEW");
   setReviewError(no, null);
+  clearReviewEnded(no);
   try {
     setTask(no, {
       kind: "review",
@@ -124,7 +127,7 @@ export async function liveReview(no: string, opts?: { humanPass?: boolean; note?
       method: "POST",
       body: JSON.stringify(body),
     });
-    // 轮询期间同步进度到审查发现页：用户被自动切到该页后能看到推进而不是"无事发生"。
+    // 轮询进度回写任务卡（面板/工单列表可见推进），但不切换用户当前所在视图。
     const outcome = await pollTask(task_id, (percent, label) => {
       setTask(no, { kind: "review", percent, label, done: false });
     });
@@ -136,16 +139,29 @@ export async function liveReview(no: string, opts?: { humanPass?: boolean; note?
       pushSystemMessage(no, `审查任务失败：${detail}`, "warn");
       showToast(`审查失败：${detail}`);
       await refreshTicket(no).catch(() => {});
-      setCenterTab("findings");
       return;
     }
     setTask(no, { kind: "review", percent: 100, label: "判决完成", done: true });
     await sleep(300);
     await Promise.all([loadReviewState(no), loadEvidence(no)]);
     await refreshTicket(no);
+    // 结果呈现不打断用户当前视图（不切发现页）：右侧面板判决卡 + 会话流结论消息 +
+    // 工单列表「已审查/驳回」徽标三路通知。
+    const verdict = appStore.getState().verdicts[no];
+    if (verdict) {
+      markReviewEnded(no, verdict.verdict);
+      if (!opts) {
+        const text =
+          verdict.verdict === "PASS"
+            ? "AI 审查通过 · 发布授权已签发，可在审查发现页查看详情"
+            : verdict.verdict === "REQUIRES_HUMAN"
+              ? "AI 审查完成 · 需人工核准后放行"
+              : `AI 审查驳回 · 共 ${(appStore.getState().findings[no] ?? []).length} 项发现，详见审查发现页`;
+        pushSystemMessage(no, text, verdict.verdict === "PASS" ? "success" : "warn");
+      }
+    }
     if (opts?.humanPass === true) pushSystemMessage(no, "人工核准通过 · 发布授权已签发", "success");
     if (opts?.humanPass === false) pushSystemMessage(no, "人工驳回 · 请根据审查意见修复后重新提审", "warn");
-    setCenterTab("findings");
   } catch (e) {
     const detail = (e as Error).message;
     setReviewError(no, detail);

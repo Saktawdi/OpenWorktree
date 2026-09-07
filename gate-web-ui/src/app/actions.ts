@@ -3,7 +3,7 @@
  * 分发到对应 feature 包或演示引擎。跨域编排（连接/启动）见 boot.ts。
  */
 import * as demo from "@/demo/engine";
-import { appStore, showToast, setCenterTab, wipePersisted } from "@/store";
+import { appStore, showToast, wipePersisted } from "@/store";
 import { seedDemo } from "@/demo/seed";
 import {
   createTicketLive,
@@ -21,7 +21,7 @@ import {
   selectTicket,
   setStage,
 } from "@/features/ticket/state";
-import { loadEngineConfig, livePresubmit, livePublish, liveReview, liveSyncBase } from "@/features/gate";
+import { loadEngineConfig, livePresubmit, livePublish, liveReview, liveSyncBase, markReviewEnded } from "@/features/gate";
 import { setVerdict } from "@/features/gate/state";
 import {
   loadSessionCatalog,
@@ -126,7 +126,7 @@ export const actions = {
     });
     setStage(no, "READY_TO_PUBLISH");
     pushSystemMessage(no, "人工审查通过 · 发布授权已签发", "success");
-    setCenterTab("findings");
+    markReviewEnded(no, "PASS");
     return Promise.resolve();
   },
   review(no: string) {
@@ -438,6 +438,7 @@ export const actions = {
     });
     setStage(no, "READY_TO_PUBLISH");
     pushSystemMessage(no, "人工核准通过 · 发布授权已签发", "success");
+    markReviewEnded(no, "PASS");
     return Promise.resolve();
   },
   rejectTicket(no: string) {
@@ -446,6 +447,7 @@ export const actions = {
     }
     setStage(no, "REJECTED");
     pushSystemMessage(no, "人工驳回 · 请根据审查意见修复后重新提审", "warn");
+    markReviewEnded(no, "REJECT");
     return Promise.resolve();
   },
   startTicket(no: string) {

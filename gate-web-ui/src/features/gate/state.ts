@@ -77,15 +77,23 @@ export function setGateSection(key: keyof GateSections, expanded: boolean) {
   saveGateSections(gateSections);
 }
 
+/* ─── 审查结果提醒（工单列表「已审查/驳回」徽标的数据源） ─── */
+
 /**
- * 进入预提审（快照已锁定、等待审查）时自动收叠「工单信息」与「会话列表」，
- * 把纵向空间让给门禁流水线的快照/判决卡片；用户手动展开后不会被再次压下
- * （该动作只在 stage 变为 PRESUBMITTED 时触发一次）。
+ * 审查判决落盘时登记：用户正查看该工单则跳过（结果就在面板/会话流里，徽标
+ * 是给没盯着这个工单的人的提醒）；打开工单或开启新一轮（预提审/重新审查）时清除。
  */
-export function collapseGateSectionsForPresubmit() {
-  const cur = s().gateSections;
-  if (!cur.info && !cur.sessions) return;
-  const gateSections = { ...cur, info: false, sessions: false };
-  patch({ gateSections });
-  saveGateSections(gateSections);
+export function markReviewEnded(no: string, verdict: "PASS" | "REJECT" | "REQUIRES_HUMAN") {
+  if (s().selectedNo === no && s().view === "workbench") return;
+  set((st) => ({ reviewEnded: { ...st.reviewEnded, [no]: { verdict, at: Date.now() } } }));
+}
+
+/** 清除审查结果提醒（打开工单即视为已读）。 */
+export function clearReviewEnded(no: string) {
+  set((st) => {
+    if (!st.reviewEnded[no]) return st;
+    const reviewEnded = { ...st.reviewEnded };
+    delete reviewEnded[no];
+    return { reviewEnded };
+  });
 }

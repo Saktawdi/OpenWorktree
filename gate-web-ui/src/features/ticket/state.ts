@@ -7,6 +7,7 @@ import { saveKanbanStages, saveVisibleStages } from "@/store/prefs";
 import type { DiffFile, Stage, StageChangeRecord, Ticket } from "@/shared/types";
 import { ALL_STAGES, KANBAN_DEFAULT_STAGES, KANBAN_LANE_COUNT, KANBAN_STAGE_ORDER, uid } from "@/shared/format";
 import { clearSessionEnded } from "@/features/session/state";
+import { clearReviewEnded } from "@/features/gate/state";
 import { emitPluginEvent } from "@/app/plugins/events";
 import type { AppState } from "@/store";
 
@@ -38,8 +39,9 @@ export function setDiffs(no: string, files: DiffFile[], eolWarning?: string) {
 }
 
 export function selectTicket(no: string) {
-  // 打开工单即视为看见"会话已结束"提醒
+  // 打开工单即视为看见"会话已结束"与"审查结果已出"提醒
   clearSessionEnded(no);
+  clearReviewEnded(no);
   patch({ selectedNo: no, centerTab: "chat", highlight: null });
 }
 

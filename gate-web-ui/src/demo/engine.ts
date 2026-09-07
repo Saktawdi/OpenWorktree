@@ -1,7 +1,7 @@
-import { addSnapshot, setFindings, setGateBusy, setOutcome, setTask, setVerdict } from "@/features/gate";
+import { addSnapshot, clearReviewEnded, markReviewEnded, setFindings, setGateBusy, setOutcome, setTask, setVerdict } from "@/features/gate";
 import { addUsage, applyTodosSnapshot, clearSessionEnded, ensureCurrentSession, finishAssistant, markSessionEnded, patchAssistant, pushAssistantPlaceholder, pushSystemMessage, pushUserMessage, setBusy, setContextLimit, setContextTokens, setSessionBusy } from "@/features/session";
 import { currentCancelSeq, requestCancel, setDiffs, setStage } from "@/features/ticket";
-import { setCenterTab, showToast, appStore } from "@/store";
+import { showToast, appStore } from "@/store";
 import type { ChatItem, DiffFile, Finding, ToolCallView, TodoItem } from "@/shared/types";
 import { approxDiffBytes } from "@/shared/diff";
 import { fakeSha, sleep, uid } from "@/shared/format";
@@ -526,6 +526,7 @@ export async function demoPresubmit(no: string) {
   setGateBusy(no, true);
   setFindings(no, []);
   setVerdict(no, null);
+  clearReviewEnded(no);
   try {
     setTask(no, { kind: "presubmit", percent: 20, label: "正在构建工作区快照", done: false });
     await sleep(850);
@@ -588,7 +589,7 @@ export async function demoReview(no: string) {
       });
       setStage(no, "REJECTED");
       pushSystemMessage(no, `第 ${round} 轮审查驳回 · ${FINDINGS_R1.length} 项发现已回注会话`, "warn");
-      setCenterTab("findings");
+      markReviewEnded(no, "REJECT");
       void import("@/features/gate/api").then((m) => m.loadEvidence(no));
     } else {
       setFindings(no, []);
@@ -601,7 +602,7 @@ export async function demoReview(no: string) {
       });
       setStage(no, "READY_TO_PUBLISH");
       pushSystemMessage(no, `第 ${round} 轮审查通过 · 发布授权已签发，所审即所发`, "success");
-      setCenterTab("findings");
+      markReviewEnded(no, "PASS");
       void import("@/features/gate/api").then((m) => m.loadEvidence(no));
     }
   } finally {

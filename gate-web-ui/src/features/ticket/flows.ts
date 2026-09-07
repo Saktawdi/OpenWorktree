@@ -5,14 +5,16 @@
 import { appStore } from "@/store";
 import { loadTicketDiff } from "./api";
 import { clearSessionEnded } from "@/features/session/state";
+import { clearReviewEnded } from "@/features/gate/state";
 import { loadTicketSessions, loadSessionMessages } from "@/features/session/api";
 import { loadSessionCatalog } from "@/features/session/catalog";
 import { loadSessionPermissions, loadSessionQuestions } from "@/features/session/permissions";
 import { loadEvidence, loadPresubmits, loadReviewState } from "@/features/gate/api";
 
 export async function selectTicketLive(no: string) {
-  // 打开工单即视为看见"会话已结束"提醒
+  // 打开工单即视为看见"会话已结束"与"审查结果已出"提醒
   clearSessionEnded(no);
+  clearReviewEnded(no);
   appStore.setState({ selectedNo: no, centerTab: "chat", highlight: null });
   const loadDiff = () => loadTicketDiff(no);
   const loadSessions = async () => {
