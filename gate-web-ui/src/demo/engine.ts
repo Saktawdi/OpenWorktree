@@ -1,6 +1,6 @@
 import { addSnapshot, setFindings, setGateBusy, setOutcome, setTask, setVerdict } from "@/features/gate";
-import { addUsage, clearSessionEnded, ensureCurrentSession, finishAssistant, markSessionEnded, patchAssistant, pushAssistantPlaceholder, pushSystemMessage, pushUserMessage, setBusy, setContextLimit, setContextTokens, setTodos } from "@/features/session";
-import { currentCancelSeq, setDiffs, setStage } from "@/features/ticket";
+import { addUsage, clearSessionEnded, ensureCurrentSession, finishAssistant, markSessionEnded, patchAssistant, pushAssistantPlaceholder, pushSystemMessage, pushUserMessage, setBusy, setContextLimit, setContextTokens, setSessionBusy, setTodos } from "@/features/session";
+import { currentCancelSeq, requestCancel, setDiffs, setStage } from "@/features/ticket";
 import { setCenterTab, showToast, appStore } from "@/store";
 import type { ChatItem, DiffFile, Finding, ToolCallView, TodoItem } from "@/shared/types";
 import { approxDiffBytes } from "@/shared/diff";
@@ -10,6 +10,30 @@ type Assistant = Extract<ChatItem, { kind: "assistant" }>;
 
 function alive(no: string, seq: number): boolean {
   return currentCancelSeq(no) === seq;
+}
+
+/**
+ * demo 模式中止当前回合（actions.abort 的 demo 分支）：
+ * · bump cancelSeq 使 in-flight 回合的 alive() 立即失效——过期回合的 finally
+ *   守卫住，不会再做任何状态回写（取代-清理语义：谁取代，谁负责清理）；
+ * · 立即释放工单级/会话级运行态（对齐 live abortLive 的乐观翻转）——回合已被
+ *   主动终结，composer 与前置运行点必须马上解锁，不等待脚本自然退出。
+ * · 目标会话按 sessionBusy 反查，而非 activeSessionId：demo 的中止按钮走工单级
+ *   busy，运行中切换会话后 activeSessionId 已指向别处，按它定位会误清/误标
+ *   新会话，真正在跑的会话反而残留 sessionBusy 且收不到 failed 标记。
+ * 无在跑回合时为幂等 no-op。中止的回合按 live abortingSessions 口径打"failed"。
+ */
+export function demoAbort(no: string) {
+  const st = appStore.getState();
+  if (!st.busy[no]) return;
+  // busy 守卫保证每工单至多一个在跑回合，且回合起止与 sessionBusy 严格同步
+  // （demoSendPrompt / demoReturnWithFindings / 本函数），据此反查唯一运行会话。
+  const sid = (st.sessions[no] ?? []).find((sess) => st.sessionBusy[sess.id] === true)?.id;
+  if (!sid) return;
+  requestCancel(no);
+  setBusy(no, false);
+  setSessionBusy(sid, false);
+  markSessionEnded(no, "failed", sid);
 }
 
 async function typeInto(
@@ -145,13 +169,16 @@ export async function demoSendPrompt(no: string, userText: string, images: strin
   const st0 = appStore.getState();
   if (st0.busy[no]) return;
   // 草稿态（无当前会话）时首条消息创建新会话并固化所选 agent，与 live 模式行为一致。
-  ensureCurrentSession(no);
+  const sid = ensureCurrentSession(no);
   const seq = currentCancelSeq(no) + 1;
   appStore.setState({ cancelSeq: { ...st0.cancelSeq, [no]: seq } });
   // 工单重新进入运行状态：上一次的"会话已结束"提醒随之失效
   clearSessionEnded(no);
   pushUserMessage(no, userText, images);
   setBusy(no, true);
+  // 会话级运行态与 live 同步（T-105 第 6 轮）：进入运行即熄灭该会话的中断红点，
+  // demo 不再只依赖工单级 busy——否则 marked failed 的会话红点永远不会清除。
+  setSessionBusy(sid, true);
   try {
     const freshSandbox = no === "T-104" && (st0.diffs[no]?.length ?? 0) === 0;
     if (freshSandbox) {
@@ -160,10 +187,16 @@ export async function demoSendPrompt(no: string, userText: string, images: strin
       await scriptAck(no, userText, seq);
     }
   } finally {
+    // 运行态清理严格守卫：只有本回合仍是当前回合（alive）时才允许回写——
+    // 被中止/被取代的回合不做任何清理，运行态的释放由取代方（demoAbort /
+    // 新回合起点）负责，避免过期 finally 把正在运行的新回合误解锁。
     const finished = alive(no, seq);
-    if (finished) setBusy(no, false);
-    // 与 live 的 done/error 对齐：正常收尾与中断分别打点，供工单列表提醒
-    markSessionEnded(no, finished ? "done" : "failed");
+    if (finished) {
+      setBusy(no, false);
+      setSessionBusy(sid, false);
+      // 与 live 的 done/error 对齐：正常收尾与中断分别打点，供工单列表提醒
+      markSessionEnded(no, "done", sid);
+    }
   }
 }
 
@@ -459,19 +492,24 @@ export async function demoReturnWithFindings(no: string) {
   const findings = st.findings[no] ?? [];
   if (findings.length === 0) return;
   // 草稿态（无当前会话，如对带 diff 的工单直接走审查→修复）时自动新建会话。
-  ensureCurrentSession(no);
+  const sid = ensureCurrentSession(no);
   const seq = currentCancelSeq(no) + 1;
   appStore.setState({ cancelSeq: { ...st.cancelSeq, [no]: seq } });
   const lines = findings.map((f, i) => `${i + 1}. [${f.severity}] ${f.path}${f.lineStart ? ":" + f.lineStart : ""} — ${f.message}`);
   pushUserMessage(no, ["请按以下审查意见逐条修复：", ...lines].join("\n"));
   clearSessionEnded(no);
   setBusy(no, true);
+  setSessionBusy(sid, true);
   try {
     await scriptFix(no, seq);
   } finally {
+    // 运行态清理严格守卫（同 demoSendPrompt）：过期回合不回写，释放由取代方负责
     const finished = alive(no, seq);
-    if (finished) setBusy(no, false);
-    markSessionEnded(no, finished ? "done" : "failed");
+    if (finished) {
+      setBusy(no, false);
+      setSessionBusy(sid, false);
+      markSessionEnded(no, "done", sid);
+    }
   }
 }
 

@@ -152,7 +152,29 @@ export function setBusy(no: string, busy: boolean) {
 }
 
 export function setSessionBusy(sessionId: string, busy: boolean) {
+  // 会话再次进入运行态时熄灭中断红点（T-105 第 6 轮）：红点 → 蓝色呼吸点自然接管
+  if (busy) clearSessionInterrupted(sessionId);
   set((st) => ({ sessionBusy: { ...st.sessionBusy, [sessionId]: busy } }));
+}
+
+/* ─── T-105 第 6 轮：会话级中断标记（会话列表前置红点的数据源） ───
+ * 与工单级 sessionEnded 提醒（用户正在查看则跳过）不同，中断是会话的属性：
+ * 回合出错/中止即点亮该会话的前置红点，无论用户当时在看哪里；该会话再次
+ * 进入运行态时熄灭（红点 → 蓝色呼吸点，自然接管状态表达）。 */
+
+/** 标记会话中断（回合出错/用户中止时调用；重复标记只刷新时间戳）。 */
+export function markSessionInterrupted(sessionId: string) {
+  set((st) => ({ sessionInterrupted: { ...st.sessionInterrupted, [sessionId]: Date.now() } }));
+}
+
+/** 清除会话中断标记（该会话再次开始运行时调用）。 */
+export function clearSessionInterrupted(sessionId: string) {
+  set((st) => {
+    if (!st.sessionInterrupted[sessionId]) return st;
+    const sessionInterrupted = { ...st.sessionInterrupted };
+    delete sessionInterrupted[sessionId];
+    return { sessionInterrupted };
+  });
 }
 
 /** 工单级 busy = 该工单任一会话仍在生成；仅用于整卡样式等聚合展示，按钮状态走 sessionBusy。 */
@@ -171,10 +193,13 @@ export function refreshTicketBusy(no: string) {
 /**
  * 记录一次会话回合结束（done=正常完成，failed=出错/中止）供工单列表提醒。
  * 用户当前停留在该工单的工作台时视为"已看见"回合结束，不叠加列表提醒。
+ * 携带 sessionId 且 kind=failed 时同步打会话级中断标记（T-105 第 6 轮）：
+ * 该会话的前置小圆点转为红色（静态），不因用户正在查看而被跳过。
  */
 export function markSessionEnded(no: string, kind: "done" | "failed", sessionId?: string) {
   // 回合结束是语义写入点：无论用户是否在查看（reminder 可能跳过），事件都 emit。
   emitPluginEvent("session.ended", { ticketNo: no, sessionId: sessionId ?? null, kind });
+  if (kind === "failed" && sessionId) markSessionInterrupted(sessionId);
   set((st) => {
     if (st.selectedNo === no && st.view === "workbench") return st;
     return { sessionEnded: { ...st.sessionEnded, [no]: { kind, at: Date.now() } } };
@@ -552,7 +577,17 @@ export function dropSessionExtras(sessionIds: string[]) {
         memberTouched = true;
       }
     }
-    return memberTouched || pinnedTouched ? { sessionPinned, sessionGroupMembers } : st;
+    const sessionInterrupted = { ...st.sessionInterrupted };
+    let interruptedTouched = false;
+    for (const sid of kill) {
+      if (sid in sessionInterrupted) {
+        delete sessionInterrupted[sid];
+        interruptedTouched = true;
+      }
+    }
+    return memberTouched || pinnedTouched || interruptedTouched
+      ? { sessionPinned, sessionGroupMembers, sessionInterrupted }
+      : st;
   });
   scheduleSessionGroupsPersist();
   scheduleSessionPinnedPersist();

@@ -122,6 +122,9 @@ export interface AppState {
   busySince: Record<string, number>;
   /** T-120 增强：会话结束提醒（key = 工单号）。done=回合正常完成；failed=出错/中止。打开工单或再次运行时清除。 */
   sessionEnded: Record<string, { kind: "done" | "failed"; at: number }>;
+  /** T-105 第 6 轮：会话级中断标记（key = 会话 id）。回合出错/中止时点亮会话列表前置红点，
+   *  该会话再次运行（setSessionBusy true）时熄灭——与工单级提醒不同，用户正在查看也照常标记。 */
+  sessionInterrupted: Record<string, number>;
   gateBusy: Record<string, boolean>;
   /** 草稿态（会话未创建）下的创建遮罩标记：首条消息走「建会话→写覆盖→发消息」三步期间为 true。 */
   creatingSession: Record<string, boolean>;
@@ -226,6 +229,7 @@ export const appStore = create<AppState>(() => ({
   sessionBusy: {},
   busySince: {},
   sessionEnded: {},
+  sessionInterrupted: {},
   gateBusy: {},
   creatingSession: {},
   usage: {},
