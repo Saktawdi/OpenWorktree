@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import {
   Archive,
@@ -7,6 +7,7 @@ import {
   CircleNotch,
   Copy,
   DotsSixVertical,
+  Folder,
   FolderOpen,
   FolderPlus,
   LockKey,
@@ -41,8 +42,12 @@ import { SessionDialogs, sessionDialogKey, type SessionDialogState } from "./Ses
  * 渲染在右侧门禁面板底部，但职权属于会话域（数据与动作都来自 session）。
  * T-105 增强：分组（名称/颜色，端侧软数据持久化于 localStorage）、右键菜单
  * （重命名/置顶/复制 ID/移入分组/归档/删除均为真实动作 + in-app 弹窗）、拖拽
- * （段内重排 + 拖入分组）、置顶、运行中指示（小圆点呼吸），动效统一走
- * motion/react（项目既有的动效库）。
+ * （段内重排 + 拖入分组）、置顶、动效统一走 motion/react（项目既有的动效库）。
+ * 第 6 轮重构（运行态呈现）：
+ * · 会话前置小圆点承载运行态——蓝色呼吸=运行中、红色静态=中断、
+ *   黄色呼吸=待问答/待授权、灰点=空闲/归档；不再复用工单 item 的「运行中」徽标；
+ * · 分组前置小圆点移除，改为文件夹图标（中断/待决/运行中统由组内会话点表达，
+ *   文件夹颜色随分组整体着色）。
  */
 
 const FLAT_ID = "flat";
@@ -61,6 +66,105 @@ interface SessionSegment {
 
 const NO_GROUPS: SessionGroup[] = [];
 const NO_PINNED: string[] = [];
+
+/* ─── 会话前置小圆点的运行态（T-105 第 6 轮重构） ───
+ * 三态语义：蓝色呼吸=运行中、红色静态=中断、黄色呼吸=待问答/待授权；灰点=空闲/归档。
+ * 不再复用工单 item 的「运行中」徽标——状态全部收敛到前置小圆点。
+ * 优先级：待问答/待授权 > 运行中（等待用户的会话比"闲着"更值得注意）> 中断 > 空闲；
+ * 中断红点由 sessionInterrupted 标记驱动（回合出错/中止点亮，该会话再次运行时熄灭）；
+ * 归档会话不携带运行态——残留的中断标记/待决登记不点亮灰点，也不参与分组聚合，
+ * 否则归档会话会把文件夹长期染色（第 6 轮审查修正）。
+ * 呼吸关键帧走 currentColor（styles.css .session-run-dot），蓝色/黄色共用同一动画。 */
+type SessionDotState = "running" | "interrupted" | "ask" | "idle";
+
+const DOT_COLORS: Record<Exclude<SessionDotState, "idle">, string> = {
+  running: "var(--color-info)",
+  interrupted: "var(--color-danger)",
+  ask: "var(--color-warn)",
+};
+
+function dotStateOf(
+  running: boolean,
+  pendingAsk: boolean,
+  interrupted: boolean,
+  archived: boolean,
+): SessionDotState {
+  if (archived) return "idle";
+  if (pendingAsk) return "ask";
+  if (running) return "running";
+  if (interrupted) return "interrupted";
+  return "idle";
+}
+
+/** 状态 → 小圆点呈现（呼吸类挂 .session-run-dot 并写入 currentColor）。 */
+function dotPresentation(
+  state: SessionDotState,
+  archived: boolean,
+): { className: string; style: CSSProperties } {
+  if (state === "idle") {
+    return {
+      className: "",
+      style: { backgroundColor: archived ? "var(--color-faint)" : "var(--color-dim)" },
+    };
+  }
+  const color = DOT_COLORS[state];
+  const breathing = state === "running" || state === "ask";
+  return {
+    className: breathing ? "session-run-dot" : "",
+    style: { backgroundColor: color, color },
+  };
+}
+
+const DOT_TITLES: Record<SessionDotState, string | undefined> = {
+  running: "会话运行中",
+  interrupted: "上次回合已中断（出错或中止）",
+  ask: "智能体在等待你回答/授权",
+  idle: undefined,
+};
+
+/** 前置状态小圆点：会话行与拖拽浮层共用。选择器只返回状态字符串（原语），避免引用抖动。 */
+function RunDot({ session }: { session: ChatSession }) {
+  const state = useApp((s) => {
+    const pendingAsk =
+      Object.values(s.pendingPermissions).some((p) => p.sessionId === session.id) ||
+      Object.values(s.pendingQuestions).some((q) => q.sessionId === session.id);
+    // 运行态统一按会话粒度读取 sessionBusy（live = SSE 流打点；demo = 回合起止同步
+    // 打点）：不回退工单级 busy + activeSessionId——运行中切换会话会把蓝点错挂到新会话。
+    const running = s.sessionBusy[session.id] === true;
+    const interrupted = s.sessionInterrupted[session.id] !== undefined;
+    return dotStateOf(running, pendingAsk, interrupted, session.status === "archived");
+  });
+  const { className, style } = dotPresentation(state, session.status === "archived");
+  return (
+    <span
+      className={`w-1.5 h-1.5 rounded-full shrink-0 ${className}`}
+      style={style}
+      title={DOT_TITLES[state]}
+    />
+  );
+}
+
+/** 分组聚合状态：组内任一活跃会话待决 → 黄；否则任一运行中 → 蓝；否则任一中断 → 红。
+ *  归档会话整体跳过：其残留的中断标记/待决登记不给文件夹染色（与单会话灰点口径一致）。
+ *  文件夹图标的呼吸与圆点同节奏；空闲回落分组自定义色。返回原语，规避选择器引用抖动。 */
+function useSegDotState(seg: SessionSegment): SessionDotState {
+  return useApp((s) => {
+    let seen: SessionDotState = "idle";
+    for (const sess of [...seg.pinned, ...seg.rest]) {
+      if (sess.status === "archived") continue;
+      const pendingAsk =
+        Object.values(s.pendingPermissions).some((p) => p.sessionId === sess.id) ||
+        Object.values(s.pendingQuestions).some((q) => q.sessionId === sess.id);
+      const running = s.sessionBusy[sess.id] === true;
+      const interrupted = s.sessionInterrupted[sess.id] !== undefined;
+      const st = dotStateOf(running, pendingAsk, interrupted, false);
+      if (st === "ask") return "ask";
+      if (st === "running") seen = "running";
+      else if (st === "interrupted" && seen === "idle") seen = "interrupted";
+    }
+    return seen;
+  });
+}
 
 /** 当前 tab 的分段视图：有分组时按分组列出（未分组殿后），无分组时退化为单段。
  *  置顶约束由渲染层分 bucket 表达（置顶区/普通区各自成 SortableContext），
@@ -417,9 +521,11 @@ function SessionList({ ticketNo, locked = false }: { ticketNo: string; locked?: 
         )}
       </AnimatePresence>
 
-      {/* 重命名/删除/移入分组/分组管理 对话框群（动效：AnimatePresence 弹入弹出） */}
-      {!locked && dialog && (
-        <AnimatePresence>
+      {/* 重命名/删除/移入分组/分组管理 对话框群（动效：AnimatePresence 弹入弹出）。
+          AnimatePresence 常驻、条件挂在子元素上：置 dialog=null 时退出动画才能播放，
+          否则整个 AnimatePresence 连子树同帧卸载，弹出方向永远不可见（第 5 轮 INFO）。 */}
+      <AnimatePresence>
+        {!locked && dialog && (
           <SessionDialogs
             key={sessionDialogKey(dialog)}
             ticketNo={ticketNo}
@@ -427,8 +533,8 @@ function SessionList({ ticketNo, locked = false }: { ticketNo: string; locked?: 
             onOpenDialog={openDialog}
             onClose={closeDialog}
           />
-        </AnimatePresence>
-      )}
+        )}
+      </AnimatePresence>
 
       {/* Creating overlay — 草稿首条消息触发的「建会话→写覆盖→发消息」三步期间阻断重复操作 */}
       {creating && (
@@ -585,7 +691,10 @@ function Segment({
   );
 }
 
-/** 分组头：色点 + 名称 + 数量 + 收展箭头；悬停时提供编辑/删除分组入口（未分组段除外）。 */
+/** 分组头：文件夹图标 + 名称 + 数量 + 收展箭头；悬停时提供编辑/删除分组入口（未分组段除外）。
+ *  第 6 轮：前置小圆点移除，改为文件夹图标（随收展切换闭合/打开）；图标颜色随分组整体
+ *  聚合运行态变色（黄呼吸=组内待问答/待授权、蓝呼吸=组内运行中、红=组内中断），
+ *  空闲时回落分组自定义色，未分组段沿用 Chats 图标。 */
 function SegmentHeader({
   seg,
   collapsed,
@@ -604,6 +713,10 @@ function SegmentHeader({
   onDelete: () => void;
 }) {
   const g = seg.group;
+  // 分组聚合运行态（原语选择器）：状态呼吸与圆点同节奏；box-shadow 光晕需要圆形容器
+  const segState = useSegDotState(seg);
+  const FolderIcon = collapsed ? Folder : FolderOpen;
+  const folderColor = segState === "idle" ? (g?.color ?? "var(--color-faint)") : DOT_COLORS[segState];
   return (
     <div
       className="flex h-[26px] items-center gap-1.5 px-2.5 cursor-pointer select-none rounded-md hover:bg-raised/60 transition-colors"
@@ -617,7 +730,23 @@ function SegmentHeader({
         ▾
       </span>
       {g ? (
-        <span className="w-2 h-2 rounded-full shrink-0 border border-black/10" style={{ background: g.color }} />
+        <span
+          className={`grid place-items-center w-4 h-4 rounded-full shrink-0 ${
+            segState === "running" || segState === "ask" ? "session-run-dot" : ""
+          }`}
+          style={{ color: folderColor }}
+          title={
+            segState === "idle"
+              ? undefined
+              : segState === "ask"
+                ? "分组内有会话待回答/待授权"
+                : segState === "running"
+                  ? "分组内有会话运行中"
+                  : "分组内有会话已中断"
+          }
+        >
+          <FolderIcon size={11} weight="fill" />
+        </span>
       ) : (
         <Chats size={11} className="text-faint shrink-0" />
       )}
@@ -663,7 +792,8 @@ function SessionDragOverlay({
     <DragOverlay dropAnimation={null}>
       <div className="flex items-center gap-2 px-2.5 py-2 rounded-lg bg-raised border border-edge-strong shadow-lg shadow-black/40 opacity-95 min-w-[160px]">
         {group && <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: group.color }} />}
-        <span className="w-1.5 h-1.5 rounded-full shrink-0 bg-accent" />
+        {/* 与行内一致的前置状态点：浮层不虚报运行态 */}
+        <RunDot session={session} />
         <span className="text-[12px] text-dim truncate max-w-40">{session.title}</span>
         <span className="flex-1" />
         <DotsSixVertical size={11} className="text-faint/60 shrink-0" />
@@ -691,17 +821,6 @@ function SessionItem({
   // 会话绑定的协作 Agent（创建时固化）：claude 紫 / opencode 蓝色点，与 Composer 选择器一致。
   const agent = useApp((s) => s.agents.find((a) => a.id === session.agentConfigId));
   const pinned = useApp((s) => (s.sessionPinned[session.ticketNo] ?? []).includes(session.id));
-  /**
-   * 运行状态（小圆点呼吸的唯一依据）：
-   * · live：该会话的 SSE 流仍在生成（sessionBusy 按会话粒度打点）；
-   * · demo：工单级运行遮罩 + 该会话是当前激活会话（demo 无会话级流信号）。
-   * 仅"被选中/挂载"不构成运行态——那是上轮被审查打回的语义错误。
-   */
-  const running = useApp((s) =>
-    s.mode === "live"
-      ? s.sessionBusy[session.id] === true
-      : s.busy[session.ticketNo] === true && s.activeSessionId[session.ticketNo] === session.id,
-  );
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: session.id,
     disabled: locked,
@@ -755,13 +874,8 @@ function SessionItem({
             <DotsSixVertical size={12} weight="bold" />
           </span>
         )}
-        {/* 运行指示点：仅会话运行中呼吸（accent 色 + 轻晕同步呼吸），归档/空闲为静态 */}
-        <span
-          className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-            running ? "bg-accent session-run-dot" : session.status === "archived" ? "bg-faint" : "bg-dim"
-          }`}
-          title={running ? "会话运行中" : undefined}
-        />
+        {/* 前置状态小圆点（T-105 第 6 轮）：蓝呼吸=运行中、红=中断、黄呼吸=待问答/待授权 */}
+        <RunDot session={session} />
         <div className="flex-1 min-w-0">
           <div className="text-[12px] text-dim truncate flex items-center gap-1">
             {pinned && (
@@ -787,16 +901,6 @@ function SessionItem({
             <span className="shrink-0">
               {new Date(session.createdAt).toLocaleDateString("zh-CN", { month: "short", day: "numeric" })}
             </span>
-            {running && (
-              <span className="run-badge run-badge-agent shrink-0" title="会话运行中">
-                <span className="eq-bars" aria-hidden>
-                  <i />
-                  <i />
-                  <i />
-                </span>
-                运行中
-              </span>
-            )}
           </div>
         </div>
         {showActions && !locked && (

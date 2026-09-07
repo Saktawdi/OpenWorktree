@@ -20,7 +20,6 @@ import {
   updateTicket,
   selectTicket,
   setStage,
-  requestCancel,
 } from "@/features/ticket/state";
 import { loadEngineConfig, livePresubmit, livePublish, liveReview, liveSyncBase } from "@/features/gate";
 import { setVerdict } from "@/features/gate/state";
@@ -50,6 +49,7 @@ import {
   updateSessionGroup as updateSessionGroupLocal,
 } from "@/features/session/state";
 import { pushSystemMessage } from "@/features/session/chat";
+import { demoAbort } from "@/demo/engine";
 import {
   loadProjects,
   createProjectLive,
@@ -540,7 +540,7 @@ export const actions = {
     if (appStore.getState().mode === "live") {
       return abortLive(no);
     }
-    requestCancel(no);
+    demoAbort(no);
     return Promise.resolve();
   },
   /* ─── 会话分组与置顶（T-105）：端侧软数据（live 后端暂无分组 API），demo/live 同一实现 ─── */

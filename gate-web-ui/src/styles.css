@@ -757,22 +757,23 @@ body {
   animation: spin 0.8s linear infinite;
 }
 
-/* ── 会话列表（T-105）：运行中小圆点呼吸 ──
-   语义与工单列表的运行中特效一脉相承：只有会话的 Agent 流正在生成时，
-   指示点才呼吸（accent 色 + 同步呼吸的轻晕）；选中/挂载不构成运行态。 */
+/* ── 会话列表（T-105）：前置状态小圆点 ──
+   三态：蓝色呼吸=运行中、红色静态=中断、黄色呼吸=待问答/待授权；空闲/归档为灰点。
+   呼吸只动 opacity 与 box-shadow，颜色一律取 currentColor（元素上直接写内联色值即可
+   换色），关键帧因此通用——同一动画驱动运行中与待决两种呼吸；中断为静态不挂此类。 */
 .session-run-dot {
   animation: sessionDotBreathe 2.2s ease-in-out infinite;
 }
 @keyframes sessionDotBreathe {
   0%, 100% {
     opacity: 1;
-    box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-accent) 10%, transparent);
+    box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 10%, transparent);
   }
   50% {
     opacity: 0.35;
     box-shadow:
-      0 0 0 2px color-mix(in srgb, var(--color-accent) 26%, transparent),
-      0 0 8px 1px color-mix(in srgb, var(--color-accent) 50%, transparent);
+      0 0 0 2px color-mix(in srgb, currentColor 26%, transparent),
+      0 0 8px 1px color-mix(in srgb, currentColor 50%, transparent);
   }
 }
 

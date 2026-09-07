@@ -79,6 +79,7 @@ export function seedDemo(force = false) {
     busy: {},
     sessionBusy: {},
     sessionEnded: {},
+    sessionInterrupted: {},
     gateBusy: {},
     usage: {},
     liveTurns: {},

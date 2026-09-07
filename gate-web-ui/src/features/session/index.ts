@@ -44,6 +44,8 @@ export {
   refreshTicketBusy,
   markSessionEnded,
   clearSessionEnded,
+  markSessionInterrupted,
+  clearSessionInterrupted,
   notePendingPermission,
   notePendingQuestion,
   dropSessionPendings,
