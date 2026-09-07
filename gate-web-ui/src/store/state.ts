@@ -120,6 +120,8 @@ export interface AppState {
   sessionBusy: Record<string, boolean>;
   /** Agent 开始运行的时间戳（运行监控面板用于展示运行时长）；空闲时移除条目。 */
   busySince: Record<string, number>;
+  /** 会话开始运行的时间戳（运行监控面板会话维度展示运行时长）；空闲时移除条目。 */
+  sessionBusySince: Record<string, number>;
   /** T-120 增强：会话结束提醒（key = 工单号）。done=回合正常完成；failed=出错/中止。打开工单或再次运行时清除。 */
   sessionEnded: Record<string, { kind: "done" | "failed"; at: number }>;
   /** T-105 第 6 轮：会话级中断标记（key = 会话 id）。回合出错/中止时点亮会话列表前置红点，
@@ -228,6 +230,7 @@ export const appStore = create<AppState>(() => ({
   busy: {},
   sessionBusy: {},
   busySince: {},
+  sessionBusySince: {},
   sessionEnded: {},
   sessionInterrupted: {},
   gateBusy: {},

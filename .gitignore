@@ -20,6 +20,7 @@ doc/local/
 
 # OhMyOpenCode agent state
 .omo/
+.gate/
 
 # Playwright MCP QA artifacts
 .playwright-mcp/

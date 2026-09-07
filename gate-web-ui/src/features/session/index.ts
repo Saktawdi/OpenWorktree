@@ -22,7 +22,7 @@ export {
   loadSessionQuestions,
   rejectSessionQuestion,
 } from "./permissions";
-export { liveSendPrompt, abortLive } from "./stream";
+export { liveSendPrompt, abortLive, isSessionStreamingLocally } from "./stream";
 export { draftCatalogFromOc } from "./model";
 export type { PermissionResponse } from "./model";
 export { focusComposer, insertIntoComposer, registerComposerBridge } from "./composerBridge";

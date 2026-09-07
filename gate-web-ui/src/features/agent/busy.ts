@@ -7,6 +7,7 @@ import { appStore } from "@/store";
 import { loadTickets } from "@/features/ticket/api";
 import { loadSessionPermissions, loadSessionQuestions } from "@/features/session/permissions";
 import { syncSessionTodos } from "@/features/session/api";
+import { isSessionStreamingLocally } from "@/features/session";
 
 interface RawBusyAgent {
   session_id: string;
@@ -45,18 +46,71 @@ export async function fetchBusyAgents(): Promise<void> {
   }
   try {
     const data = await api<{ count: number; running: RawBusyAgent[] }>("/api/agents/busy");
-    appStore.setState({
-      runningAgents: {
-        count: typeof data.count === "number" ? data.count : 0,
-        sessions: Array.isArray(data.running)
-          ? data.running.map((r) => ({
-              session_id: r.session_id,
-              title: r.title ?? null,
-              ticket_no: r.ticket_no ?? null,
-              cli: r.cli ?? null,
-            }))
-          : [],
-      },
+    const rawSessions = Array.isArray(data.running)
+      ? data.running.map((r) => ({
+          session_id: r.session_id,
+          title: r.title ?? null,
+          ticket_no: r.ticket_no ?? null,
+          cli: r.cli ?? null,
+        }))
+      : [];
+    const now = Date.now();
+
+    // 状态更新统一通过 appStore.setState 的 updater 函数读取最新 state，避免 await 期间状态竞态
+    appStore.setState((current) => {
+      const curSessionBusySince = { ...current.sessionBusySince };
+      const curSessionBusy = { ...current.sessionBusy };
+      const nextBusy = { ...current.busy };
+      const rawRunningSids = new Set(rawSessions.map((r) => r.session_id));
+
+      // 1. 同步当前接口明确返回的正在运行的后台智能体会话
+      for (const r of rawSessions) {
+        curSessionBusy[r.session_id] = true;
+        if (!curSessionBusySince[r.session_id]) {
+          curSessionBusySince[r.session_id] = now;
+        }
+        if (r.ticket_no) {
+          nextBusy[r.ticket_no] = true;
+        }
+      }
+
+      // 2. 清理已不在 rawSessions 中的外部/历史会话：
+      //    受保护对象：前端本地正在消费 SSE 事件流的会话（通过 isSessionStreamingLocally 查询）不可误删；
+      //    其余非本地流式中的外部、CLI 或历史残留会话在接口不再报告后，正常从 sessionBusy 与 sessionBusySince 中移除。
+      for (const sid of Object.keys(curSessionBusy)) {
+        if (!rawRunningSids.has(sid) && !isSessionStreamingLocally(sid)) {
+          delete curSessionBusy[sid];
+          delete curSessionBusySince[sid];
+        }
+      }
+
+      // 3. 工单级 busy 状态同步收敛：
+      //    某工单名下若无任何运行中的会话（无论是 rawSessions 还是本地受保护会话），则清除该工单的 busy 标记。
+      const runningTicketNos = new Set<string>();
+      for (const r of rawSessions) {
+        if (r.ticket_no) runningTicketNos.add(r.ticket_no);
+      }
+      const sessions = current.sessions ?? {};
+      for (const [no, sList] of Object.entries(sessions)) {
+        if ((sList ?? []).some((sess) => curSessionBusy[sess.id] === true)) {
+          runningTicketNos.add(no);
+        }
+      }
+      for (const no of Object.keys(nextBusy)) {
+        if (!runningTicketNos.has(no)) {
+          delete nextBusy[no];
+        }
+      }
+
+      return {
+        busy: nextBusy,
+        sessionBusy: curSessionBusy,
+        sessionBusySince: curSessionBusySince,
+        runningAgents: {
+          count: typeof data.count === "number" ? data.count : 0,
+          sessions: rawSessions,
+        },
+      };
     });
     // 当前查看会话刚结束一次后台运行（上一拍还在跑、这一拍已空闲）→ 收敛任务清单
     syncSessionTodosOnRunEnd();

@@ -155,7 +155,18 @@ export function setBusy(no: string, busy: boolean) {
 export function setSessionBusy(sessionId: string, busy: boolean) {
   // 会话再次进入运行态时熄灭中断红点（T-105 第 6 轮）：红点 → 蓝色呼吸点自然接管
   if (busy) clearSessionInterrupted(sessionId);
-  set((st) => ({ sessionBusy: { ...st.sessionBusy, [sessionId]: busy } }));
+  set((st) => {
+    const sessionBusySince = { ...st.sessionBusySince };
+    if (busy) {
+      sessionBusySince[sessionId] = st.sessionBusySince[sessionId] ?? Date.now();
+    } else {
+      delete sessionBusySince[sessionId];
+    }
+    return {
+      sessionBusy: { ...st.sessionBusy, [sessionId]: busy },
+      sessionBusySince,
+    };
+  });
 }
 
 /* ─── T-105 第 6 轮：会话级中断标记（会话列表前置红点的数据源） ───

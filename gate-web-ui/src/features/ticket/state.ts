@@ -44,16 +44,23 @@ export function selectTicket(no: string) {
 }
 
 /**
- * 运行监控面板的快速跳转：切回工作台并打开该工单的当前会话。
+ * 运行监控面板的快速跳转：切回工作台并打开该工单（可选定位指定会话）。
  * 工单属于其他项目时先切换项目，避免选中后列表里看不到它。
  */
-export function jumpToTicketSession(no: string) {
+export function jumpToTicketSession(no: string, sessionId?: string) {
   const st = s();
   const ticket = st.tickets.find((t) => t.ticketNo === no);
   if (ticket && ticket.projectId && ticket.projectId !== st.activeProjectId) {
     patch({ activeProjectId: ticket.projectId });
   }
-  patch({ view: "workbench" });
+  if (sessionId) {
+    patch({
+      view: "workbench",
+      activeSessionId: { ...st.activeSessionId, [no]: sessionId },
+    });
+  } else {
+    patch({ view: "workbench" });
+  }
   selectTicket(no);
 }
 
