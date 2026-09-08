@@ -334,12 +334,14 @@ class ClaudeHeadlessAdapterTest {
                 && "!".equals(t.textDelta())));
         assertTrue(chunks.stream().anyMatch(c -> c instanceof gate.domain.session.SessionStreamChunk.ThinkingChunk t
                 && "hmm".equals(t.thinkingDelta())));
+        // start 帧不带参数（null）：字面 "{}" 会给前端累积缓冲垫非法前缀（T-110 黑盒根因）。
         assertTrue(chunks.stream().anyMatch(c -> c instanceof gate.domain.session.SessionStreamChunk.ToolCallChunk tc
-                && "RUNNING".equals(tc.status()) && "Bash".equals(tc.toolName()) && "{}".equals(tc.argumentDelta())));
+                && "RUNNING".equals(tc.status()) && "Bash".equals(tc.toolName()) && tc.argumentDelta() == null));
         assertTrue(chunks.stream().anyMatch(c -> c instanceof gate.domain.session.SessionStreamChunk.ToolCallChunk tc
                 && tc.argumentDelta() != null && tc.argumentDelta().contains("cmd")));
+        // stop 帧携带拼齐的完整参数 JSON：前端按快照替换定格，live 卡片 IN 区不再空白。
         assertTrue(chunks.stream().anyMatch(c -> c instanceof gate.domain.session.SessionStreamChunk.ToolCallChunk tc
-                && "SUCCESS".equals(tc.status())));
+                && "SUCCESS".equals(tc.status()) && "{\"cmd\":\"dir\"}".equals(tc.argumentDelta())));
         assertTrue(chunks.stream().anyMatch(c -> c instanceof gate.domain.session.SessionStreamChunk.UsageChunk u
                 && u.usage() != null && u.usage().totalTokens() == 15L));
 

@@ -267,7 +267,7 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
             }
             if (parsed.errorText() != null && !parsed.errorText().isBlank()) {
                 // result.is_error：claude 以 exit 0 结束但回合失败（如网关 4xx），按错误落库。
-                insertErrorMessage(sessionId, parsed.errorText(), now);
+                insertErrorMessage(sessionId, parsed.errorText(), clock.now());
                 emitChunk(sessionId, new SessionStreamChunk.ErrorChunk(sessionId, "PROCESS_ERROR",
                         parsed.errorText(), now));
             } else {
@@ -275,9 +275,11 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
                 for (int i = 0; i < texts.size(); i++) {
                     // 一轮 run 只落一条 assistant：时间线（parts）与 usage 都挂最后一条，
                     // 前面多条仅出现在多回合 run（rounds within one process）。
+                    // 时间戳逐条现取：与用户消息共用回合开始时刻会让历史排序只剩 UUID 破平
+                    // （随机序），live 与历史视图渲染顺序不一致（T-110 实测）。
                     insertAssistantMessage(sessionId, texts.get(i),
                             i == texts.size() - 1 ? parsed.parts() : List.of(),
-                            i == texts.size() - 1 ? parsed.usage() : null, parsed.degraded(), now,
+                            i == texts.size() - 1 ? parsed.usage() : null, parsed.degraded(), clock.now(),
                             i == texts.size() - 1 ? actualModelProvider(parsed, argv.requestProvider()) : null,
                             i == texts.size() - 1 ? actualModelId(parsed, argv.requestModelId()) : null,
                             i == texts.size() - 1 ? argv.requestVariant() : null);
@@ -390,6 +392,12 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
      * ——前端按 call_id 聚合、按 argument_delta 拼参数，与 opencode 的 tool_call 契约一致。
      *
      * <p>每个进程一份实例：块索引在行间有状态，随 run 创建、随 run 丢弃。
+     *
+     * <p>参数帧契约（与前端 stream.ts 的快照/分片启发式对齐）：start 不带参数（null，
+     * 前端跳过、不污染累积缓冲）；分片原样转发；stop 携带拼齐的完整 JSON（前端按快照
+     * 整体替换，卡片定格时参数完整）。此前 start/stop 发字面 "{}"：start 的 "{}" 给累积
+     * 缓冲垫了非法前缀，stop 的 "{}" 又被判为完整快照、把真参数整体覆盖——live 视图
+     * 工具卡片永远显示 IN {}（黑盒）。
      */
     private final class StreamEcho {
         private final String sessionId;
@@ -467,7 +475,7 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
                             toolNames.put(index, name);
                             toolInputs.remove(index);
                             emitChunk(sessionId, new SessionStreamChunk.ToolCallChunk(sessionId,
-                                    callId, name, "{}", null, "RUNNING", now));
+                                    callId, name, null, null, "RUNNING", now));
                         }
                     }
                 } else if ("content_block_stop".equals(eventType) && toolCallIds.containsKey(index)) {
@@ -475,8 +483,10 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
                     if (accumulated != null) {
                         journalTodoSnapshot(toolNames.get(index), accumulated.toString());
                     }
+                    // 终态帧携带拼齐的完整参数（无参数工具即 "{}"），前端按快照替换定格。
                     emitChunk(sessionId, new SessionStreamChunk.ToolCallChunk(sessionId,
-                            toolCallIds.get(index), toolNames.get(index), "{}", null, "SUCCESS", now));
+                            toolCallIds.get(index), toolNames.get(index),
+                            accumulated == null ? "{}" : accumulated.toString(), null, "SUCCESS", now));
                 }
             } catch (Exception ignored) {
             }
@@ -512,17 +522,18 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
             ParsedOutput parsed = parseStream(run.stdout());
             if (parsed.errorText() != null && !parsed.errorText().isBlank()) {
                 // result.is_error：claude 以 exit 0 结束但回合失败（如网关 4xx），按错误落库。
-                insertErrorMessage(session.id(), parsed.errorText(), now);
+                insertErrorMessage(session.id(), parsed.errorText(), clock.now());
                 emitChunk(session.id(), new SessionStreamChunk.ErrorChunk(session.id(), "PROCESS_ERROR",
                         parsed.errorText(), now));
             } else if (!parsed.assistantTexts().isEmpty()) {
                 List<String> texts = parsed.assistantTexts();
                 for (int i = 0; i < texts.size(); i++) {
                     // 时间线（parts）与 usage 都挂最后一条 assistant；前面多条仅在
-                    // 单个进程产出多回合时出现。
+                    // 单个进程产出多回合时出现。时间戳逐条现取（同 startLocked：与用户
+                    // 消息共用回合开始时刻会让历史排序被随机 UUID 破平打乱）。
                     insertAssistantMessage(session.id(), texts.get(i),
                             i == texts.size() - 1 ? parsed.parts() : List.of(),
-                            i == texts.size() - 1 ? parsed.usage() : null, parsed.degraded(), now,
+                            i == texts.size() - 1 ? parsed.usage() : null, parsed.degraded(), clock.now(),
                             i == texts.size() - 1 ? actualModelProvider(parsed, planned.requestProvider()) : null,
                             i == texts.size() - 1 ? actualModelId(parsed, planned.requestModelId()) : null,
                             i == texts.size() - 1 ? planned.requestVariant() : null);
@@ -534,7 +545,7 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
                 String detail = run.timedOut()
                         ? "claude 运行超时被终止"
                         : "claude 未产生任何输出（exit=" + run.exitCode() + "）";
-                insertErrorMessage(session.id(), detail, now);
+                insertErrorMessage(session.id(), detail, clock.now());
                 emitChunk(session.id(), new SessionStreamChunk.ErrorChunk(session.id(), "PROCESS_ERROR", detail, now));
             }
             SessionUsage cumulative = session.cumulativeUsage().add(parsed.usage == null ? SessionUsage.EMPTY : parsed.usage);

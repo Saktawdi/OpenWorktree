@@ -189,8 +189,11 @@ public final class JdbcSessionRepository implements SessionRepository {
 
     @Override
     public List<SessionMessage> findMessages(String sessionId) {
+        // rowid 破平：claude headless 一回合多条消息共享同一 created_at（回合开始取一次
+        // 时间），按 id（随机 UUID）破平等于随机洗牌——历史视图里用户消息会排到触发它
+        // 的 agent 回复之后。rowid = 插入序 = 真实时序，两代 CLI 都严格更优。
         return jdbc.query("""
-                SELECT * FROM session_message WHERE session_id = ? ORDER BY created_at, id
+                SELECT * FROM session_message WHERE session_id = ? ORDER BY created_at, rowid
                 """, (ResultSet rs, int n) -> {
             String id = rs.getString("id");
             String blobPath = rs.getString("content_blob");
@@ -276,7 +279,7 @@ public final class JdbcSessionRepository implements SessionRepository {
         List<String> blobs = jdbc.query("""
                 SELECT tool_calls_blob FROM session_message
                 WHERE session_id = ? AND tool_calls_blob IS NOT NULL
-                ORDER BY created_at DESC, id DESC
+                ORDER BY created_at DESC, rowid DESC
                 """, (rs, n) -> rs.getString(1), sessionId);
         for (String blob : blobs) {
             for (ToolCall tc : parseToolCalls(blob)) {
