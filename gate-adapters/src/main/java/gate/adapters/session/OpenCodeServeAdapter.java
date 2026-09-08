@@ -90,6 +90,8 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
     static final long UPSTREAM_STALL_TIMEOUT_MS = 90_000L;
     /** Delay between upstream reconnect attempts after a drop. */
     static final long UPSTREAM_RECONNECT_DELAY_MS = 2_000L;
+    /** Serve 死亡判定：上游连续重连失败达到该次数即触发会话自愈（healDeadServe）。 */
+    static final int UPSTREAM_HEAL_AFTER_FAILED_CONNECTS = 3;
     /** Timeout for permission reply / list HTTP calls against the serve instance. */
     static final Duration PERMISSION_HTTP_TIMEOUT = Duration.ofSeconds(5);
 
@@ -409,8 +411,18 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
     public void respondPermission(String sessionId, String permissionId, String response) {
         postWithRecovery(sessionId, "/permission/" + permissionId + "/reply",
                 "{\"reply\":\"" + response + "\"}", "permission reply", permissionId,
-                resp -> {
+                (resp, healed) -> {
                     if (resp.statusCode() == 404) {
+                        if (healed) {
+                            // 自愈后的全新 serve 不持有旧实例的待决授权：本地关卡片即可，
+                            // 用户的允许意图对已死的工具调用无处落地（下个回合重新触发时
+                            // 会再次请求授权）。
+                            log.info("opencode", "permission.reply-lost", "sessionId", sessionId,
+                                    "permissionId", permissionId);
+                            emitChunk(sessionId, new SessionStreamChunk.PermissionRepliedChunk(
+                                    sessionId, permissionId, response, false, clock.now()));
+                            return;
+                        }
                         // Already answered (e.g. the auto-allow won the race); treat as resolved.
                         log.info("opencode", "permission.already-resolved", "sessionId", sessionId,
                                 "permissionId", permissionId);
@@ -431,7 +443,7 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
      * {@link #ensureServe} 懒复活（新端口、重接上游流）后重试一次；仍失败才抛错。
      */
     private void postWithRecovery(String sessionId, String path, String body, String what,
-                                  String ref, java.util.function.Consumer<HttpResponse<String>> check) {
+                                  String ref, java.util.function.BiConsumer<HttpResponse<String>, Boolean> check) {
         Integer port = sessionPorts.get(sessionId);
         HttpResponse<String> resp = null;
         Exception postError = null;
@@ -442,6 +454,7 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                 postError = e;
             }
         }
+        boolean healed = false;
         if (resp == null) {
             // 端口缺失或 POST 失败：serve 大概率已死。失效端口先清理（否则 ensureServe
             // 会盲返回旧端口，重试等于没修），再按 send 路径同一套懒复活拉起新 serve
@@ -450,10 +463,12 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                 if (port != null && !serveHealthy(port)) {
                     log.warn("opencode", "reply.serve-dead-heal", "sessionId", sessionId,
                             "port", port);
-                    stopUpstream(sessionId);
-                    killProcess(port);
-                    ports.release(port);
-                    sessionPorts.remove(sessionId);
+                    healDeadServe(sessionId, port);
+                    healed = true;
+                } else if (port == null) {
+                    // 端口映射已丢（reader 自愈/后端重启清理过）：ensureServe 复活的是
+                    // 全新 serve 实例，旧实例的待决卡片（权限/提问）不可能还在。
+                    healed = true;
                 }
                 int fresh = ensureServe(sessionId);
                 resp = post("http://127.0.0.1:" + fresh + path, body, PERMISSION_HTTP_TIMEOUT);
@@ -469,7 +484,7 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                                 "opencode " + what + " failed: " + ref, e);
             }
         }
-        check.accept(resp);
+        check.accept(resp, healed);
     }
 
     /** 端口快速探活（/health，500ms）：连接拒绝 = 进程已死，其余一律视为存活。 */
@@ -482,6 +497,50 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
             return resp.statusCode() == 200;
         } catch (Exception e) {
             return false;
+        }
+    }
+
+    /**
+     * serve 进程死亡的自愈（reader 重连死循环的出口）：在途回合按 degraded 冲刷落库、
+     * 释放随回合蒸发的 busy 计数、给浏览器补发 DoneChunk（否则 UI 转圈到看门狗兜底、
+     * 排队消息永远等不到 busy→idle 边沿），再清理死进程与端口映射。serve 本体不在这里
+     * 复活——下次使用（发消息/应答卡片）由 ensureServe 懒复活，避免为废弃会话常驻空转
+     * 进程。持 per-session 复活锁，与 reply 自愈/send 路径互斥。
+     *
+     * @return true = 本调用完成了自愈（或发现已被其他路径自愈），reader 可以终止；
+     *         false = serve 实际存活（如仅限流/SSE 抖动），reader 继续重连。
+     */
+    private boolean healDeadServe(String sessionId, int deadPort) {
+        Object lock = resurrectLocks.computeIfAbsent(sessionId, k -> new Object());
+        synchronized (lock) {
+            Integer current = sessionPorts.get(sessionId);
+            Upstream up = upstreams.get(sessionId);
+            if (current == null && up == null) {
+                return true; // 已被其他路径自愈过，无需重复
+            }
+            if (current != null && current != deadPort) {
+                return true; // 已复活到新端口
+            }
+            if (serveHealthy(deadPort)) {
+                return false; // 进程仍存活：只是 SSE 抖动，保持既有重连语义
+            }
+            log.warn("opencode", "serve.dead-heal", "sessionId", sessionId, "port", deadPort,
+                    "failedConnects", UPSTREAM_HEAL_AFTER_FAILED_CONNECTS);
+            if (up != null) {
+                // 冲刷半截回合必须先于摘除：turnHasNewContent 只在此处还有机会落库。
+                up.flushTurn("serve-dead");
+            }
+            // 进程死亡 = 所有在途回合的 idle/error 终点一起蒸发，busy 全量清零
+            // （与 abort 的兜底语义一致，不用逐次 decrement）。
+            inFlightCounts.remove(sessionId);
+            acceptedSinceRelease.remove(sessionId);
+            String cliSessionId = sessions.find(sessionId).map(Session::cliSessionId).orElse(null);
+            emitChunk(sessionId, new SessionStreamChunk.DoneChunk(sessionId, cliSessionId, clock.now()));
+            stopUpstream(sessionId);
+            killProcess(deadPort);
+            ports.release(deadPort);
+            sessionPorts.remove(sessionId, deadPort);
+            return true;
         }
     }
 
@@ -588,8 +647,20 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
         }
         String body = "{\"answers\":[" + String.join(",", encoded) + "]}";
         postWithRecovery(sessionId, "/question/" + requestId + "/reply", body, "question reply",
-                requestId, resp -> {
+                requestId, (resp, healed) -> {
                     if (resp.statusCode() == 404) {
+                        if (healed) {
+                            // 自愈后的全新 serve 不持有旧实例的提问回合：用户的回答无处落地，
+                            // 静默吞掉会让会话永久僵死（busy 无终点、排队消息无法泵出）。
+                            // 降级为普通消息触发新回合——答案随消息送达模型，残余的待决
+                            // 授权由 send 路径的 rejectPendingPermissions 兜底清理。
+                            String digest = questionAnswerDigest(sessionId, requestId, answers);
+                            log.info("opencode", "question.reply-lost-resend", "sessionId", sessionId,
+                                    "requestId", requestId);
+                            removePendingQuestion(sessionId, requestId);
+                            sendMessage(new AgentSessionPort.SendRequest(sessionId, digest, true));
+                            return;
+                        }
                         // Already answered/rejected elsewhere; treat as resolved.
                         log.info("opencode", "question.already-resolved", "sessionId", sessionId,
                                 "requestId", requestId);
@@ -603,10 +674,57 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
         removePendingQuestion(sessionId, requestId);
     }
 
+    /**
+     * 回答降级文本：原问题卡片的问答对折叠成 "Q: … / A: …" 消息，让模型在丢失原提问
+     * 回合后仍能拿到用户决策的语义（而不是一个裸选项列表）。
+     */
+    private String questionAnswerDigest(String sessionId, String requestId, List<List<String>> answers) {
+        List<List<String>> picked = answers == null ? List.of() : answers;
+        QuestionRequest pending = null;
+        Map<String, QuestionRequest> local = pendingQuestions.get(sessionId);
+        if (local != null) {
+            pending = local.get(requestId);
+        }
+        StringBuilder sb = new StringBuilder("[回答已送达（原提问因服务重启丢失，以下为问答内容）]");
+        List<QuestionRequest.QuestionPrompt> prompts = pending == null
+                ? List.of() : pending.questions();
+        for (int i = 0; i < prompts.size(); i++) {
+            sb.append("\nQ: ").append(prompts.get(i).question());
+            String answer = i < picked.size() && picked.get(i) != null && !picked.get(i).isEmpty()
+                    ? String.join("、", picked.get(i))
+                    : "（未选择）";
+            sb.append("\nA: ").append(answer);
+        }
+        if (prompts.isEmpty()) {
+            // pending 快照也没了（如后端重启后内存表为空）：把原始选项串行送达，不丢语义。
+            sb.append("\nA: ");
+            for (int i = 0; i < picked.size(); i++) {
+                List<String> answer = picked.get(i);
+                sb.append(i == 0 ? "" : " | ")
+                        .append(answer == null ? "" : String.join("、", answer));
+            }
+        }
+        return sb.toString();
+    }
+
     @Override
     public void rejectQuestion(String sessionId, String requestId) {
         postWithRecovery(sessionId, "/question/" + requestId + "/reject", "{}", "question reject",
-                requestId, resp -> {
+                requestId, (resp, healed) -> {
+                    if (resp.statusCode() == 404) {
+                        if (healed) {
+                            // 全新 serve 不持有旧提问：本地关卡片（UI 收到 rejected 事件即收敛）。
+                            log.info("opencode", "question.reject-lost", "sessionId", sessionId,
+                                    "requestId", requestId);
+                            emitChunk(sessionId, new SessionStreamChunk.QuestionRepliedChunk(
+                                    sessionId, requestId, true, List.of(), false, clock.now()));
+                            return;
+                        }
+                        // Already rejected elsewhere; treat as resolved.
+                        log.info("opencode", "question.already-resolved", "sessionId", sessionId,
+                                "requestId", requestId);
+                        return;
+                    }
                     if (resp.statusCode() != 404 && resp.statusCode() / 100 != 2) {
                         throw new GateException(GateErrorCode.GATE_ERROR_IO,
                                 "opencode question reject failed: HTTP " + resp.statusCode() + " " + resp.body());
@@ -1294,6 +1412,10 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
         volatile long lastEventAt = System.currentTimeMillis();
         volatile long lastDoneAt;
         volatile InputStream currentBody;
+        // 连续重连失败计数：成功建流（connected）即清零；达到 UPSTREAM_HEAL_AFTER_FAILED_CONNECTS
+        // 视为 serve 进程死亡，触发 healDeadServe（否则每 2s 一条 dropped WARN 死循环，回合
+        // 终点与 busy 释放随进程一起蒸发，会话永久僵死）。
+        final AtomicInteger failedConnects = new AtomicInteger();
         // Turn bookkeeping: if a turn ends (idle) without any assistant completion, the buffered
         // session.error is persisted as an ERROR row so failures survive page reloads.
         volatile boolean assistantPersistedSinceSend;
@@ -1401,6 +1523,7 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                             http.send(req.build(), HttpResponse.BodyHandlers.ofInputStream());
                     lastEventAt = System.currentTimeMillis();
                     currentBody = resp.body();
+                    failedConnects.set(0);
                     log.info("opencode", "upstream.connected", "sessionId", sessionId,
                             "port", port, "lastEventId", lastEventId);
                     try (BufferedReader reader = new BufferedReader(
@@ -1418,8 +1541,17 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                 } catch (InterruptedException e) {
                     return;
                 } catch (Exception e) {
+                    int failures = failedConnects.incrementAndGet();
                     log.warn("opencode", "upstream.dropped", "sessionId", sessionId,
-                            "port", port, "error", e.getClass().getSimpleName());
+                            "port", port, "error", e.getClass().getSimpleName(),
+                            "failedConnects", failures);
+                    // serve 进程死亡不会自愈：连续失败达到阈值即触发会话自愈（冲刷在途回合、
+                    // 释放 busy、补发 done、清理端口），然后终止本 reader；下次使用由
+                    // ensureServe 懒复活（opencode 侧会话数据完好）。
+                    if (!stopped && failures >= UPSTREAM_HEAL_AFTER_FAILED_CONNECTS
+                            && healDeadServe(sessionId, port)) {
+                        return;
+                    }
                 } finally {
                     currentBody = null;
                 }
