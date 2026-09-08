@@ -56,6 +56,9 @@ import {
   type QuoteWhen,
 } from "./quotes";
 import { quoteStore } from "./quote-store";
+import { SELECTION_DEFAULTS, type selectionSettingsStore } from "./selection-settings";
+
+type SelectionSettingsStore = typeof selectionSettingsStore;
 
 /* 与宿主图标白名单同名的本地映射（插件自带 phosphor，React 走宿主共享实例） */
 const ICONS = {
@@ -83,6 +86,8 @@ interface Props {
   hasKv: boolean;
   onChange(next: QuoteItem[]): void;
   loadMcpTools(): Promise<{ tools: McpToolInfo[] }>;
+  selectionSettings: SelectionSettingsStore;
+  canConfigureSelection: boolean;
 }
 
 interface Draft {
@@ -329,8 +334,15 @@ function QuoteEditor({
 
 /* ─── 管理面板 ─── */
 
-export function QuotesManager({ hasKv, onChange, loadMcpTools }: Props) {
+export function QuotesManager({
+  hasKv,
+  onChange,
+  loadMcpTools,
+  selectionSettings,
+  canConfigureSelection,
+}: Props) {
   const quotes = useSyncExternalStore(quoteStore.subscribe, quoteStore.get);
+  const selSettings = useSyncExternalStore(selectionSettings.subscribe, selectionSettings.get);
   const [editingId, setEditingId] = useState<string | "new" | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [importOpen, setImportOpen] = useState(false);
@@ -562,6 +574,62 @@ export function QuotesManager({ hasKv, onChange, loadMcpTools }: Props) {
           }}
         />
       )}
+
+      {/* 划选代码交互设置（划选弹出菜单的「引用并追问」） */}
+      <div className="rounded-xl border border-edge bg-raised/40 p-3.5 space-y-3 mt-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="text-[13px] font-semibold text-ink">划选交互：「引用并追问」</div>
+            <div className="text-[11.5px] text-faint mt-0.5">
+              在工单会话或代码对比区域划选文本时，是否在快捷菜单中显示本动作
+            </div>
+          </div>
+          <label className="relative inline-flex items-center cursor-pointer">
+            <input
+              type="checkbox"
+              className="sr-only peer"
+              checked={selSettings.enabled}
+              disabled={!canConfigureSelection}
+              onChange={(e) => {
+                selectionSettings.set({ ...selSettings, enabled: e.target.checked });
+                say(e.target.checked ? "已启用划选交互" : "已关闭划选交互");
+              }}
+            />
+            <div className="w-9 h-5 bg-edge-strong peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-accent" />
+          </label>
+        </div>
+
+        {selSettings.enabled && (
+          <div className="grid sm:grid-cols-2 gap-3 pt-2 border-t border-edge/60">
+            <label className="block">
+              <span className="field-label">菜单显示文案</span>
+              <input
+                className="text-input text-[12px]"
+                value={selSettings.label}
+                disabled={!canConfigureSelection}
+                maxLength={20}
+                placeholder={SELECTION_DEFAULTS.label}
+                onChange={(e) =>
+                  selectionSettings.set({ ...selSettings, label: e.target.value })
+                }
+              />
+            </label>
+            <label className="block">
+              <span className="field-label">追问前缀模板</span>
+              <input
+                className="text-input text-[12px]"
+                value={selSettings.prompt}
+                disabled={!canConfigureSelection}
+                maxLength={100}
+                placeholder={SELECTION_DEFAULTS.prompt}
+                onChange={(e) =>
+                  selectionSettings.set({ ...selSettings, prompt: e.target.value })
+                }
+              />
+            </label>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

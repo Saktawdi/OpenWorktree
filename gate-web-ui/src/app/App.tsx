@@ -15,6 +15,7 @@ import { ConnectionDialog } from "@/app/components/ConnectionDialog";
 import { StageChangeConfirmDialog } from "@/features/ticket/components/StageChangeConfirmDialog";
 import { SelectionQuoteLayer } from "@/features/session";
 import { Toast } from "@/shared/components/Toast";
+import { PluginSlot } from "@/app/plugins/components/PluginSlot";
 
 export default function App() {
   const booted = useApp((s) => s.booted);
@@ -51,6 +52,8 @@ export default function App() {
       <StageChangeConfirmDialog />
       <TerminalWorkbench />
       <SelectionQuoteLayer />
+      {/* 全局悬浮挂件区（floating.widgets：跨页面常驻，如 LLM 小助手浮窗） */}
+      <PluginSlot name="floating.widgets" />
       <Toast />
     </div>
   );
