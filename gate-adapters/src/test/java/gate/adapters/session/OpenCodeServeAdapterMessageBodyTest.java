@@ -105,4 +105,11 @@ class OpenCodeServeAdapterMessageBodyTest {
         assertTrue(body.startsWith("{\"parts\":[{\"type\":\"text\",\"text\":\"\"},"), body);
         assertTrue(body.endsWith("\"variant\":\"high\"}"), body);
     }
+
+    @Test
+    void deliveryFieldIsIncludedWhenSpecified() {
+        String body = OpenCodeServeAdapter.messageBody(config("p/m", List.of()), "steer me",
+                List.of(), "prov", "mod", "var", "steer");
+        assertTrue(body.contains("\"delivery\":\"steer\""), body);
+    }
 }

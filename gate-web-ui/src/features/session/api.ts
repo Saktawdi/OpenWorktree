@@ -9,6 +9,7 @@ import { fileToBase64 } from "@/shared/attachments";
 import type { ChatItem, TodoItem } from "@/shared/types";
 import { mapHistoryMessage, mapSession, type RawMessage, type RawSession } from "./model";
 import { dropLiveTurn, applyReplyMetaDefaults } from "./chat";
+import { clearSessionQueue } from "./queue";
 import { dropSessionExtras, dropSessionPendings, refreshTicketBusy, setContextTokens, setSessionBusy } from "./state";
 
 export function ticketNoOfSession(id: string): string | null {
@@ -54,9 +55,14 @@ export async function loadTicketSessions(no: string) {
     };
   });
   // 列表收敛：本工单从上次列表里消失的会话，其置顶/分组归属随刷新抹除，
-  // 避免带外删除（他端/后端）后归属残留被同 id 重建会话静默继承
+  // 避免带外删除（他端/后端）后归属残留被同 id 重建会话静默继承；排队消息是
+  // 按会话 id 键控的软数据，会话已消亡也一并清理（否则残留队列会在该会话永远
+  // 缺席的情况下被泵反复尝试投递）。
   const gone = [...prevIds].filter((id) => !list.some((s) => s.id === id));
-  if (gone.length > 0) dropSessionExtras(gone);
+  if (gone.length > 0) {
+    dropSessionExtras(gone);
+    for (const sid of gone) clearSessionQueue(sid);
+  }
 }
 
 /**
@@ -70,9 +76,13 @@ export async function refreshTicketSessionsMeta(no: string) {
     const data = await api<{ sessions: RawSession[] }>(`/api/tickets/${no}/sessions`);
     const list = (data.sessions ?? []).map((s) => mapSession(no, s));
     appStore.setState((st) => ({ sessions: { ...st.sessions, [no]: list } }));
-    // 与 loadTicketSessions 同口径的归属收敛（被动刷新路径也要收敛消失会话的残留）
+    // 与 loadTicketSessions 同口径的归属收敛（被动刷新路径也要收敛消失会话的残留）；
+    // 排队消息一并清理（见 loadTicketSessions 的注释）
     const gone = [...prevIds].filter((id) => !list.some((s) => s.id === id));
-    if (gone.length > 0) dropSessionExtras(gone);
+    if (gone.length > 0) {
+      dropSessionExtras(gone);
+      for (const sid of gone) clearSessionQueue(sid);
+    }
   } catch {
     /* 静默失败：下个常规动作还有一次刷新机会 */
   }
@@ -103,6 +113,11 @@ export async function deleteSessionLive(id: string, ticketNo: string) {
     return;
   }
   dropLiveTurn(id);
+  // 排队消息必须先于 setSessionBusy(id,false) 清理（T-107）：store 订阅是同步触发的，
+  // busy→false 会命中 attachQueueWatcher 的「运行→空闲」分支并立刻泵队——若队列还在，
+  // 队首消息会在会话已删除后仍被投递（404 + 会话失败报错）。先清空队列，watcher 再跑
+  // 时队列已空，天然 no-op。
+  clearSessionQueue(id);
   setSessionBusy(id, false);
   // 会话删除后其未决权限/提问随会话消亡，工单列表的待决徽标同步注销
   dropSessionPendings(id);

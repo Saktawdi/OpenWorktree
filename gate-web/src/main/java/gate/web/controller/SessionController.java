@@ -356,6 +356,7 @@ public final class SessionController implements WebController {
                 .orElseThrow(() -> new GateException(GateErrorCode.USAGE, "no such session: " + sessionId));
         Map<String, Object> req = Json.parseObject(ctx.body());
         String message = str(req, "message");
+        String delivery = str(req, "delivery");
         List<AgentSessionPort.Attachment> attachments = parseAttachments(req);
         if ((message == null || message.isBlank()) && attachments.isEmpty()) {
             throw new GateException(GateErrorCode.USAGE, "message is required");
@@ -366,7 +367,7 @@ public final class SessionController implements WebController {
         List<String> imagePaths = saveChatThumbnails(session, attachments);
         String outgoing = appendChatImageRefs(message == null ? "" : message, imagePaths);
         String taskId = agentSessionPort.sendMessage(
-                new AgentSessionPort.SendRequest(sessionId, outgoing, true, attachments));
+                new AgentSessionPort.SendRequest(sessionId, outgoing, true, attachments, delivery));
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("task_id", taskId);
         if (!imagePaths.isEmpty()) {

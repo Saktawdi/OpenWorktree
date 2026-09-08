@@ -31,6 +31,7 @@ import {
   switchSessionModelLive,
   abortLive,
   liveSendPrompt,
+  clearSessionQueue,
 } from "@/features/session";
 import {
   archiveSession as archiveSessionLocal,
@@ -85,10 +86,10 @@ import { verifyToken } from "@/net";
 import type { AgentConfig, OpenCodeProvider, PendingAttachment, Project, Ticket } from "@/shared/types";
 
 export const actions = {
-  sendPrompt(no: string, text: string, attachments: PendingAttachment[] = []) {
+  sendPrompt(no: string, text: string, attachments: PendingAttachment[] = [], delivery?: "steer") {
     // text 已含发送时统一追加的 [图片 #n] 引用行（引用只占位 chip，不进输入框正文）；
     // live 走 attachments 数组，demo 无后端，图片以 data URL 直接进气泡（不入克隆工作区）。
-    if (appStore.getState().mode === "live") return liveSendPrompt(no, text, attachments);
+    if (appStore.getState().mode === "live") return liveSendPrompt(no, text, attachments, delivery);
     return demo.demoSendPrompt(
       no,
       text,
@@ -511,6 +512,9 @@ export const actions = {
       void deleteSessionLive(id, no);
       return;
     }
+    // 与 live 的 deleteSessionLive 同口径：demo 删除会话时先清队列，避免残留队列
+    // 被泵自动投递到该工单的其它/新建会话。
+    clearSessionQueue(id);
     deleteSessionLocal(no, id);
   },
   switchSession(no: string, id: string) {

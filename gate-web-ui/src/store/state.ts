@@ -34,6 +34,8 @@ import type {
   QuoteChip,
   EvidenceBundle,
   SessionGroup,
+  FollowUpBehavior,
+  QueuedMessage,
 } from "@/shared/types";
 import {
   DEMO_AGENTS,
@@ -47,10 +49,12 @@ import {
 import {
   loadAgentId,
   loadComposerDrafts,
+  loadFollowUpBehavior,
   loadGatePanelCollapsed,
   loadGateSections,
   loadKanbanStages,
   loadPendingQuotes,
+  loadQueuedMessages,
   loadSessionGroups,
   loadSessionPinned,
   loadTheme,
@@ -196,6 +200,10 @@ export interface AppState {
   gatePanelCollapsed: boolean;
   /** 右侧面板三段的展开状态（localStorage 持久化）。 */
   gateSections: GateSections;
+  /** Agent 输出时的跟随行为：queue（排队，默认） | steer（插队）。 */
+  followUpBehavior: FollowUpBehavior;
+  /** 按会话隔离的排队消息（key = sessionId；localStorage 持久化）。 */
+  queuedMessages: Record<string, QueuedMessage[]>;
 }
 
 const persistedGroups = loadSessionGroups();
@@ -278,6 +286,8 @@ export const appStore = create<AppState>(() => ({
   stageChangeConfirm: null,
   gatePanelCollapsed: loadGatePanelCollapsed(),
   gateSections: loadGateSections(),
+  followUpBehavior: loadFollowUpBehavior(),
+  queuedMessages: loadQueuedMessages(),
 }));
 
 export function useApp<T>(selector: (st: AppState) => T): T {

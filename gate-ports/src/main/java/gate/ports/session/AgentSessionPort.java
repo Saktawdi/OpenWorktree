@@ -118,15 +118,21 @@ public interface AgentSessionPort {
             String sessionId,
             String message,
             boolean resume,
-            List<Attachment> attachments) {
+            List<Attachment> attachments,
+            String delivery) {
 
         public SendRequest {
             attachments = attachments == null ? List.of() : List.copyOf(attachments);
         }
 
-        /** Legacy shape: no attachments (still the common case). */
+        /** Legacy shape: no delivery override, with attachments. */
+        public SendRequest(String sessionId, String message, boolean resume, List<Attachment> attachments) {
+            this(sessionId, message, resume, attachments, null);
+        }
+
+        /** Legacy shape: no attachments, no delivery override. */
         public SendRequest(String sessionId, String message, boolean resume) {
-            this(sessionId, message, resume, List.of());
+            this(sessionId, message, resume, List.of(), null);
         }
     }
 

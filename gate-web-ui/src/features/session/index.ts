@@ -22,11 +22,22 @@ export {
   loadSessionQuestions,
   rejectSessionQuestion,
 } from "./permissions";
-export { liveSendPrompt, abortLive, isSessionStreamingLocally } from "./stream";
+export { liveSendPrompt, abortLive, liveSendToSession, isSessionStreamingLocally } from "./stream";
 export { draftCatalogFromOc, splitModelRef } from "./model";
 export type { PermissionResponse } from "./model";
 export { focusComposer, insertIntoComposer, registerComposerBridge } from "./composerBridge";
 export { applyTodosSnapshot, dropSessionTodos } from "./todos";
+export {
+  addMessageToQueue,
+  removeQueuedMessage,
+  popQueuedMessageToInput,
+  reorderQueuedMessages,
+  clearSessionQueue,
+  kickQueuePump,
+  setFollowUpBehavior,
+  getQueuedMessages,
+  EMPTY_QUEUE,
+} from "./queue";
 export {
   setSessionModels,
   setSessionModelSel,
