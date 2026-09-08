@@ -11,17 +11,23 @@ import { loadSessionCatalog } from "@/features/session/catalog";
 import { loadSessionPermissions, loadSessionQuestions } from "@/features/session/permissions";
 import { loadEvidence, loadPresubmits, loadReviewState } from "@/features/gate/api";
 
-export async function selectTicketLive(no: string) {
+export async function selectTicketLive(no: string, sid?: string) {
   // 打开工单即视为看见"会话已结束"与"审查结果已出"提醒
   clearSessionEnded(no);
   clearReviewEnded(no);
-  appStore.setState({ selectedNo: no, centerTab: "chat", highlight: null });
+  appStore.setState({
+    selectedNo: no,
+    centerTab: "chat",
+    highlight: null,
+    // 指定会话时（运行监控跳转）优先聚焦该会话，后续加载以其为锚点
+    ...(sid ? { activeSessionId: { ...appStore.getState().activeSessionId, [no]: sid } } : {}),
+  });
   const loadDiff = () => loadTicketDiff(no);
   const loadSessions = async () => {
     try {
       await loadTicketSessions(no);
       const st = appStore.getState();
-      const target = st.activeSessionId[no] || st.sessions[no]?.[st.sessions[no].length - 1]?.id;
+      const target = sid || st.activeSessionId[no] || st.sessions[no]?.[st.sessions[no].length - 1]?.id;
       if (target) {
         await loadSessionMessages(no, target);
         void loadSessionCatalog(no, target);

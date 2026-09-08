@@ -10,7 +10,9 @@ import {
   Sparkle,
   WarningCircle,
 } from "@phosphor-icons/react";
-import { jumpToTicketSession } from "@/features/ticket";
+import { jumpToTicketSession, selectTicketLive } from "@/features/ticket";
+import { clearSessionInterrupted, dismissSessionAsks } from "@/features/session";
+import { clearReviewEnded } from "@/features/gate";
 import { useApp } from "@/store";
 import type { AgentConfig, ChatSession, Ticket } from "@/shared/types";
 
@@ -38,7 +40,8 @@ interface AskRow {
   sessionId: string;
   session?: ChatSession;
   kind: "question" | "permission";
-  id: string;
+  /** 同一会话可能同时挂着提问与授权（多待决）；行按会话聚合，kinds 记录实际构成。 */
+  kinds: Array<"question" | "permission">;
 }
 
 interface InterruptedRow {
@@ -53,6 +56,14 @@ interface EndedRow {
   ticketNo: string;
   ticket: Ticket;
   session?: ChatSession;
+  at: number;
+}
+
+interface ReviewedRow {
+  ticketNo: string;
+  ticket: Ticket;
+  session?: ChatSession;
+  verdict: "PASS" | "REJECT" | "REQUIRES_HUMAN";
   at: number;
 }
 
@@ -126,12 +137,15 @@ export function RunMonitor() {
   const pendingPermissions = useApp((s) => s.pendingPermissions);
   const pendingQuestions = useApp((s) => s.pendingQuestions);
   const sessionEnded = useApp((s) => s.sessionEnded);
+  const reviewEnded = useApp((s) => s.reviewEnded);
   const tickets = useApp((s) => s.tickets);
   const sessions = useApp((s) => s.sessions);
   const activeSessionId = useApp((s) => s.activeSessionId);
   const agents = useApp((s) => s.agents);
   const agentId = useApp((s) => s.agentId);
   const selectedNo = useApp((s) => s.selectedNo);
+  const mode = useApp((s) => s.mode);
+  const conn = useApp((s) => s.conn);
 
   const [open, setOpen] = useState(false);
   const [pinned, setPinned] = useState(false);
@@ -139,32 +153,35 @@ export function RunMonitor() {
   const wrapRef = useRef<HTMLDivElement>(null);
   const closeTimer = useRef<number | null>(null);
 
-  // 1. 待回答 / 待授权 会话与工单
+  // 1. 待回答 / 待授权 会话与工单（按会话聚合：一个会话的多个待决合并为一行）
   const askList = useMemo<AskRow[]>(() => {
-    const rows: AskRow[] = [];
-    const seenSessions = new Set<string>();
-
-    for (const [id, q] of Object.entries(pendingQuestions)) {
-      const ticket = tickets.find((t) => t.ticketNo === q.ticketNo);
-      if (!ticket) continue;
-      const session = (sessions[q.ticketNo] ?? []).find((x) => x.id === q.sessionId);
-      const key = `${q.ticketNo}-${q.sessionId}`;
-      if (!seenSessions.has(key)) {
-        seenSessions.add(key);
-        rows.push({ ticketNo: q.ticketNo, ticket, sessionId: q.sessionId, session, kind: "question", id });
+    const rows = new Map<string, AskRow>();
+    const upsert = (
+      ticketNo: string,
+      sessionId: string,
+      kind: "question" | "permission",
+    ) => {
+      const ticket = tickets.find((t) => t.ticketNo === ticketNo);
+      if (!ticket) return;
+      const key = `${ticketNo}-${sessionId}`;
+      const existing = rows.get(key);
+      if (existing) {
+        if (!existing.kinds.includes(kind)) existing.kinds.push(kind);
+        return;
       }
-    }
-    for (const [id, p] of Object.entries(pendingPermissions)) {
-      const ticket = tickets.find((t) => t.ticketNo === p.ticketNo);
-      if (!ticket) continue;
-      const session = (sessions[p.ticketNo] ?? []).find((x) => x.id === p.sessionId);
-      const key = `${p.ticketNo}-${p.sessionId}`;
-      if (!seenSessions.has(key)) {
-        seenSessions.add(key);
-        rows.push({ ticketNo: p.ticketNo, ticket, sessionId: p.sessionId, session, kind: "permission", id });
-      }
-    }
-    return rows;
+      const session = (sessions[ticketNo] ?? []).find((x) => x.id === sessionId);
+      rows.set(key, {
+        ticketNo,
+        ticket,
+        sessionId,
+        session,
+        kind,
+        kinds: [kind],
+      });
+    };
+    for (const [, q] of Object.entries(pendingQuestions)) upsert(q.ticketNo, q.sessionId, "question");
+    for (const [, p] of Object.entries(pendingPermissions)) upsert(p.ticketNo, p.sessionId, "permission");
+    return [...rows.values()];
   }, [pendingQuestions, pendingPermissions, tickets, sessions]);
 
   // 2. 中断会话列表（未处于运行态且非归档的 interrupted 会话）
@@ -259,6 +276,21 @@ export function RunMonitor() {
     return rows.sort((a, b) => b.at - a.at);
   }, [sessionEnded, busy, tickets, activeSessionId, sessions]);
 
+  // 5. 审查结果提醒列表（T-110：与已结束同级低优呈现；打开工单即清除）
+  const reviewedList = useMemo<ReviewedRow[]>(() => {
+    const rows: ReviewedRow[] = [];
+    for (const [no, info] of Object.entries(reviewEnded)) {
+      if (busy[no]) continue;
+      const ticket = tickets.find((t) => t.ticketNo === no);
+      if (ticket) {
+        const sid = activeSessionId[no];
+        const session = sid ? (sessions[no] ?? []).find((x) => x.id === sid) : undefined;
+        rows.push({ ticketNo: no, ticket, session, verdict: info.verdict, at: info.at });
+      }
+    }
+    return rows.sort((a, b) => b.at - a.at);
+  }, [reviewEnded, busy, tickets, activeSessionId, sessions]);
+
   // 按工单聚合运行中会话，以便多会话时折叠/分组展示
   const runningGroups = useMemo(() => {
     const groups: Array<{ ticketNo: string; ticket: Ticket; rows: SessionRunRow[] }> = [];
@@ -281,16 +313,18 @@ export function RunMonitor() {
   const askCount = askList.length;
   const interruptedCount = interruptedList.length;
   const endedCount = endedList.length;
+  const reviewedCount = reviewedList.length;
+  const finishedCount = endedCount + reviewedCount;
 
-  // 氛围优先级判定：黄（待回答/待授权） > 红（中断） > 蓝（运行中） > 绿（已结束） > 空闲
+  // 氛围优先级判定：黄（待回答/待授权） > 红（中断） > 蓝（运行中） > 绿（已结束/已审查） > 空闲
   type AmbientTone = "yellow" | "red" | "blue" | "green" | "idle";
   const tone: AmbientTone = useMemo(() => {
     if (askCount > 0) return "yellow";
     if (interruptedCount > 0) return "red";
     if (runCount > 0) return "blue";
-    if (endedCount > 0) return "green";
+    if (finishedCount > 0) return "green";
     return "idle";
-  }, [askCount, interruptedCount, runCount, endedCount]);
+  }, [askCount, interruptedCount, runCount, finishedCount]);
 
   /* 面板打开时每秒刷新运行时长；关闭即停表。 */
   useEffect(() => {
@@ -344,6 +378,49 @@ export function RunMonitor() {
     closePanel();
   };
 
+  /* 打开某工单并聚焦会话（红/黄条目点击 = "打开处理"的完整语义）：
+     jumpToTicketSession 只做本地选中、不拉数据——会话列表/历史/待决卡片从未加载时
+     （刷新后提醒重亮即点、慢节拍补拉来的提醒），落地是空列表空对话，条目无从处理。
+     live 走 selectTicketLive 完整打开（会话/历史/待决卡片/门禁状态一次拉齐，幂等）；
+     失败或 demo 回退本地选中。 */
+  const jumpOpen = async (no: string, sid?: string) => {
+    if (mode === "live" && conn === "ok") {
+      try {
+        await selectTicketLive(no, sid);
+        closePanel();
+        return;
+      } catch {
+        /* 拉取失败不阻断跳转：本地选中兜底 */
+      }
+    }
+    jumpToTicketSession(no, sid);
+    closePanel();
+  };
+
+  /* 待回答/待授权条目：视为"已关注该会话"——清掉其名下待决登记并记入忽略表，同会话
+     若还挂着中断标记一并清除（红/黄两组不因另一半残留而常驻），黄组/徽标/会话黄点
+     随之消退；完整打开工单后会话内即有可作答的卡片，作答才是服务端真正的了结。 */
+  const jumpToAsk = (item: AskRow) => {
+    dismissSessionAsks(item.sessionId);
+    clearSessionInterrupted(item.sessionId);
+    void jumpOpen(item.ticketNo, item.sessionId);
+  };
+
+  /* 中断条目：同样按"已关注该会话"处理——清除中断标记，名下若有未决登记一并视为已见
+     （打开后仍可作答/重跑），红组与红点随之消退。 */
+  const jumpToInterrupted = (item: InterruptedRow) => {
+    clearSessionInterrupted(item.session.id);
+    dismissSessionAsks(item.session.id);
+    void jumpOpen(item.ticketNo, item.session.id);
+  };
+
+  /* 审查结果条目：打开工单即视为已读——清除该工单的 reviewEnded 登记，绿色提醒组
+     （及 chip 上的已审查计数）随之消退，与待回答/中断条目的"点击即移出"语义一致。 */
+  const jumpToReviewed = (item: ReviewedRow) => {
+    clearReviewEnded(item.ticketNo);
+    void jumpOpen(item.ticketNo, item.session?.id);
+  };
+
   // Chip 样式与文字映射
   const chipStyles = {
     yellow: "bg-warn/15 border-warn/40 text-warn hover:bg-warn/25",
@@ -365,9 +442,13 @@ export function RunMonitor() {
     if (tone === "yellow") return `${askCount} 个待处理`;
     if (tone === "red") return `${interruptedCount} 个已中断`;
     if (tone === "blue") return `${runCount} 个运行中`;
-    if (tone === "green") return `${endedCount} 个已结束`;
+    if (tone === "green") {
+      if (endedCount > 0 && reviewedCount === 0) return `${endedCount} 个已结束`;
+      if (reviewedCount > 0 && endedCount === 0) return `${reviewedCount} 个已审查`;
+      return `${finishedCount} 个已完成`;
+    }
     return "智能体空闲";
-  }, [tone, askCount, interruptedCount, runCount, endedCount]);
+  }, [tone, askCount, interruptedCount, runCount, endedCount, reviewedCount, finishedCount]);
 
   const dotClass = {
     yellow: "bg-warn animate-breathe",
@@ -377,7 +458,7 @@ export function RunMonitor() {
     idle: "",
   }[tone];
 
-  const hasAnyContent = askCount > 0 || interruptedCount > 0 || runCount > 0 || endedCount > 0;
+  const hasAnyContent = askCount > 0 || interruptedCount > 0 || runCount > 0 || endedCount > 0 || reviewedCount > 0;
 
   return (
     <div
@@ -388,7 +469,7 @@ export function RunMonitor() {
     >
       <button
         className={`inline-flex items-center gap-1.5 h-7 rounded-full px-2.5 text-[12.5px] font-medium cursor-pointer transition-colors duration-150 border min-w-0 ${chipStyles}`}
-        title="智能体运行监控：悬停查看聚焦面板，点击钉住；点击条目快速跳转对应会话"
+        title="智能体运行监控：悬停查看聚焦面板，点击钉住；待回答/已中断条目点击跳转并移出提醒，已结束/审查结果打开即已读"
         aria-expanded={open}
         onClick={() => {
           if (open && pinned) closePanel();
@@ -435,32 +516,40 @@ export function RunMonitor() {
                     <span>待回答 / 待授权 ({askCount})</span>
                   </div>
                   <div className="space-y-1">
-                    {askList.map((item) => (
-                      <button
-                        key={`${item.kind}-${item.id}`}
-                        onClick={() => jump(item.ticketNo, item.sessionId)}
-                        className="w-full flex items-center gap-2 px-2 py-1.5 rounded bg-raised/80 hover:bg-raised border border-warn/20 hover:border-warn/50 text-left transition-colors cursor-pointer"
-                      >
-                        <span className="w-5 h-5 rounded bg-warn/15 text-warn grid place-items-center shrink-0">
-                          {item.kind === "question" ? (
-                            <Question size={12} weight="bold" />
-                          ) : (
-                            <ShieldWarning size={12} weight="bold" />
-                          )}
-                        </span>
-                        <span className="flex-1 min-w-0">
-                          <span className="flex items-center gap-1.5 min-w-0">
-                            <span className="font-mono text-[11px] text-warn shrink-0">{item.ticketNo}</span>
-                            <span className="text-[12px] text-ink truncate">{item.ticket.title}</span>
+                    {askList.map((item) => {
+                      const mixed = item.kinds.length > 1;
+                      return (
+                        <button
+                          key={`${item.ticketNo}-${item.sessionId}`}
+                          onClick={() => jumpToAsk(item)}
+                          title={`前往处理 ${item.ticketNo} 会话：${item.session?.title ?? ""}（视为已关注：该会话的待回答/待授权与中断提醒一并移出监控）`}
+                          className="w-full flex items-center gap-2 px-2 py-1.5 rounded bg-raised/80 hover:bg-raised border border-warn/20 hover:border-warn/50 text-left transition-colors cursor-pointer"
+                        >
+                          <span className="w-5 h-5 rounded bg-warn/15 text-warn grid place-items-center shrink-0">
+                            {item.kind === "question" && !mixed ? (
+                              <Question size={12} weight="bold" />
+                            ) : (
+                              <ShieldWarning size={12} weight="bold" />
+                            )}
                           </span>
-                          <span className="text-[10.5px] text-dim truncate block">
-                            {item.kind === "question" ? "智能体在等待回答提问" : "智能体在等待权限授权"}
-                            {item.session?.title ? ` · ${item.session.title}` : ""}
+                          <span className="flex-1 min-w-0">
+                            <span className="flex items-center gap-1.5 min-w-0">
+                              <span className="font-mono text-[11px] text-warn shrink-0">{item.ticketNo}</span>
+                              <span className="text-[12px] text-ink truncate">{item.ticket.title}</span>
+                            </span>
+                            <span className="text-[10.5px] text-dim truncate block">
+                              {mixed
+                                ? `智能体在等待回答提问与权限授权（${item.kinds.length} 项待处理）`
+                                : item.kind === "question"
+                                  ? "智能体在等待回答提问"
+                                  : "智能体在等待权限授权"}
+                              {item.session?.title ? ` · ${item.session.title}` : ""}
+                            </span>
                           </span>
-                        </span>
-                        <span className="text-[10.5px] font-medium text-warn shrink-0">前往处理</span>
-                      </button>
-                    ))}
+                          <span className="text-[10.5px] font-medium text-warn shrink-0">前往处理</span>
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
               )}
@@ -476,7 +565,8 @@ export function RunMonitor() {
                     {interruptedList.map((item) => (
                       <button
                         key={item.session.id}
-                        onClick={() => jump(item.ticketNo, item.session.id)}
+                        onClick={() => jumpToInterrupted(item)}
+                        title={`查看中断会话 ${item.session.title || item.ticket.title}（视为已关注：该会话的中断与待回答/待授权提醒一并移出监控）`}
                         className="w-full flex items-center gap-2 px-2 py-1.5 rounded bg-raised/80 hover:bg-raised border border-danger/20 hover:border-danger/50 text-left transition-colors cursor-pointer"
                       >
                         <span className="w-5 h-5 rounded bg-danger/15 text-danger grid place-items-center shrink-0">
@@ -556,37 +646,96 @@ export function RunMonitor() {
                 </div>
               )}
 
-              {/* 4. 已结束提醒分组（绿色氛围） */}
-              {endedCount > 0 && runCount === 0 && interruptedCount === 0 && askCount === 0 && (
-                <div className="rounded-lg border border-accent/30 bg-accent/5 p-2 space-y-1.5">
-                  <div className="flex items-center gap-1.5 px-1 text-accent text-[11px] font-semibold">
-                    <CheckCircle size={13} weight="bold" />
-                    <span>最近已完成 ({endedCount})</span>
-                  </div>
-                  <div className="space-y-1">
-                    {endedList.map((item) => (
-                      <button
-                        key={item.ticketNo}
-                        onClick={() => jump(item.ticketNo, item.session?.id)}
-                        className="w-full flex items-center gap-2 px-2 py-1.5 rounded bg-raised/80 hover:bg-raised border border-accent/20 hover:border-accent/50 text-left transition-colors cursor-pointer"
-                      >
-                        <span className="w-5 h-5 rounded bg-accent/15 text-accent grid place-items-center shrink-0">
-                          <CheckCircle size={12} weight="bold" />
-                        </span>
-                        <span className="flex-1 min-w-0">
-                          <span className="flex items-center gap-1.5 min-w-0">
-                            <span className="font-mono text-[11px] text-accent shrink-0">{item.ticketNo}</span>
-                            <span className="text-[12px] text-ink truncate">{item.ticket.title}</span>
+              {/* 4. 已结束 / 审查结果提醒分组（绿色氛围，仅在没有更高优事件时作为低优提醒） */}
+              {(endedCount > 0 || reviewedCount > 0) && runCount === 0 && interruptedCount === 0 && askCount === 0 && (
+                <>
+                  {endedCount > 0 && (
+                  <div className="rounded-lg border border-accent/30 bg-accent/5 p-2 space-y-1.5">
+                    <div className="flex items-center gap-1.5 px-1 text-accent text-[11px] font-semibold">
+                      <CheckCircle size={13} weight="bold" />
+                      <span>最近已完成 ({endedCount})</span>
+                    </div>
+                    <div className="space-y-1">
+                      {endedList.map((item) => (
+                        <button
+                          key={item.ticketNo}
+                          onClick={() => jump(item.ticketNo, item.session?.id)}
+                          className="w-full flex items-center gap-2 px-2 py-1.5 rounded bg-raised/80 hover:bg-raised border border-accent/20 hover:border-accent/50 text-left transition-colors cursor-pointer"
+                        >
+                          <span className="w-5 h-5 rounded bg-accent/15 text-accent grid place-items-center shrink-0">
+                            <CheckCircle size={12} weight="bold" />
                           </span>
-                          <span className="text-[10.5px] text-dim truncate block">
-                            回合已正常完成 · 点击查看
+                          <span className="flex-1 min-w-0">
+                            <span className="flex items-center gap-1.5 min-w-0">
+                              <span className="font-mono text-[11px] text-accent shrink-0">{item.ticketNo}</span>
+                              <span className="text-[12px] text-ink truncate">{item.ticket.title}</span>
+                            </span>
+                            <span className="text-[10.5px] text-dim truncate block">
+                              回合已正常完成 · 点击查看
+                            </span>
                           </span>
-                        </span>
-                        <span className="text-[10.5px] font-medium text-accent shrink-0">查看</span>
-                      </button>
-                    ))}
+                          <span className="text-[10.5px] font-medium text-accent shrink-0">查看</span>
+                        </button>
+                      ))}
+                    </div>
                   </div>
-                </div>
+                  )}
+
+                  {/* 审查结果（T-110）：与已结束同级低优——打开工单即视为已读并从监控移除；驳回行红色区分 */}
+                  {reviewedCount > 0 && (
+                  <div className="rounded-lg border border-accent/30 bg-accent/5 p-2 space-y-1.5">
+                    <div className="flex items-center gap-1.5 px-1 text-accent text-[11px] font-semibold">
+                      <CheckCircle size={13} weight="bold" />
+                      <span>审查结果 ({reviewedCount})</span>
+                    </div>
+                    <div className="space-y-1">
+                      {reviewedList.map((item) => {
+                        const rejected = item.verdict === "REJECT";
+                        return (
+                          <button
+                            key={item.ticketNo}
+                            onClick={() => jumpToReviewed(item)}
+                            title={`跳转查看 ${item.ticketNo} 审查结果（打开后提醒移出监控）`}
+                            className={`w-full flex items-center gap-2 px-2 py-1.5 rounded bg-raised/80 hover:bg-raised border text-left transition-colors cursor-pointer ${
+                              rejected ? "border-danger/20 hover:border-danger/50" : "border-accent/20 hover:border-accent/50"
+                            }`}
+                          >
+                            <span className={`w-5 h-5 rounded grid place-items-center shrink-0 ${
+                              rejected ? "bg-danger/15 text-danger" : "bg-accent/15 text-accent"
+                            }`}>
+                              {rejected ? <WarningCircle size={12} weight="bold" /> : <CheckCircle size={12} weight="bold" />}
+                            </span>
+                            <span className="flex-1 min-w-0">
+                              <span className="flex items-center gap-1.5 min-w-0">
+                                <span className={`font-mono text-[11px] shrink-0 ${
+                                  rejected ? "text-danger" : "text-accent"
+                                }`}>
+                                  {item.ticketNo}
+                                </span>
+                                <span className="text-[12px] text-ink truncate">{item.ticket.title}</span>
+                              </span>
+                              <span className={`text-[10.5px] truncate block ${
+                                rejected ? "text-danger/80" : "text-dim"
+                              }`}>
+                                {item.verdict === "PASS"
+                                  ? "审查通过 · 已签发发布授权"
+                                  : item.verdict === "REQUIRES_HUMAN"
+                                    ? "审查完成 · 需人工核准放行"
+                                    : "审查驳回 · 存在阻断项，点击查看"}
+                              </span>
+                            </span>
+                            <span className={`text-[10.5px] font-medium shrink-0 ${
+                              rejected ? "text-danger" : "text-accent"
+                            }`}>
+                              {rejected ? "查看驳回" : "查看"}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  )}
+                </>
               )}
             </div>
           )}
@@ -594,7 +743,7 @@ export function RunMonitor() {
           <div className="divider my-1.5" />
           <div className="px-2 pb-0.5 pt-0.5 text-[10.5px] text-faint flex items-center gap-1.5">
             <Sparkle size={10} className="text-faint shrink-0" />
-            {pinned ? "已钉住：移开鼠标面板不会关闭" : "移入面板保持开启 · 点击条目快速跳转会话"}
+            {pinned ? "已钉住：移开鼠标面板不会关闭" : "移入面板保持开启 · 待回答/中断条目点击跳转后移出监控"}
           </div>
         </motion.div>
       )}

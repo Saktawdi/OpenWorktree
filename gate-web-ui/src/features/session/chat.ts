@@ -5,7 +5,7 @@
 import { appStore } from "@/store";
 import type { ChatItem, PermissionRequestView, QuestionRequestView } from "@/shared/types";
 import { uid } from "@/shared/format";
-import { notePendingPermission, notePendingQuestion } from "./state";
+import { notePendingPermission, notePendingQuestion, undismissAsk } from "./state";
 import { splitModelRef } from "./model";
 
 const set = appStore.setState;
@@ -115,6 +115,8 @@ export function resolvePermission(
   _auto: boolean,
 ) {
   resolvedPermissions.add(permissionId);
+  // 已作答：从「已处理」忽略表移除，允许该 id 后续重新点亮（应答失败 revert 同理）。
+  undismissAsk(permissionId);
   const id = `perm-${permissionId}`;
   set((st) => {
     const pendingPermissions = { ...st.pendingPermissions };
@@ -132,6 +134,7 @@ export function resolvePermission(
 /** 应答提交失败：清掉墓碑，调用方随后重新 pushPermissionRequest 恢复待决卡片。 */
 export function revertPermission(no: string, permissionId: string) {
   resolvedPermissions.delete(permissionId);
+  undismissAsk(permissionId);
   // 待决登记同步恢复（sessionId 取当前查看的会话——应答就发生在该会话视图里）
   notePendingPermission(permissionId, no, s().activeSessionId[no] ?? "");
 }
@@ -160,6 +163,8 @@ export function pushQuestionRequest(no: string, request: QuestionRequestView) {
 /** question 已有结论（用户提交/跳过，或上游 replied/rejected）：移除卡片并记墓碑。 */
 export function resolveQuestion(no: string, requestId: string, _rejected: boolean) {
   resolvedQuestions.add(requestId);
+  // 已作答/已跳过：从「已处理」忽略表移除，允许该 id 后续重新点亮（提交失败 revert 同理）。
+  undismissAsk(requestId);
   const id = `ques-${requestId}`;
   set((st) => {
     const pendingQuestions = { ...st.pendingQuestions };
@@ -177,6 +182,7 @@ export function resolveQuestion(no: string, requestId: string, _rejected: boolea
 /** 提交失败：清掉墓碑，调用方随后重新 pushQuestionRequest 恢复待决卡片。 */
 export function revertQuestion(no: string, requestId: string) {
   resolvedQuestions.delete(requestId);
+  undismissAsk(requestId);
   // 待决登记同步恢复（sessionId 取当前查看的会话——作答就发生在该会话视图里）
   notePendingQuestion(requestId, no, s().activeSessionId[no] ?? "");
 }
