@@ -57,6 +57,8 @@
   }, {
     "pattern":"\\Qdb/migration/V22__session_message_model.sql\\E"
   }, {
+    "pattern":"\\Qdb/migration/V23__session_message_variant.sql\\E"
+  }, {
     "pattern":"\\Qdb/migration\\E"
   }, {
     "pattern":"\\Qorg/eclipse/jetty/http/encoding.properties\\E"

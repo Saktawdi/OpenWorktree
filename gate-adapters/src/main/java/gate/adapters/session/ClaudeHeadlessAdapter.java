@@ -279,7 +279,8 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
                             i == texts.size() - 1 ? parsed.parts() : List.of(),
                             i == texts.size() - 1 ? parsed.usage() : null, parsed.degraded(), now,
                             i == texts.size() - 1 ? actualModelProvider(parsed, argv.requestProvider()) : null,
-                            i == texts.size() - 1 ? actualModelId(parsed, argv.requestModelId()) : null);
+                            i == texts.size() - 1 ? actualModelId(parsed, argv.requestModelId()) : null,
+                            i == texts.size() - 1 ? argv.requestVariant() : null);
                 }
             }
             if (parsed.usage() != null) {
@@ -523,7 +524,8 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
                             i == texts.size() - 1 ? parsed.parts() : List.of(),
                             i == texts.size() - 1 ? parsed.usage() : null, parsed.degraded(), now,
                             i == texts.size() - 1 ? actualModelProvider(parsed, planned.requestProvider()) : null,
-                            i == texts.size() - 1 ? actualModelId(parsed, planned.requestModelId()) : null);
+                            i == texts.size() - 1 ? actualModelId(parsed, planned.requestModelId()) : null,
+                            i == texts.size() - 1 ? planned.requestVariant() : null);
                 }
                 if (parsed.usage() != null) {
                     emitChunk(session.id(), new SessionStreamChunk.UsageChunk(session.id(), parsed.usage(), now));
@@ -565,8 +567,9 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
         }
     }
 
-    /** Planned argv plus the request-side model attribution it pins (V22 fallback source). */
-    private record PlannedArgv(List<String> argv, String requestProvider, String requestModelId) {
+    /** Planned argv plus the request-side model/variant attribution it pins (V22/V23 fallback source). */
+    private record PlannedArgv(List<String> argv, String requestProvider, String requestModelId,
+                               String requestVariant) {
     }
 
     /** Splits a model ref into {provider, bare id}; a bare id (or blank) yields a null provider. */
@@ -654,7 +657,8 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
         if (prompt != null) {
             argv.add(prompt);
         }
-        return new PlannedArgv(argv, requestHalves[0], requestHalves[1]);
+        return new PlannedArgv(argv, requestHalves[0], requestHalves[1],
+                overrideVariant == null || overrideVariant.isBlank() ? null : overrideVariant.trim());
     }
 
     /**
@@ -732,9 +736,9 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
 
     private void insertAssistantMessage(String sessionId, String text, List<TurnPart> parts,
                                         SessionUsage usage, boolean degraded, Instant at,
-                                        String modelProvider, String modelId) {
+                                        String modelProvider, String modelId, String variant) {
         sessions.insertMessage(new SessionMessage(UUID.randomUUID().toString(), sessionId, Role.ASSISTANT,
-                text, List.of(), usage, degraded, at, parts, modelProvider, modelId));
+                text, List.of(), usage, degraded, at, parts, modelProvider, modelId, variant));
     }
 
     private void insertErrorMessage(String sessionId, String text, Instant at) {

@@ -369,6 +369,8 @@ class ClaudeHeadlessAdapterTest {
         SessionMessage assistant = awaitAssistant("sess-rep-1");
         assertEquals("gateway", assistant.modelProvider(), "reported provider wins");
         assertEquals("routed-model", assistant.modelId(), "reported model id wins");
+        // V23：本用例未选推理档位（CLI 也不回传）→ 落 null，前端回退近似标注。
+        assertNull(assistant.reasoningVariant(), "no variant pinned means no attribution");
     }
 
     @Test
@@ -383,12 +385,14 @@ class ClaudeHeadlessAdapterTest {
                 echo {"type":"result","is_error":false,"usage":{"input_tokens":1,"output_tokens":1}}
                 """, StandardCharsets.UTF_8);
         seedProviderAgentAndSession("silent-prov", "silent-agent", "sess-silent-1", script,
-                "silent-prov/req-model", "req-model");
+                "silent-prov/req-model", "high");
         ClaudeHeadlessAdapter adapter = adapterFor(script);
         adapter.sendMessage(new AgentSessionPort.SendRequest("sess-silent-1", "hi", true));
         SessionMessage assistant = awaitAssistant("sess-silent-1");
         assertEquals("silent-prov", assistant.modelProvider(), "request provider half");
         assertEquals("req-model", assistant.modelId(), "request bare id is the fallback");
+        // V23：会话推理档位覆盖随行落库（--effort 钉住的请求值）。
+        assertEquals("high", assistant.reasoningVariant(), "pinned effort rides along");
     }
 
     private void insertTicket(String ticketNo) {
@@ -403,7 +407,8 @@ class ClaudeHeadlessAdapterTest {
                 null, null, null, null, "IN_PROGRESS", now.toString(), now.toString());
     }
 
-    /** V22 模型标注测试的最小种子：provider 行 + AgentConfig（默认 ref）+ 带 .git 的克隆 + 工单 + 会话。 */
+    /** V22/V23 标注测试的最小种子：provider 行 + AgentConfig（默认 ref）+ 带 .git 的克隆 + 工单 + 会话。
+     *  agentModelRef[0] = Agent 默认模型 ref；agentModelRef[1] = 会话推理档位覆盖（可省）。 */
     private void seedProviderAgentAndSession(String providerId, String agentId, String sessionId,
                                              Path script, String... agentModelRef) throws Exception {
         Instant now = Instant.now();
@@ -418,10 +423,11 @@ class ClaudeHeadlessAdapterTest {
         insertTicket("T-88");
         // 覆盖用：fallback 用例把 AgentConfig 默认 ref 设为请求值本身——
         // 会话未切覆盖（override_* 为 NULL）时 buildArgv 即钉该值。
+        String variant = agentModelRef.length > 1 ? agentModelRef[1] : null;
         sessions.insert(new Session(sessionId, "T-88", agentId, AgentCli.CLAUDE,
                 SessionStatus.ACTIVE, sessionId.equals("sess-rep-1") ? "sess-rep" : "sess-silent",
                 clone.toString(), -1, now, null,
-                SessionUsage.EMPTY, null, false));
+                SessionUsage.EMPTY, null, false, null, null, variant, false));
     }
 
     private ClaudeHeadlessAdapter adapterFor(Path script) {

@@ -1075,6 +1075,8 @@ public final class SessionController implements WebController {
         // 存量行为 null——前端回退会话当前模型的近似标注。
         out.put("model_provider", m.modelProvider());
         out.put("model_id", m.modelId());
+        // V23 逐消息推理强度：发送端钉住的请求值（上游不回传 effort），null 同上回退。
+        out.put("reasoning_variant", m.reasoningVariant());
         return out;
     }
 

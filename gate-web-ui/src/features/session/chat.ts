@@ -245,6 +245,7 @@ export function finishAssistant(
 
 /** 开始一个流式回合：占位 assistant 消息进当前视图，并以 sessionId 记入 liveTurns。 */
 export function startLiveTurn(no: string, sessionId: string) {
+  const meta = sessionReplyMeta(no);
   const item: Extract<ChatItem, { kind: "assistant" }> = {
     kind: "assistant",
     id: uid("a"),
@@ -252,26 +253,16 @@ export function startLiveTurn(no: string, sessionId: string) {
     streaming: true,
     tools: [],
     ts: Date.now(),
-    // V22 逐消息模型标注：发送端本就知道这次请求的模型（sessionModelSel → 会话覆盖 →
-    // Agent 默认 ref），占位即盖戳让 footer 流式期间就有值；回合收尾与历史重载的
-    // 兜底链不会覆盖已有值，口径三路一致。
-    model: currentRequestModel(no, sessionId),
+    // V22/V23 逐消息标注：发送端本就知道这次请求的模型与推理档位（sessionReplyMeta
+    // 与发送端同解析链），占位即盖戳让 footer 流式期间就有值；回合收尾与历史重载的
+    // 兜底链不会覆盖已有值，流式/落库/历史三路同口径。
+    model: meta.model,
+    variant: meta.variant,
   };
   set((st) => ({
     liveTurns: { ...st.liveTurns, [sessionId]: { ticketNo: no, itemId: item.id, item } },
     chats: { ...st.chats, [no]: [...(st.chats[no] ?? []), item] },
   }));
-}
-
-/** 发送端同口径的「本次请求模型」：与 sessionReplyMeta 的解析链一致。 */
-function currentRequestModel(no: string, sessionId: string): string | null {
-  const st = s();
-  const sess = (st.sessions[no] ?? []).find((x) => x.id === sessionId);
-  const cfgId = sess?.agentConfigId ?? st.agentId;
-  const cfg =
-    st.agents.find((a) => a.id === cfgId) ?? st.agents.find((a) => a.id === st.agentId) ?? st.agents[0];
-  const sel = st.sessionModelSel[sessionId];
-  return sel?.modelId || sess?.overrideModel || splitModelRef(cfg?.model).model || cfg?.name || null;
 }
 
 /**

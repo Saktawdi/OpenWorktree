@@ -177,14 +177,14 @@ public final class JdbcSessionRepository implements SessionRepository {
                 INSERT INTO session_message(id, session_id, role, content_blob, content_bytes,
                                             tool_calls_blob, parts_blob, prompt_tokens,
                                             completion_tokens, total_tokens, degraded, created_at,
-                                            model_provider, model_id)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                                            model_provider, model_id, reasoning_variant)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 message.id(), message.sessionId(), message.role().name(), ref.relPath(), ref.bytes(),
                 toolJson, partsJson, u == null ? null : u.promptTokens(), u == null ? null : u.completionTokens(),
                 u == null ? null : u.totalTokens(), message.degraded() ? 1 : 0,
                 message.timestamp().toString(),
-                message.modelProvider(), message.modelId());
+                message.modelProvider(), message.modelId(), message.reasoningVariant());
     }
 
     @Override
@@ -212,9 +212,11 @@ public final class JdbcSessionRepository implements SessionRepository {
             // V22 之前落库的行没有模型列：同样按列缺失容错，读取端回退近似标注。
             String modelProvider = null;
             String modelId = null;
+            String reasoningVariant = null;
             try {
                 modelProvider = rs.getString("model_provider");
                 modelId = rs.getString("model_id");
+                reasoningVariant = rs.getString("reasoning_variant");
             } catch (Exception columnAbsent) {
                 // pre-V22 row
             }
@@ -229,7 +231,8 @@ public final class JdbcSessionRepository implements SessionRepository {
                     Instant.parse(rs.getString("created_at")),
                     parts,
                     modelProvider,
-                    modelId);
+                    modelId,
+                    reasoningVariant);
         }, sessionId);
     }
 

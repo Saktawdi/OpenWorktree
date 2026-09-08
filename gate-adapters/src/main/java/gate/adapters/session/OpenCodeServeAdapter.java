@@ -1057,6 +1057,10 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                             latest.overrideProvider(), latest.overrideModel());
                     up.turnModelProvider = requested == null ? null : requested.providerId();
                     up.turnModelId = requested == null ? null : requested.modelId();
+                    // V23：推理强度落库值 = 本次 prompt 实际钉住的 variant（messageBody
+                    // 同源 latest.overrideVariant，空白即未选档位，落 null）。
+                    String reqVariant = latest.overrideVariant();
+                    up.turnVariant = reqVariant == null || reqVariant.isBlank() ? null : reqVariant.trim();
                 }
             }
             HttpResponse<String> resp = post("http://127.0.0.1:" + port + "/session/"
@@ -1302,6 +1306,9 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
         final Map<String, String[]> modelsByMessage = new ConcurrentHashMap<>();
         String turnModelProvider;
         String turnModelId;
+        // V23 逐消息推理强度：上游不回传实际生效的 effort，落库值即发送端钉住的请求
+        // variant（prompt body 同字段），发送线程在重置块预置，flushTurn 随行落库。
+        String turnVariant;
         // 序列化回合缓冲的全部读写者：reader 线程（step 合并）、send 线程（superseded 重置）、
         // 停机/错误路径（flush 落库）。turnText 是普通 StringBuilder，跨线程读写必须加锁。
         // flush 的 DB I/O 在锁外执行，锁只覆盖缓冲快照与清空。
@@ -1802,6 +1809,7 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
             final SessionUsage usage;
             final String modelProvider;
             final String modelId;
+            final String variant;
             synchronized (turnLock) {
                 // Drain steps that never reached their message.updated(completed) merge: an aborted
                 // or dropped turn can be cut mid-step, leaving that step's text/tools only in the
@@ -1835,11 +1843,13 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                 turnParts.clear();
                 usage = turnUsage;
                 // V22：回合模型随行落库——实际值（mergeStep 覆盖）优先，缺省即发送线程
-                // 预置的请求值兜底。
+                // 预置的请求值兜底。V23：推理强度同批快照与清空。
                 modelProvider = turnModelProvider;
                 modelId = turnModelId;
+                variant = turnVariant;
                 turnModelProvider = null;
                 turnModelId = null;
+                turnVariant = null;
                 turnText.setLength(0);
                 turnUsage = null;
                 turnHasNewContent = false;
@@ -1847,7 +1857,7 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
             }
             sessions.insertMessage(new SessionMessage(UUID.randomUUID().toString(),
                     sessionId, Role.ASSISTANT, content, tools, usage, degraded, clock.now(), parts,
-                    modelProvider, modelId));
+                    modelProvider, modelId, variant));
             log.info("opencode", degraded ? "turn.persisted-degraded" : "turn.persisted",
                     "sessionId", sessionId, "reason", reason,
                     "chars", content.length(), "toolCalls", tools.size());
@@ -2279,7 +2289,7 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
         sessions.insertMessage(new SessionMessage(UUID.randomUUID().toString(),
                 sessionId, Role.ASSISTANT, turn.text.toString(),
                 List.copyOf(turn.tools), turn.usage, true, clock.now(), List.of(),
-                turn.modelProvider, turn.modelId));
+                turn.modelProvider, turn.modelId, null));
         turn.text.setLength(0);
         turn.tools.clear();
         turn.usage = null;

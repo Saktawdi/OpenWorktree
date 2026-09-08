@@ -150,6 +150,8 @@ export interface RawMessage {
   /** V22 逐消息模型标注（上游实际值优先、请求值兜底）；存量行为 null。 */
   model_provider?: string | null;
   model_id?: string | null;
+  /** V23 逐消息推理强度（发送端钉住的请求档位）；存量行/未选档位为 null。 */
+  reasoning_variant?: string | null;
   timestamp: string;
 }
 
@@ -272,9 +274,10 @@ export function mapHistoryMessage(m: RawMessage): ChatItem | null {
       parts,
       endedAt: Date.parse(m.timestamp),
       ts: Date.parse(m.timestamp),
-      // V22 逐消息精确模型：行上有值就用它（上游实际值/请求兜底），没有（旧行）
-      // 保持 undefined，由 applyReplyMetaDefaults 用会话当前模型近似兜底。
+      // V22/V23 逐消息精确标注：行上有值就用它（模型=上游实际/请求兜底，档位=请求值），
+      // 没有（旧行）保持 undefined，由 applyReplyMetaDefaults 用会话当前值近似兜底。
       model: m.role === "ASSISTANT" && m.model_id ? m.model_id : undefined,
+      variant: m.role === "ASSISTANT" && m.reasoning_variant ? m.reasoning_variant : undefined,
     };
   }
   return null;
