@@ -60,6 +60,7 @@ export {
   notePendingPermission,
   notePendingQuestion,
   dropSessionPendings,
+  dismissSessionAsks,
   addUsage,
   setContextTokens,
   setContextLimit,

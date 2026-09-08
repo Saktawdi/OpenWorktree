@@ -228,8 +228,48 @@ export function clearSessionEnded(no: string) {
   });
 }
 
-/** 登记一条待决权限（按 permissionId 幂等，重复 asked 事件不叠加）。 */
+/* ─── T-110：待回答/待授权提醒的「已处理」忽略表 ───
+ * 用户从运行监控点击某会话的待回答/待授权条目并跳转处理：该会话名下的待决登记
+ * 立即清除（chip 黄组/工单徽标/会话黄点同步消退），其 id 同时记入忽略表——
+ * live 后端在打开工单与慢节拍会重拉仍未决的权限/提问，note 层看到被忽略的 id
+ * 便不再重新点亮提醒。作答（resolve）时移除忽略、agent 发起新 id 的待决时自然
+ * 恢复提醒。内存级集合（同页面会话），生命周期与 answered 墓碑一致：刷新页面
+ * 后仍挂在服务端的未决项会随重拉再次恢复提醒。 */
+
+const dismissedAskIds = new Set<string>();
+
+/** 作答/撤销作答后移除忽略标记，允许同 id 的待决重新点亮（幂等）。 */
+export function undismissAsk(id: string) {
+  dismissedAskIds.delete(id);
+}
+
+/** 用户点击运行监控的待回答/待授权条目跳转处理：清除该会话名下全部待决登记并记入忽略表。 */
+export function dismissSessionAsks(sessionId: string) {
+  set((st) => {
+    const pendingPermissions = { ...st.pendingPermissions };
+    const pendingQuestions = { ...st.pendingQuestions };
+    let touched = false;
+    for (const [id, ref] of Object.entries(pendingPermissions)) {
+      if (ref.sessionId === sessionId) {
+        dismissedAskIds.add(id);
+        delete pendingPermissions[id];
+        touched = true;
+      }
+    }
+    for (const [id, ref] of Object.entries(pendingQuestions)) {
+      if (ref.sessionId === sessionId) {
+        dismissedAskIds.add(id);
+        delete pendingQuestions[id];
+        touched = true;
+      }
+    }
+    return touched ? { pendingPermissions, pendingQuestions } : st;
+  });
+}
+
+/** 登记一条待决权限（按 permissionId 幂等，重复 asked 事件不叠加；被忽略的 id 不再点亮）。 */
 export function notePendingPermission(permissionId: string, ticketNo: string, sessionId: string) {
+  if (dismissedAskIds.has(permissionId)) return;
   set((st) =>
     st.pendingPermissions[permissionId]
       ? st
@@ -237,8 +277,9 @@ export function notePendingPermission(permissionId: string, ticketNo: string, se
   );
 }
 
-/** 登记一条待决提问（按 requestId 幂等）。 */
+/** 登记一条待决提问（按 requestId 幂等；被忽略的 id 不再点亮）。 */
 export function notePendingQuestion(requestId: string, ticketNo: string, sessionId: string) {
+  if (dismissedAskIds.has(requestId)) return;
   set((st) =>
     st.pendingQuestions[requestId]
       ? st
