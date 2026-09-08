@@ -46,8 +46,9 @@ import { SessionDialogs, sessionDialogKey, type SessionDialogState } from "./Ses
  * 第 6 轮重构（运行态呈现）：
  * · 会话前置小圆点承载运行态——蓝色呼吸=运行中、红色静态=中断、
  *   黄色呼吸=待问答/待授权、灰点=空闲/归档；不再复用工单 item 的「运行中」徽标；
- * · 分组前置小圆点移除，改为文件夹图标（中断/待决/运行中统由组内会话点表达，
- *   文件夹颜色随分组整体着色）。
+ * · 分组前置小圆点移除，改为文件夹图标（中断/待决/运行中统由组内会话点表达）；
+ *   文件夹图标恒用分组自定义色，不再被运行态染成状态色——组内运行/待问答时仅以
+ *   同色呼吸（透明度 + 光晕）提示，具体状态看组内各会话行的小圆点（第 11 轮修正）。
  */
 
 const FLAT_ID = "flat";
@@ -73,7 +74,7 @@ const NO_PINNED: string[] = [];
  * 优先级：待问答/待授权 > 运行中（等待用户的会话比"闲着"更值得注意）> 中断 > 空闲；
  * 中断红点由 sessionInterrupted 标记驱动（回合出错/中止点亮，该会话再次运行时熄灭）；
  * 归档会话不携带运行态——残留的中断标记/待决登记不点亮灰点，也不参与分组聚合，
- * 否则归档会话会把文件夹长期染色（第 6 轮审查修正）。
+ * 否则归档会话会让文件夹持续呼吸（第 6 轮审查修正）。
  * 呼吸关键帧走 currentColor（styles.css .session-run-dot），蓝色/黄色共用同一动画。 */
 type SessionDotState = "running" | "interrupted" | "ask" | "idle";
 
@@ -144,9 +145,11 @@ function RunDot({ session }: { session: ChatSession }) {
   );
 }
 
-/** 分组聚合状态：组内任一活跃会话待决 → 黄；否则任一运行中 → 蓝；否则任一中断 → 红。
- *  归档会话整体跳过：其残留的中断标记/待决登记不给文件夹染色（与单会话灰点口径一致）。
- *  文件夹图标的呼吸与圆点同节奏；空闲回落分组自定义色。返回原语，规避选择器引用抖动。 */
+/** 分组聚合状态（仅驱动文件夹图标是否同色呼吸 + hover 提示文案，不参与改色）：
+ *  组内任一活跃会话待决/运行中 → 呼吸（透明度 + 光晕，颜色即分组自定义色）；
+ *  仅中断 → 不呼吸，hover 提示。优先级：待问答/待授权 > 运行中 > 中断 > 空闲。
+ *  归档会话整体跳过：其残留的中断标记/待决登记不参与聚合（与单会话灰点口径一致）。
+ *  返回原语，规避选择器引用抖动。 */
 function useSegDotState(seg: SessionSegment): SessionDotState {
   return useApp((s) => {
     let seen: SessionDotState = "idle";
@@ -692,9 +695,10 @@ function Segment({
 }
 
 /** 分组头：文件夹图标 + 名称 + 数量 + 收展箭头；悬停时提供编辑/删除分组入口（未分组段除外）。
- *  第 6 轮：前置小圆点移除，改为文件夹图标（随收展切换闭合/打开）；图标颜色随分组整体
- *  聚合运行态变色（黄呼吸=组内待问答/待授权、蓝呼吸=组内运行中、红=组内中断），
- *  空闲时回落分组自定义色，未分组段沿用 Chats 图标。 */
+ *  第 6 轮：前置小圆点移除，改为文件夹图标（随收展切换闭合/打开）。
+ *  第 11 轮修正：文件夹图标恒用分组自定义色，不再被聚合运行态覆盖成状态色；
+ *  组内运行中/待问答/待授权时仅以同色呼吸（透明度 + 光晕）提示，具体状态看组内
+ *  各会话行的小圆点；未分组段沿用 Chats 图标。 */
 function SegmentHeader({
   seg,
   collapsed,
@@ -713,10 +717,13 @@ function SegmentHeader({
   onDelete: () => void;
 }) {
   const g = seg.group;
-  // 分组聚合运行态（原语选择器）：状态呼吸与圆点同节奏；box-shadow 光晕需要圆形容器
+  // 分组聚合运行态（原语选择器）：只决定文件夹图标是否同色呼吸，不参与改色。
+  // 呼吸动画走 currentColor（透明度 + 光晕），颜色恒为分组自定义色（第 11 轮修正：
+  // 文件夹图标不被运行态染成状态色；box-shadow 光晕需要圆形容器）。
   const segState = useSegDotState(seg);
   const FolderIcon = collapsed ? Folder : FolderOpen;
-  const folderColor = segState === "idle" ? (g?.color ?? "var(--color-faint)") : DOT_COLORS[segState];
+  const folderColor = g?.color ?? "var(--color-faint)";
+  const folderBreathing = segState === "running" || segState === "ask";
   return (
     <div
       className="flex h-[26px] items-center gap-1.5 px-2.5 cursor-pointer select-none rounded-md hover:bg-raised/60 transition-colors"
@@ -732,7 +739,7 @@ function SegmentHeader({
       {g ? (
         <span
           className={`grid place-items-center w-4 h-4 rounded-full shrink-0 ${
-            segState === "running" || segState === "ask" ? "session-run-dot" : ""
+            folderBreathing ? "session-run-dot" : ""
           }`}
           style={{ color: folderColor }}
           title={
