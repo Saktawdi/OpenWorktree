@@ -522,9 +522,16 @@ export function KanbanBoard() {
       return;
     }
 
+    // 终态不出门（V19 口径）：已完成/已取消的唯一出口是「重启工单」（带理由转回进行中，
+    // 见右侧门禁面板按钮），其余任何拖拽目标都在后端被拒——这里直接拦下，不让假路径走到弹窗。
+    if (from === "DONE" || from === "CANCELLED") {
+      bounce(no, from === "DONE" ? "工单已归档，如需继续请在右侧面板「重启工单」" : "工单已取消，如需继续请在右侧面板「重启工单」");
+      return;
+    }
+
     // V19 强制流转：任意非终态可拖到「已完成 / 已取消」，弹出理由确认（与重启理由同口径）。
     // 「可发布 → 已完成」保留安全发布通道——那是门禁的正常收尾，无需绕行。
-    if (to === "DONE" && from !== "DONE") {
+    if (to === "DONE") {
       if (from === "READY_TO_PUBLISH") {
         showToast("正在发布至权威库主分支…");
         void actions.publish(no);
@@ -533,22 +540,17 @@ export function KanbanBoard() {
       openStageChangeConfirm(no, "DONE");
       return;
     }
-    if (to === "CANCELLED" && from !== "CANCELLED") {
+    if (to === "CANCELLED") {
       openStageChangeConfirm(no, "CANCELLED");
       return;
     }
 
     const allowed: Partial<Record<Stage, Stage[]>> = {
       PENDING: ["IN_PROGRESS"],
-      IN_PROGRESS: ["PRESUBMITTED"],
+      IN_PROGRESS: ["PRESUBMITTED", "PENDING"],
       PRESUBMITTED: ["IN_REVIEW"],
       READY_TO_PUBLISH: ["DONE"],
     };
-
-    if (from === "DONE") {
-      bounce(no, "工单已归档，状态不可再变更");
-      return;
-    }
     if (!(allowed[from] ?? []).includes(to)) {
       bounce(no, "该流转由门禁驱动：工单必须先完成预提审与门禁审查");
       return;
@@ -557,6 +559,11 @@ export function KanbanBoard() {
     if (to === "IN_PROGRESS") {
       showToast("工单已开始，进入编码协作");
       void actions.startTicket(no);
+      return;
+    }
+    if (to === "PENDING") {
+      showToast("工单已退回待处理");
+      void actions.backToPending(no);
       return;
     }
     if (to === "PRESUBMITTED") {

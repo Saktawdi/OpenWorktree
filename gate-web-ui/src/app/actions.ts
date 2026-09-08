@@ -458,6 +458,15 @@ export const actions = {
     pushSystemMessage(no, "工单已开始 · Agent 可以在沙箱内编码", "info");
     return Promise.resolve(true);
   },
+  /** 退回待处理：仅「进行中」可拖回待处理重新排队（队列内流转，无需理由，后端同口径放行）。 */
+  backToPending(no: string) {
+    if (appStore.getState().mode === "live") {
+      return updateTicketLive(no, { stage: "PENDING" });
+    }
+    setStage(no, "PENDING");
+    pushSystemMessage(no, "工单已退回待处理", "info");
+    return Promise.resolve(true);
+  },
   /** 重启终态工单（T-117）：理由必填，轮次自动加一，进入 IN_PROGRESS。 */
   restartTicket(no: string, reason: string) {
     if (appStore.getState().mode === "live") {

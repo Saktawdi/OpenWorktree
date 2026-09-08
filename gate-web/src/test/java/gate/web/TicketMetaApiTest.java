@@ -142,6 +142,37 @@ class TicketMetaApiTest {
         HttpResponse<String> gated = patch("/api/tickets/META-5", "{\"stage\":\"IN_REVIEW\"}");
         assertTrue(gated.statusCode() >= 400, "IN_REVIEW is review-gated: " + gated.body());
         assertTrue(gated.body().contains("review-gated"), gated.body());
+
+        // 进行中可退回待处理（看板拖回重新排队）——队列内流转，无需理由。
+        HttpResponse<String> backToPending = patch("/api/tickets/META-5", "{\"stage\":\"PENDING\"}");
+        assertEquals(200, backToPending.statusCode(), backToPending.body());
+        assertTrue(backToPending.body().contains("\"stage\":\"PENDING\""), backToPending.body());
+        // 退回后仍可重新开始（队列内来回均合法）。
+        HttpResponse<String> restarted = patch("/api/tickets/META-5", "{\"stage\":\"IN_PROGRESS\"}");
+        assertEquals(200, restarted.statusCode(), restarted.body());
+    }
+
+    @Test
+    void terminal_tickets_reject_every_stage_change_except_reasoned_restart() throws Exception {
+        post("/api/tickets", "{\"ticket_no\":\"META-TERM\",\"title\":\"t\"}");
+        assertEquals(200, patch("/api/tickets/META-TERM",
+                "{\"stage\":\"CANCELLED\",\"reason\":\"误建工单\"}").statusCode());
+
+        // 终态不出门：已取消 → 强制完成（即截图里 CANCELLED → DONE 的场景）必须被拒，
+        // 且报错指向「重启」而不是误导性的 review-gated 文案。
+        HttpResponse<String> forceDone = patch("/api/tickets/META-TERM",
+                "{\"stage\":\"DONE\",\"reason\":\"已在 zcode 完成\"}");
+        assertEquals(400, forceDone.statusCode(), forceDone.body());
+        assertTrue(forceDone.body().contains("terminal ticket cannot change stage"), forceDone.body());
+
+        // 已完成 → 已取消 同样拒绝（终态之间互转一律不出门）。
+        post("/api/tickets", "{\"ticket_no\":\"META-TERM2\",\"title\":\"t\"}");
+        assertEquals(200, patch("/api/tickets/META-TERM2",
+                "{\"stage\":\"DONE\",\"reason\":\"直接收尾\"}").statusCode());
+        HttpResponse<String> cancelDone = patch("/api/tickets/META-TERM2",
+                "{\"stage\":\"CANCELLED\",\"reason\":\"改成取消\"}");
+        assertEquals(400, cancelDone.statusCode(), cancelDone.body());
+        assertTrue(cancelDone.body().contains("terminal ticket cannot change stage"), cancelDone.body());
     }
 
     @Test

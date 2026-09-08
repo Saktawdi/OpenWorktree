@@ -256,6 +256,13 @@ public final class TicketController implements WebController {
             // T-117: restarting a terminal (DONE/CANCELLED) ticket is a first-class transition
             // that must carry an operator-supplied reason — no silent revives.
             boolean restart = next == TicketStage.IN_PROGRESS && t.stage().isTerminal();
+            // 终态不出门（V19 口径收紧）：终态工单唯一出口是带理由重启转回 IN_PROGRESS，
+            // 终态之间的互转（如 已取消 → 强制已完成）一律拒绝，避免"弹窗确认后被打回"的假可用路径。
+            if (t.stage().isTerminal() && !restart && next != t.stage()) {
+                throw new GateException(GateErrorCode.USAGE,
+                        "terminal ticket cannot change stage; restart it with a reason to reopen ("
+                                + t.stage() + " -> " + next + ")");
+            }
             // V19: user-driven terminalization — force-drag to DONE or cancel from any
             // non-terminal stage; both must carry a reason (same account as the restart reason).
             boolean forceComplete = next == TicketStage.DONE && !t.stage().isTerminal();
@@ -535,9 +542,11 @@ public final class TicketController implements WebController {
                 TicketStage.READY_TO_PUBLISH);
         boolean toInProgress = to == TicketStage.IN_PROGRESS
                 && !reviewGated.contains(from);
+        // 进行中可退回待处理（看板拖回重新排队）：纯队列内流转，门禁态与终态不受此放行影响。
+        boolean toPending = to == TicketStage.PENDING && from == TicketStage.IN_PROGRESS;
         boolean toCancelled = to == TicketStage.CANCELLED
                 && !reviewGated.contains(from) && from != TicketStage.CANCELLED;
-        if (from == to || toInProgress || toCancelled) {
+        if (from == to || toInProgress || toPending || toCancelled) {
             return;
         }
         throw new GateException(GateErrorCode.USAGE,
