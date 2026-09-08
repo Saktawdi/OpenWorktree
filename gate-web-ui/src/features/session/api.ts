@@ -139,7 +139,20 @@ export async function loadSessionMessages(no: string, sessionId: string) {
   const items: ChatItem[] = hist.messages.map(mapHistoryMessage).filter(Boolean) as ChatItem[];
   const stash = appStore.getState().liveTurns[sessionId];
   if (stash) items.push(stash.item);
-  appStore.setState((st) => ({ chats: { ...st.chats, [no]: items } }));
+  // T-107 渲染修复：插队消息的行 id 已被回合时间线的 steer 分段吞并——顶层 USER 行
+  // （created_at 在回合中段、必然排在 idle 时才落库的整条回复之前）按 steer.id 去重，
+  // 否则插队气泡会在历史重载时重复出现（时间线内一份 + 列表顶层一份）。流式中的
+  // 回合未落库，去重同样覆盖 stash 的时间线。
+  const swallowed = new Set<string>();
+  for (const it of items) {
+    if (it.kind !== "assistant") continue;
+    for (const p of it.parts ?? []) {
+      if (p.type === "steer" && p.id) swallowed.add(p.id);
+    }
+  }
+  const deduped =
+    swallowed.size > 0 ? items.filter((it) => !(it.kind === "user" && swallowed.has(it.id))) : items;
+  appStore.setState((st) => ({ chats: { ...st.chats, [no]: deduped } }));
   // 任务清单以后端 session_todo 快照为准（V21）：随本请求附带返回，按会话 id 全量
   // 覆盖。快照在适配器 journal 点随 tool 事件即时落库（不等整回合 idle），所以流式
   // 中的会话切走再切回也能拿到本回合已写的清单——旧实现「有 stash 就跳过历史重建」

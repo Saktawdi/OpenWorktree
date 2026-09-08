@@ -111,8 +111,10 @@ class SessionSseHandlerTest {
         assertFalse(idle.contains("event: done"), idle);
         assertFalse(handlerReturned.get(), "handler must still be waiting for done");
 
-        // 2. Emit a live token chunk, then the terminal done chunk.
+        // 2. Emit a live token chunk, the steer reconciliation chunk, then the terminal done chunk.
         port.emit(new SessionStreamChunk.ContentChunk(SESSION_ID, "hello", Instant.now()));
+        port.emit(new SessionStreamChunk.SteerInjectedChunk(SESSION_ID, "client-7",
+                "插队：先看测试输出", Instant.now()));
         port.emit(new SessionStreamChunk.DoneChunk(SESSION_ID, "msg-1", Instant.now()));
 
         long doneDeadline = System.nanoTime() + 2_000_000_000L;
@@ -121,10 +123,14 @@ class SessionSseHandlerTest {
         }
         assertTrue(handlerReturned.get(), "handler must return promptly after done chunk");
 
-        // The received buffer must have seen the live token and the terminal done chunk.
+        // The received buffer must have seen the live token, the steer reconciliation
+        // chunk (T-107: event name + message_id/text payload), and the terminal done chunk.
         String full = received.toString();
         assertTrue(full.contains("event: token"), full);
         assertTrue(full.contains("hello"), full);
+        assertTrue(full.contains("event: steer_injected"), full);
+        assertTrue(full.contains("\"message_id\":\"client-7\""), full);
+        assertTrue(full.contains("插队：先看测试输出"), full);
         assertTrue(full.contains("event: done"), full);
     }
 

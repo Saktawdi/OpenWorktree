@@ -356,8 +356,14 @@ public final class JdbcSessionRepository implements SessionRepository {
                                     String.valueOf(mm.get("name")),
                                     String.valueOf(mm.getOrDefault("arguments_json", "")),
                                     mm.get("result_json") == null ? null : String.valueOf(mm.get("result_json"))));
+                        } else if ("thinking".equals(type)) {
+                            out.add(TurnPart.thinking(String.valueOf(mm.getOrDefault("text", ""))));
+                        } else if ("steer".equals(type)) {
+                            // T-107 渲染修复：name 承载 USER 行 id（历史重建按其去重被吞并行）。
+                            out.add(TurnPart.steer(String.valueOf(mm.getOrDefault("name", "")),
+                                    String.valueOf(mm.getOrDefault("text", ""))));
                         } else {
-                            // text / thinking（未知类型按文本容错，保住其余分段的顺序）
+                            // 未知类型按文本容错，保住其余分段的顺序
                             out.add(TurnPart.text(String.valueOf(mm.getOrDefault("text", ""))));
                         }
                     }
@@ -382,6 +388,9 @@ public final class JdbcSessionRepository implements SessionRepository {
                 m.put("name", p.name());
                 m.put("arguments_json", p.argumentsJson());
                 m.put("result_json", p.resultJson());
+            } else if (p.isSteer()) {
+                m.put("name", p.name());
+                m.put("text", p.text());
             } else {
                 m.put("text", p.text());
             }

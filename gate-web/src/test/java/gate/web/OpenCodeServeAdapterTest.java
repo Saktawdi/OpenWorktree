@@ -73,6 +73,10 @@ class OpenCodeServeAdapterTest {
     private boolean holdResponseParts;
     private CountDownLatch deferredIdleGate;
     private boolean rejectPrompt;
+    // T-107 渲染修复：回合中段 steer 注入回归。fake 在首个 step 完成后扣住事件流；
+    // 主线程放行 steerEchoGate 后补发 user 公告（插队回声）→ 续写 → idle。
+    private boolean steerMidTurn;
+    private CountDownLatch steerEchoGate;
 
     @BeforeEach
     void setUp() throws Exception {
@@ -80,6 +84,7 @@ class OpenCodeServeAdapterTest {
         partialTurnOnly = false;
         holdResponseParts = false;
         rejectPrompt = false;
+        steerMidTurn = false;
         DataSource ds = SqliteDataSourceFactory.create(root.resolve("gate.db"));
         SqliteDataSourceFactory.migrate(ds);
         jdbc = new JdbcTemplate(ds);
@@ -295,6 +300,106 @@ class OpenCodeServeAdapterTest {
         assertTrue(adapter.busySessionIds().isEmpty());
     }
 
+    @Test
+    void steer_midturn_injects_timeline_segment_and_persists_row_id() throws Exception {
+        steerMidTurn = true;
+        steerEchoGate = new CountDownLatch(1);
+        Session session = adapter.start(new AgentSessionPort.StartRequest(
+                "OPEN-1", "opencode-test", root.resolve("clone").toString(), "refs/heads/main",
+                "hello", Map.of()));
+        // 回合 1 正常受理（busy 归它）；steer 骑乘其上。
+        String normalTask = adapter.sendMessage(new AgentSessionPort.SendRequest(session.id(), "hi", true));
+        waitForTask(normalTask);
+
+        // reader 线程并发追加（emitChunk 走 listener）：必须用并发集合，流式断言才不会被
+        // ConcurrentModificationException 打断。
+        List<SessionStreamChunk> chunks = new java.util.concurrent.CopyOnWriteArrayList<>();
+        adapter.attachListener(session.id(), chunks::add);
+
+        // steer1（client-1）：文本含图片引用行（与 POST /messages 的 outgoing 同构——
+        // steer_injected 帧必须携带该权威文本，前端据此在流式期间还原缩略图）。
+        // steer2（client-2）：同样入队但上游从不公告它——重复的 user 公告帧（evt_s4b）
+        // 绝不能把它误弹出注入。
+        String steerText = "插队：先看测试输出\n[图片引用 #1] .gate/chat-images/shot.png";
+        String steerTask = adapter.sendMessage(new AgentSessionPort.SendRequest(
+                session.id(), steerText, true, List.of(), "steer", "client-1"));
+        waitForTask(steerTask);
+        String secondSteerTask = adapter.sendMessage(new AgentSessionPort.SendRequest(
+                session.id(), "第二条插队（上游永不公告）", true, List.of(), "steer", "client-2"));
+        waitForTask(secondSteerTask);
+        // 任务成功 ⇒ POST 已受理 ⇒ pendingSteers 已登记（先于 POST 登记），放行插队回声。
+        steerEchoGate.countDown();
+
+        // steer_injected 对账帧：messageId = client_message_id（乐观气泡锚点），文本随行。
+        // 只此一帧——重复的 user 公告不得把 client-2 也弹出注入（FIFO 串位）。
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        List<SessionStreamChunk.SteerInjectedChunk> injectedAll = new ArrayList<>();
+        while (System.nanoTime() < deadline && injectedAll.isEmpty()) {
+            injectedAll = chunks.stream()
+                    .filter(SessionStreamChunk.SteerInjectedChunk.class::isInstance)
+                    .map(SessionStreamChunk.SteerInjectedChunk.class::cast)
+                    .toList();
+            if (injectedAll.isEmpty()) {
+                Thread.sleep(50);
+            }
+        }
+        // 帧可能逐个到达：再等一拍让潜在的重复帧（若实现有误）也到齐。
+        Thread.sleep(500);
+        injectedAll = chunks.stream()
+                .filter(SessionStreamChunk.SteerInjectedChunk.class::isInstance)
+                .map(SessionStreamChunk.SteerInjectedChunk.class::cast)
+                .toList();
+        assertEquals(1, injectedAll.size(),
+                "重复 user 公告不得触发第二次注入: " + injectedAll);
+        SessionStreamChunk.SteerInjectedChunk injected = injectedAll.get(0);
+        assertNotNull(injected, "steer_injected 帧未到达");
+        assertEquals(session.id(), injected.sessionId());
+        assertEquals("client-1", injected.messageId());
+        assertTrue(injected.text().contains("插队：先看测试输出"), injected.text());
+        // 权威文本含图片引用行：前端流式期间按其还原插队图片缩略图（不再等刷新）。
+        assertTrue(injected.text().contains("[图片引用 #1] .gate/chat-images/shot.png"),
+                injected.text());
+
+        // 回合终点落库后：USER 行以 client_message_id 落库；ASSISTANT 行的时间线
+        // 为 text("before") → steer(client-1) → text("after")，顺序即注入位置。
+        gate.domain.session.SessionMessage assistant = null;
+        deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (System.nanoTime() < deadline && assistant == null) {
+            for (gate.domain.session.SessionMessage m : sessions.findMessages(session.id())) {
+                if (m.role() == Role.ASSISTANT
+                        && m.parts().stream().anyMatch(p -> p.isSteer())) {
+                    assistant = m;
+                }
+            }
+            if (assistant == null) {
+                Thread.sleep(50);
+            }
+        }
+        assertNotNull(assistant, "含 steer 段的回合未被落库");
+        assertEquals(3, assistant.parts().size(), assistant.parts().toString());
+        assertTrue(assistant.parts().get(0).isText()
+                && assistant.parts().get(0).text().contains("before"), assistant.parts().toString());
+        gate.domain.session.TurnPart steerPart = assistant.parts().get(1);
+        assertTrue(steerPart.isSteer(), assistant.parts().toString());
+        assertEquals("client-1", steerPart.name(), "steer 段必须携带 USER 行 id（对账锚点）");
+        assertTrue(steerPart.text().contains("插队：先看测试输出"), steerPart.text());
+        // 权威文本（含引用行）随段落库：历史重载按其还原缩略图，与实时帧同口径。
+        assertTrue(steerPart.text().contains("[图片引用 #1] .gate/chat-images/shot.png"),
+                steerPart.text());
+        assertTrue(assistant.parts().get(2).isText()
+                && assistant.parts().get(2).text().contains("after"), assistant.parts().toString());
+        // parts_blob 往返（writeParts/parseParts）保真：类型与 name 不被降级成 text。
+        assertTrue(sessions.findMessages(session.id()).stream()
+                .anyMatch(m -> "client-1".equals(m.id()) && m.role() == Role.USER),
+                "USER 行必须以 client_message_id 落库");
+        // 插队回声的 user part 不得漏进正文流（无 ContentChunk 携带其文本）。
+        assertTrue(chunks.stream()
+                        .filter(SessionStreamChunk.ContentChunk.class::isInstance)
+                        .map(SessionStreamChunk.ContentChunk.class::cast)
+                        .noneMatch(c -> c.textDelta().contains("插队：先看测试输出")),
+                "user echo part 泄漏进了正文流");
+    }
+
     private void awaitBusy(OpenCodeServeAdapter adapter, String sessionId) throws Exception {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
         while (System.nanoTime() < deadline) {
@@ -428,6 +533,52 @@ class OpenCodeServeAdapterTest {
                 sse(os, "{\"id\":\"evt_b4\",\"type\":\"session.status\",\"properties\":"
                         + "{\"sessionID\":\"sess-1\",\"status\":{\"type\":\"idle\"}}}");
                 sse(os, "{\"id\":\"evt_b5\",\"type\":\"session.status\",\"properties\":"
+                        + "{\"sessionID\":\"sess-1\",\"status\":{\"type\":\"idle\"}}}");
+                eventStreamHeld = new CountDownLatch(1);
+                eventStreamHeld.await(15, TimeUnit.SECONDS);
+                return;
+            }
+            if (steerMidTurn) {
+                // T-107 渲染修复：连接后先扣住事件流；主线程确认骑乘 steer 已受理
+                // （任务 SUCCEEDED ⇒ pendingSteers 已登记、前置普通 send 的重置已完成）
+                // 再推整个回合——assistant 活动先行，中段的 user 公告即插队回声：
+                // reader 注入 steer 段 + steer_injected 对账帧，idle 落库 text→steer→text。
+                sse(os, "{\"id\":\"evt_s0\",\"type\":\"server.connected\",\"properties\":{}}");
+                steerEchoGate.await(15, TimeUnit.SECONDS);
+                sse(os, "{\"id\":\"evt_s1\",\"type\":\"message.updated\",\"properties\":{\"info\":"
+                        + "{\"id\":\"msg_s1\",\"sessionID\":\"sess-1\",\"role\":\"assistant\","
+                        + "\"time\":{\"created\":1}}}}");
+                sse(os, "{\"id\":\"evt_s2\",\"type\":\"message.part.updated\",\"properties\":{\"part\":"
+                        + "{\"id\":\"prt_s1\",\"sessionID\":\"sess-1\",\"messageID\":\"msg_s1\","
+                        + "\"type\":\"text\",\"text\":\"before \"}}}");
+                sse(os, "{\"id\":\"evt_s3\",\"type\":\"message.updated\",\"properties\":{\"info\":"
+                        + "{\"id\":\"msg_s1\",\"sessionID\":\"sess-1\",\"role\":\"assistant\","
+                        + "\"time\":{\"created\":1,\"completed\":2},"
+                        + "\"tokens\":{\"input\":10,\"output\":5,\"reasoning\":0}}}}");
+                // 插队回声：user 公告 + 原文 part（part 必须被彻底跳过，不得漏进正文流）。
+                // 文本含图片引用行（与 POST /messages 的 outgoing 同构，前端据此还原缩略图）。
+                sse(os, "{\"id\":\"evt_s4\",\"type\":\"message.updated\",\"properties\":{\"info\":"
+                        + "{\"id\":\"msg_s9\",\"sessionID\":\"sess-1\",\"role\":\"user\","
+                        + "\"time\":{\"created\":3}}}}");
+                sse(os, "{\"id\":\"evt_s5\",\"type\":\"message.part.updated\",\"properties\":{\"part\":"
+                        + "{\"id\":\"prt_s9\",\"sessionID\":\"sess-1\",\"messageID\":\"msg_s9\","
+                        + "\"type\":\"text\",\"text\":\"插队：先看测试输出\\n[图片引用 #1] .gate/chat-images/shot.png\"}}}");
+                // 同一 user 消息的重复 message.updated（完成帧）：不得再次触发注入——
+                // 否则 FIFO 会弹出队列里下一条未公告的待注入条目（多条插队串位）。
+                sse(os, "{\"id\":\"evt_s4b\",\"type\":\"message.updated\",\"properties\":{\"info\":"
+                        + "{\"id\":\"msg_s9\",\"sessionID\":\"sess-1\",\"role\":\"user\","
+                        + "\"time\":{\"created\":3,\"completed\":4}}}}");
+                sse(os, "{\"id\":\"evt_s6\",\"type\":\"message.updated\",\"properties\":{\"info\":"
+                        + "{\"id\":\"msg_s2\",\"sessionID\":\"sess-1\",\"role\":\"assistant\","
+                        + "\"time\":{\"created\":4}}}}");
+                sse(os, "{\"id\":\"evt_s7\",\"type\":\"message.part.updated\",\"properties\":{\"part\":"
+                        + "{\"id\":\"prt_s2\",\"sessionID\":\"sess-1\",\"messageID\":\"msg_s2\","
+                        + "\"type\":\"text\",\"text\":\"after\"}}}");
+                sse(os, "{\"id\":\"evt_s8\",\"type\":\"message.updated\",\"properties\":{\"info\":"
+                        + "{\"id\":\"msg_s2\",\"sessionID\":\"sess-1\",\"role\":\"assistant\","
+                        + "\"time\":{\"created\":4,\"completed\":5},"
+                        + "\"tokens\":{\"input\":20,\"output\":8,\"reasoning\":0}}}}");
+                sse(os, "{\"id\":\"evt_s9\",\"type\":\"session.status\",\"properties\":"
                         + "{\"sessionID\":\"sess-1\",\"status\":{\"type\":\"idle\"}}}");
                 eventStreamHeld = new CountDownLatch(1);
                 eventStreamHeld.await(15, TimeUnit.SECONDS);

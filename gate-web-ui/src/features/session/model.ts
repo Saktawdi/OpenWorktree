@@ -222,6 +222,9 @@ function partsFromRaw(rawParts: RawTurnPart[] | undefined | null, tools: import(
       out.push({ type: "tool", id: tool.id, name: toolName, arguments_json: argsJson, result_json: p.result_json ?? null, status: "ok", view: tool });
     } else if (p.type === "thinking") {
       if ((p.text ?? "").trim()) out.push({ type: "thinking", text: p.text ?? "" });
+    } else if (p.type === "steer") {
+      // T-107 渲染修复：插队段按原位渲染（name = 被吞并 USER 行 id）。
+      out.push({ type: "steer", id: p.name || undefined, text: p.text ?? "" });
     } else {
       if ((p.text ?? "").trim()) out.push({ type: "text", text: p.text ?? "" });
     }

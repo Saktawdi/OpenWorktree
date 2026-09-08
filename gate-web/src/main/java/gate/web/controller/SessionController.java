@@ -366,10 +366,20 @@ public final class SessionController implements WebController {
         // 历史重载据此在用户气泡还原缩略图；Agent 也由此得知缩略图在工作区的位置。
         List<String> imagePaths = saveChatThumbnails(session, attachments);
         String outgoing = appendChatImageRefs(message == null ? "" : message, imagePaths);
+        // T-107 渲染修复：client_message_id 直通——USER 行以该 id 落库，乐观气泡与落库行
+        // 同 id，历史重载原位对账；插队段的行 id 锚点也依赖这一直通。非法/缺省即服务端自配。
+        String clientMessageId = str(req, "client_message_id");
+        if (clientMessageId != null && !clientMessageId.matches("[A-Za-z0-9_-]{4,64}")) {
+            clientMessageId = null;
+        }
         String taskId = agentSessionPort.sendMessage(
-                new AgentSessionPort.SendRequest(sessionId, outgoing, true, attachments, delivery));
+                new AgentSessionPort.SendRequest(sessionId, outgoing, true, attachments, delivery,
+                        clientMessageId));
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("task_id", taskId);
+        if (clientMessageId != null) {
+            body.put("message_id", clientMessageId);
+        }
         if (!imagePaths.isEmpty()) {
             body.put("images", imagePaths);
         }
@@ -1054,6 +1064,10 @@ public final class SessionController implements WebController {
                 pm.put("name", p.name());
                 pm.put("arguments_json", p.argumentsJson());
                 pm.put("result_json", p.resultJson());
+            } else if (p.isSteer()) {
+                // T-107 渲染修复：name = 被吞并 USER 行的 id，前端历史重建按其去重并原位渲染。
+                pm.put("name", p.name());
+                pm.put("text", p.text());
             } else {
                 pm.put("text", p.text());
             }

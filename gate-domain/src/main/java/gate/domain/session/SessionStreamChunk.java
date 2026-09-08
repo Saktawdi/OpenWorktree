@@ -17,7 +17,8 @@ public sealed interface SessionStreamChunk permits
         SessionStreamChunk.PermissionRepliedChunk,
         SessionStreamChunk.QuestionAskedChunk,
         SessionStreamChunk.QuestionRepliedChunk,
-        SessionStreamChunk.TitleChunk {
+        SessionStreamChunk.TitleChunk,
+        SessionStreamChunk.SteerInjectedChunk {
 
     String sessionId();
     Instant timestamp();
@@ -72,4 +73,12 @@ public sealed interface SessionStreamChunk permits
 
     /** opencode 自动生成的真实标题（session.updated）落库后立刻广播出去，前端可实时替换占位标签。 */
     record TitleChunk(String sessionId, String title, Instant timestamp) implements SessionStreamChunk {}
+
+    /**
+     * T-107 渲染修复：插队消息在回合中段被上游公告（message.updated role=user），reader 已把
+     * steer 段注入回合时间线并随回合落库——同时补发本帧，让正在流式的视图把乐观气泡从
+     * 列表尾部迁进时间线的准确位置（{@code messageId} 与乐观气泡/USER 行同 id，幂等对账）。
+     */
+    record SteerInjectedChunk(String sessionId, String messageId, String text,
+                              Instant timestamp) implements SessionStreamChunk {}
 }
