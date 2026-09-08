@@ -173,11 +173,22 @@ class SessionOrchestrationTest {
         assertEquals(202, post("/api/sessions/" + sid + "/messages",
                 "{\"message\":\"plain\"}").statusCode());
         assertNull(FakeAgentSessionPort.lastSent.delivery());
+        assertNull(FakeAgentSessionPort.lastSent.clientMessageId());
 
         // delivery=steer：原样透传到端口（插队；不支持插队的适配器忽略该字段）。
         assertEquals(202, post("/api/sessions/" + sid + "/messages",
                 "{\"message\":\"steer me\",\"delivery\":\"steer\"}").statusCode());
         assertEquals("steer", FakeAgentSessionPort.lastSent.delivery());
+
+        // T-107 渲染修复：client_message_id 直通——USER 行以该 id 落库（乐观气泡对账锚点）。
+        assertEquals(202, post("/api/sessions/" + sid + "/messages",
+                "{\"message\":\"with id\",\"client_message_id\":\"u-abc-1\"}").statusCode());
+        assertEquals("u-abc-1", FakeAgentSessionPort.lastSent.clientMessageId());
+
+        // 非法 id（越界字符/超长）：忽略回退服务端自配，不拒绝请求。
+        assertEquals(202, post("/api/sessions/" + sid + "/messages",
+                "{\"message\":\"bad id\",\"client_message_id\":\"bad id!!\"}").statusCode());
+        assertNull(FakeAgentSessionPort.lastSent.clientMessageId());
     }
 
     @Test

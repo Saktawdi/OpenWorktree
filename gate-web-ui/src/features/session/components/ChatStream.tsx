@@ -13,6 +13,7 @@ import {
   FileText,
   Globe,
   Info,
+  Lightning,
   ListChecks,
   MagnifyingGlass,
   PencilSimple,
@@ -293,8 +294,10 @@ function tailText(parts: TimelinePart[], lastActionIdx: number): TimelinePart[] 
 
 const TimelineBody = memo(function TimelineBody({
   item,
+  ticketNo,
 }: {
   item: Extract<ChatItem, { kind: "assistant" }>;
+  ticketNo: string;
 }) {
   const parts = item.parts!;
   const [expanded, setExpanded] = useState(item.streaming);
@@ -330,6 +333,24 @@ const TimelineBody = memo(function TimelineBody({
     }
     if (p.type === "thinking") {
       return <ThinkingRow key={`k${i}`} part={p} streamingItem={item.streaming} />;
+    }
+    if (p.type === "steer") {
+      // T-107 渲染修复：插队消息原位渲染（右对齐小气泡 + 闪电标记，与顶层用户气泡
+      // 同口径的正文/引用/缩略图处理）——回合内位置由时间线承载，不再依赖行间排序；
+      // 其后到达的正文继续走 text 分支，顺序自然正确。落库/事件文本含后端追加的
+      // 图片引用标记行（[图片引用 #n] <工作区路径>）：一次剥净——正文与缩略图同源，
+      // 标记文本绝不流入气泡正文。
+      const stripped = stripImageCitations(p.text);
+      return (
+        <div key={`s${i}`} className="flex justify-end">
+          <div className="chat-msg-line relative flex max-w-[82%] items-start gap-1.5 rounded-xl rounded-tr-sm border border-accent/35 bg-accent/10 px-3 py-1.5">
+            <Lightning size={11} weight="fill" className="mt-1 shrink-0 text-accent" />
+            <div className="min-w-0 flex-1">
+              <UserMessageBody ticketNo={ticketNo} text={stripped.body} images={stripped.images} />
+            </div>
+          </div>
+        </div>
+      );
     }
     return (
       <div key={`x${i}`} className="text-[13.5px] leading-relaxed text-ink">
@@ -533,8 +554,10 @@ function AssistantFooter({ item }: { item: Extract<ChatItem, { kind: "assistant"
 // 否则整列表的 Markdown 全量重新解析，主线程卡顿放大滚动/点击的一切延迟
 const AssistantMessage = memo(function AssistantMessage({
   item,
+  ticketNo,
 }: {
   item: Extract<ChatItem, { kind: "assistant" }>;
+  ticketNo: string;
 }) {
   // V20：有时间线走 ZCode 式分段渲染；旧行/极端缺省回退平铺（思考块+工具堆+正文）。
   const timeline = !!item.parts && item.parts.length > 0;
@@ -550,7 +573,7 @@ const AssistantMessage = memo(function AssistantMessage({
       </div>
       <div className="ml-8 space-y-2">
         {timeline ? (
-          <TimelineBody item={item} />
+          <TimelineBody item={item} ticketNo={ticketNo} />
         ) : (
           <>
             {item.thinking && <ThinkingBlock thinking={item.thinking} />}
@@ -614,7 +637,11 @@ function ChatRail({
   chat: ChatItem[];
   scrollRef: RefObject<HTMLDivElement | null>;
 }) {
-  const userMsgs = useMemo(() => chat.filter((i) => i.kind === "user"), [chat]);
+  // 类型谓词收窄联合：filter 只给 boolean 时 TS 无法证明 m.text 存在（悬浮预览用）。
+  const userMsgs = useMemo(
+    () => chat.filter((i): i is Extract<ChatItem, { kind: "user" }> => i.kind === "user"),
+    [chat],
+  );
   const [tops, setTops] = useState<number[]>([]);
   const [overflowPx, setOverflowPx] = useState(0);
   const [viewportH, setViewportH] = useState(0);
@@ -830,8 +857,10 @@ export function ChatStream({ ticketNo }: { ticketNo: string }) {
     return () => el.removeEventListener("scroll", onScroll);
   }, []);
 
-  const last = chat[chat.length - 1];
-  const streaming = !!last && last.kind === "assistant" && last.streaming === true;
+  // 流式判定不能只看数组末项：插队气泡/system 提示等可能出现在流式回合条目之后
+  // （T-107 渲染修复——末项判定在“气泡吊在流式条目尾部”的窗口里失效，滚动吸附抖动）。
+  // 按条目语义扫描：任一 assistant 条目仍在流式即视为生成中。
+  const streaming = chat.some((i) => i.kind === "assistant" && i.streaming === true);
 
   useEffect(() => {
     if (!stick.current) return;
@@ -861,7 +890,7 @@ export function ChatStream({ ticketNo }: { ticketNo: string }) {
                 </div>
               </div>
             ) : item.kind === "assistant" ? (
-              <AssistantMessage key={item.id} item={item} />
+              <AssistantMessage key={item.id} item={item} ticketNo={ticketNo} />
             ) : item.kind === "permission" ? (
               <PermissionCard
                 key={item.id}

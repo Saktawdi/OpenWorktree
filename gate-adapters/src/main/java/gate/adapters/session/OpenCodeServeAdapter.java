@@ -815,7 +815,11 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
         // First-turn detection must happen BEFORE the user message is persisted: 注入上下文
         // (项目/工单信息) rides along only on the session's opening turn.
         boolean firstTurn = sessions.findMessages(session.id()).isEmpty();
-        sessions.insertMessage(new SessionMessage(UUID.randomUUID().toString(), session.id(),
+        // T-107 渲染修复：client_message_id 直通——乐观气泡与 USER 行同 id，历史重载与
+        // steer_injected 对账帧都按该 id 锚定；缺省时服务端自配。
+        String userMessageId = request.clientMessageId() == null || request.clientMessageId().isBlank()
+                ? UUID.randomUUID().toString() : request.clientMessageId();
+        sessions.insertMessage(new SessionMessage(userMessageId, session.id(),
                 Role.USER, request.message(), List.of(), null, false, clock.now()));
         GateTask task = tasks.register("session-send", session.ticketNo(), session.id());
         // 普通回合：入队即算运行，且 busy 持续到回合真正结束（opencode 是异步回合：终点是上游
@@ -829,7 +833,7 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
             incrementInFlight(session.id());
         }
         executor.submit(() -> runSend(task, session, request.message(), request.attachments(),
-                firstTurn, steer ? "steer" : null));
+                firstTurn, steer ? "steer" : null, userMessageId));
         return task.id();
     }
 
@@ -972,11 +976,12 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
 
     private void runSend(GateTask task, Session session, String message,
                          List<AgentSessionPort.Attachment> attachments, boolean firstTurn) {
-        runSend(task, session, message, attachments, firstTurn, null);
+        runSend(task, session, message, attachments, firstTurn, null, null);
     }
 
     private void runSend(GateTask task, Session session, String message,
-                         List<AgentSessionPort.Attachment> attachments, boolean firstTurn, String delivery) {
+                         List<AgentSessionPort.Attachment> attachments, boolean firstTurn, String delivery,
+                         String userMessageId) {
         // steer（插队）是否骑乘在跑的回合：sendMessage 对 steer 不计数，此处 POST 前复核——
         //  · 在跑（inFlightCounts 含本会话）→ 骑乘：不计数、不动正在接收的回合（不做
         //    superseded 冲刷与缓冲重置，否则会把当前回合误判为“陈旧残留”而掐断）；
@@ -1051,6 +1056,11 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                     up.turnParts.clear();
                     up.turnUsage = null;
                     up.turnHasNewContent = false;
+                    // T-107 渲染修复：新回合开始前清掉上个回合残留的待注入 steer——
+                    // 其上游公告不会再到来（回合已死/已被 superseded），留着会被下个
+                    // 回合中段的真实插队公告误消费（FIFO 串位）。
+                    up.pendingSteers.clear();
+                    up.turnHasAssistantActivity = false;
                     // V22：请求值兜底——messageBody resolveModel 同口径（实时覆盖优先，回退
                     // AgentConfig 默认 ref）；上游 info 若给出实际值，mergeStep 会覆盖它。
                     ModelRef requested = resolveModel(config,
@@ -1063,9 +1073,18 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                     up.turnVariant = reqVariant == null || reqVariant.isBlank() ? null : reqVariant.trim();
                 }
             }
+            // T-107 渲染修复：骑乘 steer 在 POST 前登记待注入条目——上游的 user 公告可能
+            // 先于 HTTP 响应返回（reader 是独立线程），受理后才登记会错过注入窗口。
+            Upstream steerTarget = riding ? upstreams.get(session.id()) : null;
+            if (steerTarget != null && userMessageId != null) {
+                steerTarget.queueSteer(userMessageId, message);
+            }
             HttpResponse<String> resp = post("http://127.0.0.1:" + port + "/session/"
                     + session.cliSessionId() + "/prompt_async", body);
             if (resp.statusCode() / 100 != 2) {
+                if (steerTarget != null) {
+                    steerTarget.removeSteer(userMessageId);
+                }
                 log.error("opencode", "prompt_async.rejected",
                         "sessionId", session.id(), "status", resp.statusCode(),
                         "bodySnippet", resp.body() == null ? "" : resp.body().substring(0, Math.min(200, resp.body().length())));
@@ -1082,6 +1101,14 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
             // reader and the final assistant message is persisted from its completion snapshot.
             tasks.update(success(task, "{\"accepted\":true}"));
         } catch (Throwable e) {
+            // T-107 渲染修复：POST 阶段（含受理前）抛错时撤回已登记的待注入 steer，
+            // 其上游公告永远不会到来，残留条目会串到下个回合中段的真实公告上。
+            if (riding && userMessageId != null) {
+                Upstream failed = upstreams.get(session.id());
+                if (failed != null) {
+                    failed.removeSteer(userMessageId);
+                }
+            }
             // Persist the failure so a page reload still shows why the turn died, mirroring the
             // claude adapter's ERROR-message behaviour.
             sessions.insertMessage(new SessionMessage(UUID.randomUUID().toString(), session.id(),
@@ -1313,6 +1340,21 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
         // 停机/错误路径（flush 落库）。turnText 是普通 StringBuilder，跨线程读写必须加锁。
         // flush 的 DB I/O 在锁外执行，锁只覆盖缓冲快照与清空。
         final Object turnLock = new Object();
+        // T-107 渲染修复：待注入的 steer（插队）条目。runSend 骑乘受理前登记（FIFO，同一会话
+        // 内公告顺序与投递顺序一致）；reader 在回合中段看到 user 公告时弹出队首——位置由
+        // 时间线承载，注入点即 turnParts 的当前末尾，随 flushTurn 一并落库为 steer 分段。
+        // 公告缺失（serve 崩溃/回合中断）时条目在 TTL 窗口后被后续公告清掉，绝不串位。
+        final java.util.Deque<PendingSteer> pendingSteers = new java.util.concurrent.ConcurrentLinkedDeque<>();
+        // 本回合自上一个终点以来是否已有 assistant 活动：区分“新回合开头的 user 回声”
+        // （不注入）与“回合中段的 steer 公告”（注入）。
+        volatile boolean turnHasAssistantActivity;
+
+        /** 一次待注入的 steer：messageId 为 gate USER 行 id（client_message_id 对账锚点）。 */
+        record PendingSteer(String messageId, String text, long atMs) {
+        }
+
+        /** steer 待注入条目的有效窗口：上游公告迟迟不来（回合夭折）时条目过期作废。 */
+        private static final long STEER_TTL_MS = 60_000L;
 
         Upstream(String sessionId, int port, String cliSessionId) {
             this.sessionId = sessionId;
@@ -1677,6 +1719,41 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
             return incoming;
         }
 
+        void queueSteer(String messageId, String text) {
+            pendingSteers.addLast(new PendingSteer(messageId, text, System.currentTimeMillis()));
+        }
+
+        void removeSteer(String messageId) {
+            pendingSteers.removeIf(p -> p.messageId().equals(messageId));
+        }
+
+        /**
+         * 回合中段的 user 公告 = steer（插队）回声：弹出队首待注入条目，把 steer 分段
+         * 插进回合时间线（当前位置），并补发 steer_injected 对账帧（乐观气泡按 id 迁入
+         * 时间线）。新回合开头的 user 回声不满足“已有 assistant 活动”条件，直接跳过。
+         */
+        private void injectPendingSteer() {
+            long now = System.currentTimeMillis();
+            PendingSteer head;
+            // 过期条目（公告永远没来的死回合残留）就地作废，避免串到无关公告上。
+            while ((head = pendingSteers.peekFirst()) != null && now - head.atMs() > STEER_TTL_MS) {
+                pendingSteers.pollFirst();
+                log.warn("opencode", "steer.expired", "sessionId", sessionId,
+                        "messageId", head.messageId());
+            }
+            if (pendingSteers.isEmpty() || !turnHasAssistantActivity) {
+                return;
+            }
+            PendingSteer ps = pendingSteers.pollFirst();
+            synchronized (turnLock) {
+                turnParts.add(TurnPart.steer(ps.messageId(), ps.text()));
+            }
+            emitChunk(sessionId, new SessionStreamChunk.SteerInjectedChunk(sessionId,
+                    ps.messageId(), ps.text(), clock.now()));
+            log.info("opencode", "steer.injected", "sessionId", sessionId,
+                    "messageId", ps.messageId(), "chars", ps.text().length());
+        }
+
         @SuppressWarnings("unchecked")
         private void handleMessageUpdated(Map<String, Object> props) {
             Map<String, Object> info = props.get("info") instanceof Map<?, ?> i
@@ -1687,6 +1764,8 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
             String messageId = str(info.get("id"));
             String role = str(info.get("role"));
             if ("assistant".equals(role)) {
+                // 本回合已有 assistant 活动：此后的 user 公告即插队回声（T-107 渲染修复）。
+                turnHasAssistantActivity = true;
                 // V22：上游 info 自带本消息实际使用的模型（providerID/modelID），权威来源——
                 // 抽出来供 flushTurn 随行落库（map 里多存一份也不碍事，key 随消息清理）。
                 if (messageId != null) {
@@ -1699,7 +1778,14 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                 }
             } else if ("user".equals(role)) {
                 if (messageId != null) {
-                    userMessages.add(messageId);
+                    // T-107 渲染修复：回合中段的 user 公告是 steer（插队）回声——注入
+                    // 时间线并补发对账帧。新回合开头的 echo 因无 assistant 活动而跳过。
+                    // 同一消息的 message.updated 可能推送多次（创建/完成各一帧）：只有
+                    // 首帧触发注入——否则第二帧会弹出队列中下一条无关的待注入条目，
+                    // 多条插队消息串位/提前消费。
+                    if (userMessages.add(messageId)) {
+                        injectPendingSteer();
+                    }
                     // A user part that raced ahead of this announcement buffered itself; drop it.
                     messageParts.remove(messageId);
                     toolsByMessage.remove(messageId);
@@ -1853,6 +1939,10 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                 turnText.setLength(0);
                 turnUsage = null;
                 turnHasNewContent = false;
+                // T-107 渲染修复：回合终点即时间线收口——重置“回合中段”判定，并丢弃
+                // 仍未被公告消费的 steer 条目（回合已死，公告不会再按旧位置到来）。
+                turnHasAssistantActivity = false;
+                pendingSteers.clear();
                 assistantPersistedSinceSend = true;
             }
             sessions.insertMessage(new SessionMessage(UUID.randomUUID().toString(),

@@ -17,8 +17,13 @@ export function pushChatItem(no: string, item: ChatItem) {
   }));
 }
 
-export function pushUserMessage(no: string, text: string, images?: string[]): ChatItem {
-  const item: ChatItem = { kind: "user", id: uid("u"), text, ts: Date.now() };
+/**
+ * 推入一条用户气泡；fixedId 传入时以此作为条目 id——该 id 同时作为
+ * client_message_id 交给后端落库（T-107：乐观气泡与 USER 行同 id，历史重载与
+ * steer_injected 帧原位对账），缺省本地自配（demo 路径与旧调用点）。
+ */
+export function pushUserMessage(no: string, text: string, images?: string[], fixedId?: string): ChatItem {
+  const item: ChatItem = { kind: "user", id: fixedId ?? uid("u"), text, ts: Date.now() };
   if (images && images.length > 0) item.images = images;
   pushChatItem(no, item);
   return item;

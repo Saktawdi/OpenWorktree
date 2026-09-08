@@ -73,6 +73,7 @@ async function postSessionMessage(
   userText: string,
   attachments: PendingAttachment[],
   delivery?: "steer",
+  clientMessageId?: string,
 ): Promise<{ taskId?: string; images?: string[]; error?: string }> {
   const sel = appStore.getState().sessionModelSel[sessionId];
   try {
@@ -91,6 +92,8 @@ async function postSessionMessage(
           model_id: sel?.modelId ?? undefined,
           variant: sel?.variant ?? undefined,
           delivery: delivery ?? undefined,
+          // T-107 渲染修复：乐观气泡 id 直通落库（USER 行同 id），历史重载原位对账。
+          client_message_id: clientMessageId ?? undefined,
         }),
       },
     );
@@ -114,6 +117,21 @@ function userImagesOf(attachments: PendingAttachment[]): string[] {
  *   看到续写；busy 由轮询按后端口径释放。
  * · POST 失败：回滚乐观用户气泡并提示（消息未达 Agent）。
  */
+/** steer 段按 id 幂等追加到回合时间线末尾（注入点即当前正文位置）。
+ * 已存在同 id 段时更新文本而非跳过：乐观插入的原文尚不含后端追加的图片引用行，
+ * steer_injected 帧携带的权威文本（含引用行）必须写回——否则插队图片在流式期间
+ * 无法从引用行还原缩略图，直到整页刷新才能看见。位置保持首次插入处不动。 */
+function addSteerPart(parts: TimelinePart[] | undefined, id: string, text: string): TimelinePart[] {
+  const list = parts ?? [];
+  const idx = list.findIndex((p) => p.type === "steer" && p.id === id);
+  if (idx < 0) return [...list, { type: "steer", id, text }];
+  const existing = list[idx] as Extract<TimelinePart, { type: "steer" }>;
+  if (existing.text === text) return list;
+  const next = list.slice();
+  next[idx] = { type: "steer", id, text };
+  return next;
+}
+
 async function steerIntoRunning(
   no: string,
   sid: string,
@@ -121,13 +139,19 @@ async function steerIntoRunning(
   attachments: PendingAttachment[],
 ): Promise<boolean> {
   const userItem = pushUserMessage(no, userText, userImagesOf(attachments));
-  const result = await postSessionMessage(no, sid, userText, attachments, "steer");
+  const result = await postSessionMessage(no, sid, userText, attachments, "steer", userItem.id);
   if (result.error) {
     removeChatItem(no, userItem.id);
     pushSystemMessage(no, `插队失败：${result.error}`, "warn");
     return false;
   }
   if (result.images?.length) attachUserImages(no, userItem.id, result.images);
+  if (appStore.getState().liveTurns[sid]) {
+    // 受理即迁入时间线：插队气泡渲染在流式回合的当前正文位置（时间线承载回合内位置，
+    // 不再吊在列表尾部被不断变高的流式条目顶下去）。后续 steer_injected 帧按 id 幂等对账。
+    updateLiveTurn(sid, (a) => ({ ...a, parts: addSteerPart(a.parts, userItem.id, userText) }));
+    removeChatItem(no, userItem.id);
+  }
   if (!isSessionStreamingLocally(sid)) {
     // 观察后台回合的续写：不 await——投递已受理即返回成功，续写事件在后台驱动本页视图；
     // POST 受理后后端必有一个将到来的 idle 终点，观察流不会被晾到看门狗超时。
@@ -186,7 +210,7 @@ export async function liveSendPrompt(
       // 真目录按会话加载，草稿目录（opencode 配置）完成使命。
       void loadSessionCatalog(no, sid);
     }
-    const result = await postSessionMessage(no, sid, userText, attachments);
+    const result = await postSessionMessage(no, sid, userText, attachments, undefined, userItem.id);
     if (result.error) throw new Error(result.error);
     // 后端已把缩略图落盘到克隆 .gate/chat-images/：用可持久化的工作区路径
     // 替换乐观 data URL，此后历史重载按同一引用行解析出一致的数据源。
@@ -239,7 +263,7 @@ export async function liveSendToSession(
   const userItem = pushUserMessage(no, userText, userImagesOf(attachments));
   setBusy(no, true);
   try {
-    const result = await postSessionMessage(no, sid, userText, attachments);
+    const result = await postSessionMessage(no, sid, userText, attachments, undefined, userItem.id);
     if (result.error) throw new Error(result.error);
     if (result.images?.length) attachUserImages(no, userItem.id, result.images);
     setSessionBusy(sid, true);
@@ -673,6 +697,19 @@ async function consumeSessionEvents(
       arm();
       const d = JSON.parse((ev as MessageEvent).data);
       if (d.request_id) resolveQuestion(no, d.request_id, !!d.rejected);
+    });
+    es.addEventListener("steer_injected", (ev) => {
+      // T-107 渲染修复：后端已把 steer 段注入回合时间线（并将随回合落库）。按
+      // message_id 幂等对账——乐观气泡迁入时间线的动作在受理时已做过，这里只兜底：
+      // 兜住「受理时 liveTurn 缺位/跨页观察」等场景下残留在列表尾部的顶层气泡，
+      // 以及时间线里缺失的 steer 段（reader 注入晚于本地乐观插入的竞态）。
+      arm();
+      const d = JSON.parse((ev as MessageEvent).data);
+      const messageId = String(d.message_id ?? "");
+      if (!messageId) return;
+      const text = String(d.text ?? "");
+      updateLiveTurn(sessionId, (a) => ({ ...a, parts: addSteerPart(a.parts, messageId, text) }));
+      removeChatItem(no, messageId);
     });
     es.addEventListener("session_title", (ev) => {
       // 后端把 opencode 自动生成的标题上抛（HTTP Server: SessionSseHandler）。

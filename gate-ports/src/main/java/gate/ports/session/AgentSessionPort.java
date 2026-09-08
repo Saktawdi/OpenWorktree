@@ -119,7 +119,9 @@ public interface AgentSessionPort {
             String message,
             boolean resume,
             List<Attachment> attachments,
-            String delivery) {
+            String delivery,
+            /** 前端乐观气泡的行 id 直通（T-107）：USER 行以该 id 落库，历史重载原位对账。 */
+            String clientMessageId) {
 
         public SendRequest {
             attachments = attachments == null ? List.of() : List.copyOf(attachments);
@@ -127,12 +129,18 @@ public interface AgentSessionPort {
 
         /** Legacy shape: no delivery override, with attachments. */
         public SendRequest(String sessionId, String message, boolean resume, List<Attachment> attachments) {
-            this(sessionId, message, resume, attachments, null);
+            this(sessionId, message, resume, attachments, null, null);
         }
 
         /** Legacy shape: no attachments, no delivery override. */
         public SendRequest(String sessionId, String message, boolean resume) {
-            this(sessionId, message, resume, List.of(), null);
+            this(sessionId, message, resume, List.of(), null, null);
+        }
+
+        /** Legacy shape: no client message id (server allocates the USER row id). */
+        public SendRequest(String sessionId, String message, boolean resume,
+                           List<Attachment> attachments, String delivery) {
+            this(sessionId, message, resume, attachments, delivery, null);
         }
     }
 

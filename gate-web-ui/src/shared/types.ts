@@ -193,6 +193,12 @@ export interface ToolCallView {
 export type TimelinePart =
   | { type: "text"; text: string }
   | {
+      type: "steer";
+      /** 被吞并 USER 行的 id（client_message_id 对账锚点）；历史重建按其去重顶层气泡。 */
+      id?: string;
+      text: string;
+    }
+  | {
       type: "thinking";
       text: string;
       /** live 时段的开始/结束时刻（ms），"思考 · 持续 N 秒" 数据源；历史分段无。 */

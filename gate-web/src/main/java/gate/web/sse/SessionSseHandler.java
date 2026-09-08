@@ -72,6 +72,8 @@ public final class SessionSseHandler {
                         eventName = "question_replied";
                     } else if (chunk instanceof SessionStreamChunk.TitleChunk) {
                         eventName = "session_title";
+                    } else if (chunk instanceof SessionStreamChunk.SteerInjectedChunk) {
+                        eventName = "steer_injected";
                     }
                     Map<String, Object> chunkPayload = chunkJson(chunk);
                     String data = Json.write(chunkPayload);
@@ -165,6 +167,9 @@ public final class SessionSseHandler {
             m.put("auto", qr.auto());
         } else if (chunk instanceof SessionStreamChunk.TitleChunk t) {
             m.put("title", t.title());
+        } else if (chunk instanceof SessionStreamChunk.SteerInjectedChunk st) {
+            m.put("message_id", st.messageId());
+            m.put("text", st.text());
         }
         return m;
     }
@@ -231,6 +236,10 @@ public final class SessionSseHandler {
                 pm.put("name", p.name());
                 pm.put("arguments_json", p.argumentsJson());
                 pm.put("result_json", p.resultJson());
+            } else if (p.isSteer()) {
+                // T-107 渲染修复：name = 被吞并 USER 行的 id（与 GET /messages 同口径）。
+                pm.put("name", p.name());
+                pm.put("text", p.text());
             } else {
                 pm.put("text", p.text());
             }
