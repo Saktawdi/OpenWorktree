@@ -20,9 +20,10 @@ import {
 } from "@phosphor-icons/react";
 import { appStore, openConnect, openPluginPage, setView, switchProject, toggleTheme, useApp } from "@/store";
 import { usePlugins } from "@/app/plugins/state";
-import { PAGE_ORDER_DEFAULT, SLOT_NAV_PAGES } from "@/app/plugins/slots";
+import { HEADER_ORDER_DEFAULT, PAGE_ORDER_DEFAULT, SLOT_HEADER_ACTIONS, SLOT_NAV_PAGES } from "@/app/plugins/slots";
+import { PluginBoundary } from "@/app/plugins/components/PluginBoundary";
 import { pluginIcon } from "@/app/plugins/icons";
-import type { PageContribution } from "@/app/plugins/types";
+import type { HeaderActionContribution, PageContribution } from "@/app/plugins/types";
 import { RunMonitor } from "@/app/components/RunMonitor";
 import { TerminalMinimizedChip } from "@/features/project/components/ProjectTerminal";
 
@@ -256,6 +257,27 @@ function shellPost(action: string) {
   window.parent.postMessage({ __ow: true, action }, "*");
 }
 
+/** 顶栏右上角插件胶囊动作区（header.actions 插槽渲染型载体，按 order 升序）。 */
+function HeaderActionsSlot() {
+  const contributions = usePlugins((s) => s.contributions);
+  const actions = useMemo(() => {
+    return contributions
+      .filter((c) => c.slot === SLOT_HEADER_ACTIONS)
+      .map((c) => c.contribution as HeaderActionContribution)
+      .sort((a, b) => (a.order ?? HEADER_ORDER_DEFAULT) - (b.order ?? HEADER_ORDER_DEFAULT));
+  }, [contributions]);
+  if (actions.length === 0) return null;
+  return (
+    <>
+      {actions.map((action, i) => (
+        <div key={`header-action:${i}`} className="inline-flex items-center">
+          <PluginBoundary label={action.id}>{action.render()}</PluginBoundary>
+        </div>
+      ))}
+    </>
+  );
+}
+
 /** 桌面壳窗口控制：最小化/最大化/关闭（紧挨日夜切换，同为 icon-btn 风格）。
  *  关闭钮悬停红，对齐 Windows 标题栏惯例；浏览器/非壳环境整组不渲染。
  *  兼承载托盘桥：收「打开项目工作台」、发「当前选中项目」（托盘绿点数据源）。 */
@@ -388,6 +410,9 @@ export function TopBar() {
       <div className="flex-1" />
 
       <ProjectSwitcher />
+
+      {/* 插件胶囊动作区（header.actions 注册表，零改宿主即增减） */}
+      <HeaderActionsSlot />
 
       {/* 最小化到后台的终端会话（进程保持运行，点击恢复工作台） */}
       <TerminalMinimizedChip />

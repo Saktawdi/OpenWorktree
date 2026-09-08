@@ -15,6 +15,8 @@ import {
   kvGet,
   kvSet,
   listPlugins,
+  llmChat,
+  llmChatStream,
   requestPluginReload,
   setPluginEnabled,
 } from "./api";
@@ -27,10 +29,20 @@ import {
   setCatalog,
 } from "./state";
 import { emitPluginEvent, onPluginEvent } from "./events";
-import { SLOT_COMPOSER_CHIPS, SLOT_NAV_PAGES, SLOT_SELECTION_MENU, SLOT_SETTINGS_PLUGINS } from "./slots";
+import {
+  SLOT_COMPOSER_CHIPS,
+  SLOT_FLOATING_WIDGETS,
+  SLOT_HEADER_ACTIONS,
+  SLOT_NAV_PAGES,
+  SLOT_SELECTION_MENU,
+  SLOT_SETTINGS_PLUGINS,
+} from "./slots";
 import type {
   Disposable,
+  FloatingWidgetContribution,
+  HeaderActionContribution,
   HostFetchRequest,
+  LlmChatOptions,
   PageContribution,
   PanelWidgetContribution,
   ChatInputActionContribution,
@@ -38,6 +50,7 @@ import type {
   PluginEntryModule,
   PluginKv,
   PluginListItem,
+  PluginStorage,
   SelectionActionContribution,
 } from "./types";
 
@@ -243,7 +256,19 @@ function buildContext(info: PluginListItem, disposers: Disposable[]): PluginCont
       disposers.push(dispose);
       return dispose;
     },
+    registerHeaderAction(action: HeaderActionContribution) {
+      const dispose = registerContribution(info.id, SLOT_HEADER_ACTIONS, action);
+      disposers.push(dispose);
+      return dispose;
+    },
+    registerFloatingWidget(widget: FloatingWidgetContribution) {
+      const dispose = registerContribution(info.id, SLOT_FLOATING_WIDGETS, widget);
+      disposers.push(dispose);
+      return dispose;
+    },
     kv: info.permissions.includes("kv") ? makeKv(info.id) : null,
+    storage: info.permissions.includes("storage") ? makeStorage(info.id) : null,
+    llm: info.permissions.includes("llm") ? makeLlm() : null,
     async hostFetch<T>(path: string, init?: HostFetchRequest) {
       if (!info.permissions.includes("net")) {
         throw new Error("manifest 未声明 net 权限，无法使用 hostFetch");
@@ -266,11 +291,69 @@ function buildContext(info: PluginListItem, disposers: Disposable[]): PluginCont
   return context;
 }
 
+function makeStorage(pluginId: string): PluginStorage {
+  const prefix = `gate_plugin_${pluginId}:`;
+  return {
+    getItem(key: string): string | null {
+      try {
+        return window.localStorage.getItem(prefix + key);
+      } catch {
+        return null;
+      }
+    },
+    setItem(key: string, value: string): void {
+      try {
+        window.localStorage.setItem(prefix + key, value);
+      } catch {
+        /* storage full / disabled */
+      }
+    },
+    removeItem(key: string): void {
+      try {
+        window.localStorage.removeItem(prefix + key);
+      } catch {
+        /* ignore */
+      }
+    },
+    clear(): void {
+      try {
+        const keysToRemove: string[] = [];
+        for (let i = 0; i < window.localStorage.length; i++) {
+          const k = window.localStorage.key(i);
+          if (k && k.startsWith(prefix)) {
+            keysToRemove.push(k);
+          }
+        }
+        for (const k of keysToRemove) {
+          window.localStorage.removeItem(k);
+        }
+      } catch {
+        /* ignore */
+      }
+    },
+  };
+}
+
 function makeKv(pluginId: string): PluginKv {
   return {
     get: <T,>(key: string) => kvGet<T>(pluginId, key),
     set: (key: string, value: unknown) => kvSet(pluginId, key, value),
     del: (key: string) => kvDel(pluginId, key),
+  };
+}
+
+function makeLlm() {
+  const toWire = (options: LlmChatOptions) => ({
+    messages: options.messages,
+    provider_id: options.providerId,
+    model: options.model,
+    temperature: options.temperature,
+    max_tokens: options.maxTokens,
+  });
+  return {
+    chat: (options: LlmChatOptions) => llmChat(toWire(options)),
+    chatStream: (options: LlmChatOptions, onChunk: (chunk: string) => void) =>
+      llmChatStream(toWire(options), onChunk),
   };
 }
 

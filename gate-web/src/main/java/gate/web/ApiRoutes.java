@@ -2,6 +2,7 @@ package gate.web;
 
 import gate.web.controller.AppInfoController;
 import gate.web.controller.AuthController;
+import gate.web.controller.LlmController;
 import gate.web.controller.MetricsController;
 import gate.web.controller.OpenCodeProviderController;
 import gate.web.controller.PluginController;
@@ -54,6 +55,7 @@ public final class ApiRoutes implements WebController {
                         (gate.adapters.audit.HashChainAuditLog) c.auditLog()),
                 new TaskController(c.taskRegistry(), c.taskRunner()),
                 new ProviderController(c.providerRepository(), c.modelFetcher(), c.kmsService(), c.clock()),
+                new LlmController(c.providerRepository(), c.kmsService()),
                 new OpenCodeProviderController(new OpenCodeConfigService(), new OpenCodeModelsApi()),
                 new MetricsController(c.metricsService(), c.gateService()),
                 new SessionController(c.agentConfigRepository(), c.sessionRepository(), c.agentSessionPort(),

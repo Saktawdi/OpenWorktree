@@ -107,6 +107,61 @@ export interface PageContribution {
   render(): ReactNode;
 }
 
+/** 顶栏右上角胶囊动作贡献点（header.actions 区域）。 */
+export interface HeaderActionContribution {
+  id: string;
+  order?: number;
+  /** 渲染胶囊按钮等挂件内容（与宿主共享同一 React 实例）。 */
+  render(): ReactNode;
+}
+
+/** 全局悬浮挂件贡献点（floating.widgets 区域，如悬浮可拖拽小助手面板）。 */
+export interface FloatingWidgetContribution {
+  id: string;
+  /** 渲染悬浮挂件内容（全视口自由浮动挂载，支持 hooks）。 */
+  render(): ReactNode;
+}
+
+/** LLM 单次/流式对话请求参数。 */
+export interface LlmChatMessage {
+  role: "system" | "user" | "assistant";
+  content: string;
+}
+
+export interface LlmChatOptions {
+  messages: LlmChatMessage[];
+  providerId?: string;
+  model?: string;
+  temperature?: number;
+  maxTokens?: number;
+}
+
+export interface LlmChatResponse {
+  id?: string;
+  choices: Array<{
+    message: {
+      role: string;
+      content: string;
+    };
+    finish_reason?: string;
+  }>;
+}
+
+export interface PluginLlmApi {
+  /** 单次等待完整回复（manifest 声明 llm 权限时可用）。 */
+  chat(options: LlmChatOptions): Promise<LlmChatResponse>;
+  /** 流式对话（manifest 声明 llm 权限时可用；每收到增量内容触发 onChunk 回调，最终返回合并后的全文）。 */
+  chatStream(options: LlmChatOptions, onChunk: (chunk: string) => void): Promise<string>;
+}
+
+/** 插件前端 Storage 存储（manifest 声明 storage 权限时宿主才注入；基于 localStorage 并在 key 前拼接插件前缀隔离）。 */
+export interface PluginStorage {
+  getItem(key: string): string | null;
+  setItem(key: string, value: string): void;
+  removeItem(key: string): void;
+  clear(): void;
+}
+
 /** 插件 KV 存储（manifest 声明 kv 权限时宿主才注入；数据落 <gateHome>/plugins-data/<id>/）。 */
 export interface PluginKv {
   get<T>(key: string): Promise<T | null>;
@@ -151,7 +206,15 @@ export interface PluginContext {
   registerPage(page: PageContribution): Disposable;
   /** 注册划选文字弹出菜单的动作（selection.menu 区域，如「添加到 xxx」；apiVersion=1 增量能力）。 */
   registerSelectionAction(action: SelectionActionContribution): Disposable;
+  /** 注册顶栏右上角胶囊动作（header.actions 区域）。 */
+  registerHeaderAction(action: HeaderActionContribution): Disposable;
+  /** 注册全局悬浮挂件（floating.widgets 区域）。 */
+  registerFloatingWidget(widget: FloatingWidgetContribution): Disposable;
   readonly kv: PluginKv | null;
+  /** 前端 Storage 存储（manifest 声明 storage 权限时宿主才注入；按插件 ID 隔离）。 */
+  readonly storage: PluginStorage | null;
+  /** LLM 对话能力（manifest 声明 llm 权限时宿主才注入）。 */
+  readonly llm: PluginLlmApi | null;
   /** 注入 Web Token 的同源 /api/ 请求（manifest 声明 net 权限时可用）。 */
   hostFetch<T>(path: string, init?: HostFetchRequest): Promise<T>;
   /** 登记停用回调：宿主 disable/reload 时与注册返回的 Disposable 一起逆序执行。 */

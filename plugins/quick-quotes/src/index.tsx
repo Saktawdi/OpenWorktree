@@ -1,7 +1,7 @@
 /**
  * 快捷语录插件入口。
  * 职责：KV 装载/种子/原生条目迁移/防抖保存，语录 → composer chips 的注册与重注册，
- * 划选菜单动作（selection.menu）示例，管理面板挂件。
+ * 划选菜单动作（selection.menu，开关与文案可在设置面板配置），管理面板挂件。
  */
 import "./styles.css";
 import type { PluginContext } from "@gate/plugin-sdk";
@@ -13,15 +13,18 @@ import {
   type QuoteItem,
 } from "./quotes";
 import { quoteStore } from "./quote-store";
+import { SELECTION_DEFAULTS, selectionSettingsStore } from "./selection-settings";
 import { QuotesManager } from "./manager";
 
 const KV_KEY = "quotes";
+const SELECTION_KV_KEY = "selection-settings";
 const SAVE_DEBOUNCE_MS = 500;
 
 export function activate(ctx: PluginContext) {
   const kv = ctx.kv;
   let chipDisposers: Array<() => void> = [];
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
+  let selectionSaveTimer: ReturnType<typeof setTimeout> | null = null;
   let disposed = false;
 
   /* 语录 → chips：每次语录变化先全量注销再重注册（条目级 Disposable 由宿主保证幂等） */
@@ -39,9 +42,43 @@ export function activate(ctx: PluginContext) {
     }, SAVE_DEBOUNCE_MS);
   };
 
+  /* 划选动作设置防抖持久化 */
+  const persistSelection = () => {
+    if (!kv || disposed) return;
+    if (selectionSaveTimer) clearTimeout(selectionSaveTimer);
+    selectionSaveTimer = setTimeout(() => {
+      kv.set(SELECTION_KV_KEY, selectionSettingsStore.get()).catch((e) =>
+        ctx.log("划选设置保存失败", e),
+      );
+    }, SAVE_DEBOUNCE_MS);
+  };
+
   const unsubscribe = quoteStore.subscribe(() => {
     syncChips();
     persist();
+  });
+
+  /* 划选动作注册表：开关关闭时注销；文案变化时重注册（每次全量重建，语义与 chips 一致） */
+  let selectionDisposer: (() => void) | null = null;
+  const syncSelectionAction = () => {
+    selectionDisposer?.();
+    selectionDisposer = null;
+    const settings = selectionSettingsStore.get();
+    if (!settings.enabled) return;
+    selectionDisposer = ctx.registerSelectionAction({
+      id: "quote-and-ask",
+      label: settings.label.trim() || SELECTION_DEFAULTS.label,
+      icon: "ChatText",
+      run(api, text) {
+        api.addToComposer(text);
+        api.insertText(`\n${settings.prompt.trim() || SELECTION_DEFAULTS.prompt}`);
+        api.toast("已加入引用与追问");
+      },
+    });
+  };
+  const unsubscribeSelection = selectionSettingsStore.subscribe(() => {
+    syncSelectionAction();
+    persistSelection();
   });
 
   /* 初始装载：KV 为空（首次安装）→ 种子内置语录；有值 → 清洗后恢复。
@@ -67,6 +104,15 @@ export function activate(ctx: PluginContext) {
       ctx.log("语录装载失败，回退内置", e);
       quoteStore.set([...BUILTIN_QUOTES]);
     }
+    /* 划选动作设置装载（缺键保持默认，不打扰 KV） */
+    try {
+      const sel = await kv.get<unknown>(SELECTION_KV_KEY);
+      if (sel != null) selectionSettingsStore.loadFrom(sel);
+      syncSelectionAction();
+    } catch (e) {
+      ctx.log("划选设置装载失败", e);
+      syncSelectionAction();
+    }
   };
   void boot();
 
@@ -79,29 +125,20 @@ export function activate(ctx: PluginContext) {
         hasKv={!!kv}
         onChange={(next) => quoteStore.set(next)}
         loadMcpTools={() => ctx.hostFetch("/api/mcp/status")}
+        selectionSettings={selectionSettingsStore}
+        canConfigureSelection={!!kv}
       />
     ),
-  });
-
-  /* 划选动作示例（selection.menu 区域）：「引用并追问」——把划选文字作为引用胶囊
-   * 加入对话框，并自动补一句追问，演示宿主划选菜单的插件扩展点。 */
-  const disposeSelection = ctx.registerSelectionAction({
-    id: "quote-and-ask",
-    label: "引用并追问",
-    icon: "ChatText",
-    run(api, text) {
-      api.addToComposer(text);
-      api.insertText("\n请结合上面的引用展开说明：");
-      api.toast("已加入引用与追问");
-    },
   });
 
   return () => {
     disposed = true;
     unsubscribe();
+    unsubscribeSelection();
     chipDisposers.forEach((d) => d());
+    selectionDisposer?.();
     if (saveTimer) clearTimeout(saveTimer);
+    if (selectionSaveTimer) clearTimeout(selectionSaveTimer);
     disposeWidget();
-    disposeSelection();
   };
 }
