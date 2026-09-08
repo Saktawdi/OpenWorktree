@@ -332,6 +332,24 @@ public final class TicketController implements WebController {
         return stageChanges == null ? 0 : stageChanges.count(ticketNo);
     }
 
+    /**
+     * 当前编码轮次（看板「第 N 轮」徽标）：轮次与已锁定快照的审查轮对齐（提审分配
+     * MAX(review_round)+1，见 {@link #recordStageChange}），当前轮 = 快照最大轮与状态变更行
+     * 最大轮（重启在提审前就预占下一轮）取大者；从未提审的工单按第 1 轮计。
+     */
+    private int currentRound(String ticketNo) {
+        int round = 1;
+        if (presubmits != null) {
+            round = Math.max(round, presubmits.nextRound(ticketNo) - 1);
+        }
+        if (stageChanges != null) {
+            for (TicketStageChangeRepository.StageChangeRow row : stageChanges.findByTicket(ticketNo)) {
+                round = Math.max(round, row.round());
+            }
+        }
+        return round;
+    }
+
     /** `reason`, with the revive flow also accepting its legacy `restart_reason` alias. */
     private static String stageChangeReason(Map<String, Object> req, String primaryKey) {
         String reason = optionalText(req, primaryKey);
@@ -586,6 +604,7 @@ public final class TicketController implements WebController {
         m.put("labels", t.labels());
         m.put("restart_count", reviveCount);
         m.put("stage_change_count", stageChangeCount(t.ticketNo()));
+        m.put("review_round", currentRound(t.ticketNo()));
         m.put("is_super", t.isSuper());
         m.put("created_at", t.createdAt() == null ? null : t.createdAt().toString());
         m.put("updated_at", t.updatedAt() == null ? null : t.updatedAt().toString());

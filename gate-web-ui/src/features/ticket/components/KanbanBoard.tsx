@@ -112,6 +112,12 @@ function CardFace({
         </div>
       )}
       <div className="mt-2 pt-2 border-t border-edge/50 flex items-center gap-2 text-[11px] text-faint">
+        <span
+          className="inline-flex items-center h-[18px] rounded-md border border-edge-strong bg-raised px-1.5 font-mono text-[10px] leading-none text-dim"
+          title="工单轮次：每次预提审锁定快照进入新一轮，重启亦轮次加一"
+        >
+          第 {ticket.round ?? 1} 轮
+        </span>
         <span className="flex-1" />
         <span>{relativeTime(ticket.updatedAt)}</span>
       </div>

@@ -23,6 +23,7 @@ interface RawTicket {
   exec_token_total?: number | null;
   restart_count?: number | null;
   stage_change_count?: number | null;
+  review_round?: number | null;
   is_super?: boolean | null;
   created_at: string;
   updated_at: string;
@@ -44,6 +45,7 @@ function mapTicket(t: RawTicket): Ticket {
     execTokenTotal: t.exec_token_total ?? 0,
     restartCount: t.restart_count ?? 0,
     stageChangeCount: t.stage_change_count ?? 0,
+    round: Math.max(1, t.review_round ?? 1),
     isSuper: t.is_super ?? false,
     createdAt: t.created_at,
     updatedAt: t.updated_at,

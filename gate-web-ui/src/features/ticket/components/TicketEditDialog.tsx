@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { NotePencil, Trash } from "@phosphor-icons/react";
+import { CornersIn, CornersOut, NotePencil, Trash } from "@phosphor-icons/react";
 import { actions } from "@/app/actions";
 import { openStageChangeConfirm, openTicketEditor } from "@/features/ticket";
 import { useApp } from "@/store";
@@ -18,6 +18,8 @@ export function TicketEditDialog() {
   const [note, setNote] = useState("");
   const [labels, setLabels] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
+  // 专注模式：弹窗放大为近全屏、描述占据主要空间，Esc 退出，长文本编辑不再憋屈
+  const [focus, setFocus] = useState(false);
 
   // 仅在弹窗打开（editingNo 变化）时用 store 值播种表单。此后后台轮询（busy.ts 每 15s
   // 补拉工单列表）与各类任务回刷都会整表重建 tickets 数组、换掉 ticket 对象引用；
@@ -26,6 +28,7 @@ export function TicketEditDialog() {
   useEffect(() => {
     if (!editingNo) {
       seededNoRef.current = null;
+      setFocus(false);
       return;
     }
     if (!ticket || seededNoRef.current === editingNo) return;
@@ -36,6 +39,19 @@ export function TicketEditDialog() {
     setNote(ticket.note ?? "");
     setLabels([...ticket.labels]);
   }, [ticket, editingNo]);
+
+  // 专注模式下 Esc 只退回普通弹窗（保存仍需点按钮，避免误触丢焦点内容）
+  useEffect(() => {
+    if (!focus) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        setFocus(false);
+      }
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [focus]);
 
   const backdrop = useBackdropClose(() => openTicketEditor(null));
 
@@ -60,30 +76,40 @@ export function TicketEditDialog() {
 
   return (
     <div
-      className="fixed inset-0 z-50 grid place-items-center bg-black/55 backdrop-blur-[2px]"
+      className="fixed inset-0 z-50 grid place-items-center bg-black/55 backdrop-blur-[2px] p-4"
       {...backdrop}
     >
       <div
-        className="w-[480px] card shadow-2xl shadow-black/60 animate-rise"
+        className={`card shadow-2xl shadow-black/60 animate-rise flex flex-col transition-[width] duration-200 ${
+          focus ? "w-full max-w-[1100px] h-full max-h-[calc(100vh-32px)]" : "w-[480px] max-h-[calc(100vh-32px)]"
+        }`}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center gap-2.5 px-5 h-12 border-b border-edge">
+        <div className="flex items-center gap-2.5 px-5 h-12 border-b border-edge shrink-0">
           <NotePencil size={15} className="text-dim" />
           <span className="font-mono text-[12.5px] text-accent">{ticket.ticketNo}</span>
           <span className="text-[13.5px] font-semibold">编辑工单</span>
           <span className="flex-1" />
+          <button
+            className="icon-btn"
+            onClick={() => setFocus((v) => !v)}
+            title={focus ? "退出专注编辑（Esc）" : "专注编辑：放大描述编辑区（Esc 退出）"}
+            aria-label={focus ? "退出专注编辑" : "专注编辑"}
+          >
+            {focus ? <CornersIn size={15} /> : <CornersOut size={15} />}
+          </button>
           <button className="icon-btn" onClick={() => openTicketEditor(null)} aria-label="关闭">
             ✕
           </button>
         </div>
 
-        <div className="p-5 space-y-4 max-h-[70vh] overflow-y-auto">
-          <div>
+        <div className={`p-5 space-y-4 overflow-y-auto ${focus ? "flex-1 min-h-0 flex flex-col" : ""}`}>
+          <div className={focus ? "shrink-0" : ""}>
             <label className="field-label">标题</label>
             <input className="text-input" value={title} onChange={(e) => setTitle(e.target.value)} />
           </div>
 
-          <div>
+          <div className={focus ? "shrink-0" : ""}>
             <label className="field-label">优先级</label>
             <div className="flex gap-1">
               {PRIORITIES.map((p) => (
@@ -102,33 +128,40 @@ export function TicketEditDialog() {
             </div>
           </div>
 
-          <div>
-            <label className="field-label">描述</label>
+          <div className={focus ? "flex-1 min-h-0 flex flex-col" : ""}>
+            <div className="flex items-center gap-2">
+              <label className="field-label">描述</label>
+              <span className="flex-1" />
+              <span className="font-mono text-[10.5px] text-faint">{description.length} 字</span>
+            </div>
             <textarea
-              className="text-input h-20 py-2 resize-none"
+              className={`text-input py-2 resize-none leading-relaxed ${
+                focus ? "flex-1 min-h-[320px] !h-auto font-mono text-[12.5px]" : "h-40"
+              }`}
               placeholder="背景、验收标准…"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
+              spellCheck={false}
             />
           </div>
 
-          <div>
+          <div className={focus ? "shrink-0" : ""}>
             <label className="field-label">备注</label>
             <textarea
-              className="text-input h-16 py-2 resize-none"
+              className={`text-input py-2 resize-none ${focus ? "h-20" : "h-16"}`}
               placeholder="压测基线、关联信息…"
               value={note}
               onChange={(e) => setNote(e.target.value)}
             />
           </div>
 
-          <div>
+          <div className={focus ? "shrink-0" : ""}>
             <label className="field-label">标签</label>
             <LabelInput labels={labels} onChange={setLabels} />
           </div>
 
           {!terminal && (
-            <div className="rounded-lg border border-danger/25 bg-danger/[0.04] p-3">
+            <div className={`rounded-lg border border-danger/25 bg-danger/[0.04] p-3 ${focus ? "shrink-0" : ""}`}>
               <button
                 className="inline-flex items-center gap-1.5 text-[12.5px] text-danger/80 hover:text-danger cursor-pointer bg-transparent border-0 p-0"
                 onClick={() => {
@@ -144,7 +177,7 @@ export function TicketEditDialog() {
           )}
         </div>
 
-        <div className="flex justify-end gap-2 px-5 py-4 border-t border-edge">
+        <div className="flex justify-end gap-2 px-5 py-4 border-t border-edge shrink-0">
           <button className="btn" onClick={() => openTicketEditor(null)}>
             关闭
           </button>

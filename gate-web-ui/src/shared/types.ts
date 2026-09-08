@@ -54,6 +54,8 @@ export interface Ticket {
   restartCount?: number;
   /** 状态变更记录总数（V19）：重启 + 强制已完成 + 取消 */
   stageChangeCount?: number;
+  /** 当前编码轮次：与最近一次锁定快照的审查轮对齐，未提审 = 第 1 轮 */
+  round?: number;
   /** 快速模式超级工单（V19）：直连项目原工作区、永不关闭、不走门禁 */
   isSuper?: boolean;
   createdAt: string;
