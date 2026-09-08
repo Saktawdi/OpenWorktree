@@ -1,13 +1,15 @@
 import { motion } from "motion/react";
-import { PlugsConnected, Robot, Rocket, Wrench } from "@phosphor-icons/react";
+import { Database, Faders, PlugsConnected, Robot, Rocket, Wrench } from "@phosphor-icons/react";
 
-export type SettingsTab = "toml" | "mcp" | "llm" | "app";
+export type SettingsTab = "prefs" | "storage" | "toml" | "mcp" | "llm" | "app";
 
 const NAV_ITEMS = [
+  { key: "prefs", label: "偏好设置", desc: "输入 · 语言等本地偏好", Icon: Faders },
+  { key: "storage", label: "存储设置", desc: "数据与缓存（规划中）", Icon: Database },
   { key: "toml", label: "系统设置", desc: "运行键值与默认值", Icon: Wrench },
   { key: "mcp", label: "MCP 状态", desc: "服务与工具清单", Icon: PlugsConnected },
   { key: "llm", label: "LLM 设置", desc: "Provider 与模型", Icon: Robot },
-  { key: "app", label: "应用设置", desc: "版本 · 更新 · 仓库", Icon: Rocket },
+  { key: "app", label: "关于", desc: "版本 · 更新 · 仓库", Icon: Rocket },
 ] as const;
 
 /** 设置中心左侧分区导航（布局共享 layoutId 高亮）。 */

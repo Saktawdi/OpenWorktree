@@ -7,11 +7,13 @@ import { GateTomlBlock } from "./toml/GateTomlBlock";
 import { McpBlock } from "./mcp/McpBlock";
 import { LlmBlock } from "./llm/LlmBlock";
 import { AppInfoBlock } from "./app-info/AppInfoBlock";
+import { PrefsBlock } from "./prefs/PrefsBlock";
+import { StorageBlock } from "./storage/StorageBlock";
 
-/** 设置中心：系统设置（gate.toml）/ MCP / LLM / 应用信息四个分区（插件管理已移至顶栏一级视图）。 */
+/** 设置中心：偏好设置 / 存储设置（预留）/ 系统设置（gate.toml）/ MCP / LLM / 关于 六个分区（插件管理已移至顶栏一级视图）。 */
 export function SettingsPage() {
   const mode = useApp((s) => s.mode);
-  const [tab, setTab] = useState<SettingsTab>("toml");
+  const [tab, setTab] = useState<SettingsTab>("prefs");
 
   if (mode === "demo") {
     return (
@@ -22,7 +24,7 @@ export function SettingsPage() {
               <GearSix size={22} className="text-faint" />
             </div>
             <div className="mt-4 text-[15px] font-semibold">设置中心需要连接后端</div>
-            <div className="mt-1.5 text-[12.5px] text-faint leading-relaxed">当前为演示模式，系统设置 / MCP / LLM / 应用设置仅在连接后端后可用</div>
+            <div className="mt-1.5 text-[12.5px] text-faint leading-relaxed">当前为演示模式，系统设置 / MCP / LLM / 关于仅在连接后端后可用</div>
             <button className="btn btn-primary mt-5" onClick={openConnect}>连接后端</button>
           </div>
         </div>
@@ -44,6 +46,8 @@ export function SettingsPage() {
                 exit={{ opacity: 0, y: -6 }}
                 transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
               >
+                {tab === "prefs" && <PrefsBlock />}
+                {tab === "storage" && <StorageBlock />}
                 {tab === "toml" && <GateTomlBlock />}
                 {tab === "mcp" && <McpBlock />}
                 {tab === "llm" && <LlmBlock />}

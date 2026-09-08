@@ -1,4 +1,4 @@
-/** 应用设置区的徽标与外链小工具（app-info）。 */
+/** 「关于」区的徽标与外链小工具（app-info）。 */
 
 export function openExternal(url: string) {
   window.open(url, "_blank", "noopener,noreferrer");

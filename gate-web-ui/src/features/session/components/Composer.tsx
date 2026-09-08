@@ -10,7 +10,6 @@ import {
   Cpu,
   Eye,
   Lightning,
-  ListChecks,
   Lock,
   LockKey,
   MagnifyingGlass,
@@ -41,7 +40,6 @@ import {
   removeQueuedMessage,
   reorderQueuedMessages,
   setComposerDraft,
-  setFollowUpBehavior,
   setPendingQuotes,
   splitModelRef,
   uploadChatFile,
@@ -770,7 +768,7 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
 
   /* ─── T-107：Agent 输出时的排队 / 插队（参考 OpenChamber followUpBehavior） ─── */
 
-  // 行为开关：queue（默认）——回车排队，空闲后自动发送；steer——回车直接插队当前回合。
+  // 行为偏好（设置中心·偏好设置可切换，本处只读）：queue（默认）——回车排队，空闲后自动发送；steer——回车直接插队当前回合。
   const followUpBehavior = useApp((s) => s.followUpBehavior);
   // 排队消息列表（按会话隔离；localStorage 持久化）。
   const queue = useApp((s) =>
@@ -835,9 +833,6 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
       }
     });
   };
-
-  const toggleFollowUp = () =>
-    setFollowUpBehavior(followUpBehavior === "queue" ? "steer" : "queue");
 
   /** 排队的单条消息「立即发送」：busy 时=插队；空闲时=直接泵出。 */
   const sendQueuedNow = (m: QueuedMessage) => {
@@ -1116,24 +1111,6 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
                     draft={activeSessionId === ""}
                   />
                   <VariantPicker ticketNo={ticketNo} sel={sel} variants={currentVariants} />
-                  {activeSessionId && (
-                    <button
-                      className={`composer-btn ${followUpBehavior === "steer" ? "composer-btn-active" : ""}`}
-                      title={
-                        followUpBehavior === "queue"
-                          ? "当前：排队 —— Agent 工作时回车将消息加入队列，空闲后自动发送；Ctrl+Enter 插队。点此切换为插队"
-                          : "当前：插队 —— Agent 工作时回车将直接插队到当前回合（仅 opencode）；Ctrl+Enter 排队。点此切换为排队"
-                      }
-                      onClick={toggleFollowUp}
-                    >
-                      {followUpBehavior === "steer" ? (
-                        <Lightning size={12} weight="fill" />
-                      ) : (
-                        <ListChecks size={12} weight="fill" />
-                      )}
-                      {followUpBehavior === "steer" ? "输入：插队" : "输入：排队"}
-                    </button>
-                  )}
                   {activeSessionId && (
                     <button
                       className={`composer-btn ${autoAccept ? "composer-btn-active" : ""}`}

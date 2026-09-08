@@ -7,7 +7,7 @@ import { CopyButton, Spinner } from "@/shared/components/ui";
 import { openExternal } from "./badges";
 import { UpdateStatusArea } from "./UpdateStatusArea";
 
-/** 应用设置区块：版本信息、检查更新与 GitHub 仓库。 */
+/** 「关于」区块：版本信息、检查更新与 GitHub 仓库。 */
 export function AppInfoBlock() {
   const theme = useApp((s) => s.theme);
   const [info, setInfo] = useState<AppInfo | null>(null);

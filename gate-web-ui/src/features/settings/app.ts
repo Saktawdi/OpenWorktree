@@ -18,7 +18,7 @@ export async function checkAppUpdate(force?: boolean): Promise<UpdateCheck> {
 
 /**
  * 拉取更新日志：后端从仓库默认分支读 CHANGELOG.md，截取 version 对应的小节
- * （发现新版本时在「应用设置」页展示该版本的更新内容）。失败降级为 ok:false 数据。
+ * （发现新版本时在「关于」页展示该版本的更新内容）。失败降级为 ok:false 数据。
  */
 export async function fetchUpdateNotes(version: string, force?: boolean): Promise<UpdateNotes> {
   const q = new URLSearchParams({ version });
