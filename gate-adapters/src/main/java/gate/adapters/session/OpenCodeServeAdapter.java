@@ -1187,7 +1187,11 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
         final int port;
         final String cliSessionId;
         final Thread thread;
-        final Map<String, Integer> partSeen = new ConcurrentHashMap<>();
+        // 每个思考/文本 part 的累计转发正文（key: partId）：真 delta（message.part.delta）
+        // 与节流快照（message.part.updated）都以此为对齐基准——delta 先做最长后缀重叠
+        // 剔除（快照覆盖过的文本会在后续 delta 里重复出现），快照只转发累计之外的
+        // 新尾部。openchamber event-reducer 同款语义的后端版。
+        final Map<String, StringBuilder> partText = new ConcurrentHashMap<>();
         // Final snapshot text per assistant message: messageId -> (partId -> latest full text).
         // Replace-not-append keeps persistence idempotent: opencode re-announces a finished
         // step's text under a fresh part id, and the former append model doubled exactly that
@@ -1385,6 +1389,7 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
 
             switch (type) {
                 case "message.part.updated" -> handlePartUpdated(props);
+                case "message.part.delta" -> handlePartDelta(props);
                 case "message.updated" -> handleMessageUpdated(props);
                 case "session.status" -> handleSessionStatus(props);
                 case "session.error" -> handleSessionError(props);
@@ -1421,12 +1426,8 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                 if (full == null) {
                     return;
                 }
-                int prev = partSeen.getOrDefault(partId, 0);
-                String suffix = full.length() > prev ? full.substring(prev) : "";
-                Object explicitDelta = props.get("delta");
-                String chunk = explicitDelta instanceof String s && !s.isEmpty() ? s : suffix;
-                if (!chunk.isEmpty() || !full.isEmpty()) {
-                    partSeen.put(partId, full.length());
+                String chunk = forwardNewTail(partId, full);
+                if (!full.isEmpty()) {
                     // Snapshot text is keyed by its own messageId and only judged at that
                     // message's completion, so buffering before the role announcement is safe;
                     // dropping it here produced empty rows for fast steps (parts raced ahead of
@@ -1446,12 +1447,8 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                 if (full == null) {
                     return;
                 }
-                int prev = partSeen.getOrDefault(partId, 0);
-                String suffix = full.length() > prev ? full.substring(prev) : "";
-                Object explicitDelta = props.get("delta");
-                String chunk = explicitDelta instanceof String s && !s.isEmpty() ? s : suffix;
+                String chunk = forwardNewTail(partId, full);
                 if (!chunk.isEmpty()) {
-                    partSeen.put(partId, full.length());
                     emitChunk(sessionId, new SessionStreamChunk.ThinkingChunk(sessionId, chunk, now));
                     // 思考正文此前只进 SSE、不落库，历史里整块蒸发；现在进 per-message
                     // 有序草稿，随步合并进时间线（与 text/tool 同容器按到达序交错）。
@@ -1502,6 +1499,90 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                 }
             }
             // step-start / snapshot / patch parts carry nothing the chat view needs today.
+        }
+
+        /**
+         * 真·流式增量（openchamber 同款事件，~60 次/秒）：field=reasoning/text 的 delta
+         * 逐 token 到达。此前我们只消费节流快照 part.updated，流式体感"一顿一顿"——
+         * 快照是 opencode 内部按秒级合并后的广播，token 级内容全在这里。
+         *
+         * <p>delta 与快照共用 {@link #partText} 累计正文对齐；快照覆盖过的文本会在
+         * 后续 delta 里重复出现，按最长后缀重叠剔除（openchamber appendNonOverlappingDelta
+         * 同款）。仅 reasoning/text 两类；工具状态仍由 part.updated 驱动。
+         */
+        @SuppressWarnings("unchecked")
+        private void handlePartDelta(Map<String, Object> props) {
+            String messageId = str(props.get("messageID"));
+            String partId = str(props.get("partID"));
+            String field = str(props.get("field"));
+            String delta = str(props.get("delta"));
+            if (partId == null || delta == null || delta.isEmpty()
+                    || !("reasoning".equals(field) || "text".equals(field))) {
+                return;
+            }
+            if (messageId != null && userMessages.contains(messageId)) {
+                return;
+            }
+            Instant now = clock.now();
+            String chunk = appendAligned(partText.computeIfAbsent(partId, k -> new StringBuilder()), delta);
+            if (chunk.isEmpty()) {
+                return;
+            }
+            if ("reasoning".equals(field)) {
+                emitChunk(sessionId, new SessionStreamChunk.ThinkingChunk(sessionId, chunk, now));
+                if (messageId != null) {
+                    draft(messageId, "r:" + partId, "thinking").text.append(chunk);
+                }
+            } else {
+                emitChunk(sessionId, new SessionStreamChunk.ContentChunk(sessionId, chunk, now));
+                if (messageId != null) {
+                    // 时间线文本草稿按累计正文对齐（与快照分支同一 replace-not-append 语义）
+                    draft(messageId, "t:" + partId, "text").text =
+                            new StringBuilder(partText.get(partId).toString());
+                }
+            }
+        }
+
+        /**
+         * 快照对齐转发：返回 {@code full} 相对已累计正文的新增尾部，并把累计正文推进到
+         * {@code full}。快照可能回退（opencode 重发已完成 step 的文本时是新 partId，正常
+         * 不会同 id 回退；同 id 长度回退按重叠剔除处理，绝不清零——delta 流不能被快照重置）。
+         */
+        private String forwardNewTail(String partId, String full) {
+            StringBuilder acc = partText.computeIfAbsent(partId, k -> new StringBuilder());
+            return appendAligned(acc, full);
+        }
+
+        /**
+         * 把 {@code incoming} 对齐进 {@code acc}，返回真正新增的尾部：incoming 以 acc 结尾
+         * 或与 acc 有最长后缀重叠时只追加未重叠部分，否则整段追加。这是 openchamber
+         * event-reducer 的 appendNonOverlappingDelta 语义——快照/双流并存时两路内容不重复。
+         */
+        private static String appendAligned(StringBuilder acc, String incoming) {
+            if (incoming.isEmpty()) {
+                return "";
+            }
+            String existing = acc.toString();
+            if (incoming.equals(existing) || incoming.startsWith(existing)) {
+                // incoming 覆盖已累计正文（典型：节流快照）：只追加超出部分
+                String tail = incoming.substring(existing.length());
+                acc.append(tail);
+                return tail;
+            }
+            if (existing.endsWith(incoming)) {
+                // delta 已被某次快照覆盖过：纯重复，无新增
+                return "";
+            }
+            int maxOverlap = Math.min(existing.length(), incoming.length());
+            for (int overlap = maxOverlap; overlap > 0; overlap--) {
+                if (existing.endsWith(incoming.substring(0, overlap))) {
+                    String tail = incoming.substring(overlap);
+                    acc.append(tail);
+                    return tail;
+                }
+            }
+            acc.append(incoming);
+            return incoming;
         }
 
         @SuppressWarnings("unchecked")
