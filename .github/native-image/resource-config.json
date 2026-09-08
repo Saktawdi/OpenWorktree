@@ -51,6 +51,12 @@
   }, {
     "pattern":"\\Qdb/migration/V9__task_event_outbox.sql\\E"
   }, {
+    "pattern":"\\Qdb/migration/V20__session_message_parts.sql\\E"
+  }, {
+    "pattern":"\\Qdb/migration/V21__session_todo.sql\\E"
+  }, {
+    "pattern":"\\Qdb/migration/V22__session_message_model.sql\\E"
+  }, {
     "pattern":"\\Qdb/migration\\E"
   }, {
     "pattern":"\\Qorg/eclipse/jetty/http/encoding.properties\\E"

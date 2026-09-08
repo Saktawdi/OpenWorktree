@@ -352,6 +352,45 @@ class ClaudeHeadlessAdapterTest {
         assertEquals("hello!", assistant.content());
     }
 
+    @Test
+    void assistant_row_records_reported_model_over_request_fallback() throws Exception {
+        // V22 逐消息模型标注：CLI 在 assistant/result 行上报了实际模型 → 以实际上报为准
+        // （即使与请求值不同，网关路由后的真实模型优先）。
+        Path script = root.resolve("reported-model.cmd");
+        Files.writeString(script, """
+                @echo off
+                echo {"type":"session","session_id":"sess-rep"}
+                echo {"type":"assistant","message":{"model":"gateway/routed-model","content":[{"type":"text","text":"ok"}]}}
+                echo {"type":"result","is_error":false,"model":"gateway/routed-model","usage":{"input_tokens":1,"output_tokens":1}}
+                """, StandardCharsets.UTF_8);
+        seedProviderAgentAndSession("rm-prov", "rm-agent", "sess-rep-1", script);
+        ClaudeHeadlessAdapter adapter = adapterFor(script);
+        adapter.sendMessage(new AgentSessionPort.SendRequest("sess-rep-1", "hi", true));
+        SessionMessage assistant = awaitAssistant("sess-rep-1");
+        assertEquals("gateway", assistant.modelProvider(), "reported provider wins");
+        assertEquals("routed-model", assistant.modelId(), "reported model id wins");
+    }
+
+    @Test
+    void assistant_row_falls_back_to_requested_model_when_upstream_silent() throws Exception {
+        // V22：CLI 未上报 model 字段（旧版 CLI）→ 回退发送端请求值（--model 钉住的裸 id，
+        // provider 取 AgentConfig ref 的 provider 段）。
+        Path script = root.resolve("silent-model.cmd");
+        Files.writeString(script, """
+                @echo off
+                echo {"type":"session","session_id":"sess-silent"}
+                echo {"type":"assistant","message":{"content":[{"type":"text","text":"ok"}]}}
+                echo {"type":"result","is_error":false,"usage":{"input_tokens":1,"output_tokens":1}}
+                """, StandardCharsets.UTF_8);
+        seedProviderAgentAndSession("silent-prov", "silent-agent", "sess-silent-1", script,
+                "silent-prov/req-model", "req-model");
+        ClaudeHeadlessAdapter adapter = adapterFor(script);
+        adapter.sendMessage(new AgentSessionPort.SendRequest("sess-silent-1", "hi", true));
+        SessionMessage assistant = awaitAssistant("sess-silent-1");
+        assertEquals("silent-prov", assistant.modelProvider(), "request provider half");
+        assertEquals("req-model", assistant.modelId(), "request bare id is the fallback");
+    }
+
     private void insertTicket(String ticketNo) {
         Instant now = Instant.now();
         jdbc.update("""
@@ -362,5 +401,45 @@ class ClaudeHeadlessAdapterTest {
                 """,
                 ticketNo, "t", "refs/heads/main", root.resolve("clone").toString(),
                 null, null, null, null, "IN_PROGRESS", now.toString(), now.toString());
+    }
+
+    /** V22 模型标注测试的最小种子：provider 行 + AgentConfig（默认 ref）+ 带 .git 的克隆 + 工单 + 会话。 */
+    private void seedProviderAgentAndSession(String providerId, String agentId, String sessionId,
+                                             Path script, String... agentModelRef) throws Exception {
+        Instant now = Instant.now();
+        new gate.adapters.store.JdbcProviderRepository(jdbc).upsert(
+                new ProviderRepository.ProviderRow(providerId, providerId,
+                        "local://" + providerId, "none", "manual", now), now);
+        String modelRef = agentModelRef.length > 0 ? agentModelRef[0] : providerId + "/default-model";
+        agentConfigs.insert(new AgentConfig(agentId, agentId, AgentCli.CLAUDE,
+                providerId, modelRef, null, List.of(), "test"), now);
+        Path clone = root.resolve("clone");
+        Files.createDirectories(clone.resolve(".git"));
+        insertTicket("T-88");
+        // 覆盖用：fallback 用例把 AgentConfig 默认 ref 设为请求值本身——
+        // 会话未切覆盖（override_* 为 NULL）时 buildArgv 即钉该值。
+        sessions.insert(new Session(sessionId, "T-88", agentId, AgentCli.CLAUDE,
+                SessionStatus.ACTIVE, sessionId.equals("sess-rep-1") ? "sess-rep" : "sess-silent",
+                clone.toString(), -1, now, null,
+                SessionUsage.EMPTY, null, false));
+    }
+
+    private ClaudeHeadlessAdapter adapterFor(Path script) {
+        return new ClaudeHeadlessAdapter(processRunner, agentConfigs,
+                sessions, ticketRepository, tasks, ticketLocks, clock,
+                "cmd.exe", List.of("/c", script.toString()));
+    }
+
+    private SessionMessage awaitAssistant(String sessionId) throws InterruptedException {
+        Instant deadline = Instant.now().plusSeconds(15);
+        while (Instant.now().isBefore(deadline)) {
+            var found = sessions.findMessages(sessionId).stream()
+                    .filter(m -> m.role() == Role.ASSISTANT).findFirst();
+            if (found.isPresent()) {
+                return found.get();
+            }
+            Thread.sleep(50);
+        }
+        throw new AssertionError("assistant row never persisted for " + sessionId);
     }
 }

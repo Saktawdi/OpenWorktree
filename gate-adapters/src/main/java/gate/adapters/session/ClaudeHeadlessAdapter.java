@@ -236,7 +236,7 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
         writeContext(contextFile, request.ticketNo(), request.targetRef(), config);
         writeMcpConfig(mcpConfig, request.env());
 
-        List<String> argv = buildArgv(config, contextFile, mcpConfig, null, request.initialPrompt());
+        PlannedArgv argv = buildArgv(config, contextFile, mcpConfig, null, request.initialPrompt());
         Session session = new Session(
                 sessionId, request.ticketNo(), config.id(), AgentCli.CLAUDE, SessionStatus.ACTIVE,
                 null, request.clonePath(), -1, now, null, SessionUsage.EMPTY, null, false);
@@ -257,7 +257,7 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
         incrementInFlight(sessionId);
         try {
             StreamEcho echo = new StreamEcho(sessionId);
-            ProcessRunner.ProcRun run = processRunner.runStreaming(argv, clone, request.env(), Duration.ofMinutes(10),
+            ProcessRunner.ProcRun run = processRunner.runStreaming(argv.argv(), clone, request.env(), Duration.ofMinutes(10),
                     echo::line, null);
 
             ParsedOutput parsed = parseStream(run.stdout());
@@ -277,7 +277,9 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
                     // 前面多条仅出现在多回合 run（rounds within one process）。
                     insertAssistantMessage(sessionId, texts.get(i),
                             i == texts.size() - 1 ? parsed.parts() : List.of(),
-                            i == texts.size() - 1 ? parsed.usage() : null, parsed.degraded(), now);
+                            i == texts.size() - 1 ? parsed.usage() : null, parsed.degraded(), now,
+                            i == texts.size() - 1 ? actualModelProvider(parsed, argv.requestProvider()) : null,
+                            i == texts.size() - 1 ? actualModelId(parsed, argv.requestModelId()) : null);
                 }
             }
             if (parsed.usage() != null) {
@@ -499,10 +501,10 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
             // Always continue the recorded CLI conversation: a per-message spawn needs --resume
             // to stay in the same conversation, and the fresh read also picks up a session id a
             // still-running previous send has written after this task was enqueued.
-            List<String> argv = buildArgv(config, contextFile, mcpConfig,
+            PlannedArgv planned = buildArgv(config, contextFile, mcpConfig,
                     latest.cliSessionId(), message, latest.overrideModel(), latest.overrideVariant());
             StreamEcho echo = new StreamEcho(session.id());
-            ProcessRunner.ProcRun run = processRunner.runStreaming(argv, clone, Map.of(), Duration.ofMinutes(10),
+            ProcessRunner.ProcRun run = processRunner.runStreaming(planned.argv(), clone, Map.of(), Duration.ofMinutes(10),
                     echo::line, null);
 
             tasks.update(progress(task, 70, "解析 stream-json"));
@@ -519,7 +521,9 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
                     // 单个进程产出多回合时出现。
                     insertAssistantMessage(session.id(), texts.get(i),
                             i == texts.size() - 1 ? parsed.parts() : List.of(),
-                            i == texts.size() - 1 ? parsed.usage() : null, parsed.degraded(), now);
+                            i == texts.size() - 1 ? parsed.usage() : null, parsed.degraded(), now,
+                            i == texts.size() - 1 ? actualModelProvider(parsed, planned.requestProvider()) : null,
+                            i == texts.size() - 1 ? actualModelId(parsed, planned.requestModelId()) : null);
                 }
                 if (parsed.usage() != null) {
                     emitChunk(session.id(), new SessionStreamChunk.UsageChunk(session.id(), parsed.usage(), now));
@@ -561,14 +565,30 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
         }
     }
 
-    private List<String> buildArgv(AgentConfig config, Path contextFile, Path mcpConfig,
-                                   String resumeSessionId, String prompt) {
+    /** Planned argv plus the request-side model attribution it pins (V22 fallback source). */
+    private record PlannedArgv(List<String> argv, String requestProvider, String requestModelId) {
+    }
+
+    /** Splits a model ref into {provider, bare id}; a bare id (or blank) yields a null provider. */
+    private static String[] splitModelHalves(String modelRef) {
+        if (modelRef == null || modelRef.isBlank()) {
+            return new String[]{null, null};
+        }
+        int slash = modelRef.indexOf('/');
+        if (slash <= 0 || slash >= modelRef.length() - 1) {
+            return new String[]{null, modelRef.trim()};
+        }
+        return new String[]{modelRef.substring(0, slash).trim(), modelRef.substring(slash + 1).trim()};
+    }
+
+    private PlannedArgv buildArgv(AgentConfig config, Path contextFile, Path mcpConfig,
+                                  String resumeSessionId, String prompt) {
         return buildArgv(config, contextFile, mcpConfig, resumeSessionId, prompt, null, null);
     }
 
-    private List<String> buildArgv(AgentConfig config, Path contextFile, Path mcpConfig,
-                                   String resumeSessionId, String prompt, String overrideModel,
-                                   String overrideVariant) {
+    private PlannedArgv buildArgv(AgentConfig config, Path contextFile, Path mcpConfig,
+                                  String resumeSessionId, String prompt, String overrideModel,
+                                  String overrideVariant) {
         List<String> argv = new ArrayList<>();
         argv.add(claudeExecutable);
         argv.addAll(claudePrefix);
@@ -600,6 +620,10 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
             argv.add("--model");
             argv.add(bareModelId(effectiveModel));
         }
+        // V22：请求值兜底——记录本次 spawn 计划钉住的模型（裸 id + gate 内部 provider 段）；
+        // cliManagedModel（CLI 自管）与空配置不预置，落库依赖上游 stream-json 的实际值。
+        String[] requestHalves = cliManagedModel ? new String[]{null, null}
+                : splitModelHalves(effectiveModel);
         // 推理强度必须显式钉住：不传时 claude 按自己的默认档位发 output_config.effort，
         // 严格网关会以 400 output_config.effort must be one of: low, medium, high, max 拒绝
         // （2.1.240 实测）；显式传入枚举内档位后该 400 消失。候选档位由会话模型目录提供。
@@ -630,7 +654,7 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
         if (prompt != null) {
             argv.add(prompt);
         }
-        return argv;
+        return new PlannedArgv(argv, requestHalves[0], requestHalves[1]);
     }
 
     /**
@@ -672,6 +696,15 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
         }
     }
 
+    /** 上游实际值优先，缺失时回退发送端请求值（口径确认：实际优先、请求兜底）。 */
+    private static String actualModelProvider(ParsedOutput parsed, String requestProvider) {
+        return parsed.modelProvider() != null ? parsed.modelProvider() : requestProvider;
+    }
+
+    private static String actualModelId(ParsedOutput parsed, String requestModelId) {
+        return parsed.modelId() != null ? parsed.modelId() : requestModelId;
+    }
+
     private void writeMcpConfig(Path file, Map<String, String> env) {
         try {
             String token = env == null ? "" : env.getOrDefault("GATE_DOMAIN_TOKEN", "");
@@ -698,9 +731,10 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
     }
 
     private void insertAssistantMessage(String sessionId, String text, List<TurnPart> parts,
-                                        SessionUsage usage, boolean degraded, Instant at) {
+                                        SessionUsage usage, boolean degraded, Instant at,
+                                        String modelProvider, String modelId) {
         sessions.insertMessage(new SessionMessage(UUID.randomUUID().toString(), sessionId, Role.ASSISTANT,
-                text, List.of(), usage, degraded, at, parts));
+                text, List.of(), usage, degraded, at, parts, modelProvider, modelId));
     }
 
     private void insertErrorMessage(String sessionId, String text, Instant at) {
@@ -720,6 +754,8 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
         SessionUsage usage = null;
         String errorText = null;
         boolean degraded = false;
+        String modelProvider = null;
+        String modelId = null;
         if (stdout == null || stdout.isBlank()) {
             return new ParsedOutput(null, assistantTexts, null, true, null, List.of());
         }
@@ -773,6 +809,14 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
                         if (messageUsage != null) {
                             usage = messageUsage;
                         }
+                        // V22：CLI 上报的实际模型（"model" 可能带 provider/ 前缀）——权威来源，
+                        // 逐行覆盖（一回合多 assistant 行取最后一行的值）。
+                        String reportedModel = strField(cast(mm), "model");
+                        if (reportedModel != null && !reportedModel.isBlank()) {
+                            String[] halves = splitModelHalves(reportedModel);
+                            modelProvider = halves[0];
+                            modelId = halves[1];
+                        }
                     }
                 } else if ("user".equals(type)) {
                     // tool_result 行：把输出回填到时间线里最近的未填输出工具槽。
@@ -798,6 +842,14 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
                     if (resultUsage != null) {
                         usage = resultUsage;
                     }
+                    // V22：result 行同样上报实际模型——通常与 assistant 行一致，兜住
+                    // assistant 行缺失 model 字段的 CLI 版本。
+                    String resultModel = strField(obj, "model");
+                    if (resultModel != null && !resultModel.isBlank()) {
+                        String[] halves = splitModelHalves(resultModel);
+                        modelProvider = halves[0];
+                        modelId = halves[1];
+                    }
                     if (Boolean.TRUE.equals(obj.get("is_error"))) {
                         errorText = String.valueOf(obj.get("result"));
                     }
@@ -806,7 +858,8 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
         } catch (Exception e) {
             degraded = true;
         }
-        return new ParsedOutput(sessionId, assistantTexts, usage, degraded, errorText, parts);
+        return new ParsedOutput(sessionId, assistantTexts, usage, degraded, errorText, parts,
+                modelProvider, modelId);
     }
 
     /** tool_result.content 可能是字符串或块数组；归一成纯文本供 OUT 展示。 */
@@ -925,7 +978,20 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
         return s.replace("\\", "\\\\").replace("\"", "\\\"");
     }
 
+    /** Null-safe string field read: non-String scalars stringify, null stays null. */
+    private static String strField(Map<String, Object> map, String key) {
+        Object val = map.get(key);
+        return val == null ? null : String.valueOf(val);
+    }
+
     private record ParsedOutput(String sessionId, List<String> assistantTexts, SessionUsage usage,
-                                boolean degraded, String errorText, List<TurnPart> parts) {
+                                boolean degraded, String errorText, List<TurnPart> parts,
+                                String modelProvider, String modelId) {
+
+        /** Legacy shape for the degraded early-return (no model attribution). */
+        ParsedOutput(String sessionId, List<String> assistantTexts, SessionUsage usage,
+                     boolean degraded, String errorText, List<TurnPart> parts) {
+            this(sessionId, assistantTexts, usage, degraded, errorText, parts, null, null);
+        }
     }
 }

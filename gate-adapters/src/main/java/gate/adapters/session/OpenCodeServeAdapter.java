@@ -1020,6 +1020,12 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                     up.turnParts.clear();
                     up.turnUsage = null;
                     up.turnHasNewContent = false;
+                    // V22：请求值兜底——messageBody resolveModel 同口径（实时覆盖优先，回退
+                    // AgentConfig 默认 ref）；上游 info 若给出实际值，mergeStep 会覆盖它。
+                    ModelRef requested = resolveModel(config,
+                            latest.overrideProvider(), latest.overrideModel());
+                    up.turnModelProvider = requested == null ? null : requested.providerId();
+                    up.turnModelId = requested == null ? null : requested.modelId();
                 }
             }
             HttpResponse<String> resp = post("http://127.0.0.1:" + port + "/session/"
@@ -1221,6 +1227,13 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
         volatile boolean assistantPersistedSinceSend;
         volatile String pendingErrorName;
         volatile String pendingErrorMessage;
+        // V22 逐消息模型标注：modelsByMessage 是上游 message.updated 的 info 里按消息抽到的
+        // {providerID, modelID}（实际模型的权威来源）；turnModel* 是本回合随行落库的值——
+        // mergeStep 以实际值覆盖（切换只在下一回合生效，回合内恒定，后写覆盖先写），发送
+        // 线程在重置块预置请求值兜底（上游 info 缺字段时 flushTurn 仍有值可落）。
+        final Map<String, String[]> modelsByMessage = new ConcurrentHashMap<>();
+        String turnModelProvider;
+        String turnModelId;
         // 序列化回合缓冲的全部读写者：reader 线程（step 合并）、send 线程（superseded 重置）、
         // 停机/错误路径（flush 落库）。turnText 是普通 StringBuilder，跨线程读写必须加锁。
         // flush 的 DB I/O 在锁外执行，锁只覆盖缓冲快照与清空。
@@ -1501,8 +1514,15 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
             String messageId = str(info.get("id"));
             String role = str(info.get("role"));
             if ("assistant".equals(role)) {
+                // V22：上游 info 自带本消息实际使用的模型（providerID/modelID），权威来源——
+                // 抽出来供 flushTurn 随行落库（map 里多存一份也不碍事，key 随消息清理）。
                 if (messageId != null) {
                     assistantMessages.add(messageId);
+                    String provider = str(info.get("providerID"));
+                    String model = str(info.get("modelID"));
+                    if (provider != null || model != null) {
+                        modelsByMessage.put(messageId, new String[]{provider, model});
+                    }
                 }
             } else if ("user".equals(role)) {
                 if (messageId != null) {
@@ -1510,6 +1530,7 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                     // A user part that raced ahead of this announcement buffered itself; drop it.
                     messageParts.remove(messageId);
                     toolsByMessage.remove(messageId);
+                    modelsByMessage.remove(messageId);
                 }
                 return;
             }
@@ -1533,6 +1554,12 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
          */
         private void mergeStepIntoTurn(String messageId, SessionUsage stepUsage) {
             synchronized (turnLock) {
+                // V22：该消息的实际模型并入回合值（后写覆盖先写；缺字段的消息不覆盖）。
+                String[] stepModel = modelsByMessage.remove(messageId);
+                if (stepModel != null && stepModel[1] != null && !stepModel[1].isBlank()) {
+                    turnModelProvider = stepModel[0];
+                    turnModelId = stepModel[1];
+                }
                 String content = joinedContent(messageId);
                 List<ToolCall> stepTools = drainToolCalls(messageId);
                 if (!content.isEmpty()) {
@@ -1607,6 +1634,8 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
             final List<ToolCall> tools = new ArrayList<>();
             final List<TurnPart> parts = new ArrayList<>();
             final SessionUsage usage;
+            final String modelProvider;
+            final String modelId;
             synchronized (turnLock) {
                 // Drain steps that never reached their message.updated(completed) merge: an aborted
                 // or dropped turn can be cut mid-step, leaving that step's text/tools only in the
@@ -1639,13 +1668,20 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                 parts.addAll(turnParts);
                 turnParts.clear();
                 usage = turnUsage;
+                // V22：回合模型随行落库——实际值（mergeStep 覆盖）优先，缺省即发送线程
+                // 预置的请求值兜底。
+                modelProvider = turnModelProvider;
+                modelId = turnModelId;
+                turnModelProvider = null;
+                turnModelId = null;
                 turnText.setLength(0);
                 turnUsage = null;
                 turnHasNewContent = false;
                 assistantPersistedSinceSend = true;
             }
             sessions.insertMessage(new SessionMessage(UUID.randomUUID().toString(),
-                    sessionId, Role.ASSISTANT, content, tools, usage, degraded, clock.now(), parts));
+                    sessionId, Role.ASSISTANT, content, tools, usage, degraded, clock.now(), parts,
+                    modelProvider, modelId));
             log.info("opencode", degraded ? "turn.persisted-degraded" : "turn.persisted",
                     "sessionId", sessionId, "reason", reason,
                     "chars", content.length(), "toolCalls", tools.size());
@@ -2035,6 +2071,13 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                         && time.get("completed") != null
                         && created > assistantCutoffMs) {
                     accumulateBackfillParts(turn, parts);
+                    // V22：上游 info 的实际模型（权威来源）；缺字段时保留 turn 里已有的值。
+                    String provider = str(info.get("providerID"));
+                    String model = str(info.get("modelID"));
+                    if (model != null && !model.isBlank()) {
+                        turn.modelProvider = provider;
+                        turn.modelId = model;
+                    }
                     SessionUsage u = usageFromTokens(info.get("tokens"));
                     if (u != null) {
                         turn.usage = (turn.usage == null ? SessionUsage.EMPTY : turn.usage).add(u);
@@ -2069,11 +2112,14 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
         }
         sessions.insertMessage(new SessionMessage(UUID.randomUUID().toString(),
                 sessionId, Role.ASSISTANT, turn.text.toString(),
-                List.copyOf(turn.tools), turn.usage, true, clock.now()));
+                List.copyOf(turn.tools), turn.usage, true, clock.now(), List.of(),
+                turn.modelProvider, turn.modelId));
         turn.text.setLength(0);
         turn.tools.clear();
         turn.usage = null;
         turn.lastText = null;
+        turn.modelProvider = null;
+        turn.modelId = null;
         return 1;
     }
 
@@ -2132,6 +2178,9 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
         final List<ToolCall> tools = new ArrayList<>();
         SessionUsage usage;
         String lastText;
+        // V22：本回合实际模型（上游 info 逐消息覆盖），随 ASSISTANT 行落库。
+        String modelProvider;
+        String modelId;
 
         boolean hasContent() {
             return text.length() > 0 || !tools.isEmpty();

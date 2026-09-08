@@ -1070,6 +1070,10 @@ public final class SessionController implements WebController {
         }
         out.put("degraded", m.degraded());
         out.put("timestamp", m.timestamp().toString());
+        // V22 逐消息模型标注：上游实际值（opencode info / claude stream-json），
+        // 存量行为 null——前端回退会话当前模型的近似标注。
+        out.put("model_provider", m.modelProvider());
+        out.put("model_id", m.modelId());
         return out;
     }
 

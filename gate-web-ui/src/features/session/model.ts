@@ -147,6 +147,9 @@ export interface RawMessage {
   content: string;
   tool_calls?: Array<{ name: string; arguments_json?: string; result_json?: string }>;
   usage?: { prompt_tokens: number; completion_tokens: number } | null;
+  /** V22 逐消息模型标注（上游实际值优先、请求值兜底）；存量行为 null。 */
+  model_provider?: string | null;
+  model_id?: string | null;
   timestamp: string;
 }
 
@@ -269,6 +272,9 @@ export function mapHistoryMessage(m: RawMessage): ChatItem | null {
       parts,
       endedAt: Date.parse(m.timestamp),
       ts: Date.parse(m.timestamp),
+      // V22 逐消息精确模型：行上有值就用它（上游实际值/请求兜底），没有（旧行）
+      // 保持 undefined，由 applyReplyMetaDefaults 用会话当前模型近似兜底。
+      model: m.role === "ASSISTANT" && m.model_id ? m.model_id : undefined,
     };
   }
   return null;

@@ -176,13 +176,15 @@ public final class JdbcSessionRepository implements SessionRepository {
         jdbc.update("""
                 INSERT INTO session_message(id, session_id, role, content_blob, content_bytes,
                                             tool_calls_blob, parts_blob, prompt_tokens,
-                                            completion_tokens, total_tokens, degraded, created_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+                                            completion_tokens, total_tokens, degraded, created_at,
+                                            model_provider, model_id)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 message.id(), message.sessionId(), message.role().name(), ref.relPath(), ref.bytes(),
                 toolJson, partsJson, u == null ? null : u.promptTokens(), u == null ? null : u.completionTokens(),
                 u == null ? null : u.totalTokens(), message.degraded() ? 1 : 0,
-                message.timestamp().toString());
+                message.timestamp().toString(),
+                message.modelProvider(), message.modelId());
     }
 
     @Override
@@ -207,6 +209,15 @@ public final class JdbcSessionRepository implements SessionRepository {
             } catch (Exception columnAbsent) {
                 parts = List.of();
             }
+            // V22 之前落库的行没有模型列：同样按列缺失容错，读取端回退近似标注。
+            String modelProvider = null;
+            String modelId = null;
+            try {
+                modelProvider = rs.getString("model_provider");
+                modelId = rs.getString("model_id");
+            } catch (Exception columnAbsent) {
+                // pre-V22 row
+            }
             return new SessionMessage(
                     id,
                     sessionId,
@@ -216,7 +227,9 @@ public final class JdbcSessionRepository implements SessionRepository {
                     usage,
                     rs.getInt("degraded") != 0,
                     Instant.parse(rs.getString("created_at")),
-                    parts);
+                    parts,
+                    modelProvider,
+                    modelId);
         }, sessionId);
     }
 

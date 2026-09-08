@@ -16,6 +16,10 @@ import java.util.List;
  * @param timestamp creation time
  * @param parts     chronological turn segments (text/thinking/tool) for assistant turns;
  *                  empty when the row predates parts or carries no timeline (USER/ERROR)
+ * @param modelProvider provider of the model that actually produced this reply (V22);
+ *                  null on legacy rows / USER / ERROR — readers fall back to the
+ *                  session's current model approximation
+ * @param modelId   bare model id that actually produced this reply (V22); null likewise
  */
 public record SessionMessage(
         String id,
@@ -26,7 +30,9 @@ public record SessionMessage(
         SessionUsage usage,
         boolean degraded,
         Instant timestamp,
-        List<TurnPart> parts) {
+        List<TurnPart> parts,
+        String modelProvider,
+        String modelId) {
 
     public SessionMessage {
         if (id == null || id.isBlank()) {
@@ -43,15 +49,28 @@ public record SessionMessage(
         }
         toolCalls = toolCalls == null ? List.of() : List.copyOf(toolCalls);
         parts = parts == null ? List.of() : List.copyOf(parts);
+        if (modelProvider != null && modelProvider.isBlank()) {
+            modelProvider = null;
+        }
+        if (modelId != null && modelId.isBlank()) {
+            modelId = null;
+        }
         if (timestamp == null) {
             throw new IllegalArgumentException("timestamp must not be null");
         }
     }
 
-    /** Legacy shape (pre-timeline rows and callers that do not build a timeline). */
+    /** Legacy shape (pre-parts rows and callers that do not build a timeline). */
     public SessionMessage(String id, String sessionId, Role role, String content,
                           List<ToolCall> toolCalls, SessionUsage usage, boolean degraded,
                           Instant timestamp) {
         this(id, sessionId, role, content, toolCalls, usage, degraded, timestamp, List.of());
+    }
+
+    /** Legacy shape (pre-V22 rows): no per-message model attribution. */
+    public SessionMessage(String id, String sessionId, Role role, String content,
+                          List<ToolCall> toolCalls, SessionUsage usage, boolean degraded,
+                          Instant timestamp, List<TurnPart> parts) {
+        this(id, sessionId, role, content, toolCalls, usage, degraded, timestamp, parts, null, null);
     }
 }
