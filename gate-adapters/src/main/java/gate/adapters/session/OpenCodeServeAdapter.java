@@ -1252,6 +1252,10 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
         // 剔除（快照覆盖过的文本会在后续 delta 里重复出现），快照只转发累计之外的
         // 新尾部。openchamber event-reducer 同款语义的后端版。
         final Map<String, StringBuilder> partText = new ConcurrentHashMap<>();
+        // partId → type（text/reasoning/tool）：message.part.delta 的 field 是被追加的
+        // 属性名（reasoning part 的正文字段也叫 text），思考/正文分流必须按 part.type
+        // ——part.updated 建档记录，delta 消费时查表。
+        final Map<String, String> partTypes = new ConcurrentHashMap<>();
         // Final snapshot text per assistant message: messageId -> (partId -> latest full text).
         // Replace-not-append keeps persistence idempotent: opencode re-announces a finished
         // step's text under a fresh part id, and the former append model doubled exactly that
@@ -1476,6 +1480,11 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
             String partType = str(part.get("type"));
             String messageId = str(part.get("messageID"));
             String partId = str(part.get("id"));
+            // 建档 part 类型：message.part.delta 的 field 是属性名不是类型（reasoning part
+            // 的正文字段也叫 text），delta 消费时按此表分流思考/正文。
+            if (partId != null && partType != null && !partType.isBlank()) {
+                partTypes.put(partId, partType);
+            }
 
             if (messageId != null && userMessages.contains(messageId)) {
                 return;
@@ -1562,13 +1571,20 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
         }
 
         /**
-         * 真·流式增量（openchamber 同款事件，~60 次/秒）：field=reasoning/text 的 delta
-         * 逐 token 到达。此前我们只消费节流快照 part.updated，流式体感"一顿一顿"——
-         * 快照是 opencode 内部按秒级合并后的广播，token 级内容全在这里。
+         * 真·流式增量（openchamber 同款事件，~60 次/秒）。此前我们只消费节流快照
+         * part.updated，流式体感"一顿一顿"——快照是 opencode 内部按秒级合并后的广播，
+         * token 级内容全在这里。
          *
-         * <p>delta 与快照共用 {@link #partText} 累计正文对齐；快照覆盖过的文本会在
-         * 后续 delta 里重复出现，按最长后缀重叠剔除（openchamber appendNonOverlappingDelta
-         * 同款）。仅 reasoning/text 两类；工具状态仍由 part.updated 驱动。
+         * <p>关键语义：{@code field} 是被追加的 part 属性名——reasoning part 的正文字段
+         * 恰好也叫 "text"，绝不能按 field 分类！openchamber event-reducer 先按
+         * messageID/partID 定位 part（part.type 即思考/正文），再写 field 指定的属性。
+         * 此前按 field=="reasoning" 分流，reasoning 的 text delta 全被误当正文转发——
+         * 思考独白整段漏进正文流、思考行只剩快照尾巴（时灵时不灵取决于快照与 delta
+         * 的到达竞态），部分回合两者并存（同内容双渲染）。
+         *
+         * <p>delta 与快照共用 {@link #partText} 累计正文对齐 + 最长后缀重叠剔除
+         * （appendNonOverlappingDelta 同款）；分类锚点是 {@link #partTypes} 注册表
+         * （part.updated 建档记录的 type）。工具 output 等其余字段仍由 part.updated 驱动。
          */
         @SuppressWarnings("unchecked")
         private void handlePartDelta(Map<String, Object> props) {
@@ -1576,9 +1592,18 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
             String partId = str(props.get("partID"));
             String field = str(props.get("field"));
             String delta = str(props.get("delta"));
-            if (partId == null || delta == null || delta.isEmpty()
-                    || !("reasoning".equals(field) || "text".equals(field))) {
+            // 只接正文字段（reasoning/text 两类 part 的正文属性都叫 text）；
+            // 工具 output 等其余字段不在此驱动。
+            if (partId == null || delta == null || delta.isEmpty() || !"text".equals(field)) {
                 return;
+            }
+            String partType = partTypes.get(partId);
+            if (partType == null) {
+                // delta 竞速领先于 part.updated：先按 reasoning 建档占位，后续
+                // part.updated 到达同 key 覆盖为真实类型（opencode 事件序上思考
+                // part 先建，实践几乎总命中）。
+                partType = "reasoning";
+                partTypes.put(partId, partType);
             }
             if (messageId != null && userMessages.contains(messageId)) {
                 return;
@@ -1588,7 +1613,7 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
             if (chunk.isEmpty()) {
                 return;
             }
-            if ("reasoning".equals(field)) {
+            if ("reasoning".equals(partType)) {
                 emitChunk(sessionId, new SessionStreamChunk.ThinkingChunk(sessionId, chunk, now));
                 if (messageId != null) {
                     draft(messageId, "r:" + partId, "thinking").text.append(chunk);
