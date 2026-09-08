@@ -493,24 +493,25 @@ const ToolRow = memo(function ToolRow({ tool }: { tool: ToolCallView }) {
 });
 
 function AssistantFooter({ item }: { item: Extract<ChatItem, { kind: "assistant" }> }) {
-  // openchamber 式 footer：元信息（完成的 agent + 推理等级）常驻左对齐，
-  // 复制按钮紧随其后、仅 hover 整条回复时出现——绝不推到行尾，避免被误读成用户消息的操作。
+  // openchamber 式 footer：元信息（完成本回复的请求模型 + 推理等级）常驻左对齐，
+  // 备注解析不出时回退 Agent 名称；复制按钮紧随其后、仅 hover 整条回复时出现——
+  // 绝不推到行尾，避免被误读成用户消息的操作。
   if (item.streaming) return null;
 
   const rawVariant = (item.variant ?? "").trim();
   const variant = rawVariant && !/^(default|none)$/i.test(rawVariant) ? rawVariant : null;
-  const agent = (item.agent ?? "").trim() || null;
-  if (!agent && !variant && !item.text) return null;
+  const model = (item.model ?? "").trim() || null;
+  if (!model && !variant && !item.text) return null;
 
   return (
     <div className="mt-1.5 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[11px] text-faint">
-      {agent && (
+      {model && (
         <span
           className="flex min-w-0 items-center gap-1"
-          title={`本条回复由 ${agent} 完成`}
+          title={`本条回复由 ${model} 完成`}
         >
           <Sparkle size={11} weight="fill" className="shrink-0 text-accent/70" />
-          <span className="max-w-[180px] truncate">{agent}</span>
+          <span className="max-w-[240px] truncate font-mono text-[10.5px]">{model}</span>
         </span>
       )}
       {variant && (

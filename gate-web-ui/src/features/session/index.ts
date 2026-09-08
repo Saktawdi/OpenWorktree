@@ -23,7 +23,7 @@ export {
   rejectSessionQuestion,
 } from "./permissions";
 export { liveSendPrompt, abortLive, isSessionStreamingLocally } from "./stream";
-export { draftCatalogFromOc } from "./model";
+export { draftCatalogFromOc, splitModelRef } from "./model";
 export type { PermissionResponse } from "./model";
 export { focusComposer, insertIntoComposer, registerComposerBridge } from "./composerBridge";
 export { applyTodosSnapshot, dropSessionTodos } from "./todos";

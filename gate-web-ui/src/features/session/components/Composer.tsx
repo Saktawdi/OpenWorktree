@@ -31,6 +31,7 @@ import {
   removePendingQuote,
   setComposerDraft,
   setPendingQuotes,
+  splitModelRef,
   uploadChatFile,
 } from "@/features/session";
 import { setAgentId } from "@/features/agent";
@@ -165,14 +166,6 @@ const CLAUDE_MODEL_PRESETS: { label: string; id?: string; clear?: boolean }[] = 
   { label: "Opus", id: "opus" },
   { label: "Fable", id: "fable" },
 ];
-
-/** Splits an AgentConfig default model ref ("provider/model") into its halves. */
-function splitModelRef(model?: string | null): { provider: string | null; model: string | null } {
-  if (!model || !model.trim()) return { provider: null, model: null };
-  const slash = model.indexOf("/");
-  if (slash <= 0 || slash >= model.length - 1) return { provider: null, model };
-  return { provider: model.slice(0, slash), model: model.slice(slash + 1) };
-}
 
 interface EffectiveSel extends SessionModelSel {
   /** True when resolved from persisted override rather than config defaults. */

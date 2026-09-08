@@ -6,6 +6,7 @@ import { appStore } from "@/store";
 import type { ChatItem, PermissionRequestView, QuestionRequestView } from "@/shared/types";
 import { uid } from "@/shared/format";
 import { notePendingPermission, notePendingQuestion } from "./state";
+import { splitModelRef } from "./model";
 
 const set = appStore.setState;
 const s = () => appStore.getState();
@@ -180,38 +181,44 @@ export function revertQuestion(no: string, requestId: string) {
   notePendingQuestion(requestId, no, s().activeSessionId[no] ?? "");
 }
 
-/* ─── 回复标注（底部 footer 的 agent / 推理等级） ─── */
+/* ─── 回复标注（底部 footer 的 model / 推理等级） ─── */
 
 /**
  * 当前会话「本条回复归属」的近似标注来源（openchamber 式底部标注）：
- * - agent:   会话绑定的 AgentConfig.name（缺省回退全局 agentId、再回退首个配置）
+ * - model:   当时请求的模型（口径与发送端一致：会话实时覆盖 → 会话持久覆盖 →
+ *            Agent 默认 ref 的 model 段）；解析不出再回退 Agent 名称
  * - variant: session overrideVariant 或 sessionModelSel.variant（推理等级）
  */
-function sessionReplyMeta(no: string): { agent: string | null; variant: string | null } {
+function sessionReplyMeta(no: string): { model: string | null; variant: string | null } {
   const st = s();
   const sessionId = st.activeSessionId[no];
   const sess = (st.sessions[no] ?? []).find((x) => x.id === sessionId);
   const cfgId = sess?.agentConfigId ?? st.agentId;
   const cfg =
     st.agents.find((a) => a.id === cfgId) ?? st.agents.find((a) => a.id === st.agentId) ?? st.agents[0];
+  const sel = sessionId ? st.sessionModelSel[sessionId] : undefined;
+  // || 链而非 ?? 链：清空覆盖（claude「默认」预设）会把 modelId/overrideModel 落成空串，
+  // 空串必须跳过继续回退，最终解析不出才回退 Agent 名称。
+  const model =
+    sel?.modelId || sess?.overrideModel || splitModelRef(cfg?.model).model || cfg?.name || null;
   return {
-    agent: cfg?.name ?? cfg?.model ?? null,
+    model,
     variant: (sess?.overrideVariant ?? (sessionId ? st.sessionModelSel[sessionId]?.variant : null)) ?? null,
   };
 }
 
-/** 给历史加载/刷新恢复的 assistant 气泡补齐 agent/variant，避免 footer 只剩复制按钮。 */
+/** 给历史加载/刷新恢复的 assistant 气泡补齐 model/variant，避免 footer 只剩复制按钮。 */
 export function applyReplyMetaDefaults(no: string) {
-  const { agent, variant } = sessionReplyMeta(no);
-  if (!agent && !variant) return;
+  const { model, variant } = sessionReplyMeta(no);
+  if (!model && !variant) return;
   const list = s().chats[no] ?? [];
-  if (!list.some((m) => m.kind === "assistant" && (!m.agent || !m.variant))) return;
+  if (!list.some((m) => m.kind === "assistant" && (!m.model || !m.variant))) return;
   set((st) => ({
     chats: {
       ...st.chats,
       [no]: st.chats[no].map((m) =>
         m.kind === "assistant"
-          ? { ...m, agent: m.agent ?? agent, variant: m.variant ?? variant }
+          ? { ...m, model: m.model ?? model, variant: m.variant ?? variant }
           : m,
       ),
     },
@@ -221,14 +228,14 @@ export function applyReplyMetaDefaults(no: string) {
 export function finishAssistant(
   no: string,
   id: string,
-  meta?: { agent?: string | null; variant?: string | null },
+  meta?: { model?: string | null; variant?: string | null },
 ) {
   const fallback = sessionReplyMeta(no);
   patchAssistant(no, id, (a) => ({
     ...a,
     streaming: false,
     endedAt: a.endedAt ?? Date.now(),
-    agent: meta?.agent ?? a.agent ?? fallback.agent,
+    model: meta?.model ?? a.model ?? fallback.model,
     variant: meta?.variant ?? a.variant ?? fallback.variant,
     thinking: a.thinking ? { ...a.thinking, done: true } : a.thinking,
   }));
@@ -280,11 +287,16 @@ export function finishLiveTurn(sessionId: string) {
   set((st) => {
     const cur = st.liveTurns[sessionId];
     if (!cur) return st;
+    const fallback = sessionReplyMeta(cur.ticketNo);
     const item: Extract<ChatItem, { kind: "assistant" }> = {
       ...cur.item,
       streaming: false,
       endedAt: cur.item.endedAt ?? Date.now(),
       thinking: cur.item.thinking ? { ...cur.item.thinking, done: true } : cur.item.thinking,
+      // footer 标注在收尾盖戳：历史重载路径由 applyReplyMetaDefaults 补齐，这里
+      // 覆盖不重建视图的正常收场（断流重建路径同样会被 defaults 兜底）。
+      model: cur.item.model ?? fallback.model,
+      variant: cur.item.variant ?? fallback.variant,
     };
     const liveTurns = { ...st.liveTurns };
     delete liveTurns[sessionId];

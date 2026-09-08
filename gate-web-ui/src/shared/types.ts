@@ -305,8 +305,8 @@ export type ChatItem =
       parts?: TimelinePart[];
       /** 回合结束时刻（ms）；缺省用 ts，"已工作 x" 的时长数据源。 */
       endedAt?: number;
-      /** 完成本回复的模型/智能体名称（openchamber 式底部标注）。 */
-      agent?: string | null;
+      /** 完成本回复的请求模型名（openchamber 式底部标注；取值口径见 sessionReplyMeta）。 */
+      model?: string | null;
       /** 推理等级（reasoning-effort，如 high/medium/low）；可能为空。 */
       variant?: string | null;
     }

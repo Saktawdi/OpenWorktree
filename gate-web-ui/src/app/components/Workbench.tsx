@@ -85,12 +85,6 @@ function ContextStrip({ ticketNo }: { ticketNo: string }) {
         >
           <Sparkle size={12} className="text-accent" weight="fill" />
           {agent.name}
-          {agent.model && (
-            <>
-              {" · "}
-              <span className="font-mono text-[11px] text-faint">{agent.model}</span>
-            </>
-          )}
         </span>
       )}
       <button

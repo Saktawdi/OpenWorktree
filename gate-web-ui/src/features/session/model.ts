@@ -279,6 +279,14 @@ export function todoArgsSummary(argsJson?: string): string {
   return todoArgsSummaryImpl(argsJson);
 }
 
+/** Splits an AgentConfig default model ref ("provider/model") into its halves. */
+export function splitModelRef(model?: string | null): { provider: string | null; model: string | null } {
+  if (!model || !model.trim()) return { provider: null, model: null };
+  const slash = model.indexOf("/");
+  if (slash <= 0 || slash >= model.length - 1) return { provider: null, model };
+  return { provider: model.slice(0, slash), model: model.slice(slash + 1) };
+}
+
 /* ─── 模型目录（会话 serve 的 /models 行格式） ─── */
 
 export interface RawCatalogModel {
