@@ -511,6 +511,38 @@ body {
     @apply size-9 rounded-lg object-cover border border-edge shrink-0;
   }
 
+  /* ── 排队消息面板（T-107：Agent 输出时的排队/插队；参考 OpenChamber QueuedMessageChips） ── */
+  .queue-panel {
+    @apply rounded-2xl border border-edge bg-sunken/80 overflow-hidden;
+  }
+  .queue-panel-header {
+    @apply flex items-center gap-1.5 px-3 h-8 text-[11px] font-medium text-dim select-none;
+  }
+  .queue-panel-list {
+    @apply px-1.5 pb-1.5 flex flex-col gap-0.5 max-h-[180px] overflow-y-auto;
+  }
+  .queue-item {
+    @apply flex items-center gap-1.5 rounded-xl pl-1.5 pr-1 py-1 text-[12px]
+      transition-colors duration-150 hover:bg-raised;
+  }
+  .queue-item-text {
+    @apply min-w-0 flex-1 truncate text-ink;
+  }
+  .queue-item-meta {
+    @apply text-[10.5px] text-faint;
+  }
+  .queue-icon-btn {
+    @apply grid place-items-center size-6 rounded-lg text-faint cursor-pointer shrink-0
+      transition-colors duration-150 hover:text-ink hover:bg-canvas
+      disabled:opacity-30 disabled:pointer-events-none;
+  }
+  .queue-icon-btn-go {
+    @apply text-info;
+  }
+  .queue-icon-btn-go:hover {
+    @apply text-info bg-info/10;
+  }
+
   /* ── 引用片段胶囊（划选文字 → 添加到对话框；发送后在用户气泡里还原） ── */
   .quote-chip {
     @apply relative inline-flex max-w-full items-center gap-1 h-6.5 pl-2 pr-1 rounded-full

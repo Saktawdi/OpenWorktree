@@ -1,35 +1,47 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  ArrowDown,
+  ArrowUp,
   Brain,
   CaretDown,
   Check,
   CheckCircle,
+  Clock,
   Cpu,
   Eye,
+  Lightning,
+  ListChecks,
   Lock,
   LockKey,
   MagnifyingGlass,
   PaperPlaneRight,
+  PencilSimple,
   Quotes,
   ShieldCheck,
   Sparkle,
   Stop,
   Ticket,
   Wrench,
-  X,
+  X as XIcon,
 } from "@phosphor-icons/react";
 import type { Icon } from "@phosphor-icons/react";
 import { actions } from "@/app/actions";
 import { appStore, NO_CHAT, NO_QUOTES, showToast, useApp } from "@/store";
 import { ChatActionChips } from "@/app/plugins/components/ChatActionChips";
 import {
+  addMessageToQueue,
   clearComposerDraft,
   clearDraftModelSel,
   clearPendingQuotes,
   draftCatalogFromOc,
+  kickQueuePump,
+  popQueuedMessageToInput,
   registerComposerBridge,
   removePendingQuote,
+  removeQueuedMessage,
+  reorderQueuedMessages,
   setComposerDraft,
+  setFollowUpBehavior,
   setPendingQuotes,
   splitModelRef,
   uploadChatFile,
@@ -44,10 +56,18 @@ import {
   toPendingAttachment,
   withImageCitations,
 } from "@/shared/attachments";
-import type { CatalogProvider, PendingAttachment, SessionModelSel } from "@/shared/types";
+import type {
+  CatalogProvider,
+  PendingAttachment,
+  QueuedMessage,
+  SessionModelSel,
+} from "@/shared/types";
 
 /** 粘贴/拖入文件的大小上限（MB）：与后端 /chat-files 端点的落盘上限一致。 */
 const MAX_CHAT_FILE_MB = 50;
+
+/** 无排队消息时的稳定空引用（避免反复创建数组引发重渲染）。 */
+const NO_QUEUE: QueuedMessage[] = [];
 
 /** clipboardData.getData 在部分 MIME/浏览器组合下会抛错：包一层，失败返回空串。 */
 function tryData(read: () => string): string {
@@ -718,12 +738,16 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
 
   const send = () => {
     const t = text.trim();
-    if ((!t && pendingQuotes.length === 0 && pendingAttachments.length === 0) || busy || terminal)
+    if ((!t && pendingQuotes.length === 0 && pendingAttachments.length === 0) || terminal)
       return;
-    // 引用胶囊内联进消息纯文本（⟦引用⟧…⟦/引用⟧ 标记，Agent 读到的是原文）；
-    // 图片附件在此统一追加 [图片 #n] 引用行（独占一行、永远不与正文同行）：
-    // Agent/后端由此得知缩略图对应关系，气泡渲染侧再按标记还原成胶囊/缩略图。
-    // 发送失败时整包还原（草稿/胶囊/附件），用户改完直接重发。
+    if (busy && activeSessionId) {
+      // Agent 正在输出：Enter 语义按跟随行为设定走（排队/插队），发送按钮在 busy
+      // 态已被 Stop 按钮替代，这里只可能是键盘/快捷键触发。
+      if (followUpBehavior === "steer") steerComposed();
+      else queueComposed();
+      return;
+    }
+    if (busy) return;
     const composed =
       withImageCitations(t, pendingAttachments) +
       pendingQuotes.map((q) => `\n${wrapQuote(q.text)}`).join("");
@@ -742,6 +766,111 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
         setPendingAttachments(prevAttachments);
       }
     });
+  };
+
+  /* ─── T-107：Agent 输出时的排队 / 插队（参考 OpenChamber followUpBehavior） ─── */
+
+  // 行为开关：queue（默认）——回车排队，空闲后自动发送；steer——回车直接插队当前回合。
+  const followUpBehavior = useApp((s) => s.followUpBehavior);
+  // 排队消息列表（按会话隔离；localStorage 持久化）。
+  const queue = useApp((s) =>
+    activeSessionId ? (s.queuedMessages[activeSessionId] ?? NO_QUEUE) : NO_QUEUE,
+  );
+  // 插队（delivery=steer）仅 opencode 运行时支持；claude/demo 降级为排队并提示。
+  const steerSupported = live && activeSessionId !== "" && !isClaude;
+
+  /** 组装当前输入（正文 + 图片引用 + 引用胶囊内联文本），与 send() 同口径。 */
+  const composedPayload = () =>
+    withImageCitations(text.trim(), pendingAttachments) +
+    pendingQuotes.map((q) => `\n${wrapQuote(q.text)}`).join("");
+
+  const clearComposerInput = () => {
+    clearComposerDraft(ticketNo);
+    setPendingQuotes(ticketNo, []);
+    setPendingAttachments([]);
+  };
+
+  /** 入队：正文与附件整体进入会话队列，清空输入区。 */
+  const queueComposed = () => {
+    if (!activeSessionId) {
+      send();
+      return;
+    }
+    const payload = composedPayload();
+    if (!payload.trim() && pendingAttachments.length === 0) return;
+    const attachments = pendingAttachments;
+    addMessageToQueue(ticketNo, activeSessionId, payload, attachments);
+    clearComposerInput();
+    showToast(
+      followUpBehavior === "steer"
+        ? "已加入排队队列（Ctrl+Enter 可在当前回合插队）"
+        : "已加入排队队列 · Agent 空闲后自动发送（Ctrl+Enter 插队）",
+    );
+  };
+
+  /** 插队：直接投递给运行中的回合（仅 opencode 运行时支持）；否则降级入队并提示。 */
+  const steerComposed = () => {
+    const payload = composedPayload();
+    if (!payload.trim() && pendingAttachments.length === 0) return;
+    if (!steerSupported || !activeSessionId) {
+      if (busy) {
+        queueComposed();
+        showToast("当前 Agent 不支持实时插队，消息已加入排队队列");
+      } else {
+        send();
+      }
+      return;
+    }
+    const prevText = text;
+    const prevQuotes = pendingQuotes;
+    const prevAttachments = pendingAttachments;
+    clearComposerInput();
+    void Promise.resolve(
+      actions.sendPrompt(ticketNo, payload, prevAttachments, "steer"),
+    ).then((ok) => {
+      if (ok === false) {
+        setComposerDraft(ticketNo, prevText);
+        setPendingQuotes(ticketNo, prevQuotes);
+        setPendingAttachments(prevAttachments);
+      }
+    });
+  };
+
+  const toggleFollowUp = () =>
+    setFollowUpBehavior(followUpBehavior === "queue" ? "steer" : "queue");
+
+  /** 排队的单条消息「立即发送」：busy 时=插队；空闲时=直接泵出。 */
+  const sendQueuedNow = (m: QueuedMessage) => {
+    if (!activeSessionId) return;
+    if (busy) {
+      if (!steerSupported) {
+        showToast("当前 Agent 不支持实时插队；消息仍留在队列，空闲后自动发送");
+        return;
+      }
+      // 插队成功前消息先留在队列：失败则原样保留，避免静默丢失。
+      void Promise.resolve(
+        actions.sendPrompt(ticketNo, m.content, m.attachments ?? [], "steer"),
+      ).then((ok) => {
+        if (ok !== false) removeQueuedMessage(activeSessionId, m.id);
+      });
+      return;
+    }
+    // 空闲：把该条挪到队首并泵出（其余排队消息仍按 FIFO 随后发送）。
+    const list = appStore.getState().queuedMessages[activeSessionId] ?? [];
+    const idx = list.findIndex((x) => x.id === m.id);
+    if (idx > 0) reorderQueuedMessages(activeSessionId, m.id, list[0].id);
+    void kickQueuePump(activeSessionId);
+  };
+
+  const editQueued = (m: QueuedMessage) => {
+    if (!activeSessionId) return;
+    const popped = popQueuedMessageToInput(activeSessionId, m.id);
+    if (!popped) return;
+    setComposerDraft(ticketNo, popped.content);
+    if (popped.attachments && popped.attachments.length > 0) {
+      setPendingAttachments((prev) => [...prev, ...(popped.attachments ?? [])]);
+    }
+    requestAnimationFrame(() => taRef.current?.focus());
   };
 
   /**
@@ -808,6 +937,80 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
           </div>
         )}
 
+        {/* T-107：排队消息面板（按会话隔离；支持上移/下移排序、编辑回填、删除、立即发送=插队） */}
+        {activeSessionId && queue.length > 0 && (
+          <div className="queue-panel">
+            <div className="queue-panel-header">
+              <Clock size={11} className="text-faint" />
+              排队消息
+              <span className="font-mono text-[10.5px] text-faint">{queue.length}</span>
+              <span className="flex-1" />
+              <span className="text-[10.5px] text-faint">空闲后自动发送 · 编辑即取回输入框</span>
+            </div>
+            <div className="queue-panel-list">
+              {queue.map((m, i) => {
+                const firstLine = m.content.split("\n").find((l) => l.trim() !== "") ?? "";
+                return (
+                  <div key={m.id} className="queue-item">
+                    <button
+                      className="queue-icon-btn"
+                      disabled={i === 0}
+                      title="移到上一位"
+                      aria-label="移到上一位"
+                      onClick={() => reorderQueuedMessages(activeSessionId, m.id, queue[i - 1].id)}
+                    >
+                      <ArrowUp size={11} weight="bold" />
+                    </button>
+                    <button
+                      className="queue-icon-btn"
+                      disabled={i === queue.length - 1}
+                      title="移到下一位"
+                      aria-label="移到下一位"
+                      onClick={() => reorderQueuedMessages(activeSessionId, m.id, queue[i + 1].id)}
+                    >
+                      <ArrowDown size={11} weight="bold" />
+                    </button>
+                    <span
+                      className="queue-item-text"
+                      title={m.content}
+                      onClick={() => editQueued(m)}
+                    >
+                      {firstLine.length > 80 ? firstLine.slice(0, 80) + "…" : firstLine}
+                    </span>
+                    {m.attachments && m.attachments.length > 0 && (
+                      <span className="queue-item-meta">图 {m.attachments.length}</span>
+                    )}
+                    <button
+                      className="queue-icon-btn queue-icon-btn-go"
+                      title={busy ? (steerSupported ? "立即插队发送到当前回合" : "Agent 忙碌中，插队暂不可用") : "立即发送"}
+                      aria-label="立即发送"
+                      onClick={() => sendQueuedNow(m)}
+                    >
+                      <Lightning size={11} weight="fill" />
+                    </button>
+                    <button
+                      className="queue-icon-btn"
+                      title="编辑（取回输入框）"
+                      aria-label="编辑"
+                      onClick={() => editQueued(m)}
+                    >
+                      <PencilSimple size={11} />
+                    </button>
+                    <button
+                      className="queue-icon-btn"
+                      title="移除"
+                      aria-label="移除"
+                      onClick={() => removeQueuedMessage(activeSessionId, m.id)}
+                    >
+                      <XIcon size={11} weight="bold" />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         {/* 统一输入卡：textarea 与控制栏同卡，聚焦时整卡亮起（参考 OpenChamber） */}
         <div
           className={`composer-shell${busy ? " composer-shell-busy" : ""}${
@@ -831,7 +1034,7 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
                     aria-label={`移除附件 ${att.filename}`}
                     onClick={() => removeAttachment(att.id)}
                   >
-                    <X size={11} weight="bold" />
+                    <XIcon size={11} weight="bold" />
                   </button>
                 </div>
               ))}
@@ -862,6 +1065,16 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
+                // T-107：Agent 输出中按跟随行为路由——queue 模式 Enter=排队、
+                // Ctrl+Enter=插队；steer 模式 Enter=插队、Ctrl+Enter=排队。
+                // 空闲时 Enter/Ctrl+Enter 均为直接发送。
+                if (busy && activeSessionId) {
+                  const isCtrl = e.ctrlKey || e.metaKey;
+                  const wantSteer = followUpBehavior === "steer" ? !isCtrl : isCtrl;
+                  if (wantSteer) steerComposed();
+                  else queueComposed();
+                  return;
+                }
                 send();
               }
             }}
@@ -877,7 +1090,9 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
                   : busy
                     ? live && !activeSessionId
                       ? "正在创建会话…"
-                      : "Agent 正在工作，可点击右下按钮中断；切换的模型/推理强度将在下一回合生效…"
+                      : followUpBehavior === "steer"
+                        ? "Agent 正在工作 · 回车插队当前回合（Ctrl+Enter 排队，点击 Stop 可中断）…"
+                        : "Agent 正在工作 · 输入后回车排队，空闲自动发送（Ctrl+Enter 插队，点击 Stop 中断）…"
                     : "向 Agent 描述任务…（Enter 发送，Shift+Enter 换行，可粘贴图片/文件）"
             }
             className="composer-ta"
@@ -901,6 +1116,24 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
                     draft={activeSessionId === ""}
                   />
                   <VariantPicker ticketNo={ticketNo} sel={sel} variants={currentVariants} />
+                  {activeSessionId && (
+                    <button
+                      className={`composer-btn ${followUpBehavior === "steer" ? "composer-btn-active" : ""}`}
+                      title={
+                        followUpBehavior === "queue"
+                          ? "当前：排队 —— Agent 工作时回车将消息加入队列，空闲后自动发送；Ctrl+Enter 插队。点此切换为插队"
+                          : "当前：插队 —— Agent 工作时回车将直接插队到当前回合（仅 opencode）；Ctrl+Enter 排队。点此切换为排队"
+                      }
+                      onClick={toggleFollowUp}
+                    >
+                      {followUpBehavior === "steer" ? (
+                        <Lightning size={12} weight="fill" />
+                      ) : (
+                        <ListChecks size={12} weight="fill" />
+                      )}
+                      {followUpBehavior === "steer" ? "输入：插队" : "输入：排队"}
+                    </button>
+                  )}
                   {activeSessionId && (
                     <button
                       className={`composer-btn ${autoAccept ? "composer-btn-active" : ""}`}

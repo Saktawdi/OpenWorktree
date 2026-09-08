@@ -33,6 +33,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
@@ -55,6 +56,7 @@ class OpenCodeServeAdapterTest {
     private Path root;
     private HttpServer fakeServer;
     private int port;
+    private JdbcTemplate jdbc;
     private JdbcAgentConfigRepository agentConfigs;
     private JdbcSessionRepository sessions;
     private JdbcTicketRepository ticketRepository;
@@ -80,7 +82,7 @@ class OpenCodeServeAdapterTest {
         rejectPrompt = false;
         DataSource ds = SqliteDataSourceFactory.create(root.resolve("gate.db"));
         SqliteDataSourceFactory.migrate(ds);
-        JdbcTemplate jdbc = new JdbcTemplate(ds);
+        jdbc = new JdbcTemplate(ds);
         Instant now = Instant.now();
         new JdbcProviderRepository(jdbc).upsert(
                 new ProviderRepository.ProviderRow("manual", "manual", "local://manual", "none", "manual", now),
@@ -245,6 +247,52 @@ class OpenCodeServeAdapterTest {
         }
         assertEquals(GateTaskStatus.FAILED, tasks.find(taskId).orElseThrow().status());
         awaitBusyGone(adapter, session.id());
+    }
+
+    @Test
+    void steer_failing_before_riding_check_preserves_running_turn_busy() throws Exception {
+        // 在跑回合（busy 计数由它持有）：prompt_async 已受理、idle 被扣住。
+        holdResponseParts = true;
+        deferredIdleGate = new CountDownLatch(1);
+        Session session = adapter.start(new AgentSessionPort.StartRequest(
+                "OPEN-1", "opencode-test", root.resolve("clone").toString(), "refs/heads/main",
+                "hello", Map.of()));
+        adapter.sendMessage(new AgentSessionPort.SendRequest(session.id(), "hi", true));
+        awaitBusy(adapter, session.id());
+        Thread.sleep(800);
+        assertTrue(adapter.busySessionIds().contains(session.id()));
+
+        // steer 在 riding 判定前抛错的窗口：抹掉会话行的 cli_session_id（模拟续接信息缺失），
+        // steer 的 runSend 在 "session has no opencode endpoint" 处抛 GateException——
+        // 此刻 riding 仍为 false 且 steer 从未计数，旧代码据此误走 else 分支强清 busy。
+        jdbc.update("UPDATE agent_session SET cli_session_id = NULL WHERE id = ?", session.id());
+        List<SessionStreamChunk> seen = new ArrayList<>();
+        adapter.attachListener(session.id(), seen::add);
+        String steerTask = adapter.sendMessage(new AgentSessionPort.SendRequest(
+                session.id(), "steer me", true, List.of(), "steer"));
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (System.nanoTime() < deadline) {
+            if (tasks.find(steerTask).map(t -> t.status() == GateTaskStatus.FAILED).orElse(false)) {
+                break;
+            }
+            Thread.sleep(50);
+        }
+        assertEquals(GateTaskStatus.FAILED, tasks.find(steerTask).orElseThrow().status());
+        // 核心回归：steer 未计数、也未确认骑乘前失败——不得释放/误清在跑回合的 busy。
+        Thread.sleep(300);
+        assertTrue(adapter.busySessionIds().contains(session.id()),
+                "steer 在 riding 判定前抛错，绝不能误清在跑回合的 busy 计数");
+        // 失败只落 ERROR 行；正在流的回合视图不能被 ErrorChunk 掐断。
+        assertTrue(seen.stream().noneMatch(c -> c instanceof SessionStreamChunk.ErrorChunk),
+                "riding 判定前的 steer 失败不得向在跑回合补发 ErrorChunk");
+        assertTrue(sessions.findMessages(session.id()).stream()
+                .anyMatch(m -> m.role() == Role.ERROR), "steer 失败必须以 ERROR 行落库");
+
+        // 原回合的终点照常消耗它自己的那一次计数：放行后 busy 干净清零、不残留。
+        deferredIdleGate.countDown();
+        awaitBusyGone(adapter, session.id());
+        Thread.sleep(300);
+        assertTrue(adapter.busySessionIds().isEmpty());
     }
 
     private void awaitBusy(OpenCodeServeAdapter adapter, String sessionId) throws Exception {

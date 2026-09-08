@@ -731,3 +731,16 @@ export interface UpdateNotes {
   content?: string;
   error?: string;
 }
+
+/* ─── 排队消息（Message Queue & Steer） ─── */
+
+export type FollowUpBehavior = "queue" | "steer";
+
+export interface QueuedMessage {
+  id: string;
+  ticketNo: string;
+  sessionId: string;
+  content: string;
+  attachments?: PendingAttachment[];
+  createdAt: number;
+}

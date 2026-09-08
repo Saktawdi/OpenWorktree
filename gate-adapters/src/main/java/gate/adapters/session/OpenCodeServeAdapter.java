@@ -818,10 +818,18 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
         sessions.insertMessage(new SessionMessage(UUID.randomUUID().toString(), session.id(),
                 Role.USER, request.message(), List.of(), null, false, clock.now()));
         GateTask task = tasks.register("session-send", session.ticketNo(), session.id());
-        // 入队即算运行，且 busy 持续到回合真正结束（opencode 是异步回合：终点是上游
+        // 普通回合：入队即算运行，且 busy 持续到回合真正结束（opencode 是异步回合：终点是上游
         // session.status=idle，不是 prompt_async 的 HTTP 受理）。失败路径在 catch 里兜底释放。
-        incrementInFlight(session.id());
-        executor.submit(() -> runSend(task, session, request.message(), request.attachments(), firstTurn));
+        // steer（delivery=steer，T-107 插队）：消息实时注入“当前正在运行”的回合，该回合全程只
+        // 产生一次 idle 终点——busy 计数与终点消耗都由原回合持有，steer 自身不得计数（否则终点
+        // 到达后计数残留、会话永久 busy）。是否真有在跑回合由 runSend 在 POST 前复核：没有则
+        // 降级为普通新回合并补计。
+        boolean steer = "steer".equals(request.delivery());
+        if (!steer) {
+            incrementInFlight(session.id());
+        }
+        executor.submit(() -> runSend(task, session, request.message(), request.attachments(),
+                firstTurn, steer ? "steer" : null));
         return task.id();
     }
 
@@ -964,6 +972,22 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
 
     private void runSend(GateTask task, Session session, String message,
                          List<AgentSessionPort.Attachment> attachments, boolean firstTurn) {
+        runSend(task, session, message, attachments, firstTurn, null);
+    }
+
+    private void runSend(GateTask task, Session session, String message,
+                         List<AgentSessionPort.Attachment> attachments, boolean firstTurn, String delivery) {
+        // steer（插队）是否骑乘在跑的回合：sendMessage 对 steer 不计数，此处 POST 前复核——
+        //  · 在跑（inFlightCounts 含本会话）→ 骑乘：不计数、不动正在接收的回合（不做
+        //    superseded 冲刷与缓冲重置，否则会把当前回合误判为“陈旧残留”而掐断）；
+        //  · 没在跑（页面 busy 过期/原回合刚释放）→ 降级为普通新回合：补计 busy、按普通回合发。
+        // catch 块需要读到该判定，故声明在 try 之外。
+        boolean riding = false;
+        // 本任务是否持有 busy 计数：非 steer 已由 sendMessage 入队时计数；steer 不计数（计数归
+        // 原回合），降级为普通新回合补计后才置真。catch 只释放本任务真正持有的计数——steer 在
+        // riding 判定前抛错（ensureServe/配置查询/簿记等阶段）时手面无计数可放，强放会误清
+        // 在跑回合持有的 busy。
+        boolean holdsBusyCount = !"steer".equals(delivery);
         try (AutoCloseable ignored = ticketLocks.acquire(session.ticketNo())) {
             // 后端重启后 sessionPorts 为空：懒复活按会话行重建 serve（同一 clonePath、新端口、
             // 重接上游事件流），旧 cliSessionId 由 opencode 全局存储续接。复活失败抛错走下方
@@ -977,6 +1001,12 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
             Session latest = sessions.find(session.id()).orElse(session);
             AgentConfig config = agentConfigs.find(latest.agentConfigId()).orElseThrow();
             tasks.update(progress(task, 20, "触发 opencode 回合"));
+            riding = "steer".equals(delivery) && inFlightCounts.containsKey(session.id());
+            if ("steer".equals(delivery) && !riding) {
+                incrementInFlight(session.id());
+                holdsBusyCount = true;
+            }
+            String effectiveDelivery = riding ? "steer" : null;
             // A permission.asked left unanswered would block the new turn forever (opencode waits
             // on it before continuing); reject every residual pending ask best-effort.
             rejectPendingPermissions(session.id(), port);
@@ -998,13 +1028,14 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                 }
             }
             String body = messageBody(config, outgoing, attachments,
-                    latest.overrideProvider(), latest.overrideModel(), latest.overrideVariant());
+                    latest.overrideProvider(), latest.overrideModel(), latest.overrideVariant(),
+                    effectiveDelivery);
             Upstream up = upstreams.get(session.id());
-            if (up != null) {
+            if (up != null && !riding) {
                 // A previous turn whose stream never reached session.status=idle (serve drop,
                 // connection loss, interrupted abort) left buffered content dangling; the reset
                 // below would wipe it, so flush it as a degraded reply first and let it survive
-                // the next send.
+                // the next send. riding（steer 插队）时上游回合是活的：绝不清洗。
                 up.flushTurn("superseded");
                 // Reset BEFORE firing the request: once prompt_async lands, events for this turn
                 // can arrive within milliseconds and must not be wiped by post-send cleanup.
@@ -1038,8 +1069,10 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                         "opencode prompt_async failed: HTTP " + resp.statusCode() + " " + resp.body());
             }
             log.info("opencode", "prompt_async.accepted", "sessionId", session.id(),
-                    "cliSessionId", session.cliSessionId(), "chars", message.length());
+                    "cliSessionId", session.cliSessionId(), "chars", message.length(),
+                    "delivery", effectiveDelivery == null ? "default" : effectiveDelivery);
             // 受理即进入“等待终点释放”状态：busy 只能被本回合之后的 idle/error 终点消耗一次。
+            // riding 时该标记由原回合持有（Set 幂等），idle 终点到达后由原回合的计数消耗。
             acceptedSinceRelease.add(session.id());
             // The turn itself runs asynchronously; token/tool/done chunks arrive on the upstream
             // reader and the final assistant message is persisted from its completion snapshot.
@@ -1050,14 +1083,31 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
             sessions.insertMessage(new SessionMessage(UUID.randomUUID().toString(), session.id(),
                     Role.ERROR, e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage(),
                     List.of(), null, true, clock.now()));
-            emitChunk(session.id(), new SessionStreamChunk.ErrorChunk(session.id(), "INTERNAL_ERROR", e.getMessage(), clock.now()));
-            // 浏览器的 SSE 多半还没挂上（POST /messages 刚返回）：记入 3 秒补偿窗口，
-            // attachListener 迟到即补发，否则 UI 转圈到看门狗超时。
-            recentErrors.put(session.id(), new RecentError(System.currentTimeMillis(),
-                    "INTERNAL_ERROR", e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()));
-            // 回合根本没被受理：不会有 idle 事件到来，立即释放 busy 计数。必须先于任务簿记——
-            // 簿记失败（fence 冲突等）绝不允许把 busy 泄漏成常驻 1。
-            releaseBusyUnconditionally(session.id());
+            // steer 在 riding 判定前抛错（holdsBusyCount 仍为 false）：若会话确有在跑回合
+            // （计数由原回合持有），语义等同骑乘失败——既不能释放（会误清在跑回合的 busy、
+            // 拆掉其受理标记），也不能发 ErrorChunk（会掐断在跑回合的实时视图）。
+            boolean rideFailed = riding || ("steer".equals(delivery) && !holdsBusyCount
+                    && inFlightCounts.containsKey(session.id()));
+            if (rideFailed) {
+                // 骑乘失败（steer 被拒/上游不可达）：原回合仍可能继续产生 idle 终点，busy 计数
+                // 归原回合所有，绝不能在此无条件释放——否则在跑的回合被提前标记为空闲。
+                // 同时不补发 ErrorChunk/补偿错误：回合没死，正在流的视图不能被一个失败帧掐断，
+                // 失败已以 ERROR 行落库，刷新历史可见。
+                log.warn("opencode", "steer.ride-failed", "sessionId", session.id(),
+                        "error", e.getClass().getSimpleName());
+            } else {
+                emitChunk(session.id(), new SessionStreamChunk.ErrorChunk(session.id(), "INTERNAL_ERROR", e.getMessage(), clock.now()));
+                // 浏览器的 SSE 多半还没挂上（POST /messages 刚返回）：记入 3 秒补偿窗口，
+                // attachListener 迟到即补发，否则 UI 转圈到看门狗超时。
+                recentErrors.put(session.id(), new RecentError(System.currentTimeMillis(),
+                        "INTERNAL_ERROR", e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()));
+                // 回合根本没被受理：不会有 idle 事件到来，立即释放 busy 计数。必须先于任务簿记——
+                // 簿记失败（fence 冲突等）绝不允许把 busy 泄漏成常驻 1。只释放本任务自己持有的
+                // 计数（非 steer 入队即计 / steer 降级补计）；steer 未计数时释放会误清在跑回合。
+                if (holdsBusyCount) {
+                    releaseBusyUnconditionally(session.id());
+                }
+            }
             try {
                 tasks.update(fail(task, e));
             } catch (Exception taskEx) {
@@ -1092,6 +1142,13 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
     static String messageBody(AgentConfig config, String message,
                               List<AgentSessionPort.Attachment> attachments,
                               String overrideProvider, String overrideModel, String overrideVariant) {
+        return messageBody(config, message, attachments, overrideProvider, overrideModel, overrideVariant, null);
+    }
+
+    static String messageBody(AgentConfig config, String message,
+                              List<AgentSessionPort.Attachment> attachments,
+                              String overrideProvider, String overrideModel, String overrideVariant,
+                              String delivery) {
         StringBuilder body = new StringBuilder("{\"parts\":[{\"type\":\"text\",\"text\":\"")
                 .append(escapeJson(message)).append("\"}");
         for (AgentSessionPort.Attachment attachment : attachments == null ? List.<AgentSessionPort.Attachment>of() : attachments) {
@@ -1112,6 +1169,9 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
         }
         if (overrideVariant != null && !overrideVariant.isBlank()) {
             body.append(",\"variant\":\"").append(escapeJson(overrideVariant.trim())).append('"');
+        }
+        if (delivery != null && !delivery.isBlank()) {
+            body.append(",\"delivery\":\"").append(escapeJson(delivery.trim())).append('"');
         }
         String agent = agentFlag(config);
         if (agent != null && !agent.isBlank()) {

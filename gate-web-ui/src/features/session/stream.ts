@@ -64,27 +64,101 @@ export async function abortLive(no: string) {
   await loadTicketSessions(no).catch(() => {});
 }
 
-/* ─── 发送（含草稿建会话三步） ─── */
+/* ─── 发送（含草稿建会话三步；T-107 起支持 steer 插队） ─── */
+
+/** POST 一条消息到后端；失败只回 error 不抛（调用方决定提示与回滚）。 */
+async function postSessionMessage(
+  no: string,
+  sessionId: string,
+  userText: string,
+  attachments: PendingAttachment[],
+  delivery?: "steer",
+): Promise<{ taskId?: string; images?: string[]; error?: string }> {
+  const sel = appStore.getState().sessionModelSel[sessionId];
+  try {
+    const sent = await api<{ task_id: string; images?: string[] }>(
+      `/api/sessions/${sessionId}/messages`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          message: userText,
+          attachments: attachments.map((a) => ({
+            filename: a.filename,
+            mime: a.mime,
+            data_base64: a.dataBase64,
+          })),
+          provider_id: sel?.providerId ?? undefined,
+          model_id: sel?.modelId ?? undefined,
+          variant: sel?.variant ?? undefined,
+          delivery: delivery ?? undefined,
+        }),
+      },
+    );
+    return { taskId: sent.task_id, images: sent.images };
+  } catch (e) {
+    return { error: (e as Error).message };
+  }
+}
+
+function userImagesOf(attachments: PendingAttachment[]): string[] {
+  return attachments.filter((a) => a.mime.startsWith("image/")).map((a) => a.dataUrl);
+}
+
+/**
+ * 插队（delivery=steer）投递：把消息实时注入「正在运行」的回合，不改动回合生命周期。
+ * · 本页已在该会话上消费 SSE（isSessionStreamingLocally）：只 POST——插队后的续写事件
+ *   由现有事件流接收（整个回合只产生一次 done/终点）；绝不另开第二条流，也不设置/清除
+ *   sessionBusy。busy 与回合终点仍归原发送方释放（原 consume 的 finally 在真正的
+ *   idle 才执行），否则会被提前标记空闲并错误触发排队自动出队泵。
+ * · 会话在跑但本页没有本地流（他端启动/断流后放弃观察）：POST 后补挂一条观察流让本页
+ *   看到续写；busy 由轮询按后端口径释放。
+ * · POST 失败：回滚乐观用户气泡并提示（消息未达 Agent）。
+ */
+async function steerIntoRunning(
+  no: string,
+  sid: string,
+  userText: string,
+  attachments: PendingAttachment[],
+): Promise<boolean> {
+  const userItem = pushUserMessage(no, userText, userImagesOf(attachments));
+  const result = await postSessionMessage(no, sid, userText, attachments, "steer");
+  if (result.error) {
+    removeChatItem(no, userItem.id);
+    pushSystemMessage(no, `插队失败：${result.error}`, "warn");
+    return false;
+  }
+  if (result.images?.length) attachUserImages(no, userItem.id, result.images);
+  if (!isSessionStreamingLocally(sid)) {
+    // 观察后台回合的续写：不 await——投递已受理即返回成功，续写事件在后台驱动本页视图；
+    // POST 受理后后端必有一个将到来的 idle 终点，观察流不会被晾到看门狗超时。
+    void consumeSessionStream(no, sid);
+  }
+  return true;
+}
 
 export async function liveSendPrompt(
   no: string,
   userText: string,
   attachments: PendingAttachment[] = [],
+  delivery?: "steer",
 ): Promise<boolean> {
   const st = appStore.getState();
   // 目标永远是「当前查看的会话」（activeSessionId），不再有跨工单/跨会话的全局游标；
-  // 同一会话生成中不允许并发追加，其他会话不受影响。
+  // 同一会话生成中普通消息不允许并发追加，其他会话不受影响。
   // userText 已含发送时统一追加的 [图片 #n] 引用行（引用只占位 chip，不进输入框正文），
   // 原样推送与发送。
   const sessionId = st.activeSessionId[no];
-  if (sessionId && st.sessionBusy[sessionId]) return true;
+  if (sessionId && st.sessionBusy[sessionId] && delivery !== "steer") return true;
+  // 插队只对「正在运行的会话」有意义：会话空闲时的 steer 请求退化为普通发送
+  // （后端 runSend 对无在跑回合的 steer 同样降级为普通新回合）。
+  if (delivery === "steer" && sessionId && st.sessionBusy[sessionId]) {
+    // 工单重新进入运行状态：上一次的"会话已结束"提醒随之失效
+    clearSessionEnded(no);
+    return steerIntoRunning(no, sessionId, userText, attachments);
+  }
   // 工单重新进入运行状态：上一次的"会话已结束"提醒随之失效
   clearSessionEnded(no);
-  const userItem = pushUserMessage(
-    no,
-    userText,
-    attachments.filter((a) => a.mime.startsWith("image/")).map((a) => a.dataUrl),
-  );
+  const userItem = pushUserMessage(no, userText, userImagesOf(attachments));
   setBusy(no, true);
   let sid: string | null = sessionId || null;
   // 草稿首条消息：建会话（空首句，仅启动 serve）→ 写入草稿的模型/推理覆盖 →
@@ -112,24 +186,11 @@ export async function liveSendPrompt(
       // 真目录按会话加载，草稿目录（opencode 配置）完成使命。
       void loadSessionCatalog(no, sid);
     }
-    const sel = appStore.getState().sessionModelSel[sid];
-    const sent = await api<{ task_id: string; images?: string[] }>(`/api/sessions/${sid}/messages`, {
-      method: "POST",
-      body: JSON.stringify({
-        message: userText,
-        attachments: attachments.map((a) => ({
-          filename: a.filename,
-          mime: a.mime,
-          data_base64: a.dataBase64,
-        })),
-        provider_id: sel?.providerId ?? undefined,
-        model_id: sel?.modelId ?? undefined,
-        variant: sel?.variant ?? undefined,
-      }),
-    });
+    const result = await postSessionMessage(no, sid, userText, attachments);
+    if (result.error) throw new Error(result.error);
     // 后端已把缩略图落盘到克隆 .gate/chat-images/：用可持久化的工作区路径
     // 替换乐观 data URL，此后历史重载按同一引用行解析出一致的数据源。
-    if (sent.images?.length) attachUserImages(no, userItem.id, sent.images);
+    if (result.images?.length) attachUserImages(no, userItem.id, result.images);
     // 遮罩只覆盖「建会话→写覆盖→发消息」三步：后端受理消息即返回，回合从此开始
     // 流式输出，必须现在就撤；finally 要等整个回合结束才执行，只留给异常路径兜底。
     setCreatingSession(no, false);
@@ -151,6 +212,47 @@ export async function liveSendPrompt(
     refreshTicketBusy(no);
   }
   return !draftFailed;
+}
+
+/**
+ * 向指定会话发送（不要求该会话是「当前查看的会话」，排队自动发送专用）：
+ * 会话必须已创建。普通消息要求会话空闲；steer（插队）允许投递给运行中的会话
+ * （OpenCode delivery=steer 注入当前回合，走 steerIntoRunning——不另开流、不动 busy），
+ * 会话空闲时的 steer 请求同样退化为普通发送。
+ */
+export async function liveSendToSession(
+  no: string,
+  sessionId: string,
+  userText: string,
+  attachments: PendingAttachment[] = [],
+  delivery?: "steer",
+): Promise<boolean> {
+  const st = appStore.getState();
+  const sid = sessionId;
+  if (!sid) return false;
+  if (st.sessionBusy[sid] && delivery !== "steer") return false;
+  if (delivery === "steer" && st.sessionBusy[sid]) {
+    clearSessionEnded(no);
+    return steerIntoRunning(no, sid, userText, attachments);
+  }
+  clearSessionEnded(no);
+  const userItem = pushUserMessage(no, userText, userImagesOf(attachments));
+  setBusy(no, true);
+  try {
+    const result = await postSessionMessage(no, sid, userText, attachments);
+    if (result.error) throw new Error(result.error);
+    if (result.images?.length) attachUserImages(no, userItem.id, result.images);
+    setSessionBusy(sid, true);
+    await consumeSessionStream(no, sid);
+    return true;
+  } catch (e) {
+    pushSystemMessage(no, `会话失败：${(e as Error).message}`, "warn");
+    markSessionEnded(no, "failed", sid);
+    return false;
+  } finally {
+    setSessionBusy(sid, false);
+    refreshTicketBusy(no);
+  }
 }
 
 /* ─── SSE 流消费 ─── */

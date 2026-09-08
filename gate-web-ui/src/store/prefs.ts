@@ -17,6 +17,8 @@ const PENDING_QUOTES_KEY = "gate-pending-quotes";
 const TERMINAL_CLOSE_ALL_KEY = "gate-terminal-close-all-confirm";
 const SESSION_GROUPS_KEY = "gate-session-groups";
 const SESSION_PINNED_KEY = "gate-session-pinned";
+const FOLLOW_UP_BEHAVIOR_KEY = "gate-follow-up-behavior";
+const QUEUED_MESSAGES_KEY = "gate-queued-messages";
 
 /** 会话分组的落盘形态（T-105）：分组表 + 会话归属表（sessionId → groupId）。 */
 export interface PersistedSessionGroups {
@@ -276,5 +278,56 @@ export function saveSessionPinned(pinned: Record<string, string[]>) {
     localStorage.setItem(SESSION_PINNED_KEY, JSON.stringify(pinned));
   } catch {
     /* 存储不可用时降级为仅本窗口内保留 */
+  }
+}
+
+/* ─── 消息排队与插队偏好（T-107） ─── */
+
+export function loadFollowUpBehavior(): "queue" | "steer" {
+  try {
+    const raw = typeof window !== "undefined" ? localStorage.getItem(FOLLOW_UP_BEHAVIOR_KEY) : null;
+    return raw === "steer" ? "steer" : "queue";
+  } catch {
+    return "queue";
+  }
+}
+
+export function saveFollowUpBehavior(behavior: "queue" | "steer") {
+  try {
+    localStorage.setItem(FOLLOW_UP_BEHAVIOR_KEY, behavior);
+  } catch {
+    /* ignore */
+  }
+}
+
+export function loadQueuedMessages(): Record<string, import("@/shared/types").QueuedMessage[]> {
+  try {
+    const raw = typeof window !== "undefined" ? localStorage.getItem(QUEUED_MESSAGES_KEY) : null;
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const out: Record<string, import("@/shared/types").QueuedMessage[]> = {};
+    for (const [sid, list] of Object.entries(parsed)) {
+      if (!Array.isArray(list)) continue;
+      const valid = list.filter((item): item is import("@/shared/types").QueuedMessage =>
+        item && typeof item === "object" && typeof item.id === "string" && typeof item.content === "string",
+      );
+      if (valid.length > 0) out[sid] = valid;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+export function saveQueuedMessages(data: Record<string, import("@/shared/types").QueuedMessage[]>) {
+  try {
+    // 过滤掉空数组以保持存储整洁
+    const clean: Record<string, import("@/shared/types").QueuedMessage[]> = {};
+    for (const [sid, list] of Object.entries(data)) {
+      if (list && list.length > 0) clean[sid] = list;
+    }
+    localStorage.setItem(QUEUED_MESSAGES_KEY, JSON.stringify(clean));
+  } catch {
+    /* ignore */
   }
 }

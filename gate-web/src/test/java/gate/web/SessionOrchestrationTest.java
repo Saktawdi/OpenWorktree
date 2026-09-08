@@ -156,6 +156,31 @@ class SessionOrchestrationTest {
     }
 
     @Test
+    void send_with_delivery_passes_steer_through() throws Exception {
+        HttpResponse<String> cfg = post("/api/agent-configs", """
+                {"id":"claude-delivery","name":"Claude Delivery","cli":"CLAUDE","provider_id":"manual",
+                 "model":"claude-test","extra_flags":[],"description":"test"}
+                """);
+        assertEquals(201, cfg.statusCode(), cfg.body());
+        assertEquals(201, post("/api/tickets", "{\"ticket_no\":\"SESS-DELIV\",\"title\":\"deliv\"}")
+                .statusCode());
+        HttpResponse<String> created = post("/api/tickets/SESS-DELIV/sessions",
+                "{\"agent_config_id\":\"claude-delivery\"}");
+        assertEquals(201, created.statusCode(), created.body());
+        String sid = sessionId(created.body());
+
+        // 未带 delivery：SendRequest.delivery() 为 null（常规回合）。
+        assertEquals(202, post("/api/sessions/" + sid + "/messages",
+                "{\"message\":\"plain\"}").statusCode());
+        assertNull(FakeAgentSessionPort.lastSent.delivery());
+
+        // delivery=steer：原样透传到端口（插队；不支持插队的适配器忽略该字段）。
+        assertEquals(202, post("/api/sessions/" + sid + "/messages",
+                "{\"message\":\"steer me\",\"delivery\":\"steer\"}").statusCode());
+        assertEquals("steer", FakeAgentSessionPort.lastSent.delivery());
+    }
+
+    @Test
     void session_create_without_prompt_creates_idle_session() throws Exception {
         HttpResponse<String> cfg = post("/api/agent-configs", """
                 {"id":"claude-idle","name":"Claude Idle","cli":"CLAUDE","provider_id":"manual",
