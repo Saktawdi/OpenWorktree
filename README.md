@@ -9,6 +9,8 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/Saktawdi/OpenWorktree/releases"><img src="https://img.shields.io/github/downloads/Saktawdi/OpenWorktree/total?style=flat-square&label=%E4%B8%8B%E8%BD%BD" alt="Releases 下载总数"></a>
+  <a href="https://hub.docker.com/r/saktawdi/openworktree"><img src="https://img.shields.io/docker/pulls/saktawdi/openworktree?style=flat-square&label=docker%20%E6%8B%89%E5%8F%96" alt="Docker 镜像拉取数"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0-2ea44f?style=flat-square" alt="License GPL-3.0"></a>
   <img src="https://img.shields.io/badge/Java-17-ED8B00?style=flat-square&logo=openjdk&logoColor=white" alt="Java 17">
   <img src="https://img.shields.io/badge/React-19-149eca?style=flat-square&logo=react&logoColor=white" alt="React 19">
@@ -41,8 +43,8 @@ OpenWorktree 是一个本地优先的工单驱动开发工作台。它把「一�
       <br><sub><b>工单看板</b> · 六泳道拖拽流转，状态与优先级一眼可见</sub>
     </td>
     <td align="center" style="border:1px solid #30363d; border-radius:10px; padding:8px;">
-      <img src="doc/34f5a311-9591-4cfc-a804-7c2dd9a134a3.png" alt="暗色主题运行监控与会话工作台" width="100%">
-      <br><sub><b>会话工作台</b> · Agent 流式执行、运行监控与隔离终端</sub>
+      <img src="doc/shot-session-workbench.png" alt="暗色主题会话工作台" width="100%">
+      <br><sub><b>会话工作台</b> · Agent 流式执行、任务进度与分组会话列表</sub>
     </td>
   </tr>
   <tr>
@@ -51,24 +53,34 @@ OpenWorktree 是一个本地优先的工单驱动开发工作台。它把「一�
       <br><sub><b>任务清单</b> · 从 Agent 上下文中提取进度，执行状态随会话更新</sub>
     </td>
     <td align="center" style="border:1px solid #30363d; border-radius:10px; padding:8px;">
-      <img src="doc/92353065-66f7-41f2-8ed0-852ea7833285.png" alt="浅色主题变更对比与发布门禁" width="100%">
-      <br><sub><b>变更对比</b> · 按文件查看差异，发布前确认快照内容</sub>
+      <img src="doc/shot-review-findings.png" alt="审查发现与门禁驳回" width="100%">
+      <br><sub><b>审查发现</b> · 门禁判决与发现详情，带着发现返回会话修复</sub>
     </td>
   </tr>
   <tr>
     <td align="center" style="border:1px solid #30363d; border-radius:10px; padding:8px;">
-      <img src="doc/4fa658b6-3279-4437-9c6e-2d95dd6b8942.png" alt="暗色主题审查发现与门禁结果" width="100%">
-      <br><sub><b>审查发现</b> · 展示阻断、警告与建议，并保留修复依据</sub>
+      <img src="doc/92353065-66f7-41f2-8ed0-852ea7833285.png" alt="浅色主题变更对比与发布门禁" width="100%">
+      <br><sub><b>变更对比</b> · 按文件查看差异，发布前确认快照内容</sub>
     </td>
+    <td align="center" style="border:1px solid #30363d; border-radius:10px; padding:8px;">
+      <img src="doc/shot-evidence-chain.png" alt="证据链与审计记录" width="100%">
+      <br><sub><b>证据链</b> · 快照指纹、审查轮次与人工干预全程留痕</sub>
+    </td>
+  </tr>
+  <tr>
     <td align="center" style="border:1px solid #30363d; border-radius:10px; padding:8px;">
       <img src="doc/7ad5fa54-880e-43cf-b0fe-d68186736e2d.png" alt="暗色主题隔离终端选择器" width="100%">
       <br><sub><b>隔离终端</b> · 直接进入工单克隆目录，终端进程可保活</sub>
     </td>
+    <td align="center" style="border:1px solid #30363d; border-radius:10px; padding:8px;">
+      <img src="doc/shot-agent-providers.png" alt="暗色主题供应商管理" width="100%">
+      <br><sub><b>智能体配置</b> · 供应商接入、模型拉取与连通性测试</sub>
+    </td>
   </tr>
   <tr>
     <td align="center" style="border:1px solid #30363d; border-radius:10px; padding:8px;">
-      <img src="doc/e5a2f6a5-22a6-468a-9dc8-a27e5c4142d7.png" alt="浅色主题新增智能体配置窗口" width="100%">
-      <br><sub><b>智能体配置</b> · 接入 OpenCode、Claude Code 与自定义 Provider</sub>
+      <img src="doc/shot-plugins.png" alt="插件管理" width="100%">
+      <br><sub><b>插件</b> · 本地插件即装即用，为对话与工单扩展能力</sub>
     </td>
     <td align="center" style="border:1px solid #30363d; border-radius:10px; padding:8px;">
       <img src="doc/f30c6f39-7884-44f0-9d19-2004e5aee33f.png" alt="浅色主题项目分支与提交历史" width="100%">
