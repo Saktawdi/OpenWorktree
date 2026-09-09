@@ -75,6 +75,7 @@ desktop/node_modules/
 desktop/src-tauri/target/
 desktop/src-tauri/gen/
 desktop/src-tauri/binaries/*.exe
+# dev-shim-ow 遗留的备份命名（本机可能留有真实 native 单文件，不追踪）
 desktop/src-tauri/binaries/*.native-backup
 
 # Maven CI-friendly 版本：flatten 插件生成（install/deploy 用），不进版本库

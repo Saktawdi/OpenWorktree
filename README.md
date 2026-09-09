@@ -20,6 +20,7 @@
   <a href="#界面展示">界面展示</a> ·
   <a href="#核心流程">核心流程</a> ·
   <a href="#mcp-工具">MCP 工具</a> ·
+  <a href="#插件生态">插件生态</a> ·
   <a href="#快速开始">快速开始</a>
 </p>
 <p align="center">
@@ -136,8 +137,27 @@ OpenWorktree 内置一套 MCP（Model Context Protocol）stdio 服务器，是 A
 - **可追溯审查**：快照、差异、发现、判决、修复和审计日志形成完整证据链。
 - **安全发布**：发布需要授权，提交身份可控，目标分支与发布结果明确可见。
 - **终端工作台**：多标签终端可直连工单克隆目录，支持最小化后台与进程保活。
+- **插件系统**：对话快捷动作、划选菜单、设置挂件与整页导航四类贡献点，契约唯一来源仓库内 SDK（见 [插件生态](#插件生态)）。
 - **本地优先**：服务绑定回环地址，SQLite、本地 blob 和令牌都存放在运行目录内，拷贝即可迁移。
 - **双主题**：暗 / 亮主题随切，OW 徽章配套昼夜过渡动画。
+
+## 插件生态
+
+宿主对插件开放四个贡献点——对话区快捷动作（`composer.chips`）、划选文字菜单（`selection.menu`）、
+设置中心管理挂件（`settings.plugins`）与顶栏整页（`nav.pages`）；插件按 manifest 声明能力：
+`kv`（插件命名空间 KV 持久化，落 `<gateHome>/plugins-data/<id>/`）、`net`（注入 Web Token 的
+同源 `/api/` 请求），未声明的能力调用直接抛错。插件**不打包自己的 React**——经共享 shim 用宿主
+同一个 React 实例，样式可沿用宿主全局工具类。安全边界为 Level 1 本地可信：插件与页面脚本同级权限，
+只安装可信来源（详见 plugin-template 的「信任模型」）。
+
+- **契约唯一来源**：`packages/plugin-sdk`（README 含能力表、事件总线与冻结语义）——宿主
+  re-export 同一份类型，**不允许任何工程再维护 host-types 镜像**
+- **开发起点**：`plugin-template/`（README 含生命周期、共享 React 原理与常见问题），复制即开工
+- **内置插件**：`plugins/quick-quotes` 快捷语录（增删改查、拖拽排序、按工单状态显隐；发送消息 /
+  触发宿主预提审与按意见修复 / 指示 Agent 调 MCP 工具三类动作）
+- **安装**：插件工程内 `npm run deploy` 一键装进运行中的实例——自动探测在线后端的
+  `gate_home`（逐个候选 `gate.toml` 做 `/api/health` 探活），全离线才回退仓库 `local-run/gate-home`；
+  改代码后 `npm run build` → 设置 → 插件 →「重载」
 
 ## 架构
 
@@ -209,7 +229,18 @@ RUN npm install -g @anthropic-ai/claude-code && npm cache clean --force
 
 从源码自构建（开发时）：仓库根目录 `docker compose up -d --build`，build-arg `INSTALL_CLAUDE=true` 让 Claude Code 随镜像出来。
 
-### 方式二：本地开发
+### 方式二：Windows 桌面版
+
+Windows 上用桌面壳最省事：Tauri v2 壳内置后端单文件（GraalVM native-image，免装 JDK），
+双击即用——启动自动登录、关窗收进系统托盘常驻，不用记 `GATE_WEB_TOKEN`。
+前置只需本机 `git`（跑 Agent 会话再按需装对应 CLI，如 opencode / Claude Code）。
+
+- 安装包随 GitHub Releases 发布（「未公开先行者」阶段请从作者渠道获取，或按
+  `desktop/README.md` 自行构建）；
+- 数据默认落安装目录 `data\`（工单克隆随安装盘走），卸载可保留（移至 `%APPDATA%\OpenWorktree`）
+  或删除；后端契约与 Docker / 源码方式完全一致。
+
+### 方式三：本地开发（源码）
 
 #### 环境要求
 

@@ -25,30 +25,32 @@ npx tauri build        # 安装包在 src-tauri/target/release/bundle/nsis/
 `VC/Tools/MSVC/<ver>/bin/Hostx64/x64` 前置到 PATH，并设置 `LIB`/`INCLUDE`
 指向 MSVC 与 Windows SDK（CI 上无需处理）。
 
-## 本地 dev：无 GraalVM 时的 JVM 垫片侧车（dev-shim-ow）
+## 本地 dev：无 GraalVM 时的 JVM 垫片侧车（sidecar-jvm-shim）
 
-native 单文件只能由 CI 的 GraalVM 产出；本机只有普通 JDK 时，用 `dev-shim-ow/`
-的 Rust 垫片顶替 sidecar 跑 `tauri dev`：
+native 单文件只能由 CI 的 GraalVM 产出；本机只有普通 JDK 时，用
+`sidecar-jvm-shim/` 的 Rust 垫片顶替 sidecar 跑 `tauri dev`（用法详见
+`sidecar-jvm-shim/README.md`）：
 
 ```bash
-cd dev-shim-ow && cargo build --release        # 需 MSVC link 环境（同上）
-cp target/release/ow-dev-shim.exe src-tauri/binaries/ow-x86_64-pc-windows-msvc.exe
+cd desktop/sidecar-jvm-shim && cargo build --release   # MSVC link 环境有问题时跑 build-shim.bat
+cp target/release/sidecar-jvm-shim.exe ../src-tauri/binaries/ow-x86_64-pc-windows-msvc.exe
 cd .. && npm run tauri dev
 ```
 
-垫片行为：按 `OW_DEV_REPO`（缺省向上找带 `gate-web/target/dependency` 的祖先）定位
-仓库根，spawn `java -cp <模块 classes + 非 gate-* 依赖 jar + local-run/ui-dev-root>
-gate.web.GateWebApp --config local-run/gate.toml`，并把 JVM 的 stdout/stderr 泵给壳
-（壳按行解析令牌与端口）。要点：
+垫片以 JVM 拉起 `gate.web.GateWebApp`（`JAVA_HOME\bin\java.exe`，无则取 PATH 上的 java），
+stdout/stderr/退出码原样透传，壳的自动登录流程不变。要点：
 
-- **显式管道转发，不做句柄继承**：tauri 以管道作垫片 stdio 时，继承路径下 JVM 的
-  输出到不了壳（java 在写、壳收不到）；
-- **Job Object（kill-on-close）**：垫片进程被壳收割（含 TerminateProcess）时，
-  java 子进程随之被系统回收，不留孤儿；
-- SPA 用 `local-run/ui-dev-root/static/`（`gate-web-ui/dist` 的拷贝）伺服，改前端后
-  需重新 build + 拷贝；
-- 测完还原：删掉垫片 exe，把 `ow-x86_64-pc-windows-msvc.exe.native-backup`（若留有）
-  改回原名即可换回 native 侧车。
+- **仓库根探测**：按 exe 位置逐级向上找含 `gate-web/target/classes` 的目录——tauri dev
+  直跑 `binaries/`（仓库根下 3 层）与复制进 `target/debug/`（5 层）通吃，也可用
+  `OW_SIDECAR_REPO_ROOT` 显式覆盖；
+- **classpath**：`gate-web-ui/.sidecar-classpath`（junction → `dist`，伺服 SPA）垫最前 +
+  各模块 `target/classes` + `gate-web/target/dependency/*`；需先 `mvn -DskipTests install`
+  并构建前端 + 建 junction（缺失时后端照常起，但桌面壳 404 白屏，垫片会打警告）；
+- **孤儿保护**：java 挂进 KILL_ON_JOB_CLOSE 作业对象——壳退出收割垫片（含
+  TerminateProcess）时内核连带结束 java，不留占端口的孤儿后端；
+- 首次替换先把原 exe 备份为 `ow-x86_64-pc-windows-msvc.exe.shim-backup`，测完还原同名
+  文件即可换回 native 侧车；
+- **仅 dev 可用**：垫片离开仓库根（如被打进安装包）即报错退出，打包必须换回 native 单文件。
 
 ## 打包内容
 
@@ -66,6 +68,7 @@ gate.web.GateWebApp --config local-run/gate.toml`，并把 JVM 的 stdout/stderr
 3. **`%APPDATA%\com.openworktree.desktop`**——安装目录不可写（如 perMachine 装进
    Program Files）时的兜底，也是旧版数据的位置：首次运行会整体搬入安装目录 `data\`。
 
-`tauri dev`（debug 构建）不做迁移；dev-shim 侧车使用仓库内 `local-run/gate.toml`，
-与上述目录无关。`backend-boot.log` 落在所选数据目录根。
+`tauri dev`（debug 构建）不做迁移；垫片（sidecar-jvm-shim）拉起的 JVM 后端沿用
+`GateWebApp` 默认配置仓库内 `local-run/gate.toml`，与上述目录无关。`backend-boot.log`
+落在所选数据目录根。
 
