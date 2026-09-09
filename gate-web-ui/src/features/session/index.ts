@@ -67,6 +67,7 @@ export {
   createSession,
   startSessionDraft,
   ensureCurrentSession,
+  applyDraftGroup,
   archiveSession,
   restoreSession,
   switchSession,

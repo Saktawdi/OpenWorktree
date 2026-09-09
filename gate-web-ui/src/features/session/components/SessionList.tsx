@@ -3,6 +3,9 @@ import { AnimatePresence, motion } from "motion/react";
 import {
   Archive,
   ArrowUUpLeft,
+  ArrowsInSimple,
+  ArrowsOutSimple,
+  CaretDown,
   Chats,
   CircleNotch,
   Copy,
@@ -49,6 +52,10 @@ import { SessionDialogs, sessionDialogKey, type SessionDialogState } from "./Ses
  * · 分组前置小圆点移除，改为文件夹图标（中断/待决/运行中统由组内会话点表达）；
  *   文件夹图标恒用分组自定义色，不再被运行态染成状态色——组内运行/待问答时仅以
  *   同色呼吸（透明度 + 光晕）提示，具体状态看组内各会话行的小圆点（第 11 轮修正）。
+ * 分组收展 + 归组新建：
+ * · 收展箭头统一 SVG（CaretDown 随收展旋转）；tab 栏新增「全部收叠/展开」按钮（仅分组模式）；
+ * · 分组头（含未分组段）hover 出「+」：进入新建会话草稿并暂存归属分组（draftGroupId），
+ *   首条消息建会话时自动归入该分组（demo/live 建会话路径共用 applyDraftGroup 落地）。
  */
 
 const FLAT_ID = "flat";
@@ -243,11 +250,11 @@ export function SessionSection({ ticketNo, locked = false }: { ticketNo: string;
           <span className="chip border border-edge-strong bg-raised text-dim font-mono">{activeCount} 活跃</span>
         )}
         <span className="flex-1" />
-        <span
-          className={`text-[11px] text-faint transition-transform duration-150 ${expanded ? "rotate-0" : "-rotate-90"}`}
-        >
-          ▾
-        </span>
+        <CaretDown
+          size={12}
+          weight="bold"
+          className={`text-faint transition-transform duration-150 ${expanded ? "rotate-0" : "-rotate-90"}`}
+        />
       </button>
       {/* 收展过渡：flexGrow 在 0↔1 间与上方信息区反向重分配剩余空间（basis 0，无钳制、
           单调平滑），列表内容随 AnimatePresence 淡入淡出，替代原先的瞬移 */}
@@ -415,6 +422,23 @@ function SessionList({ ticketNo, locked = false }: { ticketNo: string; locked?: 
     (segId: string) => setCollapsed((prev) => ({ ...prev, [segId]: !prev[segId] })),
     [],
   );
+  /** 分组头 +：进入草稿并暂存归属分组（未分组段 = 不归组）；目标段收起时顺手展开，
+   *  让首条消息创建的会话落位可见。 */
+  const createInGroup = useCallback(
+    (segId: string) => {
+      if (collapsed[segId]) toggleCollapse(segId);
+      actions.startSessionDraft(ticketNo, segId === UNGROUPED_ID ? undefined : segId);
+    },
+    [ticketNo, collapsed, toggleCollapse],
+  );
+
+  /** 全部收叠/展开（仅分组模式）：任一段展开即整体收叠，全收起时一键展开。 */
+  const allCollapsed = segments.every((seg) => collapsed[seg.id] ?? false);
+  const toggleAllSegments = () => {
+    const next: Record<string, boolean> = {};
+    if (!allCollapsed) for (const seg of segments) next[seg.id] = true;
+    setCollapsed(next);
+  };
 
   return (
     <div className="relative flex flex-col flex-1 min-h-0">
@@ -443,6 +467,16 @@ function SessionList({ ticketNo, locked = false }: { ticketNo: string; locked?: 
           {archivedTotal > 0 && <span className="ml-1 font-mono text-[10px] text-faint">{archivedTotal}</span>}
         </button>
         <span className="flex-1" />
+        {grouped && (
+          <button
+            className="icon-btn !w-6 !h-6"
+            onClick={toggleAllSegments}
+            title={allCollapsed ? "展开全部分组" : "收叠全部分组"}
+            aria-label={allCollapsed ? "展开全部分组" : "收叠全部分组"}
+          >
+            {allCollapsed ? <ArrowsOutSimple size={13} weight="bold" /> : <ArrowsInSimple size={13} weight="bold" />}
+          </button>
+        )}
         {!locked && (
           <>
             <button
@@ -500,6 +534,7 @@ function SessionList({ ticketNo, locked = false }: { ticketNo: string; locked?: 
                   collapsed={collapsed}
                   activeSessionId={activeSessionId}
                   onToggleCollapse={toggleCollapse}
+                  onCreateInGroup={createInGroup}
                   onOpenMenu={openMenu}
                   onOpenDialog={openDialog}
                 />
@@ -599,6 +634,7 @@ function Segment({
   collapsed,
   activeSessionId,
   onToggleCollapse,
+  onCreateInGroup,
   onOpenMenu,
   onOpenDialog,
 }: {
@@ -609,6 +645,7 @@ function Segment({
   collapsed: Record<string, boolean>;
   activeSessionId: string | undefined;
   onToggleCollapse: (segId: string) => void;
+  onCreateInGroup: (segId: string) => void;
   onOpenMenu: (sessionId: string, x: number, y: number) => void;
   onOpenDialog: (d: SessionDialogState) => void;
 }) {
@@ -634,6 +671,7 @@ function Segment({
           locked={locked}
           count={seg.pinned.length + seg.rest.length}
           onToggle={() => onToggleCollapse(seg.id)}
+          onCreate={() => onCreateInGroup(seg.id)}
           onEdit={() => onOpenDialog({ kind: "group-edit", groupId: seg.id })}
           onDelete={() => onOpenDialog({ kind: "group-delete", groupId: seg.id })}
         />
@@ -694,7 +732,8 @@ function Segment({
   );
 }
 
-/** 分组头：文件夹图标 + 名称 + 数量 + 收展箭头；悬停时提供编辑/删除分组入口（未分组段除外）。
+/** 分组头：文件夹图标 + 名称 + 数量 + 收展箭头；悬停时提供「+ 新建会话」（归入本分组，
+ *  未分组段 = 不归组）与编辑/删除分组入口（编辑/删除仅自定义分组）。
  *  第 6 轮：前置小圆点移除，改为文件夹图标（随收展切换闭合/打开）。
  *  第 11 轮修正：文件夹图标恒用分组自定义色，不再被聚合运行态覆盖成状态色；
  *  组内运行中/待问答/待授权时仅以同色呼吸（透明度 + 光晕）提示，具体状态看组内
@@ -705,6 +744,7 @@ function SegmentHeader({
   locked,
   count,
   onToggle,
+  onCreate,
   onEdit,
   onDelete,
 }: {
@@ -713,6 +753,7 @@ function SegmentHeader({
   locked: boolean;
   count: number;
   onToggle: () => void;
+  onCreate: () => void;
   onEdit: () => void;
   onDelete: () => void;
 }) {
@@ -731,11 +772,11 @@ function SegmentHeader({
       role="button"
       title={collapsed ? "展开该分组" : "收起该分组"}
     >
-      <span
-        className={`text-[10px] text-faint transition-transform duration-150 ${collapsed ? "-rotate-90" : "rotate-0"}`}
-      >
-        ▾
-      </span>
+      <CaretDown
+        size={10}
+        weight="bold"
+        className={`text-faint shrink-0 transition-transform duration-150 ${collapsed ? "-rotate-90" : "rotate-0"}`}
+      />
       {g ? (
         <span
           className={`grid place-items-center w-4 h-4 rounded-full shrink-0 ${
@@ -760,22 +801,34 @@ function SegmentHeader({
       <span className="text-[11.5px] font-medium text-faint truncate max-w-[140px]">{g?.name ?? "未分组"}</span>
       <span className="font-mono text-[10px] text-faint/70">{count}</span>
       <span className="flex-1" />
-      {g !== null && !locked && (
+      {!locked && (
         <span
           className="flex items-center gap-0.5 opacity-0 transition-opacity duration-150 group-hover/seg:opacity-100"
           onClick={(e) => e.stopPropagation()}
         >
-          <button className="icon-btn !w-5 !h-5" title="编辑分组" aria-label="编辑分组" onClick={onEdit}>
-            <NotePencil size={11} />
-          </button>
           <button
-            className="icon-btn !w-5 !h-5 text-danger/70 hover:text-danger"
-            title="删除分组"
-            aria-label="删除分组"
-            onClick={onDelete}
+            className="icon-btn !w-5 !h-5"
+            title={g ? `新建会话并归入「${g.name}」` : "新建会话（不归组）"}
+            aria-label={g ? `新建会话并归入「${g.name}」` : "新建会话"}
+            onClick={onCreate}
           >
-            <Trash size={11} />
+            <Plus size={11} weight="bold" />
           </button>
+          {g && (
+            <>
+              <button className="icon-btn !w-5 !h-5" title="编辑分组" aria-label="编辑分组" onClick={onEdit}>
+                <NotePencil size={11} />
+              </button>
+              <button
+                className="icon-btn !w-5 !h-5 text-danger/70 hover:text-danger"
+                title="删除分组"
+                aria-label="删除分组"
+                onClick={onDelete}
+              >
+                <Trash size={11} />
+              </button>
+            </>
+          )}
         </span>
       )}
     </div>

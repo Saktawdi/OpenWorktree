@@ -493,9 +493,10 @@ export const actions = {
    * 「新建会话」进入空白草稿态：清空聊天区、解锁 Composer 的 Agent 选择，
    * 发送首条消息时才真正创建会话并固化 agent（live/demo 同一管道）。
    * 不再立即建会话——此前按钮直接用全局默认 agent 建会话，用户没有选择机会。
+   * 可选 groupId：分组头 + 的新建入口，首条消息建会话后自动归入该分组。
    */
-  startSessionDraft(no: string) {
-    startSessionDraftLocal(no);
+  startSessionDraft(no: string, groupId?: string) {
+    startSessionDraftLocal(no, groupId);
   },
   archiveSession(no: string, id: string) {
     if (appStore.getState().mode === "live") {

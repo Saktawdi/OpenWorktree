@@ -512,6 +512,8 @@ export function createSession(ticketNo: string) {
       [ticketNo]: id,
     },
   }));
+  // 草稿归属分组落地：分组头 + 进入的草稿，创建即归组并清暂存。
+  applyDraftGroup(ticketNo, id);
   // 会话创建语义写入点（demo 路径）；live 路径在 stream.ts 建会话成功后单独 emit。
   emitPluginEvent("session.created", {
     ticketNo,
@@ -528,15 +530,22 @@ export function createSession(ticketNo: string) {
  * 草稿不占会话列表、不持久任何输入——切走再切回即丢弃。
  * 任务清单/上下文占用随草稿清空：清单投影按会话 id 键控（V21），草稿态本就没有
  * 键位可命中，这里清上下文占用与活跃指针即可；清单残留由会话切换的附带查询覆盖。
+ * 可选 groupId：分组头 + 进入的草稿——归属分组暂存到 draftGroupId，首条消息
+ * 建会话时自动归入（applyDraftGroup）；不带 groupId 的普通新建清除该暂存。
  */
-export function startSessionDraft(ticketNo: string) {
+export function startSessionDraft(ticketNo: string, groupId?: string) {
   set((st) => {
     const draftModelSel = { ...st.draftModelSel };
     delete draftModelSel[ticketNo];
+    const draftGroupId = { ...st.draftGroupId };
+    const group = groupId ? (st.sessionGroups[ticketNo] ?? []).find((g) => g.id === groupId) : undefined;
+    if (group) draftGroupId[ticketNo] = group.id;
+    else delete draftGroupId[ticketNo];
     return {
       activeSessionId: { ...st.activeSessionId, [ticketNo]: "" },
       context: { ...st.context, [ticketNo]: { tokens: 0, limit: st.context[ticketNo]?.limit ?? null } },
       draftModelSel,
+      draftGroupId,
       chats: {
         ...st.chats,
         [ticketNo]: [
@@ -545,12 +554,32 @@ export function startSessionDraft(ticketNo: string) {
             id: uid("sys"),
             tone: "info" as const,
             ts: Date.now(),
-            text: "新会话草稿 · 在下方选择协作 Agent，发送首条消息后创建会话",
+            text: group
+              ? `新会话草稿 · 发送首条消息后创建会话并归入分组「${group.name}」`
+              : "新会话草稿 · 在下方选择协作 Agent，发送首条消息后创建会话",
           },
         ],
       },
     };
   });
+}
+
+/**
+ * 草稿归属分组落地：会话创建成功后归入草稿时所选分组并清除暂存（demo/live 建会话
+ * 路径共用）。分组在草稿期间被删则仅清暂存、不归组（moveSessionToGroup 同样兜底）。
+ */
+export function applyDraftGroup(ticketNo: string, sessionId: string) {
+  const groupId = s().draftGroupId[ticketNo];
+  if (!groupId) return;
+  set((st) => {
+    if (!st.draftGroupId[ticketNo]) return st;
+    const draftGroupId = { ...st.draftGroupId };
+    delete draftGroupId[ticketNo];
+    return { draftGroupId };
+  });
+  if ((s().sessionGroups[ticketNo] ?? []).some((g) => g.id === groupId)) {
+    moveSessionToGroup(ticketNo, sessionId, groupId);
+  }
 }
 
 /**
@@ -589,12 +618,18 @@ export function restoreSession(ticketNo: string, sessionId: string) {
 }
 
 export function switchSession(ticketNo: string, sessionId: string) {
-  set((st) => ({
-    activeSessionId: {
-      ...st.activeSessionId,
-      [ticketNo]: sessionId,
-    },
-  }));
+  set((st) => {
+    // 草稿随切换丢弃：草稿归属分组暂存一并清除，防残留误归组
+    const draftGroupId = { ...st.draftGroupId };
+    delete draftGroupId[ticketNo];
+    return {
+      activeSessionId: {
+        ...st.activeSessionId,
+        [ticketNo]: sessionId,
+      },
+      draftGroupId,
+    };
+  });
 }
 
 /**

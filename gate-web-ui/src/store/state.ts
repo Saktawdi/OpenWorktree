@@ -156,6 +156,8 @@ export interface AppState {
   runtimes: AgentRuntime[];
   /** 草稿态（会话未创建）暂存的模型/推理选择：随首条消息创建会话时持久化为覆盖。 */
   draftModelSel: Record<string, SessionModelSel>;
+  /** 草稿归属分组（key = 工单号）：分组头 + 进入的草稿，首条消息建会话时自动归入该分组。 */
+  draftGroupId: Record<string, string>;
   /** 输入框草稿自动保存（按工单号键）：切 tab/工单/页面后回来自动还原，发送成功或工单终态时清除。 */
   composerDrafts: Record<string, string>;
   /** 引用片段胶囊（按工单号键）：划选页面文字「添加到对话框」后暂存，随下一条消息发送。 */
@@ -301,6 +303,7 @@ export const appStore = create<AppState>(() => ({
   sessionGroupMembers: persistedGroups.members,
   sessionPinned: loadSessionPinned(),
   draftModelSel: {},
+  draftGroupId: {},
   composerDrafts: loadComposerDrafts(),
   pendingQuotes: loadPendingQuotes(),
   sessionModels: {},

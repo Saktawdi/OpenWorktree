@@ -16,6 +16,7 @@ import { mapPermissionAsk, mapQuestionAsk } from "./model";
 import { applyTodosSnapshot } from "./todos";
 import {
   addUsage,
+  applyDraftGroup,
   clearDraftModelSel,
   clearSessionEnded,
   markSessionEnded,
@@ -201,6 +202,9 @@ export async function liveSendPrompt(
       emitPluginEvent("session.created", { ticketNo: no, sessionId: sid, agentConfigId: agentId || null });
       await loadTicketSessions(no).catch(() => {});
       appStore.setState((s2) => ({ activeSessionId: { ...s2.activeSessionId, [no]: sid! } }));
+      // 草稿归属分组落地：分组头 + 进入的草稿，会话建成即归组并清暂存
+      // （归属映射为端侧软数据，与 loadTicketSessions 的列表刷新顺序无关）。
+      applyDraftGroup(no, sid!);
       // 草稿里选过的模型/推理强度：建会话后立即持久化为覆盖（首回合即生效）。
       const draftSel = appStore.getState().draftModelSel[no];
       if (draftSel?.providerId && draftSel.modelId) {
