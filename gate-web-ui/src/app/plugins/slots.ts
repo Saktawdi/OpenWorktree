@@ -34,7 +34,7 @@ export interface SlotContributionMap {
   "settings.plugins": PanelWidgetContribution;
   /** 顶栏导航的插件整页（页面体惰性挂载，禁用/重载时优雅关闭）。 */
   "nav.pages": PageContribution;
-  /** 顶栏右上角胶囊动作区（如 LLM 小助手入口胶囊）。 */
+  /** 顶栏右上角胶囊动作区（LLM 小助手已原生化，此槽继续开放给第三方胶囊动作）。 */
   "header.actions": HeaderActionContribution;
   /** 全局悬浮挂件区（全视口浮动，如可拖拽的 mini 对话面板）。 */
   "floating.widgets": FloatingWidgetContribution;

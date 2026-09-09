@@ -142,6 +142,10 @@ function tryRestore(): boolean {
       stageChangesViewFor: null,
       stageChangeConfirm: null,
       busySince: {},
+      // 小助手的流式中转态同理无法跨刷新延续（无活 fetch）：恢复时清空，历史与布局照常还原。
+      assistantLoading: false,
+      assistantStreaming: "",
+      assistantDraft: "",
     };
     // 旧版本快照没有 engine 字段：demo 模式视为已配置，live 交给 loadEngineConfig 回填。
     if (!clean.engine) {

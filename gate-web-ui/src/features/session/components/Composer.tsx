@@ -48,6 +48,7 @@ import { setAgentId } from "@/features/agent";
 import { formatTokens, variantLabel } from "@/shared/format";
 import { quotePreview, wrapQuote } from "@/shared/quotes";
 import { QuoteChip } from "@/shared/components/QuoteChip";
+import { GroupedModelMenu } from "@/shared/components/GroupedModelMenu";
 import {
   extractAbsolutePath,
   isAttachableImage,
@@ -394,39 +395,20 @@ function ModelPicker({
                 />
               </div>
             )}
-            <div className="max-h-[300px] overflow-y-auto">
-              {filtered.map((p) => (
-                <div key={p.id}>
-                  <div className="px-2.5 pt-2 pb-1 text-[10.5px] font-medium uppercase tracking-wide text-faint">
-                    {p.name}
-                  </div>
-                  {p.models.map((m) => {
-                    const active = sel?.providerId === p.id && sel?.modelId === m.id;
-                    return (
-                      <button
-                        key={`${p.id}/${m.id}`}
-                        className={`w-full flex items-center gap-2 px-2.5 h-8 rounded-lg text-left text-[12px] cursor-pointer transition-colors ${
-                          active ? "bg-raised text-ink" : "text-dim hover:bg-raised hover:text-ink"
-                        }`}
-                        onClick={() => void pick(p.id, m.id)}
-                      >
-                        <span className="font-mono text-[11.5px] truncate">{m.id}</span>
-                        {m.variants.length > 0 && (
-                          <span className="text-[10px] text-faint shrink-0">{m.variants.length} 档强度</span>
-                        )}
-                        <span className="flex-1" />
-                        {active && <Check size={13} className="text-accent" weight="bold" />}
-                      </button>
-                    );
-                  })}
-                </div>
-              ))}
-              {filtered.length === 0 && (
-                <div className="px-3 py-4 text-center text-[12px] text-faint">
-                  {catalogEmpty ? "无目录模型，可直接在下方输入模型 ID" : "无匹配模型"}
-                </div>
-              )}
-            </div>
+            <GroupedModelMenu
+              groups={filtered.map((p) => ({
+                id: p.id,
+                name: p.name,
+                models: p.models.map((m) => ({
+                  id: m.id,
+                  label: m.id,
+                  active: sel?.providerId === p.id && sel?.modelId === m.id,
+                  trailing: m.variants.length > 0 ? `${m.variants.length} 档强度` : null,
+                })),
+              }))}
+              onPick={(providerId, modelId) => void pick(providerId, modelId)}
+              emptyText={catalogEmpty ? "无目录模型，可直接在下方输入模型 ID" : "无匹配模型"}
+            />
             {isClaude && (
               <div className="border-t border-[color:var(--line)] mt-1 px-2 pt-1.5 pb-1">
                 <div className="text-[10.5px] font-medium uppercase tracking-wide text-faint pb-1">

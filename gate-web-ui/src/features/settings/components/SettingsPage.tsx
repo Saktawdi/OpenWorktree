@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { GearSix } from "@phosphor-icons/react";
 import { openConnect, useApp } from "@/store";
@@ -6,14 +6,25 @@ import { SettingsNav, type SettingsTab } from "./SettingsNav";
 import { GateTomlBlock } from "./toml/GateTomlBlock";
 import { McpBlock } from "./mcp/McpBlock";
 import { LlmBlock } from "./llm/LlmBlock";
+import { AssistantSettingsBlock } from "./assistant/AssistantSettingsBlock";
 import { AppInfoBlock } from "./app-info/AppInfoBlock";
 import { PrefsBlock } from "./prefs/PrefsBlock";
 import { StorageBlock } from "./storage/StorageBlock";
 
-/** 设置中心：偏好设置 / 存储设置（预留）/ 系统设置（gate.toml）/ MCP / LLM / 关于 六个分区（插件管理已移至顶栏一级视图）。 */
+/** 设置中心：偏好 / 存储（预留）/ 系统（gate.toml）/ MCP / LLM / LLM 助手 / 关于 七个分区（插件管理已移至顶栏一级视图）。 */
 export function SettingsPage() {
   const mode = useApp((s) => s.mode);
   const [tab, setTab] = useState<SettingsTab>("prefs");
+
+  // 跨视图深链：小助手面板等入口经事件直达指定分区（与 gate:new-project 同一惯例）。
+  useEffect(() => {
+    const onTab = (e: Event) => {
+      const next = (e as CustomEvent<string>).detail as SettingsTab | undefined;
+      if (next) setTab(next);
+    };
+    window.addEventListener("gate:settings-tab", onTab);
+    return () => window.removeEventListener("gate:settings-tab", onTab);
+  }, []);
 
   if (mode === "demo") {
     return (
@@ -51,6 +62,7 @@ export function SettingsPage() {
                 {tab === "toml" && <GateTomlBlock />}
                 {tab === "mcp" && <McpBlock />}
                 {tab === "llm" && <LlmBlock />}
+                {tab === "assistant" && <AssistantSettingsBlock />}
                 {tab === "app" && <AppInfoBlock />}
               </motion.div>
             </AnimatePresence>

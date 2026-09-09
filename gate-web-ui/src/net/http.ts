@@ -4,7 +4,8 @@
  */
 import { appStore } from "@/store";
 
-function authHeaders(): Record<string, string> {
+/** 注入 Web Token 的鉴权头：net 层内所有裸 fetch（SSE 流、二进制）统一走它。 */
+export function authHeaders(): Record<string, string> {
   const token = appStore.getState().token;
   return token ? { Authorization: `Bearer ${token}` } : {};
 }

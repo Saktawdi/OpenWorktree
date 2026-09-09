@@ -44,6 +44,14 @@ export function hhmmss(ts: number): string {
   return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 }
 
+/** 时长格式化："52 分 46 秒" / "46 秒"；0 或缺省返回 null（调用方改用步数表述）。 */
+export function formatDuration(ms: number): string | null {
+  if (!(ms > 0)) return null;
+  const total = Math.round(ms / 1000);
+  if (total < 60) return `${total} 秒`;
+  return `${Math.floor(total / 60)} 分 ${total % 60} 秒`;
+}
+
 export function relativeTime(iso: string): string {
   const then = new Date(iso).getTime();
   const diff = Date.now() - then;

@@ -14,6 +14,7 @@ import { PluginPageHost } from "@/app/plugins/components/PluginPageHost";
 import { ConnectionDialog } from "@/app/components/ConnectionDialog";
 import { StageChangeConfirmDialog } from "@/features/ticket/components/StageChangeConfirmDialog";
 import { SelectionQuoteLayer } from "@/features/session";
+import { AssistantPanel } from "@/features/assistant";
 import { Toast } from "@/shared/components/Toast";
 import { PluginSlot } from "@/app/plugins/components/PluginSlot";
 
@@ -52,7 +53,9 @@ export default function App() {
       <StageChangeConfirmDialog />
       <TerminalWorkbench />
       <SelectionQuoteLayer />
-      {/* 全局悬浮挂件区（floating.widgets：跨页面常驻，如 LLM 小助手浮窗） */}
+      {/* LLM 小助手悬浮面板（T-109 原生内置：跨视图常驻、可拖拽/缩放） */}
+      <AssistantPanel />
+      {/* 全局悬浮挂件区（floating.widgets：插件跨页面常驻挂件，如未来第三方浮窗） */}
       <PluginSlot name="floating.widgets" />
       <Toast />
     </div>

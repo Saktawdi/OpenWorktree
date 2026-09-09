@@ -702,6 +702,38 @@ export interface LlmProvider {
   models: string[];
 }
 
+/* ─── LLM 小助手（T-109，原生内置） ─── */
+
+/** 小助手会话气泡（端侧软数据：localStorage 持久化，不落库后端）。 */
+export interface AssistantChatEntry {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  ts: number;
+  /** 请求失败的回复气泡：danger 配色展示，且不回传给模型。 */
+  error?: boolean;
+  /** 完成本条回复的模型 ID（footer 元信息，与本体会话同口径）。 */
+  model?: string;
+  /** 生成耗时（毫秒）；仅流式回合有。 */
+  ms?: number;
+}
+
+/** 小助手本地偏好（设置中心「LLM 助手」分区读写）。 */
+export interface AssistantSettings {
+  /** 划选文字菜单是否显示「询问小助手」。 */
+  selectionAskEnabled: boolean;
+  /** 划选提问的前置提示词（拼接在选中文本之前）。 */
+  selectionAskPrompt: string;
+  /** 采样温度（0-1）。 */
+  temperature: number;
+}
+
+/** 小助手面板当前选用的 Provider/模型（与 LLM 设置共享同一数据源）。 */
+export interface AssistantModelSel {
+  providerId: string;
+  model: string;
+}
+
 export interface AppInfo {
   name: string;
   version: string;

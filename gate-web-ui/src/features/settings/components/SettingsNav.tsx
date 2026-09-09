@@ -1,7 +1,7 @@
 import { motion } from "motion/react";
-import { Database, Faders, PlugsConnected, Robot, Rocket, Wrench } from "@phosphor-icons/react";
+import { Database, Faders, PlugsConnected, Robot, Rocket, Sparkle, Wrench } from "@phosphor-icons/react";
 
-export type SettingsTab = "prefs" | "storage" | "toml" | "mcp" | "llm" | "app";
+export type SettingsTab = "prefs" | "storage" | "toml" | "mcp" | "llm" | "assistant" | "app";
 
 const NAV_ITEMS = [
   { key: "prefs", label: "偏好设置", desc: "输入 · 语言等本地偏好", Icon: Faders },
@@ -9,6 +9,7 @@ const NAV_ITEMS = [
   { key: "toml", label: "系统设置", desc: "运行键值与默认值", Icon: Wrench },
   { key: "mcp", label: "MCP 状态", desc: "服务与工具清单", Icon: PlugsConnected },
   { key: "llm", label: "LLM 设置", desc: "Provider 与模型", Icon: Robot },
+  { key: "assistant", label: "LLM 助手", desc: "划选提问 · 对话偏好", Icon: Sparkle },
   { key: "app", label: "关于", desc: "版本 · 更新 · 仓库", Icon: Rocket },
 ] as const;
 

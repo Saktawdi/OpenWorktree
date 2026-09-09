@@ -1,20 +1,23 @@
 /**
  * 全局划选引用层（SelectionQuoteLayer）：监听整页的左键划选，选区非空时在选区
- * 附近浮出动作菜单——内置「添加到对话框」是宿主一等能力（写入当前工单的
- * pendingQuotes，Composer 渲染成引用胶囊随下一条消息发送）；插件的「添加到 xxx」
- * 等动作经 selection.menu 插槽追加（对具体插件零感知，与 ChatActionChips 同构）。
+ * 附近浮出动作菜单——内置两个宿主一等能力：「询问小助手」（T-109 原生 LLM 助手，
+ * 偏好里可关）与「添加到对话框」（写入当前工单的 pendingQuotes，Composer 渲染成
+ * 引用胶囊随下一条消息发送）；插件的「添加到 xxx」等动作经 selection.menu 插槽
+ * 追加（对具体插件零感知，与 ChatActionChips 同构）。
  *
  * 生命周期：mouseup（左键）定锚 → 选区塌陷/滚动/Esc/点击菜单外收起。
  * 输入框与富文本编辑区内的划选不触发（那是编辑自己的内容，不是引用素材）。
  */
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Quotes } from "@phosphor-icons/react";
-import { appStore, showToast } from "@/store";
+import { Quotes, Sparkle } from "@phosphor-icons/react";
+import { appStore, showToast, useApp } from "@/store";
 import { usePlugins } from "@/app/plugins/state";
 import { SLOT_SELECTION_MENU } from "@/app/plugins/slots";
 import { pluginIcon } from "@/app/plugins/icons";
 import type { SelectionActionApi, SelectionActionContribution } from "@/app/plugins/types";
 import { addPendingQuote } from "@/features/session";
+import { askAssistant } from "@/features/assistant";
+import { ASSISTANT_SETTINGS_DEFAULTS } from "@/store/prefs";
 import { focusComposer, insertIntoComposer } from "../composerBridge";
 import { QUOTE_MAX_CHARS } from "@/shared/quotes";
 
@@ -65,6 +68,8 @@ export function SelectionQuoteLayer() {
   const [anchor, setAnchor] = useState<Anchor | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const contributions = usePlugins((s) => s.contributions);
+  const askEnabled = useApp((s) => s.assistantSettings.selectionAskEnabled);
+  const askPrompt = useApp((s) => s.assistantSettings.selectionAskPrompt);
   const pluginActions = useMemo(
     () =>
       contributions
@@ -211,6 +216,19 @@ export function SelectionQuoteLayer() {
       onMouseDown={(e) => e.preventDefault()}
     >
       <div className="flex flex-col rounded-xl border border-edge bg-panel p-1 shadow-xl shadow-black/40">
+        {askEnabled && (
+          <button
+            className="menu-action"
+            title="把选中的文字发给 LLM 小助手（悬浮面板中可再编辑后发送）"
+            onClick={() => {
+              askAssistant(`${askPrompt || ASSISTANT_SETTINGS_DEFAULTS.selectionAskPrompt}${anchor.text}`);
+              dismiss();
+            }}
+          >
+            <Sparkle size={12} weight="fill" className="text-accent" />
+            询问小助手
+          </button>
+        )}
         <button
           className="menu-action"
           title="把划选的文字作为引用胶囊加入当前工单的对话框"

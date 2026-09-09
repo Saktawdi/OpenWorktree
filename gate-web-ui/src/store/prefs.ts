@@ -2,7 +2,14 @@
  * 本地偏好持久化（store）：localStorage 键的集中读写。
  * 键名与读取默认值都在这里登记，域内 setter 只调用对应 save/load。
  */
-import type { Stage, QuoteChip, SessionGroup } from "@/shared/types";
+import type {
+  Stage,
+  QuoteChip,
+  SessionGroup,
+  AssistantChatEntry,
+  AssistantSettings,
+  AssistantModelSel,
+} from "@/shared/types";
 import { ALL_STAGES, KANBAN_DEFAULT_STAGES, KANBAN_LANE_COUNT, KANBAN_STAGE_ORDER } from "@/shared/format";
 import type { GateSections } from "./state";
 
@@ -19,6 +26,10 @@ const SESSION_GROUPS_KEY = "gate-session-groups";
 const SESSION_PINNED_KEY = "gate-session-pinned";
 const FOLLOW_UP_BEHAVIOR_KEY = "gate-follow-up-behavior";
 const QUEUED_MESSAGES_KEY = "gate-queued-messages";
+const ASSISTANT_SETTINGS_KEY = "gate-assistant-settings";
+const ASSISTANT_HISTORY_KEY = "gate-assistant-history";
+const ASSISTANT_MODEL_KEY = "gate-assistant-model";
+const ASSISTANT_LAYOUT_KEY = "gate-assistant-layout";
 
 /** 会话分组的落盘形态（T-105）：分组表 + 会话归属表（sessionId → groupId）。 */
 export interface PersistedSessionGroups {
@@ -327,6 +338,140 @@ export function saveQueuedMessages(data: Record<string, import("@/shared/types")
       if (list && list.length > 0) clean[sid] = list;
     }
     localStorage.setItem(QUEUED_MESSAGES_KEY, JSON.stringify(clean));
+  } catch {
+    /* ignore */
+  }
+}
+
+/* ─── LLM 小助手（T-109）：端侧软数据，全部 localStorage 持久化 ─── */
+
+/** 面板布局的落盘形态：开合/最小化/位置（null=默认右下角锚定）/尺寸。 */
+export interface AssistantLayout {
+  open: boolean;
+  minimized: boolean;
+  pos: { x: number; y: number } | null;
+  size: { w: number; h: number };
+}
+
+export const ASSISTANT_SETTINGS_DEFAULTS: AssistantSettings = {
+  selectionAskEnabled: true,
+  selectionAskPrompt: "请帮我解释、分析或回答这段文字：\n",
+  temperature: 0.7,
+};
+
+/** 面板默认/最小尺寸（px）：默认 400×560，最小 320×320，最大化由视口夹取。 */
+export const ASSISTANT_SIZE_DEFAULT = { w: 400, h: 560 };
+export const ASSISTANT_SIZE_MIN = { w: 320, h: 320 };
+
+/** 历史气泡落盘上限（超出保留最近段）。 */
+export const ASSISTANT_HISTORY_CAP = 200;
+
+export function loadAssistantSettings(): AssistantSettings {
+  try {
+    const raw = typeof window !== "undefined" ? localStorage.getItem(ASSISTANT_SETTINGS_KEY) : null;
+    if (!raw) return { ...ASSISTANT_SETTINGS_DEFAULTS };
+    const p = JSON.parse(raw) as Partial<AssistantSettings>;
+    const temp = typeof p.temperature === "number" ? p.temperature : ASSISTANT_SETTINGS_DEFAULTS.temperature;
+    return {
+      selectionAskEnabled: p.selectionAskEnabled !== false,
+      selectionAskPrompt:
+        typeof p.selectionAskPrompt === "string" ? p.selectionAskPrompt : ASSISTANT_SETTINGS_DEFAULTS.selectionAskPrompt,
+      temperature: Math.min(Math.max(temp, 0), 1),
+    };
+  } catch {
+    return { ...ASSISTANT_SETTINGS_DEFAULTS };
+  }
+}
+
+export function saveAssistantSettings(settings: AssistantSettings) {
+  try {
+    localStorage.setItem(ASSISTANT_SETTINGS_KEY, JSON.stringify(settings));
+  } catch {
+    /* ignore */
+  }
+}
+
+/** 读取落盘的会话历史（超出 cap 保留最近段；非法条目丢弃，形状始终完整）。 */
+export function loadAssistantHistory(cap: number): AssistantChatEntry[] {
+  try {
+    const raw = typeof window !== "undefined" ? localStorage.getItem(ASSISTANT_HISTORY_KEY) : null;
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    const valid = parsed.filter(
+      (e): e is AssistantChatEntry =>
+        !!e &&
+        typeof e === "object" &&
+        typeof (e as AssistantChatEntry).id === "string" &&
+        typeof (e as AssistantChatEntry).content === "string" &&
+        ((e as AssistantChatEntry).role === "user" || (e as AssistantChatEntry).role === "assistant"),
+    );
+    return valid.slice(-cap);
+  } catch {
+    return [];
+  }
+}
+
+export function saveAssistantHistory(entries: AssistantChatEntry[]) {
+  try {
+    localStorage.setItem(ASSISTANT_HISTORY_KEY, JSON.stringify(entries));
+  } catch {
+    /* 存储不可用时降级为仅本窗口内保留 */
+  }
+}
+
+export function loadAssistantModelSel(): AssistantModelSel {
+  try {
+    const raw = typeof window !== "undefined" ? localStorage.getItem(ASSISTANT_MODEL_KEY) : null;
+    if (!raw) return { providerId: "", model: "" };
+    const p = JSON.parse(raw) as Partial<AssistantModelSel>;
+    return {
+      providerId: typeof p.providerId === "string" ? p.providerId : "",
+      model: typeof p.model === "string" ? p.model : "",
+    };
+  } catch {
+    return { providerId: "", model: "" };
+  }
+}
+
+export function saveAssistantModelSel(sel: AssistantModelSel) {
+  try {
+    localStorage.setItem(ASSISTANT_MODEL_KEY, JSON.stringify(sel));
+  } catch {
+    /* ignore */
+  }
+}
+
+export function loadAssistantLayout(): AssistantLayout {
+  const fallback: AssistantLayout = {
+    open: false,
+    minimized: false,
+    pos: null,
+    size: { ...ASSISTANT_SIZE_DEFAULT },
+  };
+  try {
+    const raw = typeof window !== "undefined" ? localStorage.getItem(ASSISTANT_LAYOUT_KEY) : null;
+    if (!raw) return fallback;
+    const p = JSON.parse(raw) as Partial<AssistantLayout>;
+    const w = Number(p.size?.w), h = Number(p.size?.h);
+    const x = Number(p.pos?.x), y = Number(p.pos?.y);
+    return {
+      open: p.open === true,
+      minimized: p.minimized === true,
+      pos: Number.isFinite(x) && Number.isFinite(y) ? { x, y } : null,
+      size:
+        Number.isFinite(w) && Number.isFinite(h)
+          ? { w: Math.max(ASSISTANT_SIZE_MIN.w, w), h: Math.max(ASSISTANT_SIZE_MIN.h, h) }
+          : { ...ASSISTANT_SIZE_DEFAULT },
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+export function saveAssistantLayout(layout: AssistantLayout) {
+  try {
+    localStorage.setItem(ASSISTANT_LAYOUT_KEY, JSON.stringify(layout));
   } catch {
     /* ignore */
   }

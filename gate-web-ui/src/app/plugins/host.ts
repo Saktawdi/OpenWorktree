@@ -343,17 +343,11 @@ function makeKv(pluginId: string): PluginKv {
 }
 
 function makeLlm() {
-  const toWire = (options: LlmChatOptions) => ({
-    messages: options.messages,
-    provider_id: options.providerId,
-    model: options.model,
-    temperature: options.temperature,
-    max_tokens: options.maxTokens,
-  });
+  // 请求为 camelCase 业务参数，wire 映射（provider_id/max_tokens、stream）收敛在 net/llm。
   return {
-    chat: (options: LlmChatOptions) => llmChat(toWire(options)),
+    chat: (options: LlmChatOptions) => llmChat(options),
     chatStream: (options: LlmChatOptions, onChunk: (chunk: string) => void) =>
-      llmChatStream(toWire(options), onChunk),
+      llmChatStream(options, onChunk),
   };
 }
 

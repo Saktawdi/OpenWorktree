@@ -18,7 +18,6 @@ import {
   MagnifyingGlass,
   PencilSimple,
   Question,
-  Sparkle,
   TerminalWindow,
   Warning,
   X,
@@ -27,7 +26,7 @@ import { NO_CHAT, useApp } from "@/store";
 import { fetchBlobUrl } from "@/net";
 import { stripImageCitations } from "@/shared/attachments";
 import type { ChatItem, TimelinePart, ToolCallView, ToolIconKind } from "@/shared/types";
-import { hhmmss, variantLabel } from "@/shared/format";
+import { formatDuration } from "@/shared/format";
 import { friendlyToolName, isTodoTool, todoArgsSummary, compactToolArgs, compactToolResult } from "@/shared/todoUtils";
 import { resolveToolIcon } from "@/features/session/model";
 import { parseQuotedText, stripQuoteMarkers } from "@/shared/quotes";
@@ -36,6 +35,8 @@ import { QuestionCard } from "@/features/session/components/QuestionCard";
 import { Markdown } from "@/shared/components/Markdown";
 import { QuoteChip } from "@/shared/components/QuoteChip";
 import { CopyButton } from "@/shared/components/ui";
+import { AssistantShell, ReplyBody, ReplyFooter, UserBubble } from "@/shared/components/ChatPrimitives";
+import { useStickyScroll } from "@/shared/hooks";
 
 const TOOL_ICONS: Record<ToolIconKind, typeof TerminalWindow> = {
   file: FileText,
@@ -276,14 +277,6 @@ function derivePartToolView(part: Extract<TimelinePart, { type: "tool" }>): Tool
   };
 }
 
-/** 时长格式化："52 分 46 秒" / "46 秒"；0 或缺省返回 null（调用方改用步数表述）。 */
-function formatDuration(ms: number): string | null {
-  if (!(ms > 0)) return null;
-  const total = Math.round(ms / 1000);
-  if (total < 60) return `${total} 秒`;
-  return `${Math.floor(total / 60)} 分 ${total % 60} 秒`;
-}
-
 /**
  * ZCode 式回合时间线：思考/文本/工具按到达序交错；长回合完成后折叠为
  * "已工作 X 分 Y 秒"汇总条（点击展开全过程），最终汇报文本常驻其下。
@@ -353,11 +346,8 @@ const TimelineBody = memo(function TimelineBody({
       );
     }
     return (
-      <div key={`x${i}`} className="text-[13.5px] leading-relaxed text-ink">
-        <Markdown className="md-body">{p.text}</Markdown>
-        {item.streaming && i === parts.length - 1 && (
-          <span className="inline-block w-[7px] h-[15px] bg-accent animate-blink align-middle ml-0.5" />
-        )}
+      <div key={`x${i}`}>
+        <ReplyBody text={p.text} streaming={item.streaming && i === parts.length - 1} />
       </div>
     );
   };
@@ -391,8 +381,8 @@ const TimelineBody = memo(function TimelineBody({
         ? parts.map(renderPart)
         : tailText(parts, lastActionIdx).map((p, i) =>
             p.type === "text" ? (
-              <div key={`tail${i}`} className="text-[13.5px] leading-relaxed text-ink">
-                <Markdown className="md-body">{p.text}</Markdown>
+              <div key={`tail${i}`}>
+                <ReplyBody text={p.text} />
               </div>
             ) : null,
           )}
@@ -514,9 +504,9 @@ const ToolRow = memo(function ToolRow({ tool }: { tool: ToolCallView }) {
 });
 
 function AssistantFooter({ item }: { item: Extract<ChatItem, { kind: "assistant" }> }) {
-  // openchamber 式 footer：元信息（完成本回复的请求模型 + 推理等级）常驻左对齐，
-  // 备注解析不出时回退 Agent 名称；复制按钮紧随其后、仅 hover 整条回复时出现——
-  // 绝不推到行尾，避免被误读成用户消息的操作。
+  // openchamber 式 footer（共享 ReplyFooter）：元信息（完成本回复的请求模型 + 推理
+  // 等级）常驻左对齐，备注解析不出时回退 Agent 名称；复制按钮紧随其后、仅 hover
+  // 整条回复时出现——绝不推到行尾，避免被误读成用户消息的操作。
   if (item.streaming) return null;
 
   const rawVariant = (item.variant ?? "").trim();
@@ -524,30 +514,7 @@ function AssistantFooter({ item }: { item: Extract<ChatItem, { kind: "assistant"
   const model = (item.model ?? "").trim() || null;
   if (!model && !variant && !item.text) return null;
 
-  return (
-    <div className="mt-1.5 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[11px] text-faint">
-      {model && (
-        <span
-          className="flex min-w-0 items-center gap-1"
-          title={`本条回复由 ${model} 完成`}
-        >
-          <Sparkle size={11} weight="fill" className="shrink-0 text-accent/70" />
-          <span className="max-w-[240px] truncate font-mono text-[10.5px]">{model}</span>
-        </span>
-      )}
-      {variant && (
-        <span className="flex items-center gap-1" title={`推理强度：${variantLabel(variant)}`}>
-          <Brain size={11} className="shrink-0 text-info/70" />
-          <span>{variantLabel(variant)}</span>
-        </span>
-      )}
-      {item.text && (
-        <span className="flex items-center opacity-0 pointer-events-none transition-opacity duration-150 focus-within:opacity-100 focus-within:pointer-events-auto group-hover/msg:opacity-100 group-hover/msg:pointer-events-auto [&_.icon-btn]:h-6 [&_.icon-btn]:w-6 [&_.icon-btn]:rounded">
-          <CopyButton text={item.text} label="复制回复" />
-        </span>
-      )}
-    </div>
-  );
+  return <ReplyFooter model={model ?? undefined} variant={rawVariant} copyText={item.text} />;
 }
 
 // 流式期间 chat 数组每次补丁都换新引用，未受影响的消息行必须 memo 跳过重渲染，
@@ -562,41 +529,24 @@ const AssistantMessage = memo(function AssistantMessage({
   // V20：有时间线走 ZCode 式分段渲染；旧行/极端缺省回退平铺（思考块+工具堆+正文）。
   const timeline = !!item.parts && item.parts.length > 0;
   return (
-    <div className="group/msg animate-rise">
-      <div className="flex items-center gap-2 mb-1.5">
-        <span className="w-6 h-6 rounded-md bg-accent-dim grid place-items-center text-accent">
-          <Sparkle size={13} weight="fill" />
-        </span>
-        <span className="text-[12.5px] font-semibold">Agent</span>
-        <span className="flex-1" />
-        <span className="font-mono text-[10.5px] text-faint">{hhmmss(item.ts)}</span>
-      </div>
-      <div className="ml-8 space-y-2">
-        {timeline ? (
-          <TimelineBody item={item} ticketNo={ticketNo} />
-        ) : (
-          <>
-            {item.thinking && <ThinkingBlock thinking={item.thinking} />}
-            {item.tools.length > 0 && (
-              <div className="rounded-lg border border-edge bg-panel divide-y divide-edge overflow-hidden">
-                {item.tools.map((t) => (
-                  <ToolRow key={t.id} tool={t} />
-                ))}
-              </div>
-            )}
-            {(item.text || item.streaming) && (
-              <div className="text-[13.5px] leading-relaxed text-ink">
-                {item.text && <Markdown className="md-body">{item.text}</Markdown>}
-                {item.streaming && (
-                  <span className="inline-block w-[7px] h-[15px] bg-accent animate-blink align-middle ml-0.5" />
-                )}
-              </div>
-            )}
-          </>
-        )}
-        <AssistantFooter item={item} />
-      </div>
-    </div>
+    <AssistantShell ts={item.ts} name="Agent">
+      {timeline ? (
+        <TimelineBody item={item} ticketNo={ticketNo} />
+      ) : (
+        <>
+          {item.thinking && <ThinkingBlock thinking={item.thinking} />}
+          {item.tools.length > 0 && (
+            <div className="rounded-lg border border-edge bg-panel divide-y divide-edge overflow-hidden">
+              {item.tools.map((t) => (
+                <ToolRow key={t.id} tool={t} />
+              ))}
+            </div>
+          )}
+          {(item.text || item.streaming) && <ReplyBody text={item.text} streaming={item.streaming} />}
+        </>
+      )}
+      <AssistantFooter item={item} />
+    </AssistantShell>
   );
 });
 
@@ -835,43 +785,12 @@ export function ChatStream({ ticketNo }: { ticketNo: string }) {
   const chat = useApp((s) => s.chats[ticketNo] ?? NO_CHAT);
   const sessionId = useApp((s) => s.activeSessionId[ticketNo] ?? "");
   const cancelled = useApp((s) => s.tickets.find((t) => t.ticketNo === ticketNo)?.stage === "CANCELLED");
-  const bottomRef = useRef<HTMLDivElement>(null);
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const stick = useRef(true);
-  const lastTop = useRef(0);
-
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    lastTop.current = el.scrollTop;
-    const onScroll = () => {
-      const goingUp = el.scrollTop < lastTop.current - 1;
-      lastTop.current = el.scrollTop;
-      // 方向感知吸附：用户向上滚立即解除（哪怕只滚出一格，流式更新不再把视口拽回底部），
-      // 向下滚回贴底范围才恢复。旧逻辑按“距底 <120px”单向判定，从底部上滚的头几下
-      // 始终落在阈值内，配合每次 chat 更新的 smooth 回底，表现为“卡在最底部滚不动”。
-      if (goingUp) stick.current = false;
-      else if (el.scrollHeight - el.scrollTop - el.clientHeight < 120) stick.current = true;
-    };
-    el.addEventListener("scroll", onScroll, { passive: true });
-    return () => el.removeEventListener("scroll", onScroll);
-  }, []);
 
   // 流式判定不能只看数组末项：插队气泡/system 提示等可能出现在流式回合条目之后
   // （T-107 渲染修复——末项判定在“气泡吊在流式条目尾部”的窗口里失效，滚动吸附抖动）。
   // 按条目语义扫描：任一 assistant 条目仍在流式即视为生成中。
   const streaming = chat.some((i) => i.kind === "assistant" && i.streaming === true);
-
-  useEffect(() => {
-    if (!stick.current) return;
-    if (streaming) {
-      // 流式期间高频更新会把 smooth 动画反复打断重启，观感即“滚不动”，改为瞬时贴底
-      const el = scrollRef.current;
-      if (el) el.scrollTop = el.scrollHeight;
-    } else {
-      bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-    }
-  }, [chat, streaming]);
+  const { scrollRef, bottomRef } = useStickyScroll([chat, streaming], streaming);
 
   return (
     <div className="relative flex-1 min-h-0">
@@ -879,16 +798,9 @@ export function ChatStream({ ticketNo }: { ticketNo: string }) {
         <div className="max-w-[760px] mx-auto space-y-4">
           {chat.map((item) =>
             item.kind === "user" ? (
-              /* quote-line 见 styles.css：引用胶囊的原文提示跨行显示时需要整行提层 */
-              <div
-                key={item.id}
-                data-chat-msg={item.id}
-                className="chat-msg-line relative flex justify-end animate-rise"
-              >
-                <div className="max-w-[82%] rounded-xl rounded-tr-sm border border-edge bg-raised px-3.5 py-2 text-[13.5px] leading-relaxed">
-                  <UserMessageBody ticketNo={ticketNo} text={item.text} images={item.images} />
-                </div>
-              </div>
+              <UserBubble key={item.id} dataId={item.id}>
+                <UserMessageBody ticketNo={ticketNo} text={item.text} images={item.images} />
+              </UserBubble>
             ) : item.kind === "assistant" ? (
               <AssistantMessage key={item.id} item={item} ticketNo={ticketNo} />
             ) : item.kind === "permission" ? (

@@ -7,6 +7,9 @@ import { create } from "zustand";
 import type {
   AgentConfig,
   AgentRuntime,
+  AssistantChatEntry,
+  AssistantModelSel,
+  AssistantSettings,
   CatalogProvider,
   ChatItem,
   ChatSession,
@@ -16,6 +19,7 @@ import type {
   Finding,
   GitRepoView,
   GitTreeEntry,
+  LlmProvider,
   OpenCodeProvider,
   Project,
   PublishOutcome,
@@ -47,7 +51,12 @@ import {
   TREE_NEXUS,
 } from "@/demo/scenario";
 import {
+  ASSISTANT_HISTORY_CAP,
   loadAgentId,
+  loadAssistantHistory,
+  loadAssistantLayout,
+  loadAssistantModelSel,
+  loadAssistantSettings,
   loadComposerDrafts,
   loadFollowUpBehavior,
   loadGatePanelCollapsed,
@@ -204,9 +213,31 @@ export interface AppState {
   followUpBehavior: FollowUpBehavior;
   /** 按会话隔离的排队消息（key = sessionId；localStorage 持久化）。 */
   queuedMessages: Record<string, QueuedMessage[]>;
+  /* ─── LLM 小助手（T-109）：原生内置悬浮 mini 对话，布局/历史/偏好均 localStorage 持久化 ─── */
+  assistantOpen: boolean;
+  assistantMinimized: boolean;
+  /** 面板左上角坐标；null = 默认右下角锚定（首次打开/拖拽前）。 */
+  assistantPos: { x: number; y: number } | null;
+  assistantSize: { w: number; h: number };
+  /** 会话历史（localStorage 持久化， ASSISTANT_HISTORY_CAP 截断）。 */
+  assistantMessages: AssistantChatEntry[];
+  /** 输入框草稿（易失，不持久化）。 */
+  assistantDraft: string;
+  /** 流式回复中的增量文本（易失）。 */
+  assistantStreaming: string;
+  assistantLoading: boolean;
+  assistantModelSel: AssistantModelSel;
+  assistantSettings: AssistantSettings;
+  /** 「询问小助手」唤起计数：面板已开时靠它驱动输入框聚焦（不持久化）。 */
+  assistantAskNonce: number;
+  /** LLM 设置中心的 Provider 列表（面板首开拉取；null = 尚未加载）。 */
+  assistantProviders: LlmProvider[] | null;
+  assistantProvidersLoading: boolean;
+  assistantProvidersError: string | null;
 }
 
 const persistedGroups = loadSessionGroups();
+const assistantLayout = loadAssistantLayout();
 
 export const appStore = create<AppState>(() => ({
   booted: false,
@@ -288,6 +319,20 @@ export const appStore = create<AppState>(() => ({
   gateSections: loadGateSections(),
   followUpBehavior: loadFollowUpBehavior(),
   queuedMessages: loadQueuedMessages(),
+  assistantOpen: assistantLayout.open,
+  assistantMinimized: assistantLayout.minimized,
+  assistantPos: assistantLayout.pos,
+  assistantSize: assistantLayout.size,
+  assistantMessages: loadAssistantHistory(ASSISTANT_HISTORY_CAP),
+  assistantDraft: "",
+  assistantStreaming: "",
+  assistantLoading: false,
+  assistantModelSel: loadAssistantModelSel(),
+  assistantSettings: loadAssistantSettings(),
+  assistantAskNonce: 0,
+  assistantProviders: null,
+  assistantProvidersLoading: false,
+  assistantProvidersError: null,
 }));
 
 export function useApp<T>(selector: (st: AppState) => T): T {
@@ -319,7 +364,21 @@ appStore.subscribe(() => {
   saveTimer = setTimeout(() => {
     try {
       const st = appStore.getState();
-      const data = JSON.stringify({ ...st, _v: 2, toast: null, connectOpen: false, highlight: null, evidenceFocus: null });
+      // 小助手流式中转态无活连接可续：落盘前清空，恢复后不会卡"生成中"。
+      const data = JSON.stringify({
+        ...st,
+        _v: 2,
+        toast: null,
+        connectOpen: false,
+        highlight: null,
+        evidenceFocus: null,
+        assistantLoading: false,
+        assistantStreaming: "",
+        assistantDraft: "",
+        assistantProviders: null,
+        assistantProvidersLoading: false,
+        assistantProvidersError: null,
+      });
       sessionStorage.setItem(SNAPSHOT_KEY, data);
     } catch {
       /* 存储满或不可用时忽略 */
