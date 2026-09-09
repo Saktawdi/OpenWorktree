@@ -5,8 +5,9 @@
 import { api } from "@/net";
 import { appStore, showToast } from "@/store";
 import { applyTodosSnapshot } from "./todos";
+import { applyTasksSnapshot } from "./tasks";
 import { fileToBase64 } from "@/shared/attachments";
-import type { ChatItem, TodoItem } from "@/shared/types";
+import type { ChatItem, ClaudeTaskItem, TodoItem } from "@/shared/types";
 import { mapHistoryMessage, mapSession, type RawMessage, type RawSession } from "./model";
 import { dropLiveTurn, applyReplyMetaDefaults } from "./chat";
 import { clearSessionQueue } from "./queue";
@@ -90,7 +91,12 @@ export async function refreshTicketSessionsMeta(no: string) {
 
 export async function patchSessionLive(
   id: string,
-  patch: { title?: string; archived?: boolean; permission_auto_accept?: boolean },
+  patch: {
+    title?: string;
+    archived?: boolean;
+    permission_auto_accept?: boolean;
+    permission_mode?: string | null;
+  },
 ) {
   try {
     await api(`/api/sessions/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
@@ -131,7 +137,9 @@ export async function loadSessionMessages(no: string, sessionId: string) {
   // 生成中的回合要到 idle 才整回合落库，历史里看不到；切走再切回时把 liveTurns
   // 里的流式条目接回视图（EventSource 仍在推流，itemId 对上后增量自动续上）。
   const stashedAtFetch = appStore.getState().liveTurns[sessionId] !== undefined;
-  const hist = await api<{ messages: RawMessage[]; todos?: TodoItem[] }>(`/api/sessions/${sessionId}/messages`);
+  const hist = await api<{ messages: RawMessage[]; todos?: TodoItem[]; tasks?: ClaudeTaskItem[] }>(
+    `/api/sessions/${sessionId}/messages`,
+  );
   if (stashedAtFetch && !appStore.getState().liveTurns[sessionId]) {
     // 回合在请求飞行途中结束：后端发出 done 前已落库，重拉一次必然包含完整回复。
     return loadSessionMessages(no, sessionId);
@@ -158,6 +166,8 @@ export async function loadSessionMessages(no: string, sessionId: string) {
   // 中的会话切走再切回也能拿到本回合已写的清单——旧实现「有 stash 就跳过历史重建」
   // 的例外分支不再需要，串会话/清空误伤在键位与数据源层面一起消灭。
   applyTodosSnapshot(sessionId, hist.todos ?? []);
+  // claude 任务 journal（V24）同样随本请求附带：全量替换，opencode 会话恒为空数组。
+  applyTasksSnapshot(sessionId, hist.tasks ?? []);
   setContextTokens(no, 0);
   // 后端历史消息不带 model/agent 标注，这里用当前会话的 agent/推理等级补齐底部 footer。
   applyReplyMetaDefaults(no);
@@ -175,5 +185,25 @@ export async function syncSessionTodos(sessionId: string) {
     applyTodosSnapshot(sessionId, d.todos ?? []);
   } catch {
     /* 静默失败：下一次同步时机（下一拍轮询/下一回合结束）再试 */
+  }
+}
+
+/**
+ * 轻量收敛：拉取服务端 claude 任务 journal（GET /tasks）覆写该会话的任务清单投影。
+ * 供 claude 任务工具的 live 终态帧（stream.ts）与回合结束兜底（busy.ts）调用。
+ * 事实源是服务端 journal（live 乐观 id / 终态权威 id 都在服务端落定），前端不本地推演。
+ * 乱序防护：live 阶段连续 TaskCreate 触发多次并发拉取，旧响应迟到不得覆盖新响应。
+ */
+const taskSyncSeq: Record<string, number> = {};
+
+export async function syncSessionTasks(sessionId: string) {
+  const seq = (taskSyncSeq[sessionId] ?? 0) + 1;
+  taskSyncSeq[sessionId] = seq;
+  try {
+    const d = await api<{ tasks?: ClaudeTaskItem[] }>(`/api/sessions/${sessionId}/tasks`);
+    if (taskSyncSeq[sessionId] !== seq) return; // 已有更新的拉取在途/完成，本响应作废
+    applyTasksSnapshot(sessionId, d.tasks ?? []);
+  } catch {
+    /* 静默失败：下一次同步时机（下一任务工具/下一回合结束）再试 */
   }
 }

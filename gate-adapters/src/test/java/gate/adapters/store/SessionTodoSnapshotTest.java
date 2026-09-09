@@ -57,7 +57,7 @@ class SessionTodoSnapshotTest {
     private String newSession(String id) {
         repo.insert(new Session(id, "T-TODO", "cfg", AgentCli.OPENCODE, SessionStatus.ACTIVE,
                 null, dir.resolve("clone").toString(), -1, Instant.now(), null,
-                SessionUsage.EMPTY, "s", false, null, null, null, false));
+                SessionUsage.EMPTY, "s", false, null, null, null, false, null));
         return id;
     }
 

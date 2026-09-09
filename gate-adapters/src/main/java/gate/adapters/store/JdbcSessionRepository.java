@@ -66,7 +66,8 @@ public final class JdbcSessionRepository implements SessionRepository {
                 nullableColumn(rs, "override_provider"),
                 nullableColumn(rs, "override_model"),
                 nullableColumn(rs, "override_variant"),
-                rs.getInt("permission_auto_accept") != 0);
+                rs.getInt("permission_auto_accept") != 0,
+                nullableColumn(rs, "permission_mode"));
     }
 
     /** 写入端：克隆根内的绝对路径 → 相对路径；其它原样。 */
@@ -132,8 +133,8 @@ public final class JdbcSessionRepository implements SessionRepository {
                                           clone_path, allocated_port, prompt_tokens, completion_tokens,
                                           total_tokens, started_at, finished_at, title, archived,
                                           override_provider, override_model, override_variant,
-                                          permission_auto_accept)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                                          permission_auto_accept, permission_mode)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 session.id(), session.ticketNo(), session.agentConfigId(), session.cli().name(),
                 session.status().name(), session.cliSessionId(), storePath(session.clonePath()),
@@ -143,7 +144,8 @@ public final class JdbcSessionRepository implements SessionRepository {
                 session.title(),
                 session.archived() ? 1 : 0,
                 session.overrideProvider(), session.overrideModel(), session.overrideVariant(),
-                session.permissionAutoAccept() ? 1 : 0);
+                session.permissionAutoAccept() ? 1 : 0,
+                session.permissionMode());
     }
 
     @Override
@@ -153,7 +155,7 @@ public final class JdbcSessionRepository implements SessionRepository {
                 UPDATE agent_session SET status = ?, cli_session_id = ?, allocated_port = ?,
                        prompt_tokens = ?, completion_tokens = ?, total_tokens = ?, finished_at = ?,
                        title = ?, archived = ?, override_provider = ?, override_model = ?,
-                       override_variant = ?, permission_auto_accept = ?
+                       override_variant = ?, permission_auto_accept = ?, permission_mode = ?
                 WHERE id = ?
                 """,
                 session.status().name(), session.cliSessionId(), session.allocatedPort(),
@@ -163,6 +165,7 @@ public final class JdbcSessionRepository implements SessionRepository {
                 session.archived() ? 1 : 0,
                 session.overrideProvider(), session.overrideModel(), session.overrideVariant(),
                 session.permissionAutoAccept() ? 1 : 0,
+                session.permissionMode(),
                 session.id());
     }
 
@@ -295,6 +298,69 @@ public final class JdbcSessionRepository implements SessionRepository {
 
     private static String clockNow() {
         return java.time.Instant.now().toString();
+    }
+
+    // -------------------------------------------------------------------------------------------
+    // V24 session_task：claude 任务清单 journal（TaskCreate/TaskUpdate 事件累积，非全量
+    // 快照）。删除会话由 FK ON DELETE CASCADE 清理，无需显式 delete 方法。
+    // -------------------------------------------------------------------------------------------
+
+    @Override
+    public void upsertTasks(String sessionId, String tasksJson) {
+        if (tasksJson == null) {
+            return;
+        }
+        jdbc.update("""
+                INSERT INTO session_task(session_id, tasks_json, updated_at) VALUES (?,?,?)
+                ON CONFLICT(session_id) DO UPDATE SET tasks_json = excluded.tasks_json,
+                                                      updated_at = excluded.updated_at
+                """, sessionId, tasksJson, clockNow());
+    }
+
+    @Override
+    public Optional<String> findTasks(String sessionId) {
+        List<String> rows = jdbc.query("SELECT tasks_json FROM session_task WHERE session_id = ?",
+                (rs, n) -> rs.getString(1), sessionId);
+        if (!rows.isEmpty()) {
+            return Optional.of(rows.get(0));
+        }
+        // 非 claude 会话直接短路：TaskCreate/TaskUpdate 是 claude 独有工具名，opencode
+        // 永远不会产生任务事件——不做 lazy 回填扫描（/messages 附带查询是共享路径，
+        // 不能为每个 opencode 会话付一次全量 parts 解析）。
+        List<String> cli = jdbc.query("SELECT cli FROM agent_session WHERE id = ?",
+                (rs, n) -> rs.getString(1), sessionId);
+        if (cli.isEmpty() || !"CLAUDE".equals(cli.get(0))) {
+            return Optional.empty();
+        }
+        // Lazy backfill：V24 之前的历史 claude 会话没有 journal 行，扫一次消息 parts 全量
+        // 重放 TaskCreate/TaskUpdate（确定性事件源）落行后返回。与 todos 的回填同哲学：
+        // 一次成本，之后永久走 journal；无任务工具历史的会话不落行、返回 empty。
+        List<gate.domain.session.TurnPart> events = findToolParts(sessionId);
+        String replayed = gate.adapters.session.ClaudeTaskSnapshots.replayJson(events);
+        if (replayed == null) {
+            return Optional.empty();
+        }
+        upsertTasks(sessionId, replayed);
+        return Optional.of(replayed);
+    }
+
+    @Override
+    public List<TurnPart> findToolParts(String sessionId) {
+        // rowid = 插入序 = 真实时序（与 findMessages 同口径破平）。
+        List<String> blobs = jdbc.query("""
+                SELECT parts_blob FROM session_message
+                WHERE session_id = ? AND parts_blob IS NOT NULL
+                ORDER BY rowid
+                """, (rs, n) -> rs.getString(1), sessionId);
+        List<TurnPart> out = new ArrayList<>();
+        for (String blob : blobs) {
+            for (TurnPart p : parseParts(blob)) {
+                if (p.isTool()) {
+                    out.add(p);
+                }
+            }
+        }
+        return out;
     }
 
     // -------------------------------------------------------------------------------------------

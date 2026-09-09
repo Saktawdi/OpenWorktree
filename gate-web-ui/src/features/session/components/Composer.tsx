@@ -46,6 +46,7 @@ import {
   updatePendingQuoteText,
   uploadChatFile,
 } from "@/features/session";
+import { PermissionModeCycler } from "./PermissionModeCycler";
 import { setAgentId } from "@/features/agent";
 import { formatTokens, variantLabel } from "@/shared/format";
 import {
@@ -1166,20 +1167,25 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
                     draft={activeSessionId === ""}
                   />
                   <VariantPicker ticketNo={ticketNo} sel={sel} variants={currentVariants} />
-                  {activeSessionId && (
-                    <button
-                      className={`composer-btn ${autoAccept ? "composer-btn-active" : ""}`}
-                      title={
-                        autoAccept
-                          ? "权限请求将被服务端自动允许，不再弹出确认卡片"
-                          : "开启自动允许：权限请求将被服务端自动允许，不再弹出确认卡片"
-                      }
-                      onClick={() => void actions.setSessionAutoAccept(ticketNo, !autoAccept)}
-                    >
-                      <ShieldCheck size={13} weight={autoAccept ? "fill" : "regular"} />
-                      {autoAccept ? "权限：自动允许" : "权限：询问"}
-                    </button>
-                  )}
+                  {activeSessionId &&
+                    (isClaude ? (
+                      // claude：权限模式轮询（V24）——headless 专属档位，下次发送生效。
+                      <PermissionModeCycler ticketNo={ticketNo} />
+                    ) : (
+                      // opencode：自动授权按钮原样保留（两链互斥）。
+                      <button
+                        className={`composer-btn ${autoAccept ? "composer-btn-active" : ""}`}
+                        title={
+                          autoAccept
+                            ? "权限请求将被服务端自动允许，不再弹出确认卡片"
+                            : "开启自动允许：权限请求将被服务端自动允许，不再弹出确认卡片"
+                        }
+                        onClick={() => void actions.setSessionAutoAccept(ticketNo, !autoAccept)}
+                      >
+                        <ShieldCheck size={13} weight={autoAccept ? "fill" : "regular"} />
+                        {autoAccept ? "权限：自动允许" : "权限：询问"}
+                      </button>
+                    ))}
                 </>
               )}
             </div>

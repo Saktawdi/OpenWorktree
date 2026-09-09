@@ -9,6 +9,7 @@ import { QUOTE_MAX_CHARS } from "@/shared/quotes";
 import { uid } from "@/shared/format";
 import { emitPluginEvent } from "@/app/plugins/events";
 import { dropSessionTodos } from "./todos";
+import { dropSessionTasks } from "./tasks";
 
 const set = appStore.setState;
 const s = () => appStore.getState();
@@ -700,6 +701,7 @@ export function dropSessionExtras(sessionIds: string[]) {
       : st;
   });
   dropSessionTodos(sessionIds);
+  dropSessionTasks(sessionIds);
   scheduleSessionGroupsPersist();
   scheduleSessionPinnedPersist();
 }

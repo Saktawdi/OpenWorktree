@@ -6,10 +6,19 @@
 import { api } from "@/net";
 import { appStore, showToast } from "@/store";
 import type { PendingAttachment, ToolIconKind } from "@/shared/types";
-import { friendlyToolName, isTodoTool, parseTodos, todoArgsSummary, compactToolArgs, compactToolResult } from "@/shared/todoUtils";
+import {
+  friendlyToolName,
+  isTodoTool,
+  isClaudeTaskTool,
+  isClaudeTaskWriteTool,
+  parseTodos,
+  todoArgsSummary,
+  compactToolArgs,
+  compactToolResult,
+} from "@/shared/todoUtils";
 import type { TimelinePart, ToolCallView } from "@/shared/types";
 import { emitPluginEvent } from "@/app/plugins/events";
-import { loadSessionMessages, loadTicketSessions, refreshTicketSessionsMeta, syncSessionTodos } from "./api";
+import { loadSessionMessages, loadTicketSessions, refreshTicketSessionsMeta, syncSessionTasks, syncSessionTodos } from "./api";
 import { loadSessionPermissions, loadSessionQuestions } from "./permissions";
 import { loadSessionCatalog, switchSessionModelLive } from "./catalog";
 import { mapPermissionAsk, mapQuestionAsk } from "./model";
@@ -589,6 +598,9 @@ async function consumeSessionEvents(
       const callId: string = d.call_id ?? "";
       const toolName: string = d.tool_name ?? "";
       const todo = isTodoTool(toolName);
+      // claude 任务工具（V24 平行链）：与 todo 分支平行，互不相扰——TaskCreate/TaskUpdate/
+      // TaskList 是 claude 独有工具名，opencode 会话天然不会命中。
+      const claudeTask = isClaudeTaskTool(toolName);
       const entry = argsBuf.get(callId) ?? { name: toolName, args: "" };
       entry.name = toolName || entry.name;
       if (d.argument_delta) {
@@ -616,6 +628,12 @@ async function consumeSessionEvents(
         const todos = parseTodos(entry.args);
         if (todos) applyTodosSnapshot(sessionId, todos);
       }
+      // claude 任务工具不本地推演清单（id 由 claude 服务端分配）：终态帧到达即拉服务端
+      // journal——适配器在同一 stop 点已先 journal 后广播，拉到的必是含本事件的最新值
+      //（live 乐观 id / 乱序防护见 syncSessionTasks）。TaskList 只读不触发。
+      if (claudeTask && isClaudeTaskWriteTool(toolName) && d.status === "SUCCESS") {
+        void syncSessionTasks(sessionId);
+      }
       const argsSummary = todo
         ? todoArgsSummary(entry.args)
         : compactToolArgs(entry.name, entry.args);
@@ -629,7 +647,7 @@ async function consumeSessionEvents(
           view = {
             ...existing,
             name: friendlyToolName(entry.name),
-            icon: todo ? ("todo" as const) : existing.icon,
+            icon: todo || claudeTask ? ("todo" as const) : existing.icon,
             args: entry.args,
             argsSummary,
             resultSummary: compactToolResult(resultText) ?? existing.resultSummary,
@@ -643,7 +661,7 @@ async function consumeSessionEvents(
             name: friendlyToolName(toolName),
             toolName,
             args: entry.args,
-            icon: todo ? ("todo" as const) : resolveToolIcon(toolName),
+            icon: todo || claudeTask ? ("todo" as const) : resolveToolIcon(toolName),
             argsSummary,
             resultSummary: compactToolResult(resultText),
             resultDetail: resultText || undefined,

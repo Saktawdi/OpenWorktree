@@ -225,7 +225,7 @@ class ClaudeHeadlessAdapterTest {
 
         Session session = new Session("sess-send-1", "T-5", "claude-send", AgentCli.CLAUDE,
                 SessionStatus.ACTIVE, "sess-prev", clone.toString(), -1, Instant.now(), null,
-                SessionUsage.EMPTY, null, false, "prov-a", "model-b", "high", false);
+                SessionUsage.EMPTY, null, false, "prov-a", "model-b", "high", false, null);
         sessions.insert(session);
 
         ClaudeHeadlessAdapter adapter = new ClaudeHeadlessAdapter(processRunner, agentConfigs,
@@ -277,6 +277,114 @@ class ClaudeHeadlessAdapterTest {
         String args = Files.readString(root.resolve("claude-args.txt"), StandardCharsets.UTF_8);
         assertFalse(args.contains("--model"), "cli-managed sentinel must not pin --model");
         assertTrue(args.contains("hello"), "prompt still reaches claude positionally");
+    }
+
+    @Test
+    void send_pins_persisted_permission_mode_and_falls_back_to_acceptEdits() throws Exception {
+        // V24 权限模式轮询：会话持久化的档位钉进 --permission-mode，null 回退 acceptEdits
+        // （= 引入本列前的硬编码默认，存量会话行为不变）。
+        Path script = root.resolve("perm-claude.cmd");
+        Files.writeString(script, """
+                @echo off
+                echo %*>"%~dp0claude-args.txt"
+                echo {"type":"session","session_id":"sess-perm"}
+                echo {"type":"assistant","message":{"content":[{"type":"text","text":"ok"}]}}
+                """, StandardCharsets.UTF_8);
+
+        AgentConfig config = new AgentConfig("claude-perm", "Claude Perm", AgentCli.CLAUDE,
+                "manual", "manual", null, List.of(), "test");
+        agentConfigs.insert(config, Instant.now());
+        Path clone = root.resolve("clone");
+        Files.createDirectories(clone.resolve(".git"));
+        insertTicket("T-9");
+        // 第一档：持久化 bypassPermissions。
+        sessions.insert(new Session("sess-perm-1", "T-9", "claude-perm", AgentCli.CLAUDE,
+                SessionStatus.ACTIVE, null, clone.toString(), -1, Instant.now(), null,
+                SessionUsage.EMPTY, null, false, null, null, null, false, "bypassPermissions"));
+
+        ClaudeHeadlessAdapter adapter = new ClaudeHeadlessAdapter(processRunner, agentConfigs,
+                sessions, ticketRepository, tasks, ticketLocks, clock, "cmd.exe", List.of("/c", script.toString()));
+        adapter.sendMessage(new AgentSessionPort.SendRequest("sess-perm-1", "go", true));
+        awaitAssistant("sess-perm-1");
+        String args = Files.readString(root.resolve("claude-args.txt"), StandardCharsets.UTF_8);
+        assertTrue(args.contains("--permission-mode bypassPermissions"),
+                "persisted mode must pin --permission-mode");
+
+        // 第二档：null（未设置）回退默认。
+        Files.delete(root.resolve("claude-args.txt"));
+        sessions.insert(new Session("sess-perm-2", "T-9", "claude-perm", AgentCli.CLAUDE,
+                SessionStatus.ACTIVE, null, clone.toString(), -1, Instant.now(), null,
+                SessionUsage.EMPTY, null, false, null, null, null, false, null));
+        adapter.sendMessage(new AgentSessionPort.SendRequest("sess-perm-2", "go", true));
+        awaitAssistant("sess-perm-2");
+        args = Files.readString(root.resolve("claude-args.txt"), StandardCharsets.UTF_8);
+        assertTrue(args.contains("--permission-mode acceptEdits"),
+                "null mode falls back to acceptEdits (pre-V24 default)");
+    }
+
+    @Test
+    void send_journals_claude_tasks_live_then_replays_authoritative_ids() throws Exception {
+        // V24 任务链：live 阶段 TaskCreate 按 max+1 乐观入 journal（本例 1），回合终态
+        // 从 parts 的 result_json 全量重放——真实 id 5 覆盖乐观 id，TaskUpdate 的状态
+        // 变更与全字段变更一并落定。journal 是历史的纯投影。
+        Path script = root.resolve("task-claude.cmd");
+        Files.writeString(script, """
+                @echo off
+                echo {"type":"system","subtype":"init","session_id":"sess-task"}
+                echo {"type":"stream_event","event":{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu-1","name":"TaskCreate"}}}
+                echo {"type":"stream_event","event":{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\\"subject\\":\\"fix the bug\\"}"}}}
+                echo {"type":"stream_event","event":{"type":"content_block_stop","index":1}}
+                echo {"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu-1","name":"TaskCreate","input":{"subject":"fix the bug"}}]}}
+                echo {"type":"user","message":{"content":[{"type":"tool_result","content":"Task #5 created successfully: fix the bug"}]}}
+                echo {"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu-2","name":"TaskUpdate","input":{"taskId":"5","status":"completed"}}]}}
+                echo {"type":"user","message":{"content":[{"type":"tool_result","content":"Updated task #5 status"}]}}
+                echo {"type":"result","is_error":false,"usage":{"input_tokens":3,"output_tokens":2}}
+                """, StandardCharsets.UTF_8);
+
+        AgentConfig config = new AgentConfig("claude-task", "Claude Task", AgentCli.CLAUDE,
+                "manual", "manual", null, List.of(), "test");
+        agentConfigs.insert(config, Instant.now());
+        Path clone = root.resolve("clone");
+        Files.createDirectories(clone.resolve(".git"));
+        insertTicket("T-10");
+        sessions.insert(new Session("sess-task-1", "T-10", "claude-task", AgentCli.CLAUDE,
+                SessionStatus.ACTIVE, null, clone.toString(), -1, Instant.now(), null,
+                SessionUsage.EMPTY, null, false));
+
+        ClaudeHeadlessAdapter adapter = new ClaudeHeadlessAdapter(processRunner, agentConfigs,
+                sessions, ticketRepository, tasks, ticketLocks, clock, "cmd.exe", List.of("/c", script.toString()));
+        // live 终态帧契约：TaskCreate 的 stop 帧 status=SUCCESS + 携带完整参数——前端
+        // stream.ts 据此（d.status === "SUCCESS"）触发 syncSessionTasks 拉取 journal。
+        List<gate.domain.session.SessionStreamChunk> chunks =
+                Collections.synchronizedList(new ArrayList<>());
+        try (AutoCloseable sub = adapter.attachListener("sess-task-1", chunks::add)) {
+            adapter.sendMessage(new AgentSessionPort.SendRequest("sess-task-1", "plan it", true));
+            awaitAssistant("sess-task-1");
+            Instant deadline = Instant.now().plusSeconds(15);
+            while (chunks.stream().noneMatch(c -> c instanceof gate.domain.session.SessionStreamChunk.DoneChunk)
+                    && Instant.now().isBefore(deadline)) {
+                Thread.sleep(50);
+            }
+        }
+        // stop 帧（而非 RUNNING 分片帧）携带 SUCCESS + 完整参数：status 字段非 null，
+        // 前端的 SUCCESS 门条件在 live 阶段可命中（f1 复核依据，回归锁死）。
+        assertTrue(chunks.stream().anyMatch(c -> c instanceof gate.domain.session.SessionStreamChunk.ToolCallChunk tc
+                && "TaskCreate".equals(tc.toolName()) && "SUCCESS".equals(tc.status())
+                && tc.argumentDelta() != null && tc.argumentDelta().contains("fix the bug")),
+                "TaskCreate stop frame must carry SUCCESS + full args (frontend live-sync trigger)");
+        assertTrue(chunks.stream().noneMatch(c -> c instanceof gate.domain.session.SessionStreamChunk.ToolCallChunk tc
+                && "TaskCreate".equals(tc.toolName()) && tc.status() == null),
+                "no TaskCreate frame may carry a null status");
+
+        String journal = sessions.findTasks("sess-task-1").orElseThrow();
+        assertTrue(journal.contains("\"id\":5"),
+                "replay must replace the optimistic id 1 with the authoritative 5: " + journal);
+        assertTrue(journal.contains("\"status\":\"completed\""),
+                "TaskUpdate status flip must be replayed: " + journal);
+        assertTrue(journal.contains("fix the bug"), journal);
+        // opencode 的 todowrite 链不受影响：TaskCreate 不是 todo 写工具。
+        assertTrue(sessions.findTodos("sess-task-1").isEmpty(),
+                "claude task tools must not touch the session_todo chain");
     }
 
     @Test
@@ -429,7 +537,7 @@ class ClaudeHeadlessAdapterTest {
         sessions.insert(new Session(sessionId, "T-88", agentId, AgentCli.CLAUDE,
                 SessionStatus.ACTIVE, sessionId.equals("sess-rep-1") ? "sess-rep" : "sess-silent",
                 clone.toString(), -1, now, null,
-                SessionUsage.EMPTY, null, false, null, null, variant, false));
+                SessionUsage.EMPTY, null, false, null, null, variant, false, null));
     }
 
     private ClaudeHeadlessAdapter adapterFor(Path script) {

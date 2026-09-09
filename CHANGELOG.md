@@ -12,6 +12,11 @@
 
 ### 修复
 
+- **claude 会话链路修复包（T-114）——live 工具参数黑盒、消息排序、任务清单、权限模式四处**：
+  - **live 工具卡片 IN 区参数黑盒**：claude 流式回显的 start/stop 帧此前发字面 `"{}"`——start 的 `"{}"` 给前端累积缓冲垫了非法前缀，stop 的 `"{}"` 又被判定为完整快照把真参数整体覆盖，live 工具卡片永远显示 `IN {}`；现 start 帧不带参数（null）、分片原样转发、stop 帧携带拼齐的完整 JSON（前端按快照整体替换定格），历史/live 视图参数一致
+  - **历史消息排序错乱**：claude headless 一回合多条消息此前共用回合开始时刻落库，按 id（随机 UUID）破平等于随机洗牌——用户消息会排到触发它的 agent 回复之后；现落库时间戳逐条现取 + 读取端 `ORDER BY created_at, rowid`（rowid = 插入序 = 真实时序）双保险，live 与历史渲染顺序一致（重进会话对比不再跳变）
+  - **TaskCreate/TaskUpdate 任务清单——平行链（V24）**：claude 的任务工具与 opencode 的 todowrite 语义不同（增量事件 vs 全量快照），此前完全不可见；现建 `session_task` journal 平行链（与 session_todo 互不相扰）：live 阶段参数拼齐即 journal（TaskCreate 的 id 按 max+1 乐观分配），回合终态按消息历史 parts 从头**全量重放**整表覆盖——journal 是历史的纯投影，乐观 id 错位/崩溃回合幽灵任务在下一成功回合自愈；TaskUpdate 应用 args 里出现的全部字段（不止 status）。前端新 store 切片 `claudeTasks` + `ClaudeTaskPanel`（同样式渲染 subject/activeForm/description/status 与进度环），SessionRail 按 session.cli 三元挂载；新增 `GET /api/sessions/{id}/tasks` 端点，`/messages` 响应附带 `tasks` 字段；工具时间线的中文名（创建任务/更新任务/列出任务）与图标同步支持
+  - **claude 权限模式轮询（方案 A，V24）**：`--permission-mode` 此前硬编码 acceptEdits，bypassPermissions 档下 MCP 工具（如 `mcp__gate__presubmit_create`）会被拒；现 `agent_session` 新增 `permission_mode` 列（claude 专属语义，opencode 不读），PATCH 校验四档枚举（acceptEdits/plan/auto/bypassPermissions），headless 每次发送读会话档位、null 回退 acceptEdits（存量行为不变，CLI 2.1.240 实测 bypassPermissions 直接生效）；输入框按 isClaude 三元挂载 `PermissionModeCycler`（acceptEdits → plan → auto → bypassPermissions 循环，hover 各档说明 + 「下一次发送时生效」提示），opencode 的自动授权按钮原样保留
 - **点击会话 item 与运行监控跳转语义对齐**：会话有待回答/待授权时，从运行监控点击条目会清掉顶栏 chip 黄组与工单徽标并恢复待决卡片，但单独点击会话列表里的该会话两者都不发生——不清提醒（chip/徽标/会话黄点常驻，与监控跳转后的状态割裂），也不补拉待决卡片，且历史重建会整表替换聊天视图把已挂的提问/权限卡片冲掉（表现为「点了会话却不弹回答/授权窗口」）；现 `switchSession`（live）与「前往处理」同语义：点开即视为已关注该会话——待决登记与中断标记一并清除（忽略表继续兜住重拉），并在历史重建后再补拉未决的权限/提问卡片（归档会话跳过），卡片先挂后冲的顺序问题一并消除
 - **专注编辑描述框溢出到下方区域的布局 bug**：专注编辑模式下描述编辑区的收缩下限此前压在 textarea 自身（硬性 320px），弹窗可用高度不足时外层描述区先被压缩、textarea 却不跟随收缩，描述框便溢出描述区边界、压到下方备注/标签之上（表现为「描述的框过大、跑到描述区下面去」）；现把高度下限上移到描述区容器层（240px）、textarea 改为随容器自由伸缩，空间不足时整块压缩并由外层滚动接管，不再越界覆盖
 

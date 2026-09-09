@@ -228,6 +228,15 @@ export interface TodoItem {
   priority?: "high" | "medium" | "low";
 }
 
+/** claude 任务清单条目（TaskCreate/TaskUpdate 平行链，V24）：与 TodoItem 平行的独立形状。 */
+export interface ClaudeTaskItem {
+  id: number;
+  subject: string;
+  description?: string;
+  activeForm?: string;
+  status: "pending" | "in_progress" | "completed" | "cancelled";
+}
+
 /** 会话上下文占用（最新一轮的窗口占用，而非逐轮累加）。 */
 export interface ContextUsageState {
   /** 最新已知的上下文 token 占用；0 表示尚无数据。 */
@@ -343,6 +352,8 @@ export interface ChatSession {
   updatedAt: number;
   /** 会话是否自动允许权限请求（端侧开关，受控）。 */
   permissionAutoAccept: boolean;
+  /** claude 会话的权限模式档位（V24 轮询）：null = 默认（acceptEdits）。opencode 恒 null。 */
+  permissionMode?: string | null;
   /** 会话固化的协作 Agent（会话 1:1 agent，创建时选定；会话徽标/回复标注/展示位的数据源）。 */
   agentConfigId?: string | null;
   /** 会话内实时切换的模型覆盖（null = 用 AgentConfig 默认值） */

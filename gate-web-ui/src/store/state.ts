@@ -13,6 +13,7 @@ import type {
   CatalogProvider,
   ChatItem,
   ChatSession,
+  ClaudeTaskItem,
   ContextUsageState,
   DiffFile,
   EngineInfo,
@@ -149,6 +150,9 @@ export interface AppState {
   usage: Record<string, UsageView>;
   /** 会话最新任务清单（todowrite 快照；V21 起按会话 id 键控——串会话在键位上不可能发生）。 */
   todos: Record<string, TodoItem[]>;
+  /** claude 会话任务清单（TaskCreate/TaskUpdate 事件累积 journal，V24；按会话 id 键控）。
+   *  命名避开既有 tasks（TaskProgress，工单维度）。 */
+  claudeTasks: Record<string, ClaudeTaskItem[]>;
   /** 会话上下文占用（最新一轮窗口 tokens + 模型上限）。 */
   context: Record<string, ContextUsageState>;
   centerTab: CenterTab;
@@ -282,6 +286,7 @@ export const appStore = create<AppState>(() => ({
   creatingSession: {},
   usage: {},
   todos: {},
+  claudeTasks: {},
   context: {},
   centerTab: "chat",
   agents: DEMO_AGENTS,
