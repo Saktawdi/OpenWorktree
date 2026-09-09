@@ -29,6 +29,7 @@ import { appStore, NO_CHAT, NO_QUOTES, showToast, useApp } from "@/store";
 import { ChatActionChips } from "@/app/plugins/components/ChatActionChips";
 import {
   addMessageToQueue,
+  addPendingQuote,
   clearComposerDraft,
   clearDraftModelSel,
   clearPendingQuotes,
@@ -42,12 +43,18 @@ import {
   setComposerDraft,
   setPendingQuotes,
   splitModelRef,
+  updatePendingQuoteText,
   uploadChatFile,
 } from "@/features/session";
 import { setAgentId } from "@/features/agent";
 import { formatTokens, variantLabel } from "@/shared/format";
-import { quotePreview, wrapQuote } from "@/shared/quotes";
+import {
+  QUOTE_PASTE_MIN_CHARS,
+  stripQuoteMarkers,
+  wrapQuote,
+} from "@/shared/quotes";
 import { QuoteChip } from "@/shared/components/QuoteChip";
+import { QuoteEditCard } from "@/shared/components/QuoteEditCard";
 import { GroupedModelMenu } from "@/shared/components/GroupedModelMenu";
 import {
   extractAbsolutePath,
@@ -75,6 +82,16 @@ function tryData(read: () => string): string {
   } catch {
     return "";
   }
+}
+
+/**
+ * 外部粘贴文本是否「成段」：满足其一即收进引用胶囊而非直接插入正文——
+ * 多行（含换行/制表缩进的整段内容）或长度达到阈值（URL/路径等短单行不受影响）。
+ */
+function isPasteQuoteWorthy(text: string): boolean {
+  const t = text.trim();
+  if (!t) return false;
+  return t.includes("\n") || t.includes("\t") || t.length >= QUOTE_PASTE_MIN_CHARS;
 }
 
 function AgentPicker({ ticketNo }: { ticketNo: string }) {
@@ -537,6 +554,8 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
   const autoAccept = activeSession?.permissionAutoAccept ?? false;
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
   const taRef = useRef<HTMLTextAreaElement>(null);
+  // 编辑中的引用胶囊 id（外部粘贴/划选胶囊点开编辑原文；null=无编辑卡）。
+  const [editingQuoteId, setEditingQuoteId] = useState<string | null>(null);
   const live = mode === "live";
   // 草稿文本收进全局 store（按工单键自动保存 + localStorage 落盘）：
   // 切 tab/工单/页面再回来时原样还原，发送成功或工单终态时自动清除。
@@ -685,7 +704,14 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
       if (file && !seen.has(`${file.name}-${file.size}`)) seen.set(`${file.name}-${file.size}`, file);
     }
     const allFiles = Array.from(seen.values());
-    if (allFiles.length === 0) return;
+    if (allFiles.length === 0) {
+      // 纯文本粘贴（无文件）：成段文本收进引用胶囊，短单行保持直接插入光标处。
+      const text = tryData(() => dt.getData("text/plain"));
+      if (!text) return;
+      e.preventDefault();
+      handleTextPaste(text);
+      return;
+    }
 
     // 剪贴板文本载荷（uri-list / plain）优先供路径解析；纯文本粘贴无文件时走默认行为。
     e.preventDefault();
@@ -693,6 +719,26 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
       tryData(() => dt.getData("text/uri-list")),
       tryData(() => dt.getData("text/plain")),
     ]);
+  };
+
+  /* 外部粘贴文本的路由（与「添加到对话框」同一落点，来源标注「剪贴板」）：
+   * 成段文本（多行/制表缩进/达到阈值长度）收进引用胶囊——胶囊可编辑原文、可一键
+   * 转为正文插回光标处，改动需求在胶囊上就地解决；短单行（URL/路径等）保持直接
+   * 插入正文。注意：这只拦 files 为空的纯文本粘贴；带文件/绝对路径的粘贴仍走
+   * handleIncomingFiles（含浏览器拿不到路径时的纯文本兜底），已在上方 return。 */
+  const handleTextPaste = (text: string) => {
+    if (stripQuoteMarkers(text) !== text) {
+      // 剪贴板里带着引用标记外壳（复制的整条胶囊/含标记的消息）：按纯文本原样插入，
+      // 不重复包壳（否则嵌套 ⟦引用⟧ 让 Agent 侧看到双层标记）。
+      insertAtCursor(text);
+      return;
+    }
+    if (isPasteQuoteWorthy(text)) {
+      addPendingQuote(ticketNo, text, "剪贴板");
+      showToast("已收进引用胶囊 · 点胶囊可编辑原文或转为正文");
+    } else {
+      insertAtCursor(text);
+    }
   };
 
   /* 拖拽与粘贴同一条路由；提示语一直让用户「拖拽文件到输入框」，
@@ -706,7 +752,12 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
     e.preventDefault();
     const dt = e.dataTransfer;
     const files = Array.from(dt?.files ?? []);
-    if (files.length === 0) return;
+    if (files.length === 0) {
+      // 拖入纯文本（从其他应用拖选文字）：与纯文本粘贴同一条路由。
+      const text = tryData(() => dt?.getData("text/plain") ?? "");
+      if (text) handleTextPaste(text);
+      return;
+    }
     void handleIncomingFiles(files, [
       tryData(() => dt?.getData("text/uri-list") ?? ""),
       tryData(() => dt?.getData("text/plain") ?? ""),
@@ -715,6 +766,13 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
 
   const removeAttachment = (id: string) =>
     setPendingAttachments((prev) => prev.filter((a) => a.id !== id));
+
+  /** 引用胶囊「转为正文」：原文插回光标处并移除胶囊，改成普通文字随意编辑。 */
+  const quoteChipToText = (q: (typeof pendingQuotes)[number]) => {
+    removePendingQuote(ticketNo, q.id);
+    insertAtCursor(q.text);
+    requestAnimationFrame(() => taRef.current?.focus());
+  };
 
   const send = () => {
     const t = text.trim();
@@ -758,6 +816,9 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
   );
   // 插队（delivery=steer）仅 opencode 运行时支持；claude/demo 降级为排队并提示。
   const steerSupported = live && activeSessionId !== "" && !isClaude;
+
+  // 当前正在编辑原文的胶囊（编辑卡的数据源；胶囊被移除/发送后自动收回 null）。
+  const editingQuote = pendingQuotes.find((q) => q.id === editingQuoteId) ?? null;
 
   /** 组装当前输入（正文 + 图片引用 + 引用胶囊内联文本），与 send() 同口径。 */
   const composedPayload = () =>
@@ -994,6 +1055,16 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
             terminal ? " composer-shell-done" : ""
           }`}
         >
+          {editingQuote && (
+            <QuoteEditCard
+              initialText={editingQuote.text}
+              onSave={(next) => {
+                updatePendingQuoteText(ticketNo, editingQuote.id, next);
+                setEditingQuoteId(null);
+              }}
+              onClose={() => setEditingQuoteId(null)}
+            />
+          )}
           {pendingAttachments.length > 0 && (
             <div className="flex flex-wrap gap-2 px-3 pt-3">
               {pendingAttachments.map((att, i) => (
@@ -1029,6 +1100,8 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
                   key={q.id}
                   text={q.text}
                   source={q.source}
+                  onEdit={() => setEditingQuoteId(q.id)}
+                  onToText={() => quoteChipToText(q)}
                   onRemove={() => removePendingQuote(ticketNo, q.id)}
                 />
               ))}

@@ -18,6 +18,12 @@ export const QUOTE_PREVIEW_MAX = 42;
 /** 单条引用片段的原文上限（字符）：极端大段选择在入口处截断，防止撑爆消息体。 */
 export const QUOTE_MAX_CHARS = 2000;
 
+/**
+ * 外部粘贴文本自动收进引用胶囊的长度阈值：低于该值的短单行（URL/路径/一词组）
+ * 保持直接插入正文；多行文本不受此阈值限制（含换行即视为成段内容）。
+ */
+export const QUOTE_PASTE_MIN_CHARS = 60;
+
 /** 把一段选中文本包成内联标记；原样保留换行（渲染层负责折叠显示）。 */
 export function wrapQuote(text: string): string {
   return `${QUOTE_OPEN}${text}${QUOTE_CLOSE}`;

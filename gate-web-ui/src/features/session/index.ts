@@ -48,6 +48,7 @@ export {
   setPendingQuotes,
   addPendingQuote,
   removePendingQuote,
+  updatePendingQuoteText,
   clearPendingQuotes,
   setCreatingSession,
   setBusy,

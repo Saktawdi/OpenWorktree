@@ -556,6 +556,12 @@ body {
   .quote-chip-icon {
     @apply text-info shrink-0;
   }
+  /* 待发送态：胶囊主体包成 button（点击打开原文编辑卡）——
+     重置原生按钮外观，让胶囊与纯 span 形态完全一致。 */
+  .quote-chip-body {
+    @apply flex items-center gap-1 min-w-0 bg-transparent border-0 p-0 m-0
+      font-[inherit] text-[inherit] cursor-pointer select-none;
+  }
   .quote-chip-preview {
     @apply min-w-0 truncate text-left cursor-default;
     max-width: 240px;
@@ -603,6 +609,16 @@ body {
      （animate-rise 的 transform 残留）截断：悬停时把整行提到最上层。 */
   .chat-msg-line:hover {
     z-index: 20;
+  }
+
+  /* ── 引用胶囊原文编辑卡（Composer 输入卡顶部浮层：点胶囊「编辑原文」浮出） ── */
+  .quote-edit-card {
+    @apply mx-3 mt-3 rounded-xl border border-info/25 bg-info/[0.06] p-2.5 space-y-2 animate-rise;
+  }
+  .quote-edit-ta {
+    @apply w-full rounded-lg border border-edge bg-sunken px-2.5 py-2
+      text-[12.5px] leading-relaxed text-ink placeholder:text-faint
+      focus:outline-none focus:border-info/40 resize-none;
   }
 
   /* ── 划选动作菜单（SelectionQuoteLayer：内置「添加到对话框」+ 插件 selection.menu） ── */

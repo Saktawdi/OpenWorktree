@@ -104,14 +104,40 @@ export function setPendingQuotes(ticketNo: string, chips: QuoteChip[]) {
   writePendingQuotes(ticketNo, chips);
 }
 
+/** 单条胶囊的正文上限截断（addPendingQuote / updatePendingQuoteText 共用）。 */
+function clipQuoteBody(trimmed: string) {
+  return trimmed.length > QUOTE_MAX_CHARS
+    ? `${trimmed.slice(0, QUOTE_MAX_CHARS)}\n…（原文过长已截断）`
+    : trimmed;
+}
+
 /** 追加一条引用胶囊：超长截断并在原文里注明，避免极端大段选择撑爆消息。 */
 export function addPendingQuote(ticketNo: string, text: string, source?: string) {
   const trimmed = text.trim();
   if (!trimmed) return;
-  const body =
-    trimmed.length > QUOTE_MAX_CHARS ? `${trimmed.slice(0, QUOTE_MAX_CHARS)}\n…（原文过长已截断）` : trimmed;
-  const chip: QuoteChip = source ? { id: uid("q"), text: body, source } : { id: uid("q"), text: body };
+  const chip: QuoteChip = source
+    ? { id: uid("q"), text: clipQuoteBody(trimmed), source }
+    : { id: uid("q"), text: clipQuoteBody(trimmed) };
   writePendingQuotes(ticketNo, [...(s().pendingQuotes[ticketNo] ?? []), chip]);
+}
+
+/**
+ * 编辑某条引用胶囊的原文（外部粘贴胶囊的「编辑原文」出口）：回写后仍按上限截断；
+ * 清空保存视为删除该胶囊（空正文没有发送意义）。
+ */
+export function updatePendingQuoteText(ticketNo: string, quoteId: string, text: string) {
+  const chips = s().pendingQuotes[ticketNo];
+  if (!chips?.some((c) => c.id === quoteId)) return;
+  const trimmed = text.trim();
+  if (!trimmed) {
+    writePendingQuotes(ticketNo, chips.filter((c) => c.id !== quoteId));
+    return;
+  }
+  const body = clipQuoteBody(trimmed);
+  writePendingQuotes(
+    ticketNo,
+    chips.map((c) => (c.id === quoteId ? { ...c, text: body } : c)),
+  );
 }
 
 /** 移除某条引用胶囊（胶囊上的 × 按钮）。 */
