@@ -10,7 +10,7 @@
 ```bash
 cd plugin-template
 npm install
-npm run deploy          # 构建 + 安装进 <仓库根>/local-run/gate-home/plugins/
+npm run deploy          # 构建 + 安装进「运行中的后端」的插件目录
 ```
 
 启动后端与前端后：浏览器 → 设置 → 插件 → 「刷新」，模板插件出现在列表里；
@@ -18,7 +18,11 @@ composer 上方出现「插入问候」chip；插件分区下方出现「模板�
 
 - `npm run build`：只构建（产物 `dist/index.js` + `dist/style.css`）
 - `npm run watch`：增量构建（配合设置页「重载」热更新）
-- `npm run deploy`：构建 + 安装（目标默认 `<仓库根>/local-run/gate-home`，可用参数或 `GATE_HOME` 覆盖）
+- `npm run deploy`：构建 + 安装——目标取参顺序：命令行参数 > `GATE_HOME` 环境变量 >
+  探测运行中的后端实例（逐个读常见数据目录的 `gate.toml`，对 `[web]` 端口做 `/api/health`
+  探活，取第一个在线的 `gate_home`）> 回退 `<仓库根>/local-run/gate-home`。
+  **网页版实际读的是后端进程所用 gate_home**：安装版桌面壳在 `%APPDATA%\OpenWorktree\…`，
+  本地开发在仓库 `local-run`——只有探测在线实例才能保证装进网页版真正读的目录
 
 ## 目录结构
 

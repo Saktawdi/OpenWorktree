@@ -25,7 +25,7 @@
 ```bash
 cd plugins/quick-quotes
 npm install
-npm run deploy     # 构建并装进 <仓库根>/local-run/gate-home/plugins/quick-quotes/
+npm run deploy     # 构建并装进「运行中的后端」的插件目录（探测在线实例的 gate_home；全部离线才回退仓库 local-run/gate-home）
 ```
 
 前端 设置 → 插件 → 刷新；改代码后 `npm run build` → 设置页点「重载」。
