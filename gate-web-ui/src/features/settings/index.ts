@@ -16,4 +16,10 @@ export {
   probeUpstreamModels,
 } from "./api";
 export { fetchAppInfo, checkAppUpdate, fetchUpdateNotes } from "./app";
+export {
+  fetchStorageOverview,
+  fetchStorageCaches,
+  cleanStorageCache,
+  openStorageDir,
+} from "./storage";
 export { SettingsPage } from "./components/SettingsPage";

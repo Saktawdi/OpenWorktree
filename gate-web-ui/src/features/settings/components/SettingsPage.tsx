@@ -11,7 +11,7 @@ import { AppInfoBlock } from "./app-info/AppInfoBlock";
 import { PrefsBlock } from "./prefs/PrefsBlock";
 import { StorageBlock } from "./storage/StorageBlock";
 
-/** 设置中心：偏好 / 存储（预留）/ 系统（gate.toml）/ MCP / LLM / LLM 助手 / 关于 七个分区（插件管理已移至顶栏一级视图）。 */
+/** 设置中心：偏好 / 存储 / 系统（gate.toml）/ MCP / LLM / LLM 助手 / 关于 七个分区（插件管理已移至顶栏一级视图）。 */
 export function SettingsPage() {
   const mode = useApp((s) => s.mode);
   const [tab, setTab] = useState<SettingsTab>("prefs");

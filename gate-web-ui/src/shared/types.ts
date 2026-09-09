@@ -692,6 +692,44 @@ export interface McpStatus {
   human_tool_count: number;
 }
 
+/* ─── 存储设置（T-116） ─── */
+
+/** 数据目录概览里的一个位置（key: gate_home | clones_root | db | blob_root | audit）。 */
+export interface StorageDirInfo {
+  key: string;
+  path: string;
+  bytes: number;
+  exists: boolean;
+  /** 文件数封顶或 IO 失败时为下界估计。 */
+  approx: boolean;
+  /** 是否支持「在系统中打开」（仅目录型位置）。 */
+  openable: boolean;
+}
+
+export interface StorageOverview {
+  toml_path: string | null;
+  dirs: StorageDirInfo[];
+}
+
+/** 可清理缓存类别（id: proc_temp | gate_tmp | adapters_log）。 */
+export interface StorageCacheCategory {
+  id: string;
+  path: string;
+  bytes: number;
+  files: number;
+  approx: boolean;
+}
+
+export interface StorageCachesResponse {
+  caches: StorageCacheCategory[];
+}
+
+export interface StorageCleanResult {
+  ok: boolean;
+  removed_bytes: number;
+  removed_files: number;
+}
+
 export interface LlmProvider {
   id: string;
   name: string;

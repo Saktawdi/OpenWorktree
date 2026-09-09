@@ -27,17 +27,18 @@ export { draftCatalogFromOc, splitModelRef } from "./model";
 export type { PermissionResponse } from "./model";
 export { focusComposer, insertIntoComposer, registerComposerBridge } from "./composerBridge";
 export { applyTodosSnapshot, dropSessionTodos } from "./todos";
-export {
-  addMessageToQueue,
-  removeQueuedMessage,
-  popQueuedMessageToInput,
-  reorderQueuedMessages,
-  clearSessionQueue,
-  kickQueuePump,
-  setFollowUpBehavior,
-  getQueuedMessages,
-  EMPTY_QUEUE,
-} from "./queue";
+export {                                                                                                  
+  addMessageToQueue,                                                                                        
+  removeQueuedMessage,                                                                                      
+  popQueuedMessageToInput,                                                                                  
+  reorderQueuedMessages,                                                                                    
+  clearSessionQueue,                                                                                        
+  clearAllQueuedMessages,                                                                                   
+  kickQueuePump,                                                                                            
+  setFollowUpBehavior,                                                                                      
+  getQueuedMessages,                                                                                        
+  EMPTY_QUEUE,                                                                                              
+} from "./queue";                                                                                           
 export {
   setSessionModels,
   setSessionModelSel,
