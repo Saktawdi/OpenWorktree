@@ -347,9 +347,9 @@ export function QuotesManager({
   const [draft, setDraft] = useState<Draft | null>(null);
   const [importOpen, setImportOpen] = useState(false);
   const [importText, setImportText] = useState("");
-  const [notice, setNotice] = useState<{ text: string; bad: boolean } | null>(null);
   const [mcpTools, setMcpTools] = useState<McpToolInfo[] | null>(null);
   const [mcpError, setMcpError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<{ text: string; bad: boolean } | null>(null);
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -577,17 +577,16 @@ export function QuotesManager({
 
       {/* 划选代码交互设置（划选弹出菜单的「引用并追问」） */}
       <div className="rounded-xl border border-edge bg-raised/40 p-3.5 space-y-3 mt-4">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-3">
           <div>
             <div className="text-[13px] font-semibold text-ink">划选交互：「引用并追问」</div>
             <div className="text-[11.5px] text-faint mt-0.5">
               在工单会话或代码对比区域划选文本时，是否在快捷菜单中显示本动作
             </div>
           </div>
-          <label className="relative inline-flex items-center cursor-pointer">
+          <label className="qq-toggle">
             <input
               type="checkbox"
-              className="sr-only peer"
               checked={selSettings.enabled}
               disabled={!canConfigureSelection}
               onChange={(e) => {
@@ -595,7 +594,8 @@ export function QuotesManager({
                 say(e.target.checked ? "已启用划选交互" : "已关闭划选交互");
               }}
             />
-            <div className="w-9 h-5 bg-edge-strong peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-accent" />
+            <span className="qq-toggle-track" aria-hidden />
+            <span className="qq-toggle-thumb" aria-hidden />
           </label>
         </div>
 

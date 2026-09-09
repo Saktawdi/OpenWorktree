@@ -6,7 +6,9 @@
 import { useEffect, useState } from "react";
 import {
   ArrowClockwise,
+  CaretDown,
   PuzzlePiece,
+  PencilSimple,
   Spinner,
   WarningCircle,
 } from "@phosphor-icons/react";
@@ -47,6 +49,12 @@ function statusView(p: PluginView): { label: string; cls: string } {
 
 function PluginCard({ plugin }: { plugin: PluginView }) {
   const [busy, setBusy] = useState(false);
+  // 管理面板默认折叠：点头部（编辑图标/箭头）展开，避免多插件时设置页被各插件面板撑爆
+  const [expanded, setExpanded] = useState(false);
+  // 该插件是否注册了 settings.plugins 面板——没有面板的卡片无折叠语义，头部不可点
+  const hasPanel = usePlugins(
+    (s) => s.contributions.some((c) => c.pluginId === plugin.id && c.slot === "settings.plugins"),
+  );
   const status = statusView(plugin);
   const enabled = plugin.status !== "off";
 
@@ -63,7 +71,11 @@ function PluginCard({ plugin }: { plugin: PluginView }) {
 
   return (
     <div className="card overflow-hidden">
-      <div className="px-4 py-3.5 flex items-start gap-3">
+      <div
+        className={`px-4 py-3.5 flex items-start gap-3 ${hasPanel ? "cursor-pointer select-none" : ""}`}
+        onClick={hasPanel ? () => setExpanded((v) => !v) : undefined}
+        title={hasPanel ? (expanded ? "收起设置面板" : "展开设置面板") : undefined}
+      >
         <span className="w-8 h-8 rounded-lg bg-raised border border-edge grid place-items-center shrink-0">
           <PuzzlePiece size={15} className={enabled ? "text-accent" : "text-faint"} />
         </span>
@@ -75,20 +87,51 @@ function PluginCard({ plugin }: { plugin: PluginView }) {
             </span>
             <span className={`chip border ${status.cls}`}>{status.label}</span>
             <span className="flex-1" />
+            {hasPanel && expanded && (
+              <button
+                className="icon-btn"
+                title="收起设置面板"
+                aria-label={`收起设置面板 ${plugin.name}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setExpanded(false);
+                }}
+              >
+                <CaretDown size={14} />
+              </button>
+            )}
+            {hasPanel && !expanded && (
+              <button
+                className="icon-btn"
+                title="编辑：展开设置面板"
+                aria-label={`编辑插件 ${plugin.name}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setExpanded(true);
+                }}
+              >
+                <PencilSimple size={14} />
+              </button>
+            )}
             <button
               className="icon-btn"
               title="重载：停用后以最新产物重新加载（改了插件 dist 后点这里）"
               aria-label={`重载插件 ${plugin.name}`}
               disabled={busy}
-              onClick={withBusy(() => reloadPluginById(plugin.id))}
+              onClick={(e) => {
+                e.stopPropagation();
+                withBusy(() => reloadPluginById(plugin.id))();
+              }}
             >
               <ArrowClockwise size={14} />
             </button>
-            <EnabledSwitch
-              on={enabled}
-              disabled={busy}
-              onToggle={withBusy(() => togglePlugin(plugin.id, !enabled))}
-            />
+            <div onClick={(e) => e.stopPropagation()}>
+              <EnabledSwitch
+                on={enabled}
+                disabled={busy}
+                onToggle={withBusy(() => togglePlugin(plugin.id, !enabled))}
+              />
+            </div>
           </div>
           {plugin.description && (
             <div className="mt-1 text-[12px] text-dim leading-relaxed">{plugin.description}</div>
@@ -108,24 +151,26 @@ function PluginCard({ plugin }: { plugin: PluginView }) {
           )}
         </div>
       </div>
-      {/* 该插件的管理面板：与插件信息同卡，分区线上方是插件本体，下方是它的设置区。
+      {/* 该插件的管理面板：与插件信息同卡，默认折叠、点头部（铅笔图标）展开。
           插件停用/重载期间贡献点被移除，此区自动消失，卡片收合成纯信息条。 */}
-      <PluginSlot
-        name="settings.plugins"
-        pluginId={plugin.id}
-        wrap={(node, { contribution }) => {
-          const widget = contribution as PanelWidgetContribution;
-          return (
-            <div className="border-t border-edge px-4 py-3.5">
-              <div className="flex items-center gap-1.5 mb-3">
-                <PuzzlePiece size={11} className="text-faint shrink-0" />
-                <span className="text-[11px] font-medium text-faint">{widget.title ?? plugin.id}</span>
+      {hasPanel && expanded && (
+        <PluginSlot
+          name="settings.plugins"
+          pluginId={plugin.id}
+          wrap={(node, { contribution }) => {
+            const widget = contribution as PanelWidgetContribution;
+            return (
+              <div className="border-t border-edge px-4 py-3.5">
+                <div className="flex items-center gap-1.5 mb-3">
+                  <PuzzlePiece size={11} className="text-faint shrink-0" />
+                  <span className="text-[11px] font-medium text-faint">{widget.title ?? plugin.id}</span>
+                </div>
+                {node}
               </div>
-              {node}
-            </div>
-          );
-        }}
-      />
+            );
+          }}
+        />
+      )}
     </div>
   );
 }
