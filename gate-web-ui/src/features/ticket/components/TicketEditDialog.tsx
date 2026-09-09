@@ -128,15 +128,15 @@ export function TicketEditDialog() {
             </div>
           </div>
 
-          <div className={focus ? "flex-1 min-h-0 flex flex-col" : ""}>
-            <div className="flex items-center gap-2">
+          <div className={focus ? "flex-1 min-h-[240px] flex flex-col" : ""}>
+            <div className="flex items-center gap-2 shrink-0">
               <label className="field-label">描述</label>
               <span className="flex-1" />
               <span className="font-mono text-[10.5px] text-faint">{description.length} 字</span>
             </div>
             <textarea
               className={`text-input py-2 resize-none leading-relaxed ${
-                focus ? "flex-1 min-h-[320px] !h-auto font-mono text-[12.5px]" : "h-40"
+                focus ? "flex-1 min-h-0 !h-auto font-mono text-[12.5px]" : "h-40"
               }`}
               placeholder="背景、验收标准…"
               value={description}

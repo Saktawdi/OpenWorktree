@@ -118,7 +118,7 @@ function NewTicketButton() {
               <div>
                 <label className="field-label">描述（可选）</label>
                 <textarea
-                  className="text-input h-16 py-2 resize-none"
+                  className="text-input h-40 py-2 resize-none"
                   placeholder="背景、验收标准…"
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
