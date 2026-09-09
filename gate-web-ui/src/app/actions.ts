@@ -38,9 +38,11 @@ import {
 import {
   archiveSession as archiveSessionLocal,
   clearDraftModelSel,
+  clearSessionInterrupted,
   createSessionGroup as createSessionGroupLocal,
   deleteSession as deleteSessionLocal,
   deleteSessionGroup as deleteSessionGroupLocal,
+  dismissSessionAsks,
   moveSessionToGroup as moveSessionToGroupLocal,
   renameSession as renameSessionLocal,
   restoreSession as restoreSessionLocal,
@@ -520,9 +522,25 @@ export const actions = {
     deleteSessionLocal(no, id);
   },
   switchSession(no: string, id: string) {
+    // 与运行监控「前往处理」同语义：点开待回答/中断的会话即视为已关注——
+    // 该会话名下的待决登记与中断标记一并清除（顶栏 chip 黄组/工单徽标/会话小圆点
+    // 随之消退），忽略表防止慢节拍重拉重新点亮；卡片由下方补拉恢复。
+    // 只清当前点开的会话：其它会话的提醒保持原样。
+    dismissSessionAsks(id);
+    clearSessionInterrupted(id);
     if (appStore.getState().mode === "live") {
       switchSessionLocal(no, id);
-      void loadSessionMessages(no, id).catch(() => {});
+      // 历史重建（整表替换聊天视图）后再补拉未决的权限/提问卡片——顺序与
+      // selectTicketLive 一致，否则卡片先挂后视图被冲掉；被忽略的 id 不会重新点亮。
+      void loadSessionMessages(no, id)
+        .catch(() => {})
+        .then(() => {
+          // 与 selectTicketLive 同门槛：仅活跃会话恢复未决卡片（归档会话无可答项）
+          const sess = (appStore.getState().sessions[no] ?? []).find((x) => x.id === id);
+          if (sess?.status !== "active") return;
+          void loadSessionPermissions(no, id);
+          void loadSessionQuestions(no, id);
+        });
       void loadSessionCatalog(no, id);
       return;
     }
