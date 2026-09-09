@@ -20,7 +20,7 @@
   <a href="#界面展示">界面展示</a> ·
   <a href="#核心流程">核心流程</a> ·
   <a href="#mcp-工具">MCP 工具</a> ·
-  <a href="#插件生态">插件生态</a> ·
+  <a href="#插件">插件</a> ·
   <a href="#快速开始">快速开始</a>
 </p>
 <p align="center">
@@ -29,10 +29,6 @@
 
 
 OpenWorktree 是一个本地优先的工单驱动开发工作台。它把「一张工单 = 一次受控的开发交付」作为最小闭环：工单派给编码智能体，在专属的隔离克隆里写代码；提交前锁定快照并执行门禁审查，发现与判决全程留痕；审查通过后，以可追溯的身份安全发布回目标分支。
-
-## 为什么是 OpenWorktree
-
-AI 编码不应该只留下一个「看起来改好了」的结果。OpenWorktree 把 Agent 的执行范围、代码变更、审查证据和最终发布串在同一张工单里，让开发者可以在不污染主仓库的前提下快速试错，并在发布前回答三个问题：改了什么、为什么能过、谁批准了发布。
 
 ## 界面展示
 
@@ -121,12 +117,6 @@ OpenWorktree 内置一套 MCP（Model Context Protocol）stdio 服务器，是 A
 | `config_show` | Human | 查看门禁生效配置（路径、目标引用、引擎状态） |
 | `provider_list` | Human | 列出已配置的 LLM Provider 及其缓存模型 |
 
-安全设计：
-
-- **判决权不在 Agent 手里**：`review_run` 与 `commit_and_publish` 永不进入 Agent 域——否则 Agent 可以反复跑审查直到碰运气通过。判决始终由门禁策略铸造。
-- **凭据最小化**：会话令牌按会话签发、绑定单张工单，通过 `GATE_DOMAIN_TOKEN` 环境变量传递（不经 argv），明文只存在于子进程与克隆的 `.git/gate-context/` 内，不会出现在工单 diff 中。
-- **可独立编排**：也可以脱离工作台手工使用——`gate mcp serve` 启动 stdio 服务器，`gate mcp issue-token --ticket T-101`（或 `--human`）签发对应权限域的令牌；明文只打印一次，数据库只存 SHA-256 哈希。
-
 ## 核心特性
 
 - **工单看板**：六泳道看板，拖拽即流转；门禁泳道会执行对应的预提审、审查和发布操作。
@@ -137,31 +127,17 @@ OpenWorktree 内置一套 MCP（Model Context Protocol）stdio 服务器，是 A
 - **可追溯审查**：快照、差异、发现、判决、修复和审计日志形成完整证据链。
 - **安全发布**：发布需要授权，提交身份可控，目标分支与发布结果明确可见。
 - **终端工作台**：多标签终端可直连工单克隆目录，支持最小化后台与进程保活。
-- **插件系统**：对话快捷动作、划选菜单、设置挂件与整页导航四类贡献点，契约唯一来源仓库内 SDK（见 [插件生态](#插件生态)）。
+- **插件系统**：对话快捷动作、划选菜单、设置挂件与整页导航四类贡献点，契约唯一来源仓库内 SDK（见 [插件](#插件)）。
 - **本地优先**：服务绑定回环地址，SQLite、本地 blob 和令牌都存放在运行目录内，拷贝即可迁移。
 - **双主题**：暗 / 亮主题随切，OW 徽章配套昼夜过渡动画。
 
-## 插件生态
+## 插件
 
-宿主对插件开放六个贡献点——对话区快捷动作（`composer.chips`）、划选文字菜单（`selection.menu`）、
-设置中心管理挂件（`settings.plugins`）、顶栏整页（`nav.pages`）、顶栏右上角胶囊动作
-（`header.actions`）与全局悬浮挂件（`floating.widgets`）；插件按 manifest 声明能力：
-`kv`（插件命名空间 KV 持久化，落 `<gateHome>/plugins-data/<id>/`）、`net`（注入 Web Token 的
-同源 `/api/` 请求）、`storage`（浏览器 localStorage，键前缀按插件隔离）、`llm`（走宿主已配置
-Provider 的对话），未声明的能力调用直接抛错。插件**不打包自己的 React**——经共享 shim 用宿主
-同一个 React 实例，样式可沿用宿主全局工具类。安全边界为 Level 1 本地可信：插件与页面脚本同级权限，
-只安装可信来源（详见 plugin-template 的「信任模型」）。
+宿主以插槽向插件开放界面贡献点
 
-- **契约唯一来源**：[packages/plugin-sdk](packages/plugin-sdk/README.md)（README 含完整能力表、
-  插槽清单、事件总线与冻结语义）——宿主 re-export 同一份类型，**不允许任何工程再维护
-  host-types 镜像**
-- **开发起点**：[plugin-template/](plugin-template/README.md)（README 含生命周期、共享 React
-  原理与常见问题），复制即开工
-- **内置插件**：[plugins/quick-quotes](plugins/quick-quotes/README.md) 快捷语录（增删改查、
-  拖拽排序、按工单状态显隐；发送消息 / 触发宿主预提审与按意见修复 / 指示 Agent 调 MCP 工具三类动作）
-- **安装**：插件工程内 `npm run deploy` 一键装进运行中的实例——自动探测在线后端的
-  `gate_home`（逐个候选 `gate.toml` 做 `/api/health` 探活），全离线才回退仓库 `local-run/gate-home`；
-  改代码后 `npm run build` → 设置 → 插件 →「重载」
+- 贡献点接口可看：[packages/plugin-sdk](packages/plugin-sdk/README.md)（能力表、插槽清单、事件总线、生命周期与冻结语义）
+- 开发起点：[plugin-template](plugin-template/README.md)（生命周期、共享 React 原理、信任模型与常见问题）
+- 示例：[plugins/quick-quotes](plugins/quick-quotes/README.md)（快捷语录插件）
 
 ## 架构
 
@@ -254,7 +230,6 @@ RUN npm install -g @anthropic-ai/claude-code && npm cache clean --force
 
 <details>
 <summary><b>还没有环境？各系统一键安装</b></summary>
-
 **Windows**（winget）：
 
 ```powershell
@@ -358,21 +333,8 @@ java -cp "gate-cli/target/classes:gate-cli/target/dependency/*" gate.cli.GateApp
 
 ### 常见问题
 
-- **端口 18080 被占用**：修改 `local-run/gate.toml` 中 `[web].port`，并让前端代理指向新端口：`VITE_BACKEND_URL=http://127.0.0.1:<新端口> npm run dev`。
 - **后端起不来**：多数是漏了第 1 步的两条构建命令；看启动终端报错的第一行即可定位。
-- **令牌文件、数据库等都落在 `local-run/`**：整目录不入库，整目录拷走即可迁移。
-
-### 测试分层
-
-全量套件约 17 分钟（真实 Git 操作、Javalin 端到端、故障注入），日常迭代用分层 profile 控制反馈速度。分层靠 JUnit `@Tag("slow")`：打标的是**起真实服务器/Git 仓库的端到端、故障注入/崩溃恢复、真实 CLI smoke**——即崩溃、并发、重放、错权、SSE 断线、任务恢复这类慢而关键的路径；不打标的是纯单元、HTTP 契约、内存协议测试。
-
-| 命令 | 跑什么 | 耗时 |
-|------|--------|------|
-| `mvn test`（默认，等同 `-Pfast`） | 不打 slow 标签的全部测试 | 约 1 分钟 |
-| `mvn test -Pintegration` | **只跑** slow 层（端到端/故障注入/smoke） | 约 15 分钟 |
-| `mvn test -Pfull` | 全量（提交前 / 发版前跑一次） | 约 17 分钟 |
-
-约定：日常开发 `mvn test`；推前置验证 `mvn test -Pintegration`；提交前的最终确认与发版用 `-Pfull`。CI 流水线（native-build / docker-publish）目前 `-DskipTests` 不受影响。
+- 网页端**令牌文件、数据库等都落在 `local-run/`**：整目录不入库，整目录拷走即可迁移。
 
 ## 路线图
 
