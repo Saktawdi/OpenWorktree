@@ -143,18 +143,22 @@ OpenWorktree 内置一套 MCP（Model Context Protocol）stdio 服务器，是 A
 
 ## 插件生态
 
-宿主对插件开放四个贡献点——对话区快捷动作（`composer.chips`）、划选文字菜单（`selection.menu`）、
-设置中心管理挂件（`settings.plugins`）与顶栏整页（`nav.pages`）；插件按 manifest 声明能力：
+宿主对插件开放六个贡献点——对话区快捷动作（`composer.chips`）、划选文字菜单（`selection.menu`）、
+设置中心管理挂件（`settings.plugins`）、顶栏整页（`nav.pages`）、顶栏右上角胶囊动作
+（`header.actions`）与全局悬浮挂件（`floating.widgets`）；插件按 manifest 声明能力：
 `kv`（插件命名空间 KV 持久化，落 `<gateHome>/plugins-data/<id>/`）、`net`（注入 Web Token 的
-同源 `/api/` 请求），未声明的能力调用直接抛错。插件**不打包自己的 React**——经共享 shim 用宿主
+同源 `/api/` 请求）、`storage`（浏览器 localStorage，键前缀按插件隔离）、`llm`（走宿主已配置
+Provider 的对话），未声明的能力调用直接抛错。插件**不打包自己的 React**——经共享 shim 用宿主
 同一个 React 实例，样式可沿用宿主全局工具类。安全边界为 Level 1 本地可信：插件与页面脚本同级权限，
 只安装可信来源（详见 plugin-template 的「信任模型」）。
 
-- **契约唯一来源**：`packages/plugin-sdk`（README 含能力表、事件总线与冻结语义）——宿主
-  re-export 同一份类型，**不允许任何工程再维护 host-types 镜像**
-- **开发起点**：`plugin-template/`（README 含生命周期、共享 React 原理与常见问题），复制即开工
-- **内置插件**：`plugins/quick-quotes` 快捷语录（增删改查、拖拽排序、按工单状态显隐；发送消息 /
-  触发宿主预提审与按意见修复 / 指示 Agent 调 MCP 工具三类动作）
+- **契约唯一来源**：[packages/plugin-sdk](packages/plugin-sdk/README.md)（README 含完整能力表、
+  插槽清单、事件总线与冻结语义）——宿主 re-export 同一份类型，**不允许任何工程再维护
+  host-types 镜像**
+- **开发起点**：[plugin-template/](plugin-template/README.md)（README 含生命周期、共享 React
+  原理与常见问题），复制即开工
+- **内置插件**：[plugins/quick-quotes](plugins/quick-quotes/README.md) 快捷语录（增删改查、
+  拖拽排序、按工单状态显隐；发送消息 / 触发宿主预提审与按意见修复 / 指示 Agent 调 MCP 工具三类动作）
 - **安装**：插件工程内 `npm run deploy` 一键装进运行中的实例——自动探测在线后端的
   `gate_home`（逐个候选 `gate.toml` 做 `/api/health` 探活），全离线才回退仓库 `local-run/gate-home`；
   改代码后 `npm run build` → 设置 → 插件 →「重载」
@@ -213,7 +217,7 @@ docker compose logs openworktree | grep GATE_WEB_TOKEN   # 复制登录令牌 �
 
 打开 <http://localhost:8080>。
 
-要点：
+注意：
 
 - **镜像内容**：JDK 17 + git + nginx + 构建好的前端 + **opencode（项目默认 Agent CLI，内置，Agent 会话开箱即用）**。工单、审查、发布、隔离终端不依赖外部环境；Claude Code 按下面方式扩装。
 - **安全边界不变**：后端只能绑容器内回环（`GateConfig.WebConfig` fail-closed），对外界只有一个 nginx；`allowed_origins` Host 白名单照旧生效——局域网访问记得填 `OW_ALLOWED_ORIGINS`。
@@ -229,16 +233,13 @@ RUN npm install -g @anthropic-ai/claude-code && npm cache clean --force
 
 从源码自构建（开发时）：仓库根目录 `docker compose up -d --build`，build-arg `INSTALL_CLAUDE=true` 让 Claude Code 随镜像出来。
 
-### 方式二：Windows 桌面版
+### 方式二：Windows 桌面版（推荐，需CLI环境）
 
-Windows 上用桌面壳最省事：Tauri v2 壳内置后端单文件（GraalVM native-image，免装 JDK），
-双击即用——启动自动登录、关窗收进系统托盘常驻，不用记 `GATE_WEB_TOKEN`。
+双击即用——启动自动登录。
 前置只需本机 `git`（跑 Agent 会话再按需装对应 CLI，如 opencode / Claude Code）。
 
-- 安装包随 GitHub Releases 发布（「未公开先行者」阶段请从作者渠道获取，或按
-  `desktop/README.md` 自行构建）；
-- 数据默认落安装目录 `data\`（工单克隆随安装盘走），卸载可保留（移至 `%APPDATA%\OpenWorktree`）
-  或删除；后端契约与 Docker / 源码方式完全一致。
+- 安装包随 GitHub Releases 发布（另可按照`desktop/README.md` 自行构建）；
+- 数据默认落安装目录 `data\`（工单克隆随安装盘走），卸载可保留（移至 `%APPDATA%\OpenWorktree`）或删除；后端契约与 Docker / 源码方式完全一致。
 
 ### 方式三：本地开发（源码）
 

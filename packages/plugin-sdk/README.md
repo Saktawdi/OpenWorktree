@@ -27,10 +27,17 @@ export default defineConfig({ resolve: { alias: pluginReactAliases() }, /* … *
 
 ### 能力与权限（manifest.permissions 后端单一事实来源）
 
-| 能力 | API | 说明 |
+未声明的能力对应 ctx 成员为 `null`（或调用抛错）；manifest 声明列表形如
+`["kv", "net"]`。
+
+| 能力 | ctx 注入 | 说明 |
 |---|---|---|
-| `kv` | `ctx.kv.get/set/del` | 插件命名空间 KV，数据落 `<gateHome>/plugins-data/<id>/` |
-| `net` | `ctx.hostFetch(path, init)` | 注入 Web Token 的同源 `/api/` 请求；未声明即抛错 |
+| `kv` | `ctx.kv.get/set/del` | 插件命名空间 KV，数据落 `<gateHome>/plugins-data/<id>/`，后端按插件隔离 |
+| `net` | `ctx.hostFetch(path, init)` | 注入 Web Token 的同源 `/api/` 相对路径请求（method 限 GET/POST/PUT/DELETE）；未声明即抛错，非 `/api/` 路径也抛错 |
+| `storage` | `ctx.storage.getItem/setItem/removeItem/clear` | 浏览器 localStorage，键自动加 `gate_plugin_<id>:` 前缀按插件隔离（不跨插件、不随工单） |
+| `llm` | `ctx.llm.chat / ctx.llm.chatStream` | 走宿主已配置的 LLM Provider 的单次/流式对话（`messages` 必填；`providerId / model / temperature / maxTokens` 可选——缺省取第一个已配置的 Provider 及其首个模型） |
+
+`ctx.log(...)` 恒可用（控制台输出带 `[plugin:<id>]` 前缀），无需权限。
 
 ### 贡献点（宿主区域插槽）
 
@@ -40,6 +47,11 @@ export default defineConfig({ resolve: { alias: pluginReactAliases() }, /* … *
 | `ctx.registerSelectionAction(c)` | `selection.menu` | 动作型 | 划选页面文字弹出菜单的动作（如「添加到 xxx」）。**内置「添加到对话框」不在注册表**，插件动作追加在其后；`when({ text })` 按划选文本显隐，`run(api, text)` 里可 `api.addToComposer(text) / insertText(text) / toast(text)` |
 | `ctx.registerPanelWidget(w)` | `settings.plugins` | 渲染型 | 设置中心「插件」分区的面板挂件 |
 | `ctx.registerPage(p)` | `nav.pages` | 渲染型 | 顶栏导航整页（`order` 升序、缺省 100）；插件禁用/重载时宿主自动关闭打开中的页面 |
+| `ctx.registerHeaderAction(a)` | `header.actions` | 渲染型 | 顶栏右上角胶囊动作区（`order` 升序、缺省 100）；LLM 小助手已原生化进宿主，此槽开放给第三方胶囊动作 |
+| `ctx.registerFloatingWidget(w)` | `floating.widgets` | 渲染型 | 全局悬浮挂件（全视口自由浮动挂载，如可拖拽的 mini 对话面板） |
+
+渲染型区域的 `render()` 返回 React 节点，经共享 shim 用**宿主同一个 React 实例**，
+可用 hooks、可直接用宿主全局样式类。
 
 动作型区域的 `ChatInputState` 快照：`ticketNo / mode / busy / terminal / stage / diffs / findingsCount / restartCount`。
 `ChatActionApi`：`insertText / sendPrompt / presubmit / returnWithFindings / toast`。
@@ -73,6 +85,9 @@ export function activate(ctx: PluginContext): Disposable | void
 - `SUPPORTED_API_VERSION`（本包导出）与后端 `gate.web.plugin.PluginManifest#SUPPORTED_API_VERSION`
   **跨语言各持一份**，升级代次时两处 + CHANGELOG 必须同步；manifest 校验以后端为唯一闸门。
 - 已发布字段/事件不可改名、删除或收窄；演进只做增量（新增可选字段、新增 ctx 方法、新增事件）。
+- 同代次内允许的增量（`apiVersion="1"` 下已追加过）：`selection.menu` / `nav.pages` /
+  `header.actions` / `floating.widgets` 插槽与 `storage` / `llm` 权限、`ctx.log`——插件按需探测
+  ctx 成员是否为 `null` 即可向下兼容，无需升代次。
 
 ## 红线
 

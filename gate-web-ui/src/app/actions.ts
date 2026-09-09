@@ -26,6 +26,8 @@ import { setVerdict } from "@/features/gate/state";
 import {
   loadSessionCatalog,
   loadSessionMessages,
+  loadSessionPermissions,
+  loadSessionQuestions,
   patchSessionLive,
   deleteSessionLive,
   switchSessionModelLive,

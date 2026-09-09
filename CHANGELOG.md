@@ -13,7 +13,7 @@
 ### 优化
 
 - **新建工单描述框同步加高**：新建工单表单的描述编辑框此前仍是 4 行小框，与编辑弹窗普通模式加高后的体验不一致；现同步加高至 8 行（h-16 → h-40），长描述录入不再憋屈
-- **桌面 dev 垫片收敛到 sidecar-jvm-shim（文档与开发工具整理）**：移除被取代的 `desktop/dev-shim-ow`（含已入库的 `ow-x86_64-pc-windows-msvc.exe.devshim-backup` 残留），`desktop/README.md` 本地 dev 节改写为现行垫片的用法（仓库根逐级探测 / `.sidecar-classpath` junction 伺服 SPA / kill-on-close 防孤儿），备份后缀统一为 `.shim-backup`；主 README 增补「插件生态」章节（SDK 契约 / 模板 / quick-quotes / deploy 探活安装）与快速开始「方式二：Windows 桌面版」
+- **桌面 dev 垫片收敛到 sidecar-jvm-shim（文档与开发工具整理）**：移除被取代的 `desktop/dev-shim-ow`（含已入库的 `ow-x86_64-pc-windows-msvc.exe.devshim-backup` 残留），`desktop/README.md` 本地 dev 节改写为现行垫片的用法（仓库根逐级探测 / `.sidecar-classpath` junction 伺服 SPA / kill-on-close 防孤儿），备份后缀统一为 `.shim-backup`；主 README 增补「插件生态」章节（SDK 契约 / 模板 / quick-quotes / deploy 探活安装，并直链各 README）与快速开始「方式二：Windows 桌面版」；plugin-sdk README 同步到现行契约（六插槽：+header.actions / floating.widgets；四权限：+storage / llm；同代次增量语义）
 
 ## 0.3.7（未发行）
 
