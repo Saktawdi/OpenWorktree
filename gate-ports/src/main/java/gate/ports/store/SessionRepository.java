@@ -50,6 +50,32 @@ public interface SessionRepository {
         return Optional.empty();
     }
 
+    /**
+     * Upserts the claude session's task journal (V24 TaskCreate/TaskUpdate 平行链)：
+     * {@code tasksJson} 为规范 ClaudeTaskItem[] JSON（"[]" = 空列表）。与 todos 不同，
+     * 这里的值是事件累积结果而非全量快照——调用方（累加器）负责读-改-写。
+     */
+    default void upsertTasks(String sessionId, String tasksJson) {
+        throw new UnsupportedOperationException("upsertTasks is not supported");
+    }
+
+    /**
+     * Returns the claude session's task journal JSON (规范 ClaudeTaskItem[])，无行返回
+     * empty。实现方可在此做 lazy 回填（扫历史 parts 全量重放 TaskCreate/TaskUpdate）。
+     */
+    default Optional<String> findTasks(String sessionId) {
+        return Optional.empty();
+    }
+
+    /**
+     * Returns the session's tool timeline parts (V20 parts_blob) flattened in rowid order —
+     * claude 任务 journal 回放的确定性事件源（name/arguments/result 三元组序列）。
+     * 轻量查询：只取 parts_blob，不触碰 content blob store。
+     */
+    default List<gate.domain.session.TurnPart> findToolParts(String sessionId) {
+        throw new UnsupportedOperationException("findToolParts is not supported");
+    }
+
     /** Deletes the session row (workbench session-list removal). Messages must go first — FK. */
     void delete(String id);
 

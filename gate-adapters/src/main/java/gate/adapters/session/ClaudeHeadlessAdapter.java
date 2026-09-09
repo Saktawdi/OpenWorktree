@@ -236,7 +236,7 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
         writeContext(contextFile, request.ticketNo(), request.targetRef(), config);
         writeMcpConfig(mcpConfig, request.env());
 
-        PlannedArgv argv = buildArgv(config, contextFile, mcpConfig, null, request.initialPrompt());
+        PlannedArgv argv = buildArgv(config, contextFile, mcpConfig, null, request.initialPrompt(), null, null, null);
         Session session = new Session(
                 sessionId, request.ticketNo(), config.id(), AgentCli.CLAUDE, SessionStatus.ACTIVE,
                 null, request.clonePath(), -1, now, null, SessionUsage.EMPTY, null, false);
@@ -284,6 +284,8 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
                             i == texts.size() - 1 ? actualModelId(parsed, argv.requestModelId()) : null,
                             i == texts.size() - 1 ? argv.requestVariant() : null);
                 }
+                // claude 任务 journal 终态重放：parts 已持久化，按历史全量校正乐观 id/幽灵条目。
+                replayClaudeTasks(sessionId);
             }
             if (parsed.usage() != null) {
                 withUsage = withUsage.withCumulativeUsage(parsed.usage());
@@ -429,6 +431,26 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
             }
         }
 
+        /**
+         * V24 claude 任务 journal（live 阶段）：TaskCreate/TaskUpdate 参数拼齐即读-改-写
+         * session_task，不等整回合落库。live 时 result 未到，TaskCreate 的 id 由
+         * {@link ClaudeTaskSnapshots} 按 max+1 乐观分配；终态重放会按 parts 的
+         * result_json 整表校正。journal 失败只吞掉——派生数据，绝不影响回合流。
+         */
+        private void journalClaudeTask(String name, String inputJson) {
+            if (!ClaudeTaskSnapshots.isWriteTool(name)) {
+                return;
+            }
+            try {
+                String current = sessions.findTasks(sessionId).orElse("[]");
+                String next = ClaudeTaskSnapshots.applyJson(current, name, inputJson, null);
+                if (next != null) {
+                    sessions.upsertTasks(sessionId, next);
+                }
+            } catch (Exception ignored) {
+            }
+        }
+
         void line(String line) {
             if (line == null || line.isBlank()) {
                 return;
@@ -482,6 +504,7 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
                     StringBuilder accumulated = toolInputs.remove(index);
                     if (accumulated != null) {
                         journalTodoSnapshot(toolNames.get(index), accumulated.toString());
+                        journalClaudeTask(toolNames.get(index), accumulated.toString());
                     }
                     // 终态帧携带拼齐的完整参数（无参数工具即 "{}"），前端按快照替换定格。
                     emitChunk(sessionId, new SessionStreamChunk.ToolCallChunk(sessionId,
@@ -512,8 +535,10 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
             // Always continue the recorded CLI conversation: a per-message spawn needs --resume
             // to stay in the same conversation, and the fresh read also picks up a session id a
             // still-running previous send has written after this task was enqueued.
+            // permissionMode 同样取 fresh read：轮询切换在下一回合（本进程）生效。
             PlannedArgv planned = buildArgv(config, contextFile, mcpConfig,
-                    latest.cliSessionId(), message, latest.overrideModel(), latest.overrideVariant());
+                    latest.cliSessionId(), message, latest.overrideModel(), latest.overrideVariant(),
+                    latest.permissionMode());
             StreamEcho echo = new StreamEcho(session.id());
             ProcessRunner.ProcRun run = processRunner.runStreaming(planned.argv(), clone, Map.of(), Duration.ofMinutes(10),
                     echo::line, null);
@@ -538,6 +563,8 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
                             i == texts.size() - 1 ? actualModelId(parsed, planned.requestModelId()) : null,
                             i == texts.size() - 1 ? planned.requestVariant() : null);
                 }
+                // claude 任务 journal 终态重放：parts 已持久化，按历史全量校正乐观 id/幽灵条目。
+                replayClaudeTasks(session.id());
                 if (parsed.usage() != null) {
                     emitChunk(session.id(), new SessionStreamChunk.UsageChunk(session.id(), parsed.usage(), now));
                 }
@@ -578,6 +605,22 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
         }
     }
 
+    /**
+     * V24 claude 任务 journal 终态重放（B 方案·全量重建）：按消息历史 parts 从头重放
+     * TaskCreate/TaskUpdate 整表覆盖。journal 因此是历史的纯投影——live 阶段的乐观 id
+     * 错位、崩溃回合遗留的幽灵任务、TaskUpdate 的全字段变更都在这里一次性校正。
+     * 无任务事件的会话不落行（lazy 回填语义同源）。失败只吞掉：派生数据不影响回合流。
+     */
+    private void replayClaudeTasks(String sessionId) {
+        try {
+            String replayed = ClaudeTaskSnapshots.replayJson(sessions.findToolParts(sessionId));
+            if (replayed != null) {
+                sessions.upsertTasks(sessionId, replayed);
+            }
+        } catch (Exception ignored) {
+        }
+    }
+
     /** Planned argv plus the request-side model/variant attribution it pins (V22/V23 fallback source). */
     private record PlannedArgv(List<String> argv, String requestProvider, String requestModelId,
                                String requestVariant) {
@@ -596,13 +639,13 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
     }
 
     private PlannedArgv buildArgv(AgentConfig config, Path contextFile, Path mcpConfig,
-                                  String resumeSessionId, String prompt) {
-        return buildArgv(config, contextFile, mcpConfig, resumeSessionId, prompt, null, null);
+                                   String resumeSessionId, String prompt) {
+        return buildArgv(config, contextFile, mcpConfig, resumeSessionId, prompt, null, null, null);
     }
 
     private PlannedArgv buildArgv(AgentConfig config, Path contextFile, Path mcpConfig,
-                                  String resumeSessionId, String prompt, String overrideModel,
-                                  String overrideVariant) {
+                                   String resumeSessionId, String prompt, String overrideModel,
+                                   String overrideVariant, String permissionMode) {
         List<String> argv = new ArrayList<>();
         argv.add(claudeExecutable);
         argv.addAll(claudePrefix);
@@ -663,8 +706,11 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
             argv.add(mcpConfig.toString());
             argv.add("--strict-mcp-config");
         }
+        // 权限模式（V24）：读会话持久化的轮询档位，null 回退 acceptEdits（= 引入本列
+        // 之前的硬编码默认，存量会话行为不变）。headless -p 下实测直接生效（2.1.240），
+        // 无需 --dangerously-skip-permissions 组合。
         argv.add("--permission-mode");
-        argv.add("acceptEdits");
+        argv.add(permissionMode == null || permissionMode.isBlank() ? "acceptEdits" : permissionMode);
         if (prompt != null) {
             argv.add(prompt);
         }

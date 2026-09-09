@@ -27,7 +27,7 @@ import { fetchBlobUrl } from "@/net";
 import { stripImageCitations } from "@/shared/attachments";
 import type { ChatItem, TimelinePart, ToolCallView, ToolIconKind } from "@/shared/types";
 import { formatDuration } from "@/shared/format";
-import { friendlyToolName, isTodoTool, todoArgsSummary, compactToolArgs, compactToolResult } from "@/shared/todoUtils";
+import { friendlyToolName, isTodoTool, isClaudeTaskTool, todoArgsSummary, compactToolArgs, compactToolResult } from "@/shared/todoUtils";
 import { resolveToolIcon } from "@/features/session/model";
 import { parseQuotedText, stripQuoteMarkers } from "@/shared/quotes";
 import { PermissionCard } from "@/features/session/components/PermissionCard";
@@ -269,7 +269,7 @@ function derivePartToolView(part: Extract<TimelinePart, { type: "tool" }>): Tool
     name: friendlyToolName(part.name),
     toolName: part.name,
     args: part.arguments_json,
-    icon: todo ? "todo" : resolveToolIcon(part.name),
+    icon: todo || isClaudeTaskTool(part.name) ? "todo" : resolveToolIcon(part.name),
     argsSummary: todo ? todoArgsSummary(part.arguments_json) : compactToolArgs(part.name, part.arguments_json),
     resultSummary: compactToolResult(part.result_json),
     resultDetail: part.result_json ?? undefined,

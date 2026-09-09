@@ -10,7 +10,7 @@ import type {
   PermissionRequestView,
   QuestionRequestView,
 } from "@/shared/types";
-import { friendlyToolName, isTodoTool, parseTodos, todoArgsSummary as todoArgsSummaryImpl, compactToolArgs, compactToolResult } from "@/shared/todoUtils";
+import { friendlyToolName, isTodoTool, isClaudeTaskTool, parseTodos, todoArgsSummary as todoArgsSummaryImpl, compactToolArgs, compactToolResult } from "@/shared/todoUtils";
 import { stripImageCitations } from "@/shared/attachments";
 
 function sessionTimeLabel(at?: number): string {
@@ -32,6 +32,7 @@ export interface RawSession {
   override_model?: string | null;
   override_variant?: string | null;
   permission_auto_accept?: boolean | null;
+  permission_mode?: string | null;
 }
 
 export function mapSession(no: string, s: RawSession): ChatSession {
@@ -44,6 +45,7 @@ export function mapSession(no: string, s: RawSession): ChatSession {
     createdAt,
     updatedAt: s.updated_at ? Date.parse(s.updated_at) : createdAt,
     permissionAutoAccept: s.permission_auto_accept ?? false,
+    permissionMode: s.permission_mode ?? null,
     agentConfigId: s.agent_config_id ?? null,
     overrideProvider: s.override_provider ?? null,
     overrideModel: s.override_model ?? null,
@@ -191,7 +193,7 @@ export interface RawTurnPart {
 }
 
 function timelinePartIcon(toolName: string, todo: boolean): import("@/shared/types").ToolIconKind {
-  return todo ? ("todo" as const) : resolveToolIcon(toolName);
+  return todo || isClaudeTaskTool(toolName) ? ("todo" as const) : resolveToolIcon(toolName);
 }
 
 /**
@@ -260,7 +262,7 @@ export function mapHistoryMessage(m: RawMessage): ChatItem | null {
           name: friendlyToolName(toolName),
           toolName,
           args,
-          icon: todo ? ("todo" as const) : resolveToolIcon(toolName),
+          icon: todo || isClaudeTaskTool(toolName) ? ("todo" as const) : resolveToolIcon(toolName),
           argsSummary: todo ? todoArgsSummary(args) : compactToolArgs(toolName, args),
           resultSummary: compactToolResult(tc.result_json),
           resultDetail: tc.result_json,

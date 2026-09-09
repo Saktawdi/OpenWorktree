@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Check, ListChecks, CircleNotch } from "@phosphor-icons/react";
 import { NO_CHAT, useApp } from "@/store";
-import type { ChatItem, TodoItem } from "@/shared/types";
+import type { ChatItem, ClaudeTaskItem, TodoItem } from "@/shared/types";
 import { computeContextBreakdown,
   computeContextPercent,
   formatTokens,
@@ -11,7 +11,8 @@ import { todoProgress } from "@/shared/todoUtils";
 
 /**
  * 会话横条（CenterTabs）右侧的图标按钮组（openchamber 式）：
- * · 任务清单环 —— todowrite 进度（已完成/总数），点击弹出 todolist 面板；
+ * · 任务清单环 —— opencode todowrite 进度 / claude TaskCreate·TaskUpdate journal
+ *   （按 session.cli 三元挂载，两链互不相扰），点击弹出对应面板；
  * · 上下文环 —— 会话窗口占用（绿→黄→红 60/85 分档），点击弹出角色占比面板。
  * 无数据的图标自动隐藏；弹层从横条下方向下弹出，点击外部 / Esc 关闭。
  */
@@ -167,6 +168,109 @@ const TODO_GROUPS: Array<{ key: TodoItem["status"]; label: string; dot?: string 
   { key: "cancelled", label: "已取消" },
 ];
 
+/** claude 任务条目行（V24）：subject 为主文案，activeForm 是执行中动作描述，description 折叠为副文案。 */
+function ClaudeTaskRow({ task }: { task: ClaudeTaskItem }) {
+  const done = task.status === "completed";
+  const cancelled = task.status === "cancelled";
+  const working = task.status === "in_progress";
+  return (
+    <div className="flex items-start gap-2 min-w-0">
+      {working ? (
+        <CircleNotch size={13} className="text-info shrink-0 mt-[3px] animate-[spin_0.9s_linear_infinite]" />
+      ) : done ? (
+        <Check size={13} className="text-accent shrink-0 mt-[3px]" weight="bold" />
+      ) : (
+        <span
+          className={`w-[13px] h-[13px] rounded-full border shrink-0 mt-[3px] ${
+            cancelled ? "border-faint/50" : "border-edge-strong"
+          }`}
+        />
+      )}
+      <div className="flex-1 min-w-0">
+        <span
+          className={`text-[12px] leading-relaxed block break-words ${
+            cancelled ? "text-faint line-through" : done ? "text-dim" : "text-ink"
+          }`}
+        >
+          {task.subject}
+        </span>
+        {working && task.activeForm && (
+          <span className="block text-[11px] leading-relaxed text-info/90 mt-0.5 break-words">
+            {task.activeForm}
+          </span>
+        )}
+        {task.description && (
+          <span className="block text-[11px] leading-relaxed text-faint mt-0.5 break-words line-clamp-3">
+            {task.description}
+          </span>
+        )}
+      </div>
+      <span className="font-mono text-[10px] tabular-nums text-faint/70 shrink-0 mt-[4px]">#{task.id}</span>
+    </div>
+  );
+}
+
+/** claude 任务面板（V24 平行链）：与 TodoPanel 同款式（分组/进度条/计数）。 */
+function ClaudeTaskPanel({ tasks }: { tasks: ClaudeTaskItem[] }) {
+  const p = todoProgress(tasks);
+  return (
+    <div className="w-[300px]">
+      <div className="sticky top-0 bg-overlay/95 backdrop-blur-sm px-3.5 pt-3 pb-2.5 border-b border-edge space-y-2.5">
+        <div className="flex items-center gap-2">
+          <ListChecks size={14} className="text-accent" weight="bold" />
+          <span className="text-[12.5px] font-semibold text-ink">任务清单</span>
+          <span className="flex-1" />
+          <span className="font-mono text-[11px] tabular-nums text-dim">
+            {p.completed}
+            <span className="text-faint">/{p.total}</span>
+          </span>
+        </div>
+        <div className="h-1.5 rounded-full bg-edge overflow-hidden">
+          <div
+            className="h-full rounded-full bg-gradient-to-r from-accent/80 to-accent transition-[width] duration-300"
+            style={{ width: `${Math.min(100, p.percent)}%` }}
+          />
+        </div>
+        <div className="flex gap-2.5 flex-wrap text-[10.5px]">
+          <span className="text-faint">共 {p.total}</span>
+          {p.inProgress > 0 && (
+            <span className="inline-flex items-center gap-1 text-info">
+              <span className="w-1 h-1 rounded-full bg-info animate-breathe" />
+              进行中 {p.inProgress}
+            </span>
+          )}
+          {p.pending > 0 && <span className="text-faint">待处理 {p.pending}</span>}
+          {p.completed > 0 && <span className="text-accent">已完成 {p.completed}</span>}
+          {p.cancelled > 0 && <span className="text-faint/70 line-through">已取消 {p.cancelled}</span>}
+        </div>
+      </div>
+      <div className="max-h-[340px] overflow-y-auto p-3.5 space-y-3.5">
+        {TODO_GROUPS.map(({ key, label }) => {
+          const group = tasks.filter((t) => t.status === key);
+          if (group.length === 0) return null;
+          return (
+            <div key={key} className="space-y-1.5">
+              <div className="flex items-center gap-1.5 text-[10.5px] font-semibold uppercase tracking-wider text-faint">
+                {key === "in_progress" && <span className="w-1.5 h-1.5 rounded-full bg-info animate-breathe" />}
+                {key === "completed" && <Check size={10} weight="bold" className="text-accent" />}
+                {key === "pending" && <span className="w-1.5 h-1.5 rounded-full border border-edge-strong" />}
+                {key === "cancelled" && <span className="text-faint/70 leading-none">×</span>}
+                {label}
+                <span className="flex-1 border-t border-edge/60" />
+              </div>
+              <div className="space-y-1.5 pl-1">
+                {group.map((t) => (
+                  <ClaudeTaskRow key={`task-${t.id}`} task={t} />
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function TodoPanel({ todos }: { todos: TodoItem[] }) {
   const p = todoProgress(todos);
   return (
@@ -292,15 +396,29 @@ function ContextPanel({ items, ctx }: {
 }
 
 export function SessionRail({ ticketNo }: { ticketNo: string }) {
-  // 任务清单按会话 id 键控（V21）：读当前活跃会话的投影，草稿态（无会话）天然无清单。
+  // 任务清单按会话 id 键控（V21/V24）：读当前活跃会话的投影，草稿态（无会话）天然无清单。
   const activeSessionId = useApp((s) => s.activeSessionId[ticketNo]);
   const todos = useApp((s) => (activeSessionId ? s.todos[activeSessionId] : undefined));
+  const tasks = useApp((s) => (activeSessionId ? s.claudeTasks[activeSessionId] : undefined));
+  // 双链三元挂载（V24）：claude 会话的清单环走 TaskCreate/TaskUpdate journal，
+  // opencode（含草稿态/未知）仍走 todowrite 快照——两链互不相扰。
+  const activeSession = useApp((s) =>
+    activeSessionId ? (s.sessions[ticketNo] ?? []).find((x) => x.id === activeSessionId) : undefined,
+  );
+  const agents = useApp((s) => s.agents);
+  const isClaudeSession = agents.find((a) => a.id === activeSession?.agentConfigId)?.cli === "claude";
   const ctx = useApp((s) => s.context[ticketNo]);
   const chat = useApp((s) => (s.selectedNo === ticketNo ? s.chats[ticketNo] : undefined) ?? NO_CHAT);
-  const [openPanel, setOpenPanel] = useState<"todo" | "context" | null>(null);
+  const [openPanel, setOpenPanel] = useState<"todo" | "task" | "context" | null>(null);
   const railRef = useDismiss(openPanel !== null, () => setOpenPanel(null));
 
-  const progress = todos && todos.length > 0 ? todoProgress(todos) : null;
+  const progress = isClaudeSession
+    ? tasks && tasks.length > 0
+      ? todoProgress(tasks)
+      : null
+    : todos && todos.length > 0
+      ? todoProgress(todos)
+      : null;
   const usage = computeContextPercent(ctx, chat);
   // 仅有系统提示词的空会话（无实测 tokens、无真实对话）不显示上下文环。
   const hasConversation =
@@ -315,8 +433,16 @@ export function SessionRail({ ticketNo }: { ticketNo: string }) {
       {progress && (
         <div className="relative">
           <RailButton
-            open={openPanel === "todo"}
-            onClick={() => setOpenPanel(openPanel === "todo" ? null : "todo")}
+            open={openPanel === "todo" || openPanel === "task"}
+            onClick={() =>
+              setOpenPanel(
+                (isClaudeSession ? openPanel === "task" : openPanel === "todo")
+                  ? null
+                  : isClaudeSession
+                    ? "task"
+                    : "todo",
+              )
+            }
             label={`任务清单 ${progress.completed}/${progress.total}`}
           >
             <ProgressRing
@@ -327,9 +453,13 @@ export function SessionRail({ ticketNo }: { ticketNo: string }) {
               <ListChecks size={12} className="text-accent" weight="bold" />
             </ProgressRing>
           </RailButton>
-          {openPanel === "todo" && (
+          {(openPanel === "todo" || openPanel === "task") && (
             <div className="absolute right-0 top-[calc(100%+10px)] z-30 rounded-2xl border border-edge bg-overlay backdrop-blur-sm shadow-xl animate-scale-in overflow-hidden">
-              <TodoPanel todos={todos ?? []} />
+              {openPanel === "task" ? (
+                <ClaudeTaskPanel tasks={tasks ?? []} />
+              ) : (
+                <TodoPanel todos={todos ?? []} />
+              )}
             </div>
           )}
         </div>

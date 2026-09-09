@@ -8,6 +8,7 @@ export {
   deleteSessionLive,
   loadSessionMessages,
   syncSessionTodos,
+  syncSessionTasks,
   ticketNoOfSession,
   uploadChatFile,
 } from "./api";
@@ -27,6 +28,7 @@ export { draftCatalogFromOc, splitModelRef } from "./model";
 export type { PermissionResponse } from "./model";
 export { focusComposer, insertIntoComposer, registerComposerBridge } from "./composerBridge";
 export { applyTodosSnapshot, dropSessionTodos } from "./todos";
+export { applyTasksSnapshot, dropSessionTasks } from "./tasks";
 export {
   addMessageToQueue,
   removeQueuedMessage,

@@ -57,7 +57,8 @@ export interface TodoProgress {
   percent: number;
 }
 
-export function todoProgress(todos: TodoItem[]): TodoProgress {
+/** 进度统计只依赖 status——TodoItem 与 ClaudeTaskItem（V24）共用。 */
+export function todoProgress(todos: Array<Pick<TodoItem, "status">>): TodoProgress {
   const total = todos.length;
   const completed = todos.filter((t) => t.status === "completed").length;
   const inProgress = todos.filter((t) => t.status === "in_progress").length;
@@ -81,12 +82,29 @@ export function isTodoTool(name: string | undefined | null): boolean {
   return n.includes("todowrite") || n.includes("todoread") || n === "todo_write" || n === "todo_read";
 }
 
+/** claude 任务工具识别（TaskCreate/TaskUpdate/TaskList——claude 独有工具名，天然与 opencode 隔离）。 */
+export function isClaudeTaskTool(name: string | undefined | null): boolean {
+  if (!name) return false;
+  const n = name.toLowerCase();
+  return n === "taskcreate" || n === "taskupdate" || n === "tasklist";
+}
+
+/** claude 任务写工具识别（TaskList 只读，不触发 journal 拉取）。 */
+export function isClaudeTaskWriteTool(name: string | undefined | null): boolean {
+  if (!name) return false;
+  const n = name.toLowerCase();
+  return n === "taskcreate" || n === "taskupdate";
+}
+
 /** 常见工具的中文友好名（仅用于展示，未匹配时返回原名）。 */
 export function friendlyToolName(name: string | undefined): string {
   if (!name) return "工具调用";
   const n = name.toLowerCase();
   if (n.includes("todowrite") || n === "todo_write") return "任务清单";
   if (n.includes("todoread") || n === "todo_read") return "读取清单";
+  if (n === "taskcreate") return "创建任务";
+  if (n === "taskupdate") return "更新任务";
+  if (n === "tasklist") return "列出任务";
   if (n === "bash" || n === "shell") return "运行命令";
   if (n === "read" || n === "view") return "读取文件";
   if (n === "edit" || n === "multiedit" || n === "apply_patch") return "编辑文件";
@@ -148,9 +166,17 @@ export function compactToolArgs(toolName: string | undefined, argsJson: string |
       const url = str("url");
       if (url) return truncate(url);
     }
+    if (n === "taskupdate") {
+      // claude TaskUpdate：#id → 目标状态（无 description 可摘要时比裸 id 可读）。
+      const taskId = o.taskId ?? o.task_id;
+      const status = str("status");
+      if (taskId != null) return status ? `#${taskId} → ${status}` : `#${taskId}`;
+    }
     if (n.includes("task")) {
       const desc = str("description") || str("prompt");
       if (desc) return truncate(desc);
+      const subject = str("subject");
+      if (subject) return truncate(subject);
     }
     // 路径族：read/edit/write/glob/ls 等以文件为主体的工具
     const path = str("file_path") || str("path") || str("notebook_path") || str("dir");

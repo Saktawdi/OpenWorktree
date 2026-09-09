@@ -571,6 +571,14 @@ export const actions = {
     if (!sid) return Promise.resolve(false);
     return patchSessionLive(sid, { permission_auto_accept: value });
   },
+  /** 切换 claude 权限模式档位（V24 轮询）：PATCH 持久化，下一次发送时生效。 */
+  setSessionPermissionMode(no: string, mode: string) {
+    const st = appStore.getState();
+    if (st.mode !== "live") return Promise.resolve(false);
+    const sid = st.activeSessionId[no];
+    if (!sid) return Promise.resolve(false);
+    return patchSessionLive(sid, { permission_mode: mode });
+  },
   abort(no: string) {
     if (appStore.getState().mode === "live") {
       return abortLive(no);

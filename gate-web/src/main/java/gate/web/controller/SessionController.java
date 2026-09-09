@@ -121,6 +121,7 @@ public final class SessionController implements WebController {
         app.delete("/api/sessions/{id}", this::deleteSession);
         app.get("/api/sessions/{id}/messages", this::listMessages);
         app.get("/api/sessions/{id}/todos", this::getTodos);
+        app.get("/api/sessions/{id}/tasks", this::getTasks);
         app.post("/api/sessions/{id}/messages", this::sendMessage);
         app.post("/api/sessions/{id}/abort", this::abortSession);
         app.post("/api/sessions/{id}/model", this::setModel);
@@ -254,15 +255,20 @@ public final class SessionController implements WebController {
         ctx.json(sessionJson(s));
     }
 
+    /** claude --permission-mode 轮询档位（V24）：PATCH 可接受的枚举集合。 */
+    private static final java.util.Set<String> PERMISSION_MODES =
+            java.util.Set.of("acceptEdits", "plan", "auto", "bypassPermissions");
+
     public void patchSession(Context ctx) {
         String id = ctx.pathParam("id");
         Session s = sessionRepository.find(id).orElseThrow(() -> new GateException(
                 GateErrorCode.USAGE, "no such session: " + id));
         Map<String, Object> req = Json.parseObject(ctx.body());
         if (!req.containsKey("title") && !req.containsKey("archived")
-                && !req.containsKey("permission_auto_accept")) {
+                && !req.containsKey("permission_auto_accept")
+                && !req.containsKey("permission_mode")) {
             throw new GateException(GateErrorCode.USAGE,
-                    "nothing to update: provide title, archived, or permission_auto_accept");
+                    "nothing to update: provide title, archived, permission_auto_accept, or permission_mode");
         }
         String title = s.title();
         if (req.containsKey("title")) {
@@ -278,10 +284,30 @@ public final class SessionController implements WebController {
                 ? Boolean.parseBoolean(String.valueOf(req.get("archived"))) : s.archived();
         boolean permissionAutoAccept = req.containsKey("permission_auto_accept")
                 ? Boolean.parseBoolean(String.valueOf(req.get("permission_auto_accept"))) : s.permissionAutoAccept();
+        // 权限模式（claude 专属语义）：null = 清除回退默认（acceptEdits）。manual/dontAsk
+        // 在 headless -p 无交互面的场景下无意义，不在轮询枚举内即拒收。
+        String permissionMode = s.permissionMode();
+        if (req.containsKey("permission_mode")) {
+            if (s.cli() != AgentCli.CLAUDE) {
+                throw new GateException(GateErrorCode.USAGE,
+                        "permission_mode is only supported for claude sessions");
+            }
+            Object rawMode = req.get("permission_mode");
+            if (rawMode == null) {
+                permissionMode = null;
+            } else {
+                String m = String.valueOf(rawMode).trim();
+                if (!PERMISSION_MODES.contains(m)) {
+                    throw new GateException(GateErrorCode.USAGE,
+                            "invalid permission_mode: " + m + " (allowed: " + PERMISSION_MODES + ")");
+                }
+                permissionMode = m;
+            }
+        }
         Session updated = new Session(s.id(), s.ticketNo(), s.agentConfigId(), s.cli(), s.status(),
                 s.cliSessionId(), s.clonePath(), s.allocatedPort(), s.startedAt(), s.finishedAt(),
                 s.cumulativeUsage(), title, archived, s.overrideProvider(), s.overrideModel(),
-                s.overrideVariant(), permissionAutoAccept);
+                s.overrideVariant(), permissionAutoAccept, permissionMode);
         sessionRepository.update(updated);
         ctx.status(HttpStatus.OK);
         ctx.json(sessionJson(updated));
@@ -321,6 +347,9 @@ public final class SessionController implements WebController {
         // 任务清单随消息历史附带（V21）：前端切换会话时一次请求同时拿到清单，
         // 不再全量扫历史反解最后一条 todowrite。无行（从未写过 todo）为空数组。
         body.put("todos", todosJson(id));
+        // claude 任务 journal（V24）同样随消息历史附带：TaskCreate/TaskUpdate 平行链的
+        // 投影，opencode 会话恒为空数组（工具名天然隔离）。
+        body.put("tasks", tasksJson(id));
         ctx.status(HttpStatus.OK);
         ctx.json(body);
     }
@@ -337,9 +366,34 @@ public final class SessionController implements WebController {
         ctx.json(body);
     }
 
+    /** claude 任务 journal（V24）：TaskCreate/TaskUpdate 事件累积，供轮询兜底与切会话附带查询。 */
+    public void getTasks(Context ctx) {
+        String id = ctx.pathParam("id");
+        if (sessionRepository.find(id).isEmpty()) {
+            throw new GateException(GateErrorCode.USAGE, "no such session: " + id);
+        }
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("tasks", tasksJson(id));
+        ctx.status(HttpStatus.OK);
+        ctx.json(body);
+    }
+
     /** 快照 JSON 字符串 → 解析后的数组（无行/解析失败按空清单）。 */
     private List<Object> todosJson(String sessionId) {
         String json = sessionRepository.findTodos(sessionId).orElse(null);
+        if (json == null) {
+            return List.of();
+        }
+        try {
+            return Json.mapper().readValue(json, List.class);
+        } catch (Exception e) {
+            return List.of();
+        }
+    }
+
+    /** 任务 journal JSON 字符串 → 解析后的数组（无行/解析失败按空列表）。 */
+    private List<Object> tasksJson(String sessionId) {
+        String json = sessionRepository.findTasks(sessionId).orElse(null);
         if (json == null) {
             return List.of();
         }
@@ -1027,6 +1081,7 @@ public final class SessionController implements WebController {
         m.put("override_model", s.overrideModel());
         m.put("override_variant", s.overrideVariant());
         m.put("permission_auto_accept", s.permissionAutoAccept());
+        m.put("permission_mode", s.permissionMode());
         m.put("started_at", s.startedAt().toString());
         m.put("finished_at", s.finishedAt() == null ? null : s.finishedAt().toString());
         if (s.cumulativeUsage() == null) {

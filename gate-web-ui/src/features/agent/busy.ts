@@ -6,7 +6,7 @@ import { api } from "@/net";
 import { appStore } from "@/store";
 import { loadTickets } from "@/features/ticket/api";
 import { loadSessionPermissions, loadSessionQuestions } from "@/features/session/permissions";
-import { syncSessionTodos } from "@/features/session/api";
+import { syncSessionTasks, syncSessionTodos } from "@/features/session/api";
 import { isSessionStreamingLocally } from "@/features/session";
 
 interface RawBusyAgent {
@@ -18,15 +18,16 @@ interface RawBusyAgent {
 
 /**
  * 后台运行会话的任务清单收敛（无 SSE 直连时的兜底）：
- * 只在「当前查看的会话从运行中转为空闲」的那一刻用服务端 session_todo 快照回算一次
- * 任务清单（V21：轻端点单行查询，不再全量拉历史重扫）——最多延迟一拍自动对齐，
- * 兑现"不手动刷新也能出现/更新"。运行中绝不清零：服务端快照随 tool 事件即时落库，
- * 本页没有 EventSource 时（刷新后/外部发起/事件断流），兜底查询拿到的就是最新快照；
+ * 只在「当前查看的会话从运行中转为空闲」的那一刻用服务端快照回算一次
+ * 任务清单（V21 todos / V24 claude tasks 双链：轻端点单行查询，不再全量拉历史
+ * 重扫）——最多延迟一拍自动对齐，兑现"不手动刷新也能出现/更新"。
+ * 运行中绝不清零：服务端快照随 tool 事件即时落库，本页没有 EventSource 时
+ * （刷新后/外部发起/事件断流），兜底查询拿到的就是最新快照；
  * 本地直连的会话由 SSE 实时回写，同样跳过。
  */
 let prevRunningSessionIds = new Set<string>();
 
-function syncSessionTodosOnRunEnd() {
+function syncSessionProjectionsOnRunEnd() {
   const st = appStore.getState();
   if (st.mode !== "live" || st.conn !== "ok" || !st.selectedNo) return;
   const sid = st.activeSessionId[st.selectedNo];
@@ -34,6 +35,8 @@ function syncSessionTodosOnRunEnd() {
   const runningNow = new Set(st.runningAgents.sessions.map((r) => r.session_id));
   if (!prevRunningSessionIds.has(sid) || runningNow.has(sid)) return;
   void syncSessionTodos(sid);
+  // claude 任务链同口径兜底（opencode 会话恒为空数组，无谓但无害的一次轻查询）。
+  void syncSessionTasks(sid);
 }
 
 export async function fetchBusyAgents(): Promise<void> {
@@ -113,7 +116,7 @@ export async function fetchBusyAgents(): Promise<void> {
       };
     });
     // 当前查看会话刚结束一次后台运行（上一拍还在跑、这一拍已空闲）→ 收敛任务清单
-    syncSessionTodosOnRunEnd();
+    syncSessionProjectionsOnRunEnd();
     prevRunningSessionIds = new Set(appStore.getState().runningAgents.sessions.map((r) => r.session_id));
   } catch {
     // 请求失败按现有 fetch 封装行为处理：静默，不改状态
