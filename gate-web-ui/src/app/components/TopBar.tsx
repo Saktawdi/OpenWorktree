@@ -26,6 +26,7 @@ import { pluginIcon } from "@/app/plugins/icons";
 import type { HeaderActionContribution, PageContribution } from "@/app/plugins/types";
 import { RunMonitor } from "@/app/components/RunMonitor";
 import { TerminalMinimizedChip } from "@/features/project/components/ProjectTerminal";
+import { AssistantCapsule } from "@/features/assistant";
 
 /** 主题切换动画时长（抽帧加速版：54 帧 × 37ms ≈ 2.0s，留少量余量）。 */
 const ANIM_MS = 2050;
@@ -410,6 +411,9 @@ export function TopBar() {
       <div className="flex-1" />
 
       <ProjectSwitcher />
+
+      {/* LLM 小助手胶囊（T-109 原生内置；header.actions 插槽继续开放给插件胶囊） */}
+      <AssistantCapsule />
 
       {/* 插件胶囊动作区（header.actions 注册表，零改宿主即增减） */}
       <HeaderActionsSlot />

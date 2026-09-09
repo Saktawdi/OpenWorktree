@@ -3,7 +3,7 @@
  * 全部走 net 层同源相对路径（dev 经 vite proxy /plugins、/api → 后端）。
  */
 import { appStore } from "@/store";
-import type { HostFetchRequest, LlmChatResponse, PluginListItem } from "./types";
+import type { HostFetchRequest, PluginListItem } from "./types";
 
 function authHeaders(): Record<string, string> {
   const token = appStore.getState().token;
@@ -103,69 +103,8 @@ export async function hostFetch<T>(path: string, init: HostFetchRequest = {}): P
   return (await res.json()) as T;
 }
 
-/* ─── LLM 能力数据面（/api/llm/chat 代理：KMS 解密在后端完成，前端/插件只见业务字段） ─── */
+/* ─── LLM 能力数据面 ───
+ * 实现收敛在 net/llm（原生 LLM 小助手与插件宿主共用），这里保留历史 import 路径的转发。 */
 
-interface LlmChatWireOptions {
-  messages: Array<{ role: string; content: string }>;
-  provider_id?: string;
-  model?: string;
-  temperature?: number;
-  max_tokens?: number;
-  stream?: boolean;
-}
-
-/** 单次非流式 chat：POST /api/llm/chat (stream=false)。 */
-export async function llmChat(options: LlmChatWireOptions): Promise<LlmChatResponse> {
-  return api<LlmChatResponse>("/api/llm/chat", {
-    method: "POST",
-    body: JSON.stringify({ ...options, stream: false }),
-  });
-}
-
-/**
- * 流式 chat：POST /api/llm/chat (stream=true)，消费 OpenAI 兼容 SSE。
- * 每个含内容的 data: 帧把 delta.content 喂给 onChunk；[DONE] 或流关闭结束。
- */
-export async function llmChatStream(
-  options: LlmChatWireOptions,
-  onChunk: (chunk: string) => void,
-): Promise<string> {
-  const res = await fetch("/api/llm/chat", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify({ ...options, stream: true }),
-  });
-  if (!res.ok) throw new Error(await readError(res));
-  if (!res.body) throw new Error("响应无正文，无法流式读取");
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let full = "";
-  let buf = "";
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buf += decoder.decode(value, { stream: true });
-    // SSE 帧以空行分隔；逐行解析 data: 前缀，行残缺时留在 buf 等下一片。
-    let idx: number;
-    while ((idx = buf.indexOf("\n")) >= 0) {
-      const line = buf.slice(0, idx).replace(/\r$/, "");
-      buf = buf.slice(idx + 1);
-      if (!line.startsWith("data:")) continue;
-      const payload = line.slice(5).trim();
-      if (!payload || payload === "[DONE]") continue;
-      try {
-        const frame = JSON.parse(payload) as {
-          choices?: Array<{ delta?: { content?: string } }>;
-        };
-        const chunk = frame.choices?.[0]?.delta?.content ?? "";
-        if (chunk) {
-          full += chunk;
-          onChunk(chunk);
-        }
-      } catch {
-        /* 非 JSON 帧忽略（keepalive 注释等） */
-      }
-    }
-  }
-  return full;
-}
+export { llmChat, llmChatStream } from "@/net";
+export type { LlmChatMessage, LlmChatRequest, LlmChatResponse } from "@/net";
