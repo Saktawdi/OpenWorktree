@@ -35,6 +35,7 @@ export {
   popQueuedMessageToInput,
   reorderQueuedMessages,
   clearSessionQueue,
+  clearAllQueuedMessages,
   kickQueuePump,
   setFollowUpBehavior,
   getQueuedMessages,

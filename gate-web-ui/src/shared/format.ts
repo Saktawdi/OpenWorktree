@@ -29,8 +29,16 @@ export function shortHash(hash: string, head = 10, tail = 6): string {
 }
 
 export function formatBytes(n: number): string {
+  if (!Number.isFinite(n) || n <= 0) return "0 B";
   if (n < 1024) return `${n} B`;
-  return `${(n / 1024).toFixed(1)} KB`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let v = n;
+  let u = -1;
+  do {
+    v /= 1024;
+    u++;
+  } while (v >= 1024 && u < units.length - 1);
+  return `${v.toFixed(1)} ${units[u]}`;
 }
 
 export function formatTokens(n: number): string {
