@@ -26,7 +26,7 @@ export const zhGate = {
   "gate.restartHint.done": "重新开启该工单的编码协作，轮次自动加一",
   "gate.restartHint.cancelled": "已取消的工单可重新开启，轮次自动加一",
   "gate.action.syncBase": "同步基座 · 追平主分支",
-  "gate.action.syncBaseTip": "把工单分支快进到主分支最新 tip；沙箱内未提交的改动会原样保留（T-118 基座同步）",
+  "gate.action.syncBaseTip": "把工单分支快进到主分支最新 tip；沙箱内未提交的改动（含未跟踪文件）会 stash 重放保留，冲突标记留在工作区等你处理",
   "gate.action.archived": "工单已完成归档",
   "gate.action.cancelledTip": "已取消的工单已锁定，不可再操作",
   "gate.action.cancelledLocked": "工单已取消 · 已锁定",

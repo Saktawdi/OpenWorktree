@@ -62,7 +62,7 @@ public final class BaseSyncHandler implements BaseSynchronizer {
         }
         if (ticket.stage().isTerminal()) {
             throw new GateException(GateErrorCode.USAGE, "ticket is " + ticket.stage()
-                    + "; restart it before syncing the base (T-117)");
+                    + "; restart it before syncing the base");
         }
         if (REVIEW_GATED.contains(ticket.stage())) {
             throw new GateException(GateErrorCode.USAGE, "base is frozen while ticket "

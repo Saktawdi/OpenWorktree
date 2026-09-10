@@ -113,12 +113,13 @@ public final class McpToolRegistry {
                 "sync_base",
                 AGENT_DOMAIN,
                 "Fast-forward this ticket's clone and its authoritative branch onto the latest tip "
-                + "of the project's base branch (T-118 基座同步). Uncommitted worktree changes "
+                + "of the project's base branch. Uncommitted worktree changes "
                 + "(including untracked files) are stashed and replayed by default (allow_dirty=true; "
                 + "conflict markers are left in the worktree for you to resolve); pass "
                 + "allow_dirty=false to skip a dirty clone untouched instead. Refused while a review "
-                + "round is open (the reviewed diff is pinned to its base) and for quick-mode super "
-                + "tickets, which work on the project workspace itself and need no base sync.",
+                + "round is open (the reviewed diff is pinned to its base), for terminal tickets "
+                + "(restart the ticket first) and for quick-mode super tickets, which work on the "
+                + "project workspace itself and need no base sync.",
                 schema(Map.of(
                         "type", "object",
                         "properties", Map.of(

@@ -26,7 +26,7 @@ export const enGate = {
   "gate.restartHint.done": "Reopen coding collaboration on this ticket; the round bumps automatically",
   "gate.restartHint.cancelled": "A cancelled ticket can be reopened; the round bumps automatically",
   "gate.action.syncBase": "Sync base · catch up with main",
-  "gate.action.syncBaseTip": "Fast-forwards the ticket branch to the latest main tip; uncommitted sandbox changes are preserved (T-118 base sync)",
+  "gate.action.syncBaseTip": "Fast-forwards the ticket branch to the latest main tip; uncommitted sandbox changes (including untracked files) are stashed and replayed, and conflict markers are left in the workspace for you to resolve",
   "gate.action.archived": "Ticket archived",
   "gate.action.cancelledTip": "Cancelled tickets are locked and cannot be operated on",
   "gate.action.cancelledLocked": "Ticket cancelled · locked",
