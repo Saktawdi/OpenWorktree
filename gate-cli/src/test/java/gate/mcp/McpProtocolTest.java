@@ -65,6 +65,7 @@ class McpProtocolTest {
         assertTrue(resp.contains("presubmit_create"), "must list presubmit_create");
         assertTrue(resp.contains("presubmit_get_diff"), "must list presubmit_get_diff");
         assertTrue(resp.contains("review_result_get"), "must list review_result_get");
+        assertTrue(resp.contains("sync_base"), "must list sync_base");
         assertTrue(resp.contains("review_run"), "must list review_run");
         assertTrue(resp.contains("commit_and_publish"), "must list commit_and_publish");
         assertTrue(resp.contains("config_show"), "must list config_show");

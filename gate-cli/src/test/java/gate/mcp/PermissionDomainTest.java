@@ -214,6 +214,7 @@ class PermissionDomainTest {
             case "presubmit_create" -> Map.of("ticket_no", "T-1");
             case "presubmit_get_diff" -> Map.of("ticket_no", "T-1");
             case "review_result_get" -> Map.of("ticket_no", "T-1");
+            case "sync_base" -> Map.of("ticket_no", "T-1");
             case "review_run" -> Map.of("ticket_no", "T-1");
             case "commit_and_publish" -> Map.of("ticket_no", "T-1");
             case "config_show" -> Map.of();

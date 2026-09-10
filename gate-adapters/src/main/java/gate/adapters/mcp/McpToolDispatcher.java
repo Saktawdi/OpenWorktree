@@ -104,6 +104,7 @@ public final class McpToolDispatcher {
             case "presubmit_create" -> presubmitCreate(arguments);
             case "presubmit_get_diff" -> presubmitGetDiff(arguments);
             case "review_result_get" -> reviewResultGet(arguments);
+            case "sync_base" -> syncBase(arguments);
             case "review_run" -> reviewRun(arguments);
             case "commit_and_publish" -> commitAndPublish(arguments);
             case "config_show" -> configShow();
@@ -131,7 +132,8 @@ public final class McpToolDispatcher {
     private static boolean hasTicketParam(McpToolRegistry.ToolDef tool) {
         return "presubmit_create".equals(tool.name())
                 || "presubmit_get_diff".equals(tool.name())
-                || "review_result_get".equals(tool.name());
+                || "review_result_get".equals(tool.name())
+                || "sync_base".equals(tool.name());
     }
 
     // --- tool implementations ---
@@ -282,6 +284,41 @@ public final class McpToolDispatcher {
         return result;
     }
 
+    /**
+     * T-118 基座同步, exposed to agents: fast-forward the ticket's clone and authoritative branch
+     * onto the base-branch tip, stashing and replaying uncommitted worktree changes by default
+     * (same semantics as the manual web button; the session-start auto-sync skips dirty clones
+     * instead). No ticket lock here, matching {@code presubmit_create}: the calling agent session
+     * is the de-facto worktree owner, and the web-side lock would refuse the very session the
+     * call comes from.
+     */
+    private Map<String, Object> syncBase(Map<String, Object> args) {
+        String tool = "sync_base";
+        String ticketNo = ticketNoArg(tool, args);
+        boolean allowDirty = Boolean.TRUE.equals(boolArg(tool, args, "allow_dirty", true));
+        var r = gateService.syncBase(
+                new gate.application.basesync.SyncBaseCommand(ticketNo, allowDirty, "agent"));
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("ticket_no", ticketNo);
+        result.put("status", r.status());
+        result.put("behind", r.behind());
+        result.put("from_tip", r.fromTip());
+        result.put("to_tip", r.toTip());
+        result.put("branch_moved", r.branchMoved());
+        result.put("conflicts", r.conflicts());
+        result.put("stash_kept", r.stashKept());
+        if (r.skippedReason() != null) {
+            result.put("skipped_reason", r.skippedReason());
+        }
+        if (r.importKind() != null) {
+            result.put("import_kind", r.importKind());
+            if (r.importReason() != null) {
+                result.put("import_reason", r.importReason());
+            }
+        }
+        return result;
+    }
+
     private Map<String, Object> reviewRun(Map<String, Object> args) {
         String tool = "review_run";
         String ticketNo = ticketNoArg(tool, args);
@@ -391,6 +428,33 @@ public final class McpToolDispatcher {
         }
         throw validation(tool, List.of(new FieldError("round",
                 "wrong JSON type", "integer", jsonType(v))));
+    }
+
+    /**
+     * Optional boolean argument: JSON {@code true}/{@code false} or the string forms
+     * {@code "true"}/{@code "false"} (agent CLIs sometimes stringify); {@code null} → default.
+     */
+    private static boolean boolArg(String tool, Map<String, Object> args, String key, boolean dflt) {
+        Object v = args.get(key);
+        if (v == null) {
+            return dflt;
+        }
+        if (v instanceof Boolean b) {
+            return b;
+        }
+        if (v instanceof String s) {
+            String t = s.trim().toLowerCase(java.util.Locale.ROOT);
+            if ("true".equals(t)) {
+                return true;
+            }
+            if ("false".equals(t)) {
+                return false;
+            }
+            throw validation(tool, List.of(new FieldError(key,
+                    "must be a boolean", "boolean", s)));
+        }
+        throw validation(tool, List.of(new FieldError(key,
+                "wrong JSON type", "boolean", jsonType(v))));
     }
 
     private static String strArg(Map<String, Object> args, String key) {

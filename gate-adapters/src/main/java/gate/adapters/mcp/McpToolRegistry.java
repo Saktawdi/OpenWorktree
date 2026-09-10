@@ -12,7 +12,8 @@ import java.util.Set;
  * <p><b>Two domains, two credential sets:</b>
  * <ul>
  *   <li><b>agent domain</b> (low privilege, bound to one ticket,下发 with the worktree):
- *       {@code presubmit_create}, {@code presubmit_get_diff}, {@code review_result_get} — plus
+ *       {@code presubmit_create}, {@code presubmit_get_diff}, {@code review_result_get},
+ *       {@code sync_base} — plus
  *       {@code ticket_create}, which is agent-callable but not ticket-bound (its whole point is
  *       creating NEW tickets, e.g. follow-ups discovered mid-work). It is however
  *       <b>project-bound</b>: the new ticket must live in the bound ticket's project
@@ -106,6 +107,25 @@ public final class McpToolRegistry {
                         "properties", Map.of(
                                 "ticket_no", Map.of("type", "string"),
                                 "round", Map.of("type", "integer", "description", "Round number (default: latest)")),
+                        "required", List.of("ticket_no")))));
+
+        register(new ToolDef(
+                "sync_base",
+                AGENT_DOMAIN,
+                "Fast-forward this ticket's clone and its authoritative branch onto the latest tip "
+                + "of the project's base branch (T-118 基座同步). Uncommitted worktree changes "
+                + "(including untracked files) are stashed and replayed by default (allow_dirty=true; "
+                + "conflict markers are left in the worktree for you to resolve); pass "
+                + "allow_dirty=false to skip a dirty clone untouched instead. Refused while a review "
+                + "round is open (the reviewed diff is pinned to its base) and for quick-mode super "
+                + "tickets, which work on the project workspace itself and need no base sync.",
+                schema(Map.of(
+                        "type", "object",
+                        "properties", Map.of(
+                                "ticket_no", Map.of("type", "string", "description", "Ticket number"),
+                                "allow_dirty", Map.of("type", "boolean", "description",
+                                        "Stash and replay uncommitted changes (default true); "
+                                                + "false skips a dirty clone untouched")),
                         "required", List.of("ticket_no")))));
 
         // --- human/orchestrator domain (high privilege) ---

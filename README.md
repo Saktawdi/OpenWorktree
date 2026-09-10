@@ -124,6 +124,7 @@ OpenWorktree 内置一套 MCP（Model Context Protocol）stdio 服务器，是 A
 | `presubmit_create` | Agent | 预提审：把当前工作区冻结为不可变快照并开启一轮审查。这是 Agent 唯一能触发的状态迁移 |
 | `presubmit_get_diff` | Agent | 读取某轮预提审锁定的差异文本，确认送审内容 |
 | `review_result_get` | Agent | 读取审查结果（判决 + 结构化发现），据此修复后再次送审 |
+| `sync_base` | Agent | 基座同步：把工单克隆与权威分支快进到主分支最新 tip（T-118），未提交改动默认 stash 重放保留，冲突标记留在工作区由 Agent 解决；审查期与快速模式超级工单拒绝同步 |
 | `review_run` | Human | 执行一轮审查（内置引擎或人工判决），产出发现与判决 |
 | `commit_and_publish` | Human | 把已审查的快照提交并经门禁发布到目标分支 |
 | `config_show` | Human | 查看门禁生效配置（路径、目标引用、引擎状态） |

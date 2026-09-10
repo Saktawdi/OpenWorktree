@@ -94,6 +94,7 @@ public final class AgentContextPrompt {
               .append("没有预提审/门禁/publish 流程，presubmit_create 等 MCP 工具不可用\n");
         } else {
             sb.append("- 你无权 push 到权威库；预提审请调 presubmit_create MCP 工具\n")
+              .append("- 基座落后主分支时（或主动想追平最新主分支），调 sync_base MCP 工具快进；未提交改动默认 stash 重放保留，冲突标记留在工作区由你解决\n")
               .append("- tree_hash 约定: 审核锚定不可变 tree，修改后需重新预提审\n");
         }
         return sb.toString();
