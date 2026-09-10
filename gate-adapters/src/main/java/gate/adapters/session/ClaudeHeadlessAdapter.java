@@ -236,7 +236,7 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
         writeContext(contextFile, request.ticketNo(), request.targetRef(), config);
         writeMcpConfig(mcpConfig, request.env());
 
-        PlannedArgv argv = buildArgv(config, contextFile, mcpConfig, null, request.initialPrompt(), null, null, null);
+        PlannedArgv argv = buildArgv(config, contextFile, mcpConfig, null, null, null, null);
         Session session = new Session(
                 sessionId, request.ticketNo(), config.id(), AgentCli.CLAUDE, SessionStatus.ACTIVE,
                 null, request.clonePath(), -1, now, null, SessionUsage.EMPTY, null, false);
@@ -258,7 +258,7 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
         try {
             StreamEcho echo = new StreamEcho(sessionId);
             ProcessRunner.ProcRun run = processRunner.runStreaming(argv.argv(), clone, request.env(), Duration.ofMinutes(10),
-                    echo::line, null);
+                    request.initialPrompt(), echo::line, null);
 
             ParsedOutput parsed = parseStream(run.stdout());
             Session withUsage = session;
@@ -537,11 +537,11 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
             // still-running previous send has written after this task was enqueued.
             // permissionMode 同样取 fresh read：轮询切换在下一回合（本进程）生效。
             PlannedArgv planned = buildArgv(config, contextFile, mcpConfig,
-                    latest.cliSessionId(), message, latest.overrideModel(), latest.overrideVariant(),
+                    latest.cliSessionId(), latest.overrideModel(), latest.overrideVariant(),
                     latest.permissionMode());
             StreamEcho echo = new StreamEcho(session.id());
             ProcessRunner.ProcRun run = processRunner.runStreaming(planned.argv(), clone, Map.of(), Duration.ofMinutes(10),
-                    echo::line, null);
+                    message, echo::line, null);
 
             tasks.update(progress(task, 70, "解析 stream-json"));
             ParsedOutput parsed = parseStream(run.stdout());
@@ -639,20 +639,24 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
     }
 
     private PlannedArgv buildArgv(AgentConfig config, Path contextFile, Path mcpConfig,
-                                   String resumeSessionId, String prompt) {
-        return buildArgv(config, contextFile, mcpConfig, resumeSessionId, prompt, null, null, null);
+                                   String resumeSessionId) {
+        return buildArgv(config, contextFile, mcpConfig, resumeSessionId, null, null, null);
     }
 
     private PlannedArgv buildArgv(AgentConfig config, Path contextFile, Path mcpConfig,
-                                   String resumeSessionId, String prompt, String overrideModel,
+                                   String resumeSessionId, String overrideModel,
                                    String overrideVariant, String permissionMode) {
         List<String> argv = new ArrayList<>();
         argv.add(claudeExecutable);
         argv.addAll(claudePrefix);
         argv.add("-p");
-        // The prompt must stay a positional argument: with --input-format=stream-json claude
-        // ignores it and waits for stdin (closed by the runner) — it then exits 0 with no
-        // output and never creates a CLI session.
+        // T-121: prompt 不作为 argv 传递——由 runner 写入 stdin。多行 argv 元素活不到 CLI：
+        // CliLocator 把 `claude` 解析成 npm 的 claude.cmd（runnableSibling 优先 .cmd），
+        // JDK 对 .cmd 一律 `cmd.exe /c` 包装，而 cmd 的命令行在第一个换行处结束，
+        // 于是用户消息只有第一行到达（引用 / [图片引用] 路径行 / 多行指令全部静默丢失）。
+        // claude 2.1.240 实测：-p 不带 positional 时从 stdin 读 prompt，多行完好。
+        // 注意别改走 --input-format=stream-json：该模式下 claude 既不认 positional 也不消费
+        // stdin，会 exit 0 无输出且不建会话（本注释早先那条踩坑记录即指此，别回退）。
         argv.add("--output-format");
         argv.add("stream-json");
         // claude CLI hard requirement: --print + stream-json output refuses to start without
@@ -711,9 +715,6 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
         // 无需 --dangerously-skip-permissions 组合。
         argv.add("--permission-mode");
         argv.add(permissionMode == null || permissionMode.isBlank() ? "acceptEdits" : permissionMode);
-        if (prompt != null) {
-            argv.add(prompt);
-        }
         return new PlannedArgv(argv, requestHalves[0], requestHalves[1],
                 overrideVariant == null || overrideVariant.isBlank() ? null : overrideVariant.trim());
     }

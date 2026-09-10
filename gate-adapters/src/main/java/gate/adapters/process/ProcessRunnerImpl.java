@@ -7,6 +7,7 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -98,6 +99,12 @@ public final class ProcessRunnerImpl implements ProcessRunner {
     @Override
     public ProcRun runStreaming(List<String> argv, Path cwd, Map<String, String> env, Duration timeout,
                                 Consumer<String> stdoutConsumer, Consumer<String> stderrConsumer) {
+        return runStreaming(argv, cwd, env, timeout, null, stdoutConsumer, stderrConsumer);
+    }
+
+    @Override
+    public ProcRun runStreaming(List<String> argv, Path cwd, Map<String, String> env, Duration timeout,
+                                String stdin, Consumer<String> stdoutConsumer, Consumer<String> stderrConsumer) {
         if (argv == null || argv.isEmpty()) {
             throw new IllegalArgumentException("argv must not be empty");
         }
@@ -114,7 +121,7 @@ public final class ProcessRunnerImpl implements ProcessRunner {
             }
 
             Process process = pb.start();
-            process.getOutputStream().close();
+            writeStdin(process, stdin);
 
             CompletableFuture<Void> outFuture = CompletableFuture.runAsync(() ->
                     drainStream(process.getInputStream(), line -> {
@@ -168,6 +175,24 @@ public final class ProcessRunnerImpl implements ProcessRunner {
             Thread.currentThread().interrupt();
             throw new GateException(GateErrorCode.GATE_ERROR_IO, "interrupted running " + String.join(" ", argv), e);
         }
+    }
+
+    /**
+     * Writes {@code stdin} (UTF-8) to the child and closes the pipe. The write runs on its own
+     * thread: a prompt larger than the OS pipe buffer would otherwise block the caller before the
+     * child is ever waited on (and it always closes the pipe, so the child sees EOF and can exit).
+     */
+    private static void writeStdin(Process process, String stdin) {
+        CompletableFuture.runAsync(() -> {
+            try (OutputStream out = process.getOutputStream()) {
+                if (stdin != null) {
+                    out.write(stdin.getBytes(StandardCharsets.UTF_8));
+                    out.flush();
+                }
+            } catch (IOException ignored) {
+                // A child that exits before reading stdin (e.g. a bad flag) is not an error here.
+            }
+        });
     }
 
     private static void drainStream(InputStream in, Consumer<String> lineConsumer) {

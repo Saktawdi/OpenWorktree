@@ -93,7 +93,7 @@ class AdapterBusyRegistryTest {
         // 使用内存桩避免 Windows 下 cmd 脚本时序/编码的不确定性
         ProcessRunner okRunner = new ProcessRunner() {
             @Override public ProcRun run(List<String> argv, Path cwd, Map<String, String> env, Duration timeout) { return new ProcRun(argv, 0, "", "", Duration.ofMillis(10), false); }
-            @Override public ProcRun runStreaming(List<String> argv, Path cwd, Map<String, String> env, Duration timeout, java.util.function.Consumer<String> a, java.util.function.Consumer<String> b) {
+            @Override public ProcRun runStreaming(List<String> argv, Path cwd, Map<String, String> env, Duration timeout, String stdin, java.util.function.Consumer<String> a, java.util.function.Consumer<String> b) {
                 return new ProcRun(argv, 0, "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"ok\"}]}}", "", Duration.ofMillis(10), false);
             }
         };
@@ -120,7 +120,7 @@ class AdapterBusyRegistryTest {
         // 用一个会抛异常的 runner：ProcessRunner.runStreaming 抛 RuntimeException
         ProcessRunner throwing = new ProcessRunner() {
             @Override public ProcRun run(List<String> argv, Path cwd, Map<String, String> env, Duration timeout) { throw new RuntimeException("boom"); }
-            @Override public ProcRun runStreaming(List<String> argv, Path cwd, Map<String, String> env, Duration timeout, java.util.function.Consumer<String> a, java.util.function.Consumer<String> b) { throw new RuntimeException("boom"); }
+            @Override public ProcRun runStreaming(List<String> argv, Path cwd, Map<String, String> env, Duration timeout, String stdin, java.util.function.Consumer<String> a, java.util.function.Consumer<String> b) { throw new RuntimeException("boom"); }
         };
         agentConfigs.insert(new AgentConfig("claude-err", "C", AgentCli.CLAUDE, "manual", "m", null, List.of(), "d"), Instant.now());
         Path clone = root.resolve("clone-err");
@@ -145,7 +145,7 @@ class AdapterBusyRegistryTest {
         CountDownLatch release = new CountDownLatch(1);
         ProcessRunner blocking = new ProcessRunner() {
             @Override public ProcRun run(List<String> argv, Path cwd, Map<String, String> env, Duration timeout) { return new ProcRun(argv, 0, "", "", Duration.ofMillis(10), false); }
-            @Override public ProcRun runStreaming(List<String> argv, Path cwd, Map<String, String> env, Duration timeout, java.util.function.Consumer<String> a, java.util.function.Consumer<String> b) {
+            @Override public ProcRun runStreaming(List<String> argv, Path cwd, Map<String, String> env, Duration timeout, String stdin, java.util.function.Consumer<String> a, java.util.function.Consumer<String> b) {
                 started.countDown();
                 try { release.await(10, TimeUnit.SECONDS); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
                 return new ProcRun(argv, 0, "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"done\"}]}}", "", Duration.ofMillis(10), false);
@@ -187,7 +187,7 @@ class AdapterBusyRegistryTest {
         CountDownLatch release = new CountDownLatch(1);
         ProcessRunner blocking = new ProcessRunner() {
             @Override public ProcRun run(List<String> argv, Path cwd, Map<String, String> env, Duration timeout) { return new ProcRun(argv, 0, "", "", Duration.ofMillis(10), false); }
-            @Override public ProcRun runStreaming(List<String> argv, Path cwd, Map<String, String> env, Duration timeout, java.util.function.Consumer<String> a, java.util.function.Consumer<String> b) {
+            @Override public ProcRun runStreaming(List<String> argv, Path cwd, Map<String, String> env, Duration timeout, String stdin, java.util.function.Consumer<String> a, java.util.function.Consumer<String> b) {
                 started.countDown();
                 try { release.await(10, TimeUnit.SECONDS); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
                 return new ProcRun(argv, 0, "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"init done\"}]}}", "", Duration.ofMillis(10), false);
