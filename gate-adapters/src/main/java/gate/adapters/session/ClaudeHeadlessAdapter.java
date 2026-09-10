@@ -19,6 +19,7 @@ import gate.domain.task.GateTaskStatus;
 import gate.domain.ticket.Ticket;
 import gate.ports.store.AgentConfigRepository;
 import gate.ports.session.AgentSessionPort;
+import gate.ports.session.AgentSessionPort.Attachment;
 import gate.ports.infra.Clock;
 import gate.ports.infra.ProcessRunner;
 import gate.ports.store.ProjectRepository;
@@ -263,8 +264,10 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
         TurnCancel turn = registerTurn(sessionId);
         try {
             StreamEcho echo = new StreamEcho(sessionId);
+            // 首回合没有附件（StartRequest 不携带），但输入格式与后续回合一致：同样一行 stream-json。
+            String stdin = ClaudeStreamInput.line(request.initialPrompt(), List.of());
             ProcessRunner.ProcRun run = processRunner.runStreaming(argv.argv(), clone, request.env(), Duration.ofMinutes(10),
-                    new ProcessRunner.StreamSpec(request.initialPrompt(), turn), echo::line, null);
+                    new ProcessRunner.StreamSpec(stdin, turn), echo::line, null);
 
             // T-120：首回合被 abort 杀掉——不落助手/错误消息，会话保持刚插入时的状态。
             if (turn.cancelled()) {
@@ -329,7 +332,7 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
         incrementInFlight(session.id());
         // 取消信号同样在入队时登记：排队中的回合也要能被 abort 拦住（还没 spawn 就不该再 spawn）
         TurnCancel turn = registerTurn(session.id());
-        executor.submit(() -> runSend(task, session, request.message(), turn));
+        executor.submit(() -> runSend(task, session, request.message(), request.attachments(), turn));
         return task.id();
     }
 
@@ -578,7 +581,8 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
         }
     }
 
-    private void runSend(GateTask task, Session session, String message, TurnCancel turn) {
+    private void runSend(GateTask task, Session session, String message, List<Attachment> attachments,
+                         TurnCancel turn) {
         try (AutoCloseable ignored = ticketLocks.acquire(session.ticketNo())) {
             if (turn.cancelled()) {
                 // 排队期间就被中断：消息还没进过 CLI，整回合作废——不入历史、不 spawn、不发帧
@@ -610,8 +614,11 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
                     latest.cliSessionId(), latest.overrideModel(), latest.overrideVariant(),
                     latest.permissionMode());
             StreamEcho echo = new StreamEcho(session.id());
+            // T-118：图片附件在这里进输入流——正文与 image 块同处一行 stream-json（附件不走 argv，
+            // 也不落库；落库的仍是 insertUserMessage 存下的那条原文）。
+            String stdin = ClaudeStreamInput.line(message, attachments);
             ProcessRunner.ProcRun run = processRunner.runStreaming(planned.argv(), clone, Map.of(), Duration.ofMinutes(10),
-                    new ProcessRunner.StreamSpec(message, turn), echo::line, null);
+                    new ProcessRunner.StreamSpec(stdin, turn), echo::line, null);
 
             if (turn.cancelled()) {
                 // T-120：本轮已被 abort 杀掉。不落任何助手/错误消息、不改会话状态（soft abort 保持
@@ -743,6 +750,10 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
         // 的问题。runner 现在能写 stdin：实测写一行 user message JSON 再关 stdin，可正常建会话
         // 出结果，--resume 续轮与 image 内容块（模型确实看到图）均可用。要送图片本体就走这条
         // stdin 通道——图片字节不过 argv，cmd.exe 的换行截断碰不到它。
+        // T-118：输入就此改走 stream-json——每条用户消息一行 JSON（ClaudeStreamInput 编码），
+        // content 数组里装 text 与 image 块，图片本体这才有了非 argv 的载体。
+        argv.add("--input-format");
+        argv.add("stream-json");
         argv.add("--output-format");
         argv.add("stream-json");
         // claude CLI hard requirement: --print + stream-json output refuses to start without

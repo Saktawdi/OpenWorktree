@@ -23,6 +23,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
@@ -40,6 +41,10 @@ import org.springframework.jdbc.core.JdbcTemplate;
  * {@code cmd.exe /c} 启动，而 cmd 的命令行在第一个换行处结束——多行 argv 元素只有第一行能到达
  * CLI，于是引用（追加在新行）、{@code [图片引用 #n]} 路径行、多行指令全部静默丢失
  * （证据会话 f506fb84：6/6 多行消息截断，单行零失误）。
+ *
+ * <p>T-118 起 stdin 不再是一段裸正文，而是 {@code --input-format=stream-json} 要的一行 JSON
+ * （{@link ClaudeStreamInput}）：正文进 text 块，图片进 image 块。断言相应地从"比对 stdin 原文"
+ * 改成"解出 text 块比对"，图片另有一条用例盯着不得进 argv。
  */
 class ClaudePromptDeliveryTest {
 
@@ -92,7 +97,9 @@ class ClaudePromptDeliveryTest {
         adapter.sendMessage(new AgentSessionPort.SendRequest(s.id(), MULTILINE, true));
         awaitDelivery(runner, 5);
 
-        assertEquals(MULTILINE, runner.stdin, "多行消息必须整段经 stdin 送达 CLI");
+        assertEquals(MULTILINE, stdinText(runner.stdin), "多行消息必须整段经 stdin 送达 CLI");
+        assertTrue(runner.argv.contains("--input-format"), "输入得声明 stream-json: " + runner.argv);
+        assertEquals(1, runner.stdin.lines().count(), "整行输入只有一个物理换行（行尾）");
         assertFalse(runner.argv.stream().anyMatch(a -> a.contains("\n")),
                 "argv 不得含任何多行元素（cmd.exe 会在换行处截断）: " + runner.argv);
         assertFalse(runner.argv.contains(MULTILINE), "prompt 不得再作为 positional argv 传递");
@@ -110,8 +117,36 @@ class ClaudePromptDeliveryTest {
         adapter.sendMessage(new AgentSessionPort.SendRequest(s.id(), QUOTE_ONLY, true));
         awaitDelivery(runner, 5);
 
-        assertEquals(QUOTE_ONLY, runner.stdin);
+        assertEquals(QUOTE_ONLY, stdinText(runner.stdin));
         assertTrue(runner.stdin.contains("⟦引用⟧"), "引用标记必须活着到达 CLI（此前整条消息只剩空首行）");
+        adapter.close();
+    }
+
+    // ---- T-118：图片附件编成 image 块随正文同行进 stdin，base64 绝不进 argv ----
+    @Test
+    void image_attachment_travels_as_content_block_never_argv() throws Exception {
+        CapturingRunner runner = new CapturingRunner();
+        ClaudeHeadlessAdapter adapter = adapter(runner, "DELIV-4");
+        Session s = adapter.start(new AgentSessionPort.StartRequest(
+                "DELIV-4", "claude-deliv", clone("DELIV-4").toString(), "refs/heads/main", "", Map.of()));
+
+        String b64 = Base64.getEncoder().encodeToString(new byte[]{1, 2, 3, 4});
+        adapter.sendMessage(new AgentSessionPort.SendRequest(s.id(), "看图\n[图片引用 #1] .gate/chat-images/a.png", true,
+                List.of(new AgentSessionPort.Attachment("a.png", "image/png", b64))));
+        awaitDelivery(runner, 5);
+
+        // 正文那半：路径行与引用行照旧整段送达
+        assertEquals("看图\n[图片引用 #1] .gate/chat-images/a.png", stdinText(runner.stdin));
+        // 图片那半：content 里多一个 image 块，裸 base64（无 data-URL 前缀）
+        List<Map<String, Object>> images = stdinImages(runner.stdin);
+        assertEquals(1, images.size(), "附件应编成一个 image 块: " + runner.stdin);
+        Map<String, Object> source = castMap(images.get(0).get("source"));
+        assertEquals("base64", source.get("type"));
+        assertEquals("image/png", source.get("media_type"));
+        assertEquals(b64, source.get("data"));
+        // 整条输入仍是单行 JSON（按行读的 stream-json 不能被正文换行破帧），图片字节不过 argv
+        assertEquals(1, runner.stdin.lines().count());
+        assertFalse(runner.argv.stream().anyMatch(a -> a.contains(b64)), "图片 base64 不得进 argv: " + runner.argv);
         adapter.close();
     }
 
@@ -123,9 +158,45 @@ class ClaudePromptDeliveryTest {
         adapter.start(new AgentSessionPort.StartRequest(
                 "DELIV-3", "claude-deliv", clone("DELIV-3").toString(), "refs/heads/main", MULTILINE, Map.of()));
 
-        assertEquals(MULTILINE, runner.stdin, "首回合 initial_prompt 同样必须整段经 stdin 送达");
+        assertEquals(MULTILINE, stdinText(runner.stdin), "首回合 initial_prompt 同样必须整段经 stdin 送达");
         assertFalse(runner.argv.stream().anyMatch(a -> a.contains("\n")), "argv 不得含多行元素: " + runner.argv);
         adapter.close();
+    }
+
+    // ---- stdin 解码助手：T-118 后 stdin 是一行 stream-json，正文在 text 块里 ----
+
+    /** 取出 stdin 那行 JSON 里所有 text 块拼回的正文（用例里都只有一个）。 */
+    @SuppressWarnings("unchecked")
+    private static String stdinText(String stdin) {
+        StringBuilder sb = new StringBuilder();
+        for (Map<String, Object> block : stdinContent(stdin)) {
+            if ("text".equals(block.get("type"))) {
+                sb.append(block.get("text"));
+            }
+        }
+        return sb.toString();
+    }
+
+    /** 取出 stdin 那行 JSON 里的 image 块。 */
+    private static List<Map<String, Object>> stdinImages(String stdin) {
+        List<Map<String, Object>> out = new java.util.ArrayList<>();
+        for (Map<String, Object> block : stdinContent(stdin)) {
+            if ("image".equals(block.get("type"))) {
+                out.add(block);
+            }
+        }
+        return out;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<Map<String, Object>> stdinContent(String stdin) {
+        Map<String, Object> envelope = gate.application.util.MiniJson.parseObject(stdin.trim());
+        return (List<Map<String, Object>>) (List<?>) castMap(envelope.get("message")).get("content");
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> castMap(Object value) {
+        return (Map<String, Object>) value;
     }
 
     private ClaudeHeadlessAdapter adapter(ProcessRunner runner, String ticketNo) throws Exception {
