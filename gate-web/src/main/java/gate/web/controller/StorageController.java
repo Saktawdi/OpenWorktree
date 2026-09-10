@@ -10,7 +10,8 @@ import java.util.Map;
 /**
  * 存储设置 Controller（设置中心「存储设置」页，T-116）。
  * Owns /api/storage/overview, /api/storage/caches, /api/storage/caches/{id}/clean,
- * /api/storage/workspaces, /api/storage/workspaces/{id}/prune and /api/storage/open routes.
+ * /api/storage/workspaces, /api/storage/workspaces/prune (一键清理全部工作区),
+ * /api/storage/workspaces/{id}/prune and /api/storage/open routes.
  */
 public final class StorageController implements WebController {
 
@@ -26,6 +27,7 @@ public final class StorageController implements WebController {
         app.get("/api/storage/caches", this::caches);
         app.post("/api/storage/caches/{id}/clean", this::clean);
         app.get("/api/storage/workspaces", this::workspaces);
+        app.post("/api/storage/workspaces/prune", this::pruneAll);
         app.post("/api/storage/workspaces/{id}/prune", this::prune);
         app.post("/api/storage/open", this::open);
     }
@@ -48,6 +50,12 @@ public final class StorageController implements WebController {
     public void workspaces(Context ctx) {
         ctx.status(HttpStatus.OK);
         ctx.json(storage.workspaces());
+    }
+
+    /** 一键清理：后端自己遍历全部工作区；有会话在运行时 400 拒绝。 */
+    public void pruneAll(Context ctx) {
+        ctx.status(HttpStatus.OK);
+        ctx.json(storage.pruneAllWorkspaces());
     }
 
     public void prune(Context ctx) {

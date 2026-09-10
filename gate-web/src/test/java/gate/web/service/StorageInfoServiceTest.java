@@ -11,8 +11,13 @@ import gate.domain.error.GateErrorCode;
 import gate.domain.error.GateException;
 import gate.domain.policy.Policy;
 import gate.domain.publish.CommitIdentity;
+import gate.domain.session.AgentCli;
+import gate.domain.session.Session;
+import gate.domain.session.SessionStatus;
 import gate.domain.ticket.Ticket;
 import gate.domain.ticket.TicketStage;
+import gate.ports.session.AgentSessionPort;
+import gate.ports.store.SessionRepository;
 import gate.ports.store.TicketRepository;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -25,6 +30,9 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.function.Consumer;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -449,5 +457,211 @@ class StorageInfoServiceTest {
         assertEquals(GateErrorCode.USAGE, e.code());
         // 校验失败绝不动真格删除
         assertTrue(Files.exists(clonesRoot.resolve("T-116").resolve("node_modules")));
+    }
+
+    /* ─── 一键清理（会话运行边界） ─── */
+
+    @Test
+    void pruneAllCleansEveryWorkspaceInOneTraversal() throws IOException {
+        seedWorkspace("T-104");
+        seedWorkspace("T-116");
+
+        Map<String, Object> result = service.pruneAllWorkspaces();
+
+        assertEquals(true, result.get("ok"));
+        // 每个工作区各 node_modules(7) + target(2) = 9，两个工作区合计 18 / 6 个文件
+        assertEquals(18L, ((Number) result.get("removed_bytes")).longValue());
+        assertEquals(6L, ((Number) result.get("removed_files")).longValue());
+
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> per = (List<Map<String, Object>>) result.get("workspaces");
+        assertEquals(List.of("T-104", "T-116"), per.stream().map(m -> m.get("id")).toList(),
+                "按工作区给出分项（稳定排序）");
+        @SuppressWarnings("unchecked")
+        List<String> dirs = (List<String>) per.get(0).get("dirs");
+        assertTrue(dirs.contains("node_modules"));
+        assertTrue(dirs.contains("target"));
+
+        for (String id : List.of("T-104", "T-116")) {
+            Path root = clonesRoot.resolve(id);
+            assertFalse(Files.exists(root.resolve("node_modules")));
+            assertFalse(Files.exists(root.resolve("target")));
+            assertTrue(Files.exists(root.resolve("src").resolve("Main.java")), "源代码绝不清理");
+            assertTrue(Files.exists(root.resolve(".git").resolve("objects").resolve("o")), ".git 绝不清理");
+        }
+    }
+
+    @Test
+    void pruneAllSkipsWorkspacesWithoutRegenerableContent() throws IOException {
+        seedWorkspace("T-104");
+        Files.createDirectories(clonesRoot.resolve("EMPTY-1").resolve("src"));
+
+        Map<String, Object> result = service.pruneAllWorkspaces();
+
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> per = (List<Map<String, Object>>) result.get("workspaces");
+        assertEquals(1, per.size());
+        assertEquals("T-104", per.get(0).get("id"), "无内容的工作区不进分项");
+    }
+
+    @Test
+    void pruneAllRefusesWhileAnySessionRunsAndDeletesNothing() throws IOException {
+        seedWorkspace("T-116");
+        StorageInfoService guarded = guarded(new BusySessions("s-1"), new FakeSessions());
+
+        GateException e = assertThrows(GateException.class, guarded::pruneAllWorkspaces);
+        assertEquals(GateErrorCode.USAGE, e.code());
+        assertTrue(e.getMessage().contains("s-1"), "拒绝信息列出运行中的会话 id");
+        assertTrue(Files.exists(clonesRoot.resolve("T-116").resolve("node_modules")),
+                "有会话在运行时绝不删任何文件");
+    }
+
+    @Test
+    void pruneWorkspaceRefusesOnlyTheWorkspaceWithRunningSessions() throws IOException {
+        seedWorkspace("T-116");
+        seedWorkspace("T-110");
+        // 运行中会话 s-1 绑定 T-116：该工作区拒绝，别的工作区照常可清理
+        StorageInfoService guarded = guarded(new BusySessions("s-1"), new FakeSessions("s-1", "T-116"));
+
+        GateException e = assertThrows(GateException.class, () -> guarded.pruneWorkspace("T-116"));
+        assertEquals(GateErrorCode.USAGE, e.code());
+        assertTrue(Files.exists(clonesRoot.resolve("T-116").resolve("node_modules")));
+
+        Map<String, Object> ok = guarded.pruneWorkspace("T-110");
+        assertEquals(9L, ((Number) ok.get("removed_bytes")).longValue());
+        assertFalse(Files.exists(clonesRoot.resolve("T-110").resolve("node_modules")));
+    }
+
+    @Test
+    void pruneAllWithoutClonesRootIsANoOp() {
+        Map<String, Object> result = service.pruneAllWorkspaces();
+        assertEquals(true, result.get("ok"));
+        assertEquals(0L, ((Number) result.get("removed_bytes")).longValue());
+        assertTrue(((List<?>) result.get("workspaces")).isEmpty());
+    }
+
+    /** 装配了会话端口的服务替身（清理边界链路的受测对象）。 */
+    private StorageInfoService guarded(AgentSessionPort sessions, SessionRepository sessionRepo) {
+        return new StorageInfoService(config(), null, tickets, sessions, sessionRepo, opened::add);
+    }
+
+    /** 会话端口替身：只有 busySessionIds 有行为，其余方法绝不参与本服务链路。 */
+    private static final class BusySessions implements AgentSessionPort {
+
+        private final Set<String> busy;
+
+        BusySessions(String... ids) {
+            this.busy = Set.of(ids);
+        }
+
+        @Override
+        public Set<String> busySessionIds() {
+            return busy;
+        }
+
+        @Override
+        public Session start(StartRequest request) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public String sendMessage(SendRequest request) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void abort(String sessionId) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public List<gate.domain.session.SessionMessage> getHistory(String sessionId) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Stream<SessionEvent> streamEvents(String sessionId) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public AutoCloseable attachListener(String sessionId,
+                                            Consumer<gate.domain.session.SessionStreamChunk> listener) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void respondPermission(String sessionId, String permissionId, String response) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public List<gate.domain.session.PermissionRequest> pendingPermissions(String sessionId) {
+            throw new UnsupportedOperationException();
+        }
+    }
+
+    /** 会话仓库替身：只回答「会话属于哪个工单」，其余方法绝不参与本服务链路。 */
+    private static final class FakeSessions implements SessionRepository {
+
+        private final Map<String, String> ticketBySession = new HashMap<>();
+
+        /** 成对传入 sessionId, ticketNo。 */
+        FakeSessions(String... sessionTicketPairs) {
+            for (int i = 0; i < sessionTicketPairs.length; i += 2) {
+                ticketBySession.put(sessionTicketPairs[i], sessionTicketPairs[i + 1]);
+            }
+        }
+
+        @Override
+        public Optional<Session> find(String id) {
+            String ticketNo = ticketBySession.get(id);
+            if (ticketNo == null) {
+                return Optional.empty();
+            }
+            return Optional.of(new Session(id, ticketNo, "cfg", AgentCli.CLAUDE,
+                    SessionStatus.ACTIVE, null, "clones/" + ticketNo, 0, Instant.EPOCH, Instant.EPOCH,
+                    null, null, false));
+        }
+
+        @Override
+        public List<Session> findByTicket(String ticketNo) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public List<Session> findByAgentConfig(String agentConfigId) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void insert(Session session) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void update(Session session) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void insertMessage(gate.domain.session.SessionMessage message) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public List<gate.domain.session.SessionMessage> findMessages(String sessionId) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void delete(String id) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void deleteMessages(String sessionId) {
+            throw new UnsupportedOperationException();
+        }
     }
 }

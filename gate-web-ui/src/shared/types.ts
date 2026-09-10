@@ -789,6 +789,25 @@ export interface StoragePruneResult {
   dirs: string[];
 }
 
+/** 一键清理里一个有实绩的工作区分项。 */
+export interface StoragePruneAllWorkspace {
+  id: string;
+  removed_bytes: number;
+  removed_files: number;
+  removed_dirs: number;
+  /** 该工作区本次删除成功的可再生目录（相对路径）。 */
+  dirs: string[];
+}
+
+/** 一键清理全部工作区的结果（后端自己跑遍历；无实绩的工作区不进分项）。 */
+export interface StoragePruneAllResult {
+  ok: boolean;
+  removed_bytes: number;
+  removed_files: number;
+  removed_dirs: number;
+  workspaces: StoragePruneAllWorkspace[];
+}
+
 export interface LlmProvider {
   id: string;
   name: string;

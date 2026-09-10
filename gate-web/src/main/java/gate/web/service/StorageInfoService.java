@@ -3,6 +3,9 @@ package gate.web.service;
 import gate.domain.config.GateConfig;
 import gate.domain.error.GateErrorCode;
 import gate.domain.error.GateException;
+import gate.domain.session.Session;
+import gate.ports.session.AgentSessionPort;
+import gate.ports.store.SessionRepository;
 import gate.ports.store.TicketRepository;
 import java.io.IOException;
 import java.nio.file.FileVisitResult;
@@ -16,7 +19,9 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
@@ -29,6 +34,9 @@ import java.util.stream.Stream;
  * 诊断日志）与工作区内<b>可再生</b>的依赖/构建产物（node_modules、target 等）：blob
  * 存储 / 索引目录 / 审计日志承载快照与判决证据链，绝不作为可清理项下发；工单克隆
  * 的源代码与 .git 同样不可清理，只有可再生目录可以整树删除。
+ *
+ * <p>工作区清理另设运行边界：任一适配器报告会话回合进行中时，一键清理整体拒绝；
+ * 单个工作区清理只在该工作区名下有运行中会话时拒绝（其他工作区照常可清理）。
  */
 public final class StorageInfoService {
 
@@ -79,6 +87,10 @@ public final class StorageInfoService {
     private record TreeRemoved(long bytes, long files, long dirs) {
     }
 
+    /** 一次工作区清理的实绩：总量 + 实际删除成功的可再生目录相对路径。 */
+    private record WorkspacePrune(TreeRemoved removed, List<String> dirs) {
+    }
+
     private final Path gateHome;
     private final Path clonesRoot;
     private final Path dbPath;
@@ -86,14 +98,29 @@ public final class StorageInfoService {
     private final Path auditPath;
     private final Path gateToml;
     private final TicketRepository tickets;
+    /** 运行中会话快照（清理边界判据）；未装配时为 null，按「无运行中会话」处理。 */
+    private final AgentSessionPort sessions;
+    /** 运行中会话 → 所属工单（工作区）的映射；未装配时为 null，按「无法判定」处理。 */
+    private final SessionRepository sessionRepo;
     private final DirLauncher launcher;
 
     public StorageInfoService(GateConfig config, Path gateToml, TicketRepository tickets) {
-        this(config, gateToml, tickets, defaultLauncher());
+        this(config, gateToml, tickets, null, null, defaultLauncher());
     }
 
-    /** 测试缝：注入工单仓库与目录打开器。 */
+    /** 生产装配：带会话端口，清理动作按「是否有会话在运行」设边界。 */
+    public StorageInfoService(GateConfig config, Path gateToml, TicketRepository tickets,
+                              AgentSessionPort sessions, SessionRepository sessionRepo) {
+        this(config, gateToml, tickets, sessions, sessionRepo, defaultLauncher());
+    }
+
+    /** 测试缝：注入工单仓库、会话端口与目录打开器（未装配的部分按无运行中会话处理）。 */
     StorageInfoService(GateConfig config, Path gateToml, TicketRepository tickets, DirLauncher launcher) {
+        this(config, gateToml, tickets, null, null, launcher);
+    }
+
+    StorageInfoService(GateConfig config, Path gateToml, TicketRepository tickets,
+                       AgentSessionPort sessions, SessionRepository sessionRepo, DirLauncher launcher) {
         this.gateHome = config.gateHome().toAbsolutePath().normalize();
         this.clonesRoot = config.clonesRoot().toAbsolutePath().normalize();
         this.dbPath = config.dbPath().toAbsolutePath().normalize();
@@ -101,6 +128,8 @@ public final class StorageInfoService {
         this.auditPath = config.auditPath().toAbsolutePath().normalize();
         this.gateToml = gateToml == null ? null : gateToml.toAbsolutePath().normalize();
         this.tickets = tickets;
+        this.sessions = sessions;
+        this.sessionRepo = sessionRepo;
         this.launcher = launcher;
     }
 
@@ -207,18 +236,8 @@ public final class StorageInfoService {
      */
     public Map<String, Object> workspaces() {
         List<Map<String, Object>> items = new ArrayList<>();
-        if (Files.isDirectory(clonesRoot)) {
-            try (Stream<Path> stream = Files.list(clonesRoot)) {
-                for (Path dir : stream.sorted().toList()) {
-                    if (!Files.isDirectory(dir)) {
-                        continue; // 克隆根下的散落文件不是工作区
-                    }
-                    items.add(workspaceInfo(dir));
-                }
-            } catch (IOException e) {
-                throw new GateException(GateErrorCode.GATE_ERROR_IO,
-                        "cannot list clones root " + clonesRoot, e);
-            }
+        for (Path dir : workspaceDirs()) {
+            items.add(workspaceInfo(dir));
         }
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("clones_root", clonesRoot.toString());
@@ -227,11 +246,101 @@ public final class StorageInfoService {
     }
 
     /**
+     * 一键清理：自己跑一遍遍历，清理克隆根下每个工作区的全部可再生目录
+     * （前端不必先取清单）。边界规则：只要有任何一个会话在运行就整体拒绝——
+     * 清理会删掉运行中会话赖以工作的依赖与构建产物。
+     */
+    public Map<String, Object> pruneAllWorkspaces() {
+        Set<String> busy = busySessionIds();
+        if (!busy.isEmpty()) {
+            throw new GateException(GateErrorCode.USAGE,
+                    "cannot clean workspaces while sessions are running: " + String.join(", ", busy));
+        }
+        List<Map<String, Object>> perWorkspace = new ArrayList<>();
+        long removedBytes = 0;
+        long removedFiles = 0;
+        long removedDirs = 0;
+        for (Path dir : workspaceDirs()) {
+            WorkspacePrune prune = pruneRegenerable(dir);
+            if (prune.removed().files() == 0 && prune.removed().dirs() == 0) {
+                continue; // 无可清理内容的工作区不进分项（前端按分项数报「清理了几个工作区」）
+            }
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("id", dir.getFileName().toString());
+            m.put("removed_bytes", prune.removed().bytes());
+            m.put("removed_files", prune.removed().files());
+            m.put("removed_dirs", prune.removed().dirs());
+            m.put("dirs", prune.dirs());
+            perWorkspace.add(m);
+            removedBytes += prune.removed().bytes();
+            removedFiles += prune.removed().files();
+            removedDirs += prune.removed().dirs();
+        }
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("ok", true);
+        body.put("removed_bytes", removedBytes);
+        body.put("removed_files", removedFiles);
+        body.put("removed_dirs", removedDirs);
+        body.put("workspaces", perWorkspace);
+        return body;
+    }
+
+    /**
      * 清理指定工作区的全部可再生目录（node_modules/构建产物等，整树删除）。
-     * 源代码、.git 与不可再生的其余内容绝不触碰。未知/非法 id 拒绝（fail-closed）。
+     * 源代码、.git 与不可再生的其余内容绝不触碰。未知/非法 id 拒绝（fail-closed）；
+     * 该工作区名下有会话在运行时同样拒绝（删依赖会把运行中会话的落脚点抽掉）。
      */
     public Map<String, Object> pruneWorkspace(String id) {
         Path root = workspaceDir(id);
+        if (busyWorkspaceIds().contains(id)) {
+            throw new GateException(GateErrorCode.USAGE,
+                    "workspace has sessions running: " + id);
+        }
+        WorkspacePrune prune = pruneRegenerable(root);
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("ok", true);
+        body.put("removed_bytes", prune.removed().bytes());
+        body.put("removed_files", prune.removed().files());
+        body.put("removed_dirs", prune.removed().dirs());
+        body.put("dirs", prune.dirs());
+        return body;
+    }
+
+    /**
+     * 克隆根下的工作区目录（直接子目录；散落文件不是工作区；根不存在时为空）。
+     * 列表与一键清理共用同一口径，免得两处各写一遍遍历规则。
+     */
+    private List<Path> workspaceDirs() {
+        if (!Files.isDirectory(clonesRoot)) {
+            return List.of();
+        }
+        try (Stream<Path> stream = Files.list(clonesRoot)) {
+            return stream.filter(Files::isDirectory).sorted().toList();
+        } catch (IOException e) {
+            throw new GateException(GateErrorCode.GATE_ERROR_IO,
+                    "cannot list clones root " + clonesRoot, e);
+        }
+    }
+
+    /** 运行中会话 id 快照（未装配会话端口时为空：测试缝与无会话环境按「无运行中会话」处理）。 */
+    private Set<String> busySessionIds() {
+        return sessions == null ? Set.of() : sessions.busySessionIds();
+    }
+
+    /** 运行中会话所属的工作区 id（= 会话绑定的工单号）；无法判定映射时按空集处理。 */
+    private Set<String> busyWorkspaceIds() {
+        if (sessions == null || sessionRepo == null) {
+            return Set.of();
+        }
+        Set<String> out = new TreeSet<>();
+        for (String sid : sessions.busySessionIds()) {
+            sessionRepo.find(sid).map(Session::ticketNo).filter(Objects::nonNull).ifPresent(out::add);
+        }
+        return out;
+    }
+
+    /** 扫描并整树删除一个工作区的全部可再生目录（工作区自身校验由调用方负责）。 */
+    private WorkspacePrune pruneRegenerable(Path root) {
         WorkspaceScan scan = scanWorkspace(root);
         long removedBytes = 0;
         long removedFiles = 0;
@@ -248,13 +357,7 @@ public final class StorageInfoService {
                 removed.add(p.get("name").toString());
             }
         }
-        Map<String, Object> body = new LinkedHashMap<>();
-        body.put("ok", true);
-        body.put("removed_bytes", removedBytes);
-        body.put("removed_files", removedFiles);
-        body.put("removed_dirs", removedDirs);
-        body.put("dirs", removed);
-        return body;
+        return new WorkspacePrune(new TreeRemoved(removedBytes, removedFiles, removedDirs), removed);
     }
 
     /** 工作区目录解析：id 必须匹配合法形态且是克隆根的直接子目录（防路径穿越）。 */

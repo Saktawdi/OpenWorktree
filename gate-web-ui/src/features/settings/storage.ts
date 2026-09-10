@@ -7,6 +7,7 @@ import type {
   StorageCachesResponse,
   StorageCleanResult,
   StorageOverview,
+  StoragePruneAllResult,
   StoragePruneResult,
   StorageWorkspacesResponse,
 } from "@/shared/types";
@@ -35,6 +36,18 @@ export async function fetchStorageWorkspaces(): Promise<StorageWorkspacesRespons
 /** 清理一个工作区的全部可再生目录（node_modules/构建产物等；破坏性操作，调用方负责二次确认）。 */
 export async function pruneStorageWorkspace(id: string): Promise<StoragePruneResult> {
   return api<StoragePruneResult>(`/api/storage/workspaces/${encodeURIComponent(id)}/prune`, {
+    method: "POST",
+    body: "{}",
+  });
+}
+
+/**
+ * 一键清理：后端自己遍历全部工作区并清理可再生目录。
+ * 边界由后端兜底——任一会话有进行中回合时以 400 拒绝（错误信息列出运行中的会话 id）；
+ * 前端另用既有的 /api/agents/busy 轮询结果提前禁用按钮并给出原因。
+ */
+export async function pruneAllStorageWorkspaces(): Promise<StoragePruneAllResult> {
+  return api<StoragePruneAllResult>("/api/storage/workspaces/prune", {
     method: "POST",
     body: "{}",
   });

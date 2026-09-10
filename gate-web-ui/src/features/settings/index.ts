@@ -22,6 +22,7 @@ export {
   cleanStorageCache,
   fetchStorageWorkspaces,
   pruneStorageWorkspace,
+  pruneAllStorageWorkspaces,
   openStorageDir,
 } from "./storage";
 export { SettingsPage } from "./components/SettingsPage";

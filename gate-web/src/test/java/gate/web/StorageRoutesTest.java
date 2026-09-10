@@ -194,4 +194,57 @@ class StorageRoutesTest {
         HttpResponse<String> traversal = post("/api/storage/workspaces/..%2F..%2Fgate-home/prune", "{}");
         assertEquals(400, traversal.statusCode(), traversal.body());
     }
+
+    @Test
+    void pruneAllRouteCleansEveryWorkspaceBehindOnePost() throws Exception {
+        Path a = harness.components().config().clonesRoot().resolve("RT-10");
+        Files.createDirectories(a.resolve("node_modules"));
+        Files.writeString(a.resolve("node_modules").resolve("lib.js"), "abcdef", StandardCharsets.UTF_8);
+        Path b = harness.components().config().clonesRoot().resolve("RT-11");
+        Files.createDirectories(b.resolve("target"));
+        Files.writeString(b.resolve("target").resolve("A.class"), "xy", StandardCharsets.UTF_8);
+
+        HttpResponse<String> res = post("/api/storage/workspaces/prune", "{}");
+
+        assertEquals(200, res.statusCode(), res.body());
+        Map<String, Object> body = JSON.readValue(res.body(), Map.class);
+        assertEquals(true, body.get("ok"));
+        assertEquals(8, ((Number) body.get("removed_bytes")).longValue(), res.body());
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> per = (List<Map<String, Object>>) body.get("workspaces");
+        assertEquals(List.of("RT-10", "RT-11"), per.stream().map(m -> m.get("id")).toList(), res.body());
+        assertFalse(Files.exists(a.resolve("node_modules")), "可再生目录整树删除");
+        assertFalse(Files.exists(b.resolve("target")));
+        assertTrue(Files.isDirectory(a), "工作区本身保留");
+    }
+
+    @Test
+    void pruneAllRouteRefusesWhileASessionRuns() throws Exception {
+        // 会话端口替身报告一个进行中回合：一键清理必须整体拒绝，且不动任何文件
+        AgentsBusyApiTest.FakeBusyPort busy = new AgentsBusyApiTest.FakeBusyPort();
+        busy.busyIds.add("s-1");
+        try (WebHarness guarded = new WebHarness("git", "127.0.0.1", busy)) {
+            Path clone = guarded.components().config().clonesRoot().resolve("RT-12");
+            Files.createDirectories(clone.resolve("node_modules"));
+            Files.writeString(clone.resolve("node_modules").resolve("lib.js"), "abcdef", StandardCharsets.UTF_8);
+
+            WebServer guardedServer = new WebServer(guarded.components());
+            guardedServer.start();
+            try {
+                HttpRequest pruned = HttpRequest.newBuilder(
+                                URI.create("http://127.0.0.1:" + guardedServer.port() + "/api/storage/workspaces/prune"))
+                        .header("Authorization", "Bearer " + guarded.humanToken())
+                        .header("Content-Type", "application/json")
+                        .POST(HttpRequest.BodyPublishers.ofString("{}", StandardCharsets.UTF_8))
+                        .build();
+                HttpResponse<String> res = client.send(pruned, HttpResponse.BodyHandlers.ofString());
+
+                assertEquals(400, res.statusCode(), res.body());
+                assertTrue(res.body().contains("s-1"), res.body());
+                assertTrue(Files.exists(clone.resolve("node_modules")), "拒绝发生在删除之前");
+            } finally {
+                guardedServer.close();
+            }
+        }
+    }
 }
