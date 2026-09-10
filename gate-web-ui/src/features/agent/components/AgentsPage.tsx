@@ -1,4 +1,4 @@
-import { useState } from "react";
+﻿import { useState } from "react";
 import { PencilSimple, Plus, Sparkle, Trash } from "@phosphor-icons/react";
 import { actions } from "@/app/actions";
 import { appStore, useApp } from "@/store";
@@ -7,9 +7,11 @@ import { RuntimeCards } from "./RuntimeCards";
 import { AgentDialog } from "./AgentDialog";
 import { OpenCodeProvidersModal } from "./opencode/OpenCodeProvidersModal";
 import { CLI_LABEL } from "./labels";
+import { useT } from "@/i18n";
 
 /** 智能体页：本地 CLI 运行时检测 + 智能体员工配置管理。 */
 export function AgentsPage() {
+  const t = useT();
   const agents = useApp((s) => s.agents);
   const agentId = useApp((s) => s.agentId);
   const [dialog, setDialog] = useState<{ open: boolean; agent: AgentConfig | null }>({ open: false, agent: null });
@@ -21,20 +23,20 @@ export function AgentsPage() {
       <div className="max-w-[1080px] mx-auto px-6 py-5 space-y-6">
         <section>
           <div className="flex items-center gap-3 pb-3">
-            <span className="kicker">本地 CLI 检测</span>
-            <span className="font-mono text-[11px] text-faint">自动探测本机可用的 Agent 运行时</span>
+            <span className="kicker">{t("agents.cliKicker")}</span>
+            <span className="font-mono text-[11px] text-faint">{t("agents.cliDesc")}</span>
           </div>
           <RuntimeCards onManageProviders={() => setOcModalOpen(true)} />
         </section>
 
         <section>
           <div className="flex items-center gap-3 pb-3">
-            <span className="kicker">智能体员工</span>
-            <span className="font-mono text-[11px] text-faint">{agents.length} 个配置</span>
+            <span className="kicker">{t("agents.staffKicker")}</span>
+            <span className="font-mono text-[11px] text-faint">{t("agents.staffCount", { n: agents.length })}</span>
             <span className="flex-1" />
             <button className="btn btn-primary h-8" onClick={() => setDialog({ open: true, agent: null })}>
               <Plus size={14} weight="bold" />
-              新增智能体
+              {t("agent.dialog.new")}
             </button>
           </div>
 
@@ -50,7 +52,7 @@ export function AgentsPage() {
                     <span className="text-[13.5px] font-semibold">{a.name}</span>
                     <span className="chip border border-edge-strong bg-raised text-dim">{CLI_LABEL[a.cli]}</span>
                     <span className="chip border border-info/25 bg-info/10 text-info font-mono">{a.model}</span>
-                    {isDefault && <span className="chip border border-accent/30 bg-accent/10 text-accent">默认</span>}
+                    {isDefault && <span className="chip border border-accent/30 bg-accent/10 text-accent">{t("agents.default")}</span>}
                     <span className="flex-1" />
                     {confirmDelete === a.id ? (
                       <span className="flex items-center gap-1">
@@ -61,26 +63,26 @@ export function AgentsPage() {
                             setConfirmDelete(null);
                           }}
                         >
-                          确认删除
+                          {t("llm.confirmDelete")}
                         </button>
                         <button className="chip border border-edge-strong text-dim cursor-pointer" onClick={() => setConfirmDelete(null)}>
-                          返回
+                          {t("llm.back")}
                         </button>
                       </span>
                     ) : (
                       <>
                         <button
                           className="icon-btn"
-                          title="编辑"
-                          aria-label="编辑"
+                          title={t("agents.edit")}
+                          aria-label={t("agents.edit")}
                           onClick={() => setDialog({ open: true, agent: a })}
                         >
                           <PencilSimple size={13} />
                         </button>
                         <button
                           className="icon-btn hover:!text-danger"
-                          title="删除"
-                          aria-label="删除"
+                          title={t("common.delete")}
+                          aria-label={t("common.delete")}
                           onClick={() => setConfirmDelete(a.id)}
                         >
                           <Trash size={13} />
@@ -92,12 +94,12 @@ export function AgentsPage() {
                   <div className="mt-2.5 flex items-center gap-3 text-[11.5px] text-faint">
                     {a.systemPrompt && (
                       <span className="truncate max-w-[420px]" title={a.systemPrompt}>
-                        提示词：{a.systemPrompt}
+                        {t("agents.promptPrefix")}：{a.systemPrompt}
                       </span>
                     )}
                     {a.extraFlags.length > 0 && (
                       <span className="font-mono truncate" title={a.extraFlags.join(" ")}>
-                        参数 ×{a.extraFlags.length}
+                        {t("agents.argsCount", { n: a.extraFlags.length })}
                       </span>
                     )}
                     <span className="flex-1" />
@@ -106,7 +108,7 @@ export function AgentsPage() {
                         className="text-[11.5px] text-dim hover:text-accent cursor-pointer bg-transparent border-0 p-0"
                         onClick={() => appStore.setState({ agentId: a.id })}
                       >
-                        设为默认
+                        {t("agents.makeDefault")}
                       </button>
                     )}
                   </div>
@@ -115,8 +117,8 @@ export function AgentsPage() {
             })}
             {agents.length === 0 && (
               <div className="card border-dashed p-10 text-center">
-                <div className="text-[13.5px] text-dim">还没有智能体配置</div>
-                <div className="mt-1 text-[12px] text-faint">基于检测到的本地 CLI 创建第一个智能体员工</div>
+                <div className="text-[13.5px] text-dim">{t("agents.empty")}</div>
+                <div className="mt-1 text-[12px] text-faint">{t("agents.emptyHint")}</div>
               </div>
             )}
           </div>

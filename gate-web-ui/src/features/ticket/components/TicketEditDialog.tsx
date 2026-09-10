@@ -1,14 +1,16 @@
-import { useEffect, useRef, useState } from "react";
+﻿import { useEffect, useRef, useState } from "react";
 import { CornersIn, CornersOut, NotePencil, Trash } from "@phosphor-icons/react";
 import { actions } from "@/app/actions";
 import { openStageChangeConfirm, openTicketEditor } from "@/features/ticket";
 import { useApp } from "@/store";
 import type { Priority } from "@/shared/types";
 import { LabelInput, useBackdropClose } from "@/shared/components/ui";
+import { useT } from "@/i18n";
 
 const PRIORITIES: Priority[] = ["P0", "P1", "P2", "P3"];
 
 export function TicketEditDialog() {
+  const t = useT();
   const editingNo = useApp((s) => s.editingTicketNo);
   const ticket = useApp((s) => s.tickets.find((t) => t.ticketNo === s.editingTicketNo));
 
@@ -88,29 +90,29 @@ export function TicketEditDialog() {
         <div className="flex items-center gap-2.5 px-5 h-12 border-b border-edge shrink-0">
           <NotePencil size={15} className="text-dim" />
           <span className="font-mono text-[12.5px] text-accent">{ticket.ticketNo}</span>
-          <span className="text-[13.5px] font-semibold">编辑工单</span>
+          <span className="text-[13.5px] font-semibold">{t("wb.editTicket")}</span>
           <span className="flex-1" />
           <button
             className="icon-btn"
             onClick={() => setFocus((v) => !v)}
-            title={focus ? "退出专注编辑（Esc）" : "专注编辑：放大描述编辑区（Esc 退出）"}
-            aria-label={focus ? "退出专注编辑" : "专注编辑"}
+            title={focus ? t("edit.exitFocus") : t("edit.focusTip")}
+            aria-label={focus ? t("edit.exitFocus") : t("edit.focus")}
           >
             {focus ? <CornersIn size={15} /> : <CornersOut size={15} />}
           </button>
-          <button className="icon-btn" onClick={() => openTicketEditor(null)} aria-label="关闭">
+          <button className="icon-btn" onClick={() => openTicketEditor(null)} aria-label={t("common.close")}>
             ✕
           </button>
         </div>
 
         <div className={`p-5 space-y-4 overflow-y-auto ${focus ? "flex-1 min-h-0 flex flex-col" : ""}`}>
           <div className={focus ? "shrink-0" : ""}>
-            <label className="field-label">标题</label>
+            <label className="field-label">{t("ticket.new.titleLabel")}</label>
             <input className="text-input" value={title} onChange={(e) => setTitle(e.target.value)} />
           </div>
 
           <div className={focus ? "shrink-0" : ""}>
-            <label className="field-label">优先级</label>
+            <label className="field-label">{t("ticket.new.priorityLabel")}</label>
             <div className="flex gap-1">
               {PRIORITIES.map((p) => (
                 <button
@@ -130,15 +132,15 @@ export function TicketEditDialog() {
 
           <div className={focus ? "flex-1 min-h-[240px] flex flex-col" : ""}>
             <div className="flex items-center gap-2 shrink-0">
-              <label className="field-label">描述</label>
+              <label className="field-label">{t("common.description")}</label>
               <span className="flex-1" />
-              <span className="font-mono text-[10.5px] text-faint">{description.length} 字</span>
+              <span className="font-mono text-[10.5px] text-faint">{t("edit.charCount", { n: description.length })}</span>
             </div>
             <textarea
               className={`text-input py-2 resize-none leading-relaxed ${
                 focus ? "flex-1 min-h-0 !h-auto font-mono text-[12.5px]" : "h-40"
               }`}
-              placeholder="背景、验收标准…"
+              placeholder={t("ticket.new.descPlaceholder")}
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               spellCheck={false}
@@ -146,17 +148,17 @@ export function TicketEditDialog() {
           </div>
 
           <div className={focus ? "shrink-0" : ""}>
-            <label className="field-label">备注</label>
+            <label className="field-label">{t("edit.note")}</label>
             <textarea
               className={`text-input py-2 resize-none ${focus ? "h-20" : "h-16"}`}
-              placeholder="压测基线、关联信息…"
+              placeholder={t("edit.notePlaceholder")}
               value={note}
               onChange={(e) => setNote(e.target.value)}
             />
           </div>
 
           <div className={focus ? "shrink-0" : ""}>
-            <label className="field-label">标签</label>
+            <label className="field-label">{t("edit.labels")}</label>
             <LabelInput labels={labels} onChange={setLabels} />
           </div>
 
@@ -171,7 +173,7 @@ export function TicketEditDialog() {
                 }}
               >
                 <Trash size={13} />
-                取消工单（转入已取消状态）
+                {t("edit.cancelTicket")}
               </button>
             </div>
           )}
@@ -179,10 +181,10 @@ export function TicketEditDialog() {
 
         <div className="flex justify-end gap-2 px-5 py-4 border-t border-edge shrink-0">
           <button className="btn" onClick={() => openTicketEditor(null)}>
-            关闭
+            {t("common.close")}
           </button>
           <button className="btn btn-primary" disabled={!title.trim() || saving} onClick={save}>
-            {saving ? "保存中…" : "保存修改"}
+            {saving ? t("llm.saving") : t("llm.saveChanges")}
           </button>
         </div>
       </div>

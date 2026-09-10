@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
 import { ArrowRight, LockKey, SealCheck, X } from "@phosphor-icons/react";
 import { actions } from "@/app/actions";
-import { STAGE_LABEL, STAGE_CHANGE_KIND_LABEL } from "@/shared/format";
+import { stageChangeKindLabel, stageLabel } from "@/shared/format";
 import { closeStageChangeConfirm } from "@/features/ticket";
 import { showToast, useApp } from "@/store";
 import { Spinner, useBackdropClose } from "@/shared/components/ui";
+import { useT } from "@/i18n";
 
 const REASON_MAX = 2000;
 
@@ -14,10 +15,11 @@ const REASON_MAX = 2000;
  * 「已完成」的强制收尾跳过门禁（不产生快照/审查/发布），「已取消」则锁定会话操作。
  */
 export function StageChangeConfirmDialog() {
+  const t = useT();
   const confirm = useApp((s) => s.stageChangeConfirm);
   const ticket = useApp((s) => {
     if (!s.stageChangeConfirm) return undefined;
-    return s.tickets.find((t) => t.ticketNo === s.stageChangeConfirm?.ticketNo);
+    return s.tickets.find((tk) => tk.ticketNo === s.stageChangeConfirm?.ticketNo);
   });
   const [reason, setReason] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -35,7 +37,7 @@ export function StageChangeConfirmDialog() {
   const to = confirm.to;
   const complete = to === "DONE";
   const from = ticket.stage;
-  const kindLabel = complete ? "强制已完成" : STAGE_CHANGE_KIND_LABEL.cancel;
+  const kindLabel = complete ? t("stageChange.force_complete") : stageChangeKindLabel("cancel", t);
   const valid = reason.trim().length > 0 && reason.length <= REASON_MAX;
 
   const close = () => {
@@ -52,7 +54,7 @@ export function StageChangeConfirmDialog() {
     setSubmitting(false);
     if (ok) {
       closeStageChangeConfirm();
-      showToast(complete ? "工单已强制完成" : "工单已取消");
+      showToast(complete ? t("stageChange.doneToast") : t("stageChange.cancelToast"));
     }
   };
 
@@ -74,42 +76,28 @@ export function StageChangeConfirmDialog() {
           <span className="font-mono text-[12.5px] text-accent">{ticket.ticketNo}</span>
           <span className="text-[13.5px] font-semibold">{kindLabel}</span>
           <span className="flex-1" />
-          <button className="icon-btn" onClick={close} aria-label="关闭">
+          <button className="icon-btn" onClick={close} aria-label={t("common.close")}>
             ✕
           </button>
         </div>
 
         <div className="p-5 space-y-4">
           <div className="rounded-lg border border-edge bg-sunken/60 px-3.5 py-2.5 text-[12px] text-dim leading-relaxed">
-            该工单当前处于
-            <span className="mx-1 font-medium text-ink">{STAGE_LABEL[from]}</span>
-            状态，即将
-            {complete ? (
-              <>
-                跳过门禁（不经过快照/审查/发布）直接标记为
-                <span className="mx-1 font-medium text-accent">已完成</span>
-              </>
-            ) : (
-              <>
-                强制流转到
-                <span className="mx-1 font-medium text-warn">已取消</span>
-                ，会话与门禁操作将停用
-              </>
-            )}
-            。
+            {complete
+              ? t("stageChange.confirmLine.complete", {
+                  from: stageLabel(from, t),
+                  to: stageLabel("DONE", t),
+                })
+              : t("stageChange.confirmLine.cancel", { from: stageLabel(from, t) })}
           </div>
 
           <div>
             <label className="field-label">
-              状态变更理由<span className="text-danger">*</span>
+              {t("stageChange.reasonLabel")}<span className="text-danger">*</span>
             </label>
             <textarea
               className="text-input h-28 py-2 resize-none"
-              placeholder={
-                complete
-                  ? "为什么要跳过门禁强制收尾？后续可在工单信息里回看…（必填）"
-                  : "为什么要取消该工单？后续可在工单信息里回看…（必填）"
-              }
+              placeholder={complete ? t("stageChange.reasonPlaceholder.complete") : t("stageChange.reasonPlaceholder.cancel")}
               value={reason}
               maxLength={REASON_MAX}
               onChange={(e) => setReason(e.target.value)}
@@ -121,35 +109,35 @@ export function StageChangeConfirmDialog() {
           </div>
 
           <div className="text-[11.5px] text-faint leading-relaxed">
-            理由将记入工单的状态变更记录
+            {t("stageChange.reasonHint")}
             <span className="mx-1 inline-flex items-center gap-1 align-middle">
-              <span className="font-medium text-dim">{STAGE_LABEL[from]}</span>
+              <span className="font-medium text-dim">{stageLabel(from, t)}</span>
               <ArrowRight size={10} className="inline" />
-              <span className="font-medium text-ink">{STAGE_LABEL[to]}</span>
+              <span className="font-medium text-ink">{stageLabel(to, t)}</span>
             </span>
-            ，与重启理由同一口径，可在工作台右侧「工单信息 → 状态记录」里查看。
+            {t("stageChange.reasonHintTail")}
           </div>
         </div>
 
         <div className="flex justify-end gap-2 px-5 py-4 border-t border-edge">
           <button className="btn" onClick={close}>
-            取消
+            {t("common.cancel")}
           </button>
           <button className={`btn btn-primary ${complete ? "" : "!bg-warn !border-warn"}`} disabled={!valid || submitting} onClick={submit}>
             {submitting ? (
               <>
                 <Spinner />
-                流转中…
+                {t("stageChange.submitting")}
               </>
             ) : complete ? (
               <>
                 <SealCheck size={14} weight="fill" />
-                确认强制完成
+                {t("stageChange.submit.complete")}
               </>
             ) : (
               <>
                 <LockKey size={14} weight="fill" />
-                确认取消工单
+                {t("stageChange.submit.cancel")}
               </>
             )}
           </button>

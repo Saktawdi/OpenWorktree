@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+﻿import { useEffect, useState } from "react";
 import { ArrowClockwise, CircleNotch, Lightning, PencilSimple, Plug, Plus, Trash, X } from "@phosphor-icons/react";
 import { actions } from "@/app/actions";
 import { useApp } from "@/store";
@@ -7,9 +7,11 @@ import type { OpenCodeProvider } from "@/shared/types";
 import { useBackdropClose } from "@/shared/components/ui";
 import { normalizeModelEntries } from "./presets";
 import { OcProviderPanel } from "./OcProviderPanel";
+import { useT } from "@/i18n";
 
 /** 供应商管理全屏弹窗：从 OpenCode 运行时卡片的入口进入。 */
 export function OpenCodeProvidersModal({ onClose }: { onClose: () => void }) {
+  const t = useT();
   const ocProviders = useApp((s) => s.ocProviders);
   const ocConfigPath = useApp((s) => s.ocConfigPath);
   const mode = useApp((s) => s.mode);
@@ -29,7 +31,7 @@ export function OpenCodeProvidersModal({ onClose }: { onClose: () => void }) {
   const testProvider = async (p: OpenCodeProvider) => {
     const model = normalizeModelEntries(p.models)[0]?.id;
     if (!model || !p.baseURL) {
-      setTestResult({ key: p.key, ok: false, text: "缺少 Base URL 或模型，无法测试" });
+      setTestResult({ key: p.key, ok: false, text: t("oc.testNeedConfig") });
       return;
     }
     setTesting(p.key);
@@ -60,18 +62,18 @@ export function OpenCodeProvidersModal({ onClose }: { onClose: () => void }) {
         <div className="w-[700px] max-w-full shrink-0 flex flex-col min-w-0">
         <div className="flex items-center gap-2 px-5 h-12 border-b border-edge shrink-0">
           <Plug size={15} className="text-accent" weight="fill" />
-          <span className="text-[13.5px] font-semibold">OpenCode 供应商管理</span>
+          <span className="text-[13.5px] font-semibold">{t("oc.modalTitle")}</span>
           {ocConfigPath && <span className="font-mono text-[11px] text-faint truncate">{ocConfigPath}</span>}
           <span className="flex-1" />
-          <button className="btn h-8" onClick={() => actions.loadOcProviders()} title="重新读取配置文件">
+          <button className="btn h-8" onClick={() => actions.loadOcProviders()} title={t("oc.reloadConfig")}>
             <ArrowClockwise size={13} />
-            刷新
+            {t("common.refresh")}
           </button>
           <button className="btn btn-primary h-8" onClick={() => setDialog({ open: true, provider: null })}>
             <Plus size={14} weight="bold" />
-            新增供应商
+            {t("oc.newProvider")}
           </button>
-          <button className="icon-btn" title="关闭" aria-label="关闭" onClick={onClose}>
+          <button className="icon-btn" title={t("common.close")} aria-label={t("common.close")} onClick={onClose}>
             <X size={15} />
           </button>
         </div>
@@ -102,18 +104,18 @@ export function OpenCodeProvidersModal({ onClose }: { onClose: () => void }) {
                         setConfirmDelete(null);
                       }}
                     >
-                      确认删除
+                      {t("llm.confirmDelete")}
                     </button>
                     <button className="chip border border-edge-strong text-dim cursor-pointer" onClick={() => setConfirmDelete(null)}>
-                      返回
+                      {t("llm.back")}
                     </button>
                   </span>
                 ) : (
                   <>
                     <button
                       className="icon-btn"
-                      title="测试连通（第一个模型）"
-                      aria-label="测试连通"
+                      title={t("oc.testTip")}
+                      aria-label={t("oc.test")}
                       disabled={testing === p.key}
                       onClick={() => void testProvider(p)}
                     >
@@ -121,16 +123,16 @@ export function OpenCodeProvidersModal({ onClose }: { onClose: () => void }) {
                     </button>
                     <button
                       className="icon-btn"
-                      title="编辑"
-                      aria-label="编辑"
+                      title={t("agents.edit")}
+                      aria-label={t("agents.edit")}
                       onClick={() => setDialog({ open: true, provider: p })}
                     >
                       <PencilSimple size={13} />
                     </button>
                     <button
                       className="icon-btn hover:!text-danger"
-                      title="删除"
-                      aria-label="删除"
+                      title={t("common.delete")}
+                      aria-label={t("common.delete")}
                       onClick={() => setConfirmDelete(p.key)}
                     >
                       <Trash size={13} />
@@ -145,7 +147,7 @@ export function OpenCodeProvidersModal({ onClose }: { onClose: () => void }) {
                   </span>
                 )}
                 <span>
-                  模型{" "}
+                  {t("agent.modelLabel")}{" "}
                   <span className="font-mono text-dim">
                     {normalizeModelEntries(p.models).length > 0
                       ? normalizeModelEntries(p.models).map((m) => m.id).join(" · ")
@@ -159,10 +161,10 @@ export function OpenCodeProvidersModal({ onClose }: { onClose: () => void }) {
             <div className="card border-dashed p-8 text-center">
               <div className="text-[13px] text-dim">
                 {mode === "live"
-                  ? "opencode.json 里还没有 provider，或文件尚未创建"
-                  : "还没有供应商配置"}
+                  ? t("oc.emptyNoFile")
+                  : t("oc.empty")}
               </div>
-              <div className="mt-1 text-[12px] text-faint">新增一个 OpenCode 兼容供应商后，智能体即可选用它的模型</div>
+              <div className="mt-1 text-[12px] text-faint">{t("oc.emptyHint")}</div>
             </div>
           )}
         </div>

@@ -1,7 +1,8 @@
-import { useState } from "react";
+﻿import { useState } from "react";
 import { SealCheck, ShieldCheck } from "@phosphor-icons/react";
 import { actions } from "@/app/actions";
 import { useBackdropClose } from "@/shared/components/ui";
+import { useT } from "@/i18n";
 
 /**
  * 人工审查确认弹窗（ReviewActions 触发；也被 FindingsView 复用）。
@@ -19,6 +20,7 @@ export function ManualReviewDialog({
   busy: boolean;
   onClose: () => void;
 }) {
+  const t = useT();
   const [note, setNote] = useState("");
   const backdrop = useBackdropClose(busy ? undefined : onClose);
   return (
@@ -32,46 +34,45 @@ export function ManualReviewDialog({
       >
         <div className="flex items-center gap-2.5 px-5 h-12 border-b border-edge">
           <ShieldCheck size={15} className="text-warn" weight="fill" />
-          <span className="text-[13.5px] font-semibold">人工审查确认</span>
+          <span className="text-[13.5px] font-semibold">{t("manual.title")}</span>
           <span className="flex-1" />
-          <button className="icon-btn" onClick={onClose} disabled={busy} aria-label="关闭">
+          <button className="icon-btn" onClick={onClose} disabled={busy} aria-label={t("common.close")}>
             ✕
           </button>
         </div>
         <div className="p-5 space-y-3">
           <div className="text-[13px] leading-relaxed text-dim">
-            确认已人工审阅第 {round} 轮快照的全部变更？
+            {t("manual.confirmLine", { n: round })}
           </div>
           <div>
-            <div className="field-label">核准理由（必填，将记入证据链与审计日志）</div>
+            <div className="field-label">{t("manual.reasonLabel")}</div>
             <textarea
               className="textarea mt-1 h-[64px] resize-none"
-              placeholder="例如：coverage gap 涉及的文件均为测试夹具，已逐个人工审阅"
+              placeholder={t("manual.reasonPlaceholder")}
               value={note}
               onChange={(e) => setNote(e.target.value)}
               disabled={busy}
             />
           </div>
           <div className="rounded-lg bg-sunken border border-edge px-3 py-2.5 text-[12px] leading-relaxed text-faint">
-            确认后本轮判决以人工核准为准，审查引擎不再参与；工单将进入「待发布」，
-            可直接一键安全发布。触发身份与理由会记入审计日志。
+            {t("manual.note")}
           </div>
         </div>
         <div className="flex justify-end gap-2 px-5 pb-4">
           <button className="btn h-8 text-[12.5px]" onClick={onClose} disabled={busy}>
-            取消
+            {t("common.cancel")}
           </button>
           <button
             className="btn btn-primary h-8 text-[12.5px]"
             disabled={busy || note.trim().length === 0}
-            title={note.trim() ? undefined : "填写核准理由后才能确认"}
+            title={note.trim() ? undefined : t("manual.reasonRequired")}
             onClick={() => {
               actions.reviewHuman(ticketNo, note.trim());
               onClose();
             }}
           >
             <SealCheck size={13} weight="fill" />
-            确认已审阅并放行
+            {t("manual.confirm")}
           </button>
         </div>
       </div>

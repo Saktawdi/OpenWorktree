@@ -1,8 +1,9 @@
 import type { Priority, Severity, Stage } from "@/shared/types";
-import { PRIORITY_COLOR, SEVERITY_LABEL, STAGE_LABEL } from "@/shared/format";
+import { PRIORITY_COLOR, stageLabel } from "@/shared/format";
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { Copy, X } from "@phosphor-icons/react";
 import { useApp } from "@/store";
+import { useT } from "@/i18n";
 
 /**
  * 弹窗遮罩的关闭判定。
@@ -54,6 +55,7 @@ export function StageDot({ stage }: { stage: Stage }) {
 }
 
 export function StageBadge({ stage }: { stage: Stage }) {
+  const t = useT();
   const tone =
     stage === "REJECTED"
       ? "text-danger border-danger/30 bg-danger/10"
@@ -67,7 +69,7 @@ export function StageBadge({ stage }: { stage: Stage }) {
   return (
     <span className={`chip border ${tone}`}>
       <StageDot stage={stage} />
-      {STAGE_LABEL[stage]}
+      {stageLabel(stage, t)}
     </span>
   );
 }
@@ -85,13 +87,14 @@ export function PriorityChip({ priority, muted = false }: { priority: Priority; 
 }
 
 export function SeverityChip({ severity }: { severity: Severity }) {
+  const t = useT();
   const map: Record<Severity, string> = {
     BLOCKER: "text-danger border-danger/40 bg-danger/15",
     WARNING: "text-warn border-warn/40 bg-warn/15",
     NIT: "text-dim border-edge-strong bg-raised",
     INFO: "text-info border-info/30 bg-info/10",
   };
-  return <span className={`chip border ${map[severity]}`}>{SEVERITY_LABEL[severity]}</span>;
+  return <span className={`chip border ${map[severity]}`}>{t(`severity.${severity}`)}</span>;
 }
 
 export function Spinner({ className = "" }: { className?: string }) {
@@ -178,13 +181,14 @@ export async function copyText(text: string): Promise<boolean> {
 }
 
 export function CopyButton({ text, label }: { text: string; label?: string }) {
+  const t = useT();
   const [done, setDone] = useState(false);
   return (
     <button
       type="button"
       className="icon-btn"
-      title={label ?? "复制"}
-      aria-label={label ?? "复制"}
+      title={label ?? t("common.copy")}
+      aria-label={label ?? t("common.copy")}
       onClick={() => {
         const t = String(text ?? "");
         if (!t) return;
@@ -206,7 +210,17 @@ export function CopyButton({ text, label }: { text: string; label?: string }) {
   );
 }
 
-const COMMON_LABELS = ["开发", "BUG", "优化", "重构", "文档", "安全", "性能", "测试"];
+/** 常用标签建议（键到 i18n，英文界面显示英文建议词）。 */
+const COMMON_LABEL_KEYS = [
+  "labelInput.dev",
+  "labelInput.bug",
+  "labelInput.optimize",
+  "labelInput.refactor",
+  "labelInput.docs",
+  "labelInput.security",
+  "labelInput.perf",
+  "labelInput.test",
+] as const;
 const MAX_LABELS = 20;
 
 /**
@@ -216,16 +230,19 @@ const MAX_LABELS = 20;
 export function LabelInput({
   labels,
   onChange,
-  placeholder = "输入后回车添加，可用逗号分隔",
-  suggestions = COMMON_LABELS,
+  placeholder,
+  suggestions,
 }: {
   labels: string[];
   onChange: (next: string[]) => void;
   placeholder?: string;
   suggestions?: string[];
 }) {
+  const t = useT();
   const [draft, setDraft] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
+  const commonLabels = suggestions ?? COMMON_LABEL_KEYS.map((k) => t(k));
+  const resolvedPlaceholder = placeholder ?? t("labelInput.placeholder");
 
   const addParts = (parts: string[]) => {
     const next = [...labels];
@@ -255,7 +272,7 @@ export function LabelInput({
               type="button"
               className="grid h-4 w-4 place-items-center rounded text-faint cursor-pointer hover:text-danger"
               onClick={() => remove(l)}
-              aria-label={`移除标签 ${l}`}
+              aria-label={t("labelInput.removeTag", { tag: l })}
             >
               <X size={9} weight="bold" />
             </button>
@@ -265,7 +282,7 @@ export function LabelInput({
           ref={inputRef}
           className="h-7 min-w-[72px] flex-1 bg-transparent text-[13px] text-ink placeholder:text-faint outline-none"
           value={draft}
-          placeholder={labels.length === 0 ? placeholder : ""}
+          placeholder={labels.length === 0 ? resolvedPlaceholder : ""}
           onChange={(e) => {
             const v = e.target.value;
             if (/[,，]/.test(v)) {
@@ -302,8 +319,8 @@ export function LabelInput({
         />
       </div>
       <div className="mt-1.5 flex flex-wrap items-center gap-1">
-        <span className="mr-0.5 text-[10.5px] text-faint">常用</span>
-        {suggestions.map((tag) => {
+        <span className="mr-0.5 text-[10.5px] text-faint">{t("labelInput.common")}</span>
+        {commonLabels.map((tag) => {
           const existing = labels.find((l) => l.toLowerCase() === tag.toLowerCase());
           return (
             <button

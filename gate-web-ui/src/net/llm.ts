@@ -1,8 +1,9 @@
-/**
+﻿/**
  * LLM 对话数据面（net）：/api/llm/chat 的唯一前端实现（KMS 解密在后端完成，
  * 前端只见业务字段）。原生 LLM 小助手（features/assistant）与插件宿主
  * ctx.llm（app/plugins）共用，避免 SSE 解析两处镜像。
  */
+import { t } from "@/i18n";
 import { api, authHeaders } from "./http";
 
 /** 一条对话消息（wire 与 SDK 契约同形）。 */
@@ -75,7 +76,7 @@ export async function llmChatStream(
     }
     throw new Error(msg);
   }
-  if (!res.body) throw new Error("响应无正文，无法流式读取");
+  if (!res.body) throw new Error(t("net.noBody"));
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let full = "";

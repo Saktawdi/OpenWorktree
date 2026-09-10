@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 插件系统（app/plugins）：宿主运行时。
  *
  * 生命周期定义（前端"热插拔"语义）：
@@ -7,6 +7,7 @@
  *   重载 = 禁用 → 以新 cacheTag 重新 import（产物更新后指纹必然变化）。
  * 任何插件异常只进错误面板，不崩主应用。
  */
+import { t } from "@/i18n";
 import "./shared";
 import { appStore } from "@/store";
 import {
@@ -99,7 +100,7 @@ async function syncPlugins(): Promise<void> {
   try {
     list = await listPlugins();
   } catch (e) {
-    setCatalog([], `插件目录读取失败：${(e as Error).message}`, false);
+    setCatalog([], t("plugins.hostCatalogFailed", { err: (e as Error).message }), false);
     return;
   }
   // 目录视图先行（error 状态在 markPlugin 里写入，必须先有目录行）。
@@ -171,7 +172,7 @@ async function loadPlugin(info: PluginListItem): Promise<void> {
     const activate =
       typeof candidate === "function" ? candidate : candidate?.activate;
     if (typeof activate !== "function") {
-      throw new Error("入口未导出 activate(ctx)");
+      throw new Error(t("plugins.hostNoActivate"));
     }
     const ctx = buildContext(info, disposers);
     const returned = (activate as PluginEntryModule["activate"])(ctx);
@@ -271,7 +272,7 @@ function buildContext(info: PluginListItem, disposers: Disposable[]): PluginCont
     llm: info.permissions.includes("llm") ? makeLlm() : null,
     async hostFetch<T>(path: string, init?: HostFetchRequest) {
       if (!info.permissions.includes("net")) {
-        throw new Error("manifest 未声明 net 权限，无法使用 hostFetch");
+        throw new Error(t("plugins.hostNoNetPerm"));
       }
       return hostFetch<T>(path, init);
     },

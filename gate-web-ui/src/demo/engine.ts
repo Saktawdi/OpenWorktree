@@ -1,4 +1,5 @@
-import { addSnapshot, clearReviewEnded, markReviewEnded, setFindings, setGateBusy, setOutcome, setTask, setVerdict } from "@/features/gate";
+﻿import { addSnapshot, clearReviewEnded, markReviewEnded, setFindings, setGateBusy, setOutcome, setTask, setVerdict } from "@/features/gate";
+import { t } from "@/i18n";
 import { addUsage, applyTodosSnapshot, clearSessionEnded, ensureCurrentSession, finishAssistant, markSessionEnded, patchAssistant, pushAssistantPlaceholder, pushSystemMessage, pushUserMessage, setBusy, setContextLimit, setContextTokens, setSessionBusy } from "@/features/session";
 import { currentCancelSeq, requestCancel, setDiffs, setStage } from "@/features/ticket";
 import { showToast, appStore } from "@/store";
@@ -481,7 +482,7 @@ async function scriptFix(no: string, seq: number) {
 
 function aborted(no: string, id: string) {
   finishAssistant(no, id);
-  pushSystemMessage(no, "生成已中断 · Agent 进程已终止并释放工单锁", "warn");
+  pushSystemMessage(no, t("demo.aborted"), "warn");
 }
 
 function applyDiffs(no: string, files: DiffFile[]) {
@@ -520,7 +521,7 @@ export async function demoPresubmit(no: string) {
   if (st.gateBusy[no]) return;
   const files = st.diffs[no] ?? [];
   if (files.length === 0) {
-    showToast("工作区暂无变更，先让 Agent 完成编码");
+    showToast(t("kanban.block.noChanges"));
     return;
   }
   setGateBusy(no, true);
@@ -548,7 +549,7 @@ export async function demoPresubmit(no: string) {
       capturedAt: Date.now(),
     });
     setStage(no, "PRESUBMITTED");
-    pushSystemMessage(no, `第 ${round} 轮快照已锁定 · 指纹 ${treeHash.slice(0, 10)}…${treeHash.slice(-6)} · 所见即所审`, "success");
+    pushSystemMessage(no, t("demo.snapshotLocked", { round, hash: `${treeHash.slice(0, 10)}…${treeHash.slice(-6)}` }), "success");
     void import("@/features/gate/api").then((m) => m.loadEvidence(no));
   } finally {
     setTask(no, null);
@@ -561,7 +562,7 @@ export async function demoReview(no: string) {
   if (st.gateBusy[no]) return;
   const snaps = st.snapshots[no] ?? [];
   if (snaps.length === 0) {
-    showToast("请先预提审，锁定待审快照");
+    showToast(t("demo.needPresubmit"));
     return;
   }
   const round = snaps[snaps.length - 1].round;
@@ -588,7 +589,7 @@ export async function demoReview(no: string) {
         round,
       });
       setStage(no, "REJECTED");
-      pushSystemMessage(no, `第 ${round} 轮审查驳回 · ${FINDINGS_R1.length} 项发现已回注会话`, "warn");
+      pushSystemMessage(no, t("demo.reviewRejected", { round, n: FINDINGS_R1.length }), "warn");
       markReviewEnded(no, "REJECT");
       void import("@/features/gate/api").then((m) => m.loadEvidence(no));
     } else {
@@ -601,7 +602,7 @@ export async function demoReview(no: string) {
         authorizationId: fakeSha(`auth:${no}:${round}`).slice(0, 16),
       });
       setStage(no, "READY_TO_PUBLISH");
-      pushSystemMessage(no, `第 ${round} 轮审查通过 · 发布授权已签发，所审即所发`, "success");
+      pushSystemMessage(no, t("demo.reviewPassed", { round }), "success");
       markReviewEnded(no, "PASS");
       void import("@/features/gate/api").then((m) => m.loadEvidence(no));
     }
@@ -616,7 +617,7 @@ export async function demoPublish(no: string) {
   if (st.gateBusy[no]) return;
   const verdict = st.verdicts[no];
   if (!verdict || verdict.verdict !== "PASS") {
-    showToast("尚未取得发布授权，先通过门禁审查");
+    showToast(t("demo.needReview"));
     return;
   }
   const snaps = st.snapshots[no] ?? [];
@@ -642,8 +643,8 @@ export async function demoPublish(no: string) {
       publishedAt: Date.now(),
     });
     setStage(no, "DONE");
-    pushSystemMessage(no, `已原子发布至主分支 main · 提交 ${commitSha.slice(0, 8)} · 快照指纹核验一致`, "success");
-    showToast("发布成功，主分支已更新");
+    pushSystemMessage(no, t("demo.published", { sha: commitSha.slice(0, 8) }), "success");
+    showToast(t("gateflow.publishSuccess"));
     void import("@/features/gate/api").then((m) => m.loadEvidence(no));
   } finally {
     setTask(no, null);

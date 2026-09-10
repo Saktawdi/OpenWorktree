@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+﻿import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   CaretDown,
   CaretRight,
@@ -37,10 +37,22 @@ import { LabelInput, useBackdropClose } from "@/shared/components/ui";
 import { RepoViewDialog } from "@/features/project/components/RepoView";
 import { TerminalPickerDialog } from "@/features/project/components/ProjectTerminal";
 import { WorkspaceBrowserDialog } from "@/features/project/components/WorkspaceBrowserDialog";
+import { useT, type Translate } from "@/i18n";
 
-const SIZE_LABEL: Record<string, string> = { small: "小型", medium: "中型", large: "大型" };
-// 项目标签偏向领域/类型划分，与工单标签（开发、BUG…）区分开
-const PROJECT_COMMON_LABELS = ["电商", "内容", "文档", "数据", "AI", "工具", "前端", "后端"];
+// 项目标签偏向领域/类型划分，与工单标签（开发、BUG…）区分开；建议词走 i18n。
+const PROJECT_COMMON_LABEL_KEYS = [
+  "project.tag.ecommerce",
+  "project.tag.content",
+  "project.tag.docs",
+  "project.tag.data",
+  "project.tag.ai",
+  "project.tag.tools",
+  "project.tag.frontend",
+  "project.tag.backend",
+] as const;
+function sizeLabel(sz: string, tr: Translate): string {
+  return tr(`project.size.${sz}` as never) !== `project.size.${sz}` ? tr(`project.size.${sz}` as never) : sz;
+}
 
 type SizeFilter = "__all__" | "small" | "medium" | "large" | "__unset__";
 type PriorityFilter = "__all__" | "P0" | "P1" | "P2" | "P3" | "__unset__";
@@ -69,6 +81,7 @@ function ProjectDialog({
   initial?: Project | null;
   onClose: () => void;
 }) {
+  const t = useT();
   const mode = useApp((s) => s.mode);
   const backdrop = useBackdropClose(onClose);
   const [name, setName] = useState(initial?.name ?? "");
@@ -105,18 +118,18 @@ function ProjectDialog({
     if (backendPlatform === "linux" || backendPlatform === "mac") {
       return {
         placeholder: `${backendHome || (backendPlatform === "mac" ? "/Users/you" : "/home/you")}/my-project`,
-        hint: `后端运行在 ${backendPlatform === "linux" ? "Linux" : "macOS"}：手动输入或点右侧图标浏览；目录不存在时会在接入时自动创建`,
+        hint: t("project.pathHint.unix", { platform: backendPlatform === "linux" ? "Linux" : "macOS" }),
       };
     }
     if (backendPlatform === "windows") {
       return {
         placeholder: "D:/work/my-project",
-        hint: "后端运行在 Windows：请填盘符开头的绝对路径；目录不存在时会自动创建",
+        hint: t("project.pathHint.windows"),
       };
     }
     return {
-      placeholder: "D:/work/my-project 或 /home/you/my-project",
-      hint: "手动输入或点击右侧文件夹图标浏览本地目录；目录不存在时会自动创建",
+      placeholder: t("project.pathPlaceholderAny"),
+      hint: t("project.pathHint.generic"),
     };
   })();
 
@@ -158,7 +171,7 @@ function ProjectDialog({
 
   const openBrowser = () => {
     if (mode !== "live") {
-      showToast("目录浏览需要连接本地后端（live 模式）");
+      showToast(t("project.browseNeedLive"));
       return;
     }
     setBrowserOpen(true);
@@ -169,26 +182,26 @@ function ProjectDialog({
       <div className="w-[460px] card shadow-2xl shadow-black/60 animate-rise" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-2 px-5 h-12 border-b border-edge">
           <FolderPlus size={15} className="text-accent" />
-          <span className="text-[13.5px] font-semibold">{initial ? "编辑项目" : "接入新项目"}</span>
+          <span className="text-[13.5px] font-semibold">{initial ? t("project.edit") : t("project.connectNew")}</span>
         </div>
         <div className="p-5 space-y-4">
           <div>
-            <label className="field-label">项目名称</label>
+            <label className="field-label">{t("project.nameLabel")}</label>
             <input
               autoFocus
               className="text-input"
-              placeholder="例如：Acme Checkout"
+              placeholder={t("project.namePlaceholder")}
               value={name}
               onChange={(e) => setName(e.target.value)}
             />
             {!initial && (
-              <div className="mt-1 text-[11px] text-faint">选择工作区后自动取目录名填充；手动输入过的名称不会被覆盖</div>
+              <div className="mt-1 text-[11px] text-faint">{t("project.nameHint")}</div>
             )}
           </div>
           {!initial && (
             <>
               <div>
-                <label className="field-label">工作区路径（绝对路径）</label>
+                <label className="field-label">{t("project.pathLabel")}</label>
                 <div className="relative">
                   <input
                     className="text-input font-mono text-[12px] pr-10"
@@ -199,8 +212,8 @@ function ProjectDialog({
                   <button
                     type="button"
                     className="absolute right-1.5 top-1/2 -translate-y-1/2 grid place-items-center w-7 h-7 rounded-md text-faint cursor-pointer hover:text-accent hover:bg-raised transition-colors"
-                    title="浏览本地目录"
-                    aria-label="浏览本地目录"
+                    title={t("project.browse")}
+                    aria-label={t("project.browse")}
                     onClick={openBrowser}
                   >
                     <FolderOpen size={15} weight="regular" />
@@ -217,25 +230,25 @@ function ProjectDialog({
                   onChange={(e) => setInitGit(e.target.checked)}
                   className="accent-[#35d99e]"
                 />
-                目录为空时自动执行 git init（使用下方主分支，默认 main）
+                {t("project.initGitLabel")}
               </label>
             </>
           )}
           <div>
-            <label className="field-label">主分支</label>
+            <label className="field-label">{t("project.mainBranchLabel")}</label>
             <input
               className="text-input font-mono text-[12px]"
-              placeholder={initial ? initial.targetRef?.replace("refs/heads/", "") || "main" : "留空自动检测（空目录则 main）"}
+              placeholder={initial ? initial.targetRef?.replace("refs/heads/", "") || "main" : t("project.mainBranchPlaceholder")}
               value={targetBranch}
               onChange={(e) => setTargetBranch(e.target.value)}
             />
             <div className="mt-1 text-[11px] text-faint">
-              master / main 等单段分支名，基座同步与建单基线都用它；修改后对新开工单生效
+              {t("project.mainBranchHint")}
             </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="field-label">优先级</label>
+              <label className="field-label">{t("ticket.new.priorityLabel")}</label>
               <div className="flex gap-1">
                 {[null, "P0", "P1", "P2", "P3"].map((p) => (
                   <button
@@ -247,13 +260,13 @@ function ProjectDialog({
                         : "border-edge text-dim hover:text-ink hover:bg-raised"
                     }`}
                   >
-                    {p === null ? "无" : p}
+                    {p === null ? t("common.none") : p}
                   </button>
                 ))}
               </div>
             </div>
             <div>
-              <label className="field-label">规模</label>
+              <label className="field-label">{t("project.sizeLabel")}</label>
               <div className="flex gap-1">
                 {[null, "small", "medium", "large"].map((sz) => (
                   <button
@@ -265,27 +278,27 @@ function ProjectDialog({
                         : "border-edge text-dim hover:text-ink hover:bg-raised"
                     }`}
                   >
-                    {sz === null ? "无" : SIZE_LABEL[sz]}
+                    {sz === null ? t("common.none") : sizeLabel(sz, t)}
                   </button>
                 ))}
               </div>
             </div>
           </div>
           <div>
-            <label className="field-label">标签</label>
-            <LabelInput labels={tags} onChange={setTags} suggestions={PROJECT_COMMON_LABELS} />
+            <label className="field-label">{t("edit.labels")}</label>
+            <LabelInput labels={tags} onChange={setTags} suggestions={PROJECT_COMMON_LABEL_KEYS.map((k) => t(k))} />
           </div>
         </div>
         <div className="flex justify-end gap-2 px-5 py-4 border-t border-edge">
           <button className="btn" onClick={onClose}>
-            取消
+            {t("common.cancel")}
           </button>
           <button
             className="btn btn-primary"
             disabled={!name.trim() || (!initial && !workspacePath.trim()) || saving}
             onClick={save}
           >
-            {saving ? "保存中…" : initial ? "保存修改" : "接入项目"}
+            {saving ? t("llm.saving") : initial ? t("llm.saveChanges") : t("topbar.project.connect")}
           </button>
         </div>
       </div>
@@ -353,6 +366,7 @@ function SortableProjectCard({
 }) {
   const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } =
     useSortable({ id: project.id });
+  const t = useT();
   return (
     <div
       ref={setNodeRef}
@@ -365,8 +379,8 @@ function SortableProjectCard({
           {...attributes}
           {...listeners}
           className="grid place-items-center w-5 h-6 -ml-1 rounded text-faint/60 cursor-grab active:cursor-grabbing hover:text-dim hover:bg-raised transition-colors touch-none"
-          title="拖拽调整顺序"
-          aria-label={`拖拽调整 ${project.name} 的顺序`}
+          title={t("project.dragOrderTip")}
+          aria-label={t("project.dragOrderAria", { name: project.name })}
         >
           <DotsSixVertical size={13} weight="bold" />
         </button>,
@@ -385,6 +399,7 @@ function dragJustEnded(): boolean {
 }
 
 export function ProjectsPage() {
+  const t = useT();
   const projects = useApp((s) => s.projects);
   const activeId = useApp((s) => s.activeProjectId);
   const tickets = useApp((s) => s.tickets);
@@ -440,7 +455,7 @@ export function ProjectsPage() {
 
   const openTerminal = (p: Project) => {
     if (mode !== "live") {
-      showToast("终端需要连接本地后端（live 模式）后使用");
+      showToast(t("wb.terminalNeedLive"));
       return;
     }
     setTerminalFor(p);
@@ -465,8 +480,8 @@ export function ProjectsPage() {
     if (activeProject.starred !== overProject.starred) {
       showToast(
         activeProject.starred
-          ? "星标项目固定在最前——先取消星标再把它排到后面"
-          : "星标项目固定在最前——可先星标它，或在星标区下方拖拽排序",
+          ? t("project.starBlock.unstar")
+          : t("project.starBlock.star"),
       );
       return;
     }
@@ -486,9 +501,9 @@ export function ProjectsPage() {
     <div className="flex-1 min-h-0 overflow-y-auto scrollbar-none">
       <div className="max-w-[1080px] mx-auto px-6 py-5">
         <div className="flex flex-wrap items-center gap-2 pb-4">
-          <span className="kicker">项目接入</span>
+          <span className="kicker">{t("project.kicker")}</span>
           <span className="font-mono text-[11px] text-faint">
-            {hasFilters ? `${filtered.length}/${projects.length} 个项目` : `${projects.length} 个项目`}
+            {hasFilters ? t("project.countFiltered", { shown: filtered.length, total: projects.length }) : t("project.count", { n: projects.length })}
           </span>
           <div className="relative ml-1">
             <MagnifyingGlass
@@ -497,15 +512,15 @@ export function ProjectsPage() {
             />
             <input
               className="text-input h-8 w-48 pl-7 pr-7 text-[12.5px]"
-              placeholder="搜索名称 / 路径 / 标签"
-              aria-label="搜索项目"
+              placeholder={t("project.search")}
+              aria-label={t("project.searchAria")}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
             />
             {query && (
               <button
                 className="absolute right-1.5 top-1/2 -translate-y-1/2 grid place-items-center w-5 h-5 rounded text-faint hover:text-ink cursor-pointer"
-                aria-label="清除搜索"
+                aria-label={t("kanban.clearSearch")}
                 onClick={() => setQuery("")}
               >
                 <X size={11} weight="bold" />
@@ -513,34 +528,34 @@ export function ProjectsPage() {
             )}
           </div>
           <FilterSelect
-            label="按规模筛选"
+            label={t("project.sizeFilter")}
             value={sizeFilter}
             onChange={(v) => setSizeFilter(v as SizeFilter)}
             options={[
-              { value: "__all__", label: "全部规模" },
-              { value: "small", label: "小型" },
-              { value: "medium", label: "中型" },
-              { value: "large", label: "大型" },
-              { value: "__unset__", label: "未设置" },
+              { value: "__all__", label: t("project.sizeAll") },
+              { value: "small", label: t("project.size.small") },
+              { value: "medium", label: t("project.size.medium") },
+              { value: "large", label: t("project.size.large") },
+              { value: "__unset__", label: t("project.unset") },
             ]}
           />
           <FilterSelect
-            label="按优先级筛选"
+            label={t("project.priorityFilter")}
             value={priorityFilter}
             onChange={(v) => setPriorityFilter(v as PriorityFilter)}
             options={[
-              { value: "__all__", label: "全部优先级" },
+              { value: "__all__", label: t("project.priorityAll") },
               { value: "P0", label: "P0" },
               { value: "P1", label: "P1" },
               { value: "P2", label: "P2" },
               { value: "P3", label: "P3" },
-              { value: "__unset__", label: "未设置" },
+              { value: "__unset__", label: t("project.unset") },
             ]}
           />
           <span className="flex-1" />
           <button className="btn btn-primary h-8" onClick={() => setDialog({ open: true, project: null })}>
             <FolderPlus size={14} weight="fill" />
-            接入新项目
+            {t("topbar.project.connectNew")}
           </button>
         </div>
 
@@ -561,20 +576,20 @@ export function ProjectsPage() {
                           {handle}
                           <FolderOpen size={15} className={isActive ? "text-accent" : "text-faint"} />
                           <span className="text-[13.5px] font-semibold truncate">{p.name}</span>
-                          {isActive && <span className="chip border border-accent/30 bg-accent/10 text-accent">当前</span>}
+                          {isActive && <span className="chip border border-accent/30 bg-accent/10 text-accent">{t("sess.current")}</span>}
                           <span className="flex-1" />
                           <button
                             className={`icon-btn ${p.starred ? "!text-warn" : ""}`}
-                            title={p.starred ? "取消置顶" : "星标置顶"}
-                            aria-label={p.starred ? `取消置顶 ${p.name}` : `星标置顶 ${p.name}`}
+                            title={p.starred ? t("sess.unpin") : t("project.star")}
+                            aria-label={p.starred ? t("project.unstarAria", { name: p.name }) : t("project.starAria", { name: p.name })}
                             onClick={() => toggleStar(p)}
                           >
                             <Star size={13} weight={p.starred ? "fill" : "regular"} />
                           </button>
                           <button
                             className="icon-btn"
-                            title="编辑项目"
-                            aria-label="编辑项目"
+                            title={t("project.edit")}
+                            aria-label={t("project.edit")}
                             onClick={() => {
                               if (dragJustEnded()) return;
                               setDialog({ open: true, project: p });
@@ -591,17 +606,17 @@ export function ProjectsPage() {
                                   setConfirmDelete(null);
                                 }}
                               >
-                                确认移除
+                                {t("llm.confirmDelete")}
                               </button>
                               <button className="chip border border-edge-strong text-dim cursor-pointer" onClick={() => setConfirmDelete(null)}>
-                                返回
+                                {t("llm.back")}
                               </button>
                             </span>
                           ) : (
                             <button
                               className="icon-btn hover:!text-danger"
-                              title="移除项目"
-                              aria-label="移除项目"
+                              title={t("project.remove")}
+                              aria-label={t("project.remove")}
                               onClick={() => {
                                 if (dragJustEnded()) return;
                                 setConfirmDelete(p.id);
@@ -617,11 +632,11 @@ export function ProjectsPage() {
                         </div>
 
                         <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
-                          <span className="chip border border-edge-strong bg-raised text-dim" title="项目主分支">
+                          <span className="chip border border-edge-strong bg-raised text-dim" title={t("wb.projectBranch")}>
                             <GitBranch size={11} />
                             {p.targetRef.replace("refs/heads/", "")}
                           </span>
-                          {p.size && <span className="chip border border-info/25 bg-info/10 text-info">{SIZE_LABEL[p.size]}</span>}
+                          {p.size && <span className="chip border border-info/25 bg-info/10 text-info">{sizeLabel(p.size, t)}</span>}
                           {p.priority && <span className="chip border border-warn/30 bg-warn/10 text-warn font-mono">{p.priority}</span>}
                           {p.tags.map((t) => (
                             <span key={t} className="chip border border-edge-strong bg-raised text-faint">
@@ -632,26 +647,26 @@ export function ProjectsPage() {
 
                         <div className="mt-3 pt-3 border-t border-edge flex items-center gap-3 text-[11.5px] text-faint">
                           <span>
-                            工单 <span className="font-mono text-dim">{pTickets.length}</span>
+                            {t("ticket.list.title")} <span className="font-mono text-dim">{pTickets.length}</span>
                           </span>
                           <span>
-                            活跃 <span className="font-mono text-dim">{activeCount}</span>
+                            {t("sess.tab.active")} <span className="font-mono text-dim">{activeCount}</span>
                           </span>
-                          <span>更新于 {relativeTime(p.updatedAt)}</span>
+                          <span>{t("project.updatedAt", { time: relativeTime(p.updatedAt) })}</span>
                           <span className="flex-1" />
                           <button
                             className="inline-flex items-center gap-1 text-[11.5px] text-dim hover:text-ink cursor-pointer bg-transparent border-0 p-0"
                             onClick={() => openTerminal(p)}
-                            title="在项目克隆目录中打开终端"
+                            title={t("wb.openTerminal")}
                           >
                             <TerminalWindow size={12} />
-                            终端
+                            {t("project.terminal")}
                           </button>
                           <button
                             className="inline-flex items-center gap-1 text-[11.5px] text-dim hover:text-ink cursor-pointer bg-transparent border-0 p-0"
                             onClick={() => setDetailId(detailId === p.id ? null : p.id)}
                           >
-                            仓库视图
+                            {t("project.repoView")}
                             <CaretRight size={11} className={`transition-transform ${detailId === p.id ? "rotate-90" : ""}`} />
                           </button>
                           <button
@@ -665,10 +680,10 @@ export function ProjectsPage() {
                                 actions.openTicket(p.superTicketNo);
                               }
                             }}
-                            title="打开工作台 · 直达快速模式（原工作区直连，提交直达主分支）"
+                            title={t("project.openWorkbenchTip")}
                           >
                             <Play size={11} weight="fill" />
-                            打开工作台
+                            {t("project.openWorkbench")}
                           </button>
                         </div>
                       </div>
@@ -678,16 +693,16 @@ export function ProjectsPage() {
               })}
               {projects.length === 0 && (
                 <div className="col-span-full card border-dashed p-10 text-center">
-                  <div className="text-[13.5px] text-dim">尚未接入任何项目</div>
-                  <div className="mt-1 text-[12px] text-faint">接入本地工作区后，即可创建工单并开始沙箱协作</div>
+                  <div className="text-[13.5px] text-dim">{t("project.empty")}</div>
+                  <div className="mt-1 text-[12px] text-faint">{t("project.emptyHint")}</div>
                 </div>
               )}
               {projects.length > 0 && filtered.length === 0 && (
                 <div className="col-span-full card border-dashed p-10 text-center">
-                  <div className="text-[13.5px] text-dim">没有符合筛选条件的项目</div>
+                  <div className="text-[13.5px] text-dim">{t("project.noMatch")}</div>
                   <button className="mt-2 btn btn-sm mx-auto" onClick={clearFilters}>
                     <X size={12} />
-                    清除筛选
+                    {t("kanban.clearFilters")}
                   </button>
                 </div>
               )}

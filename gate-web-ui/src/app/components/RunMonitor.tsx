@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+﻿import { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "motion/react";
 import {
   CheckCircle,
@@ -14,6 +14,7 @@ import { jumpToTicketSession, selectTicketLive } from "@/features/ticket";
 import { clearSessionInterrupted, dismissSessionAsks } from "@/features/session";
 import { clearReviewEnded } from "@/features/gate";
 import { useApp } from "@/store";
+import { useT } from "@/i18n";
 import type { AgentConfig, ChatSession, Ticket } from "@/shared/types";
 
 /** ms → "mm:ss"（超过 1 小时为 "h:mm:ss"）。 */
@@ -80,14 +81,15 @@ function RunningSessionItem({
   onJump: (ticketNo: string, sessionId?: string) => void;
   nested?: boolean;
 }) {
-  const title = row.ticket.title || "(无标题工单)";
-  const sessionTitle = row.session.title || "未命名会话";
-  const agentLabel = row.agent ? `${row.agent.name} · ${row.agent.model}` : "智能体运行中";
+  const t = useT();
+  const title = row.ticket.title || t("runmonitor.untitledTicket");
+  const sessionTitle = row.session.title || t("runmonitor.untitled");
+  const agentLabel = row.agent ? `${row.agent.name} · ${row.agent.model}` : t("runmonitor.agentRunning");
 
   return (
     <button
       onClick={() => onJump(row.ticketNo, row.session.id)}
-      title={`跳转到 ${row.ticketNo} 会话：${sessionTitle}`}
+      title={t("runmonitor.jumpToSession", { no: row.ticketNo, title: sessionTitle })}
       className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-left cursor-pointer transition-colors border ${
         nested ? "bg-panel/60 hover:bg-panel" : "bg-raised"
       } ${
@@ -115,13 +117,13 @@ function RunningSessionItem({
         </span>
       </span>
       <span className="shrink-0 flex items-center gap-1 text-faint">
-        <span className="font-mono text-[10.5px] tabular-nums" title="本次运行时长">
+        <span className="font-mono text-[10.5px] tabular-nums" title={t("runmonitor.runDurationTip")}>
           {elapsedLabel(row.since, now)}
         </span>
         <CircleNotch
           size={12}
           className="text-info animate-[spin_0.9s_linear_infinite]"
-          aria-label="运行中"
+          aria-label={t("common.running")}
         />
       </span>
     </button>
@@ -129,6 +131,7 @@ function RunningSessionItem({
 }
 
 export function RunMonitor() {
+  const t = useT();
   const busy = useApp((s) => s.busy);
   const busySince = useApp((s) => s.busySince);
   const sessionBusy = useApp((s) => s.sessionBusy);
@@ -239,7 +242,7 @@ export function RunMonitor() {
         const session: ChatSession = (sessions[no] ?? []).find((x) => x.id === sid) ?? {
           id: sid,
           ticketNo: no,
-          title: "当前会话",
+          title: t("runmonitor.currentSession"),
           status: "active",
           createdAt: Date.now(),
           updatedAt: Date.now(),
@@ -439,16 +442,16 @@ export function RunMonitor() {
   }[tone];
 
   const chipLabel = useMemo(() => {
-    if (tone === "yellow") return `${askCount} 个待处理`;
-    if (tone === "red") return `${interruptedCount} 个已中断`;
-    if (tone === "blue") return `${runCount} 个运行中`;
+    if (tone === "yellow") return t("runmonitor.chip.pending", { n: askCount });
+    if (tone === "red") return t("runmonitor.chip.interrupted", { n: interruptedCount });
+    if (tone === "blue") return t("runmonitor.chip.running", { n: runCount });
     if (tone === "green") {
-      if (endedCount > 0 && reviewedCount === 0) return `${endedCount} 个已结束`;
-      if (reviewedCount > 0 && endedCount === 0) return `${reviewedCount} 个已审查`;
-      return `${finishedCount} 个已完成`;
+      if (endedCount > 0 && reviewedCount === 0) return t("runmonitor.chip.ended", { n: endedCount });
+      if (reviewedCount > 0 && endedCount === 0) return t("runmonitor.chip.reviewed", { n: reviewedCount });
+      return t("runmonitor.chip.finished", { n: finishedCount });
     }
-    return "智能体空闲";
-  }, [tone, askCount, interruptedCount, runCount, endedCount, reviewedCount, finishedCount]);
+    return t("runmonitor.chip.idle");
+  }, [tone, askCount, interruptedCount, runCount, endedCount, reviewedCount, finishedCount, t]);
 
   const dotClass = {
     yellow: "bg-warn animate-breathe",
@@ -469,7 +472,7 @@ export function RunMonitor() {
     >
       <button
         className={`inline-flex items-center gap-1.5 h-7 rounded-full px-2.5 text-[12.5px] font-medium cursor-pointer transition-colors duration-150 border min-w-0 ${chipStyles}`}
-        title="智能体运行监控：悬停查看聚焦面板，点击钉住；待回答/已中断条目点击跳转并移出提醒，已结束/审查结果打开即已读"
+        title={t("runmonitor.chipTip")}
         aria-expanded={open}
         onClick={() => {
           if (open && pinned) closePanel();
@@ -492,18 +495,18 @@ export function RunMonitor() {
           className="absolute left-0 top-9 z-40 w-[360px] card p-2 shadow-xl shadow-black/50"
         >
           <div className="flex items-center gap-2 px-2 pt-1 pb-1.5">
-            <span className="kicker">运行监控 · 聚焦</span>
+            <span className="kicker">{t("runmonitor.focusTitle")}</span>
             <span className="flex-1" />
             <span className="chip border border-edge-strong bg-raised text-dim font-mono text-[11px]">
-              {runCount > 0 ? `${runCount} 会话运行中` : "空闲"}
+              {runCount > 0 ? t("runmonitor.sessionsRunning", { n: runCount }) : t("runmonitor.idle")}
             </span>
           </div>
 
           {!hasAnyContent ? (
             <div className="px-3 py-6 text-center">
-              <div className="text-[12.5px] text-dim">暂无运行中的智能体会话</div>
+              <div className="text-[12.5px] text-dim">{t("runmonitor.emptyTitle")}</div>
               <div className="mt-1 text-[11.5px] text-faint">
-                在工单会话中发送消息后，运行及异常状态会在这里聚焦显示
+                {t("runmonitor.emptyHint")}
               </div>
             </div>
           ) : (
@@ -513,7 +516,7 @@ export function RunMonitor() {
                 <div className="rounded-lg border border-warn/30 bg-warn/5 p-2 space-y-1.5">
                   <div className="flex items-center gap-1.5 px-1 text-warn text-[11px] font-semibold">
                     <Question size={13} weight="bold" />
-                    <span>待回答 / 待授权 ({askCount})</span>
+                    <span>{t("runmonitor.group.asks", { n: askCount })}</span>
                   </div>
                   <div className="space-y-1">
                     {askList.map((item) => {
@@ -522,7 +525,7 @@ export function RunMonitor() {
                         <button
                           key={`${item.ticketNo}-${item.sessionId}`}
                           onClick={() => jumpToAsk(item)}
-                          title={`前往处理 ${item.ticketNo} 会话：${item.session?.title ?? ""}（视为已关注：该会话的待回答/待授权与中断提醒一并移出监控）`}
+                          title={t("runmonitor.askTip", { no: item.ticketNo, title: item.session?.title ?? "" })}
                           className="w-full flex items-center gap-2 px-2 py-1.5 rounded bg-raised/80 hover:bg-raised border border-warn/20 hover:border-warn/50 text-left transition-colors cursor-pointer"
                         >
                           <span className="w-5 h-5 rounded bg-warn/15 text-warn grid place-items-center shrink-0">
@@ -539,14 +542,14 @@ export function RunMonitor() {
                             </span>
                             <span className="text-[10.5px] text-dim truncate block">
                               {mixed
-                                ? `智能体在等待回答提问与权限授权（${item.kinds.length} 项待处理）`
+                                ? t("runmonitor.askMixed", { n: item.kinds.length })
                                 : item.kind === "question"
-                                  ? "智能体在等待回答提问"
-                                  : "智能体在等待权限授权"}
+                                  ? t("runmonitor.askQuestion")
+                                  : t("runmonitor.askPermission")}
                               {item.session?.title ? ` · ${item.session.title}` : ""}
                             </span>
                           </span>
-                          <span className="text-[10.5px] font-medium text-warn shrink-0">前往处理</span>
+                          <span className="text-[10.5px] font-medium text-warn shrink-0">{t("runmonitor.goHandle")}</span>
                         </button>
                       );
                     })}
@@ -559,14 +562,14 @@ export function RunMonitor() {
                 <div className="rounded-lg border border-danger/30 bg-danger/5 p-2 space-y-1.5">
                   <div className="flex items-center gap-1.5 px-1 text-danger text-[11px] font-semibold">
                     <WarningCircle size={13} weight="bold" />
-                    <span>中断事件 ({interruptedCount})</span>
+                    <span>{t("runmonitor.group.interrupted", { n: interruptedCount })}</span>
                   </div>
                   <div className="space-y-1">
                     {interruptedList.map((item) => (
                       <button
                         key={item.session.id}
                         onClick={() => jumpToInterrupted(item)}
-                        title={`查看中断会话 ${item.session.title || item.ticket.title}（视为已关注：该会话的中断与待回答/待授权提醒一并移出监控）`}
+                        title={t("runmonitor.interruptedTip", { title: item.session.title || item.ticket.title })}
                         className="w-full flex items-center gap-2 px-2 py-1.5 rounded bg-raised/80 hover:bg-raised border border-danger/20 hover:border-danger/50 text-left transition-colors cursor-pointer"
                       >
                         <span className="w-5 h-5 rounded bg-danger/15 text-danger grid place-items-center shrink-0">
@@ -578,10 +581,10 @@ export function RunMonitor() {
                             <span className="text-[12px] text-ink truncate">{item.session.title || item.ticket.title}</span>
                           </span>
                           <span className="text-[10.5px] text-dim truncate block">
-                            会话已异常中断或中止 · 点击查看
+                            {t("runmonitor.interruptedDesc")}
                           </span>
                         </span>
-                        <span className="text-[10.5px] font-medium text-danger shrink-0">查看</span>
+                        <span className="text-[10.5px] font-medium text-danger shrink-0">{t("runmonitor.view")}</span>
                       </button>
                     ))}
                   </div>
@@ -593,7 +596,7 @@ export function RunMonitor() {
                 <div className="space-y-1.5">
                   <div className="flex items-center gap-1.5 px-1 text-dim text-[11px] font-medium">
                     <Pulse size={12} weight="bold" className="text-info" />
-                    <span>正在执行的会话 ({runCount})</span>
+                    <span>{t("runmonitor.group.running", { n: runCount })}</span>
                   </div>
                   <div className="space-y-1">
                     {runningGroups.map((group) => {
@@ -624,7 +627,7 @@ export function RunMonitor() {
                               {group.ticket.title}
                             </span>
                             <span className="chip text-[10px] bg-info/10 text-info border border-info/20 shrink-0">
-                              {group.rows.length} 个会话运行中
+                              {t("runmonitor.sessionsRunning", { n: group.rows.length })}
                             </span>
                           </div>
                           <div className="space-y-1 pl-2 border-l-2 border-edge">
@@ -653,7 +656,7 @@ export function RunMonitor() {
                   <div className="rounded-lg border border-accent/30 bg-accent/5 p-2 space-y-1.5">
                     <div className="flex items-center gap-1.5 px-1 text-accent text-[11px] font-semibold">
                       <CheckCircle size={13} weight="bold" />
-                      <span>最近已完成 ({endedCount})</span>
+                      <span>{t("runmonitor.group.ended", { n: endedCount })}</span>
                     </div>
                     <div className="space-y-1">
                       {endedList.map((item) => (
@@ -671,10 +674,10 @@ export function RunMonitor() {
                               <span className="text-[12px] text-ink truncate">{item.ticket.title}</span>
                             </span>
                             <span className="text-[10.5px] text-dim truncate block">
-                              回合已正常完成 · 点击查看
+                              {t("runmonitor.endedDesc")}
                             </span>
                           </span>
-                          <span className="text-[10.5px] font-medium text-accent shrink-0">查看</span>
+                          <span className="text-[10.5px] font-medium text-accent shrink-0">{t("runmonitor.view")}</span>
                         </button>
                       ))}
                     </div>
@@ -686,7 +689,7 @@ export function RunMonitor() {
                   <div className="rounded-lg border border-accent/30 bg-accent/5 p-2 space-y-1.5">
                     <div className="flex items-center gap-1.5 px-1 text-accent text-[11px] font-semibold">
                       <CheckCircle size={13} weight="bold" />
-                      <span>审查结果 ({reviewedCount})</span>
+                      <span>{t("runmonitor.group.reviewed", { n: reviewedCount })}</span>
                     </div>
                     <div className="space-y-1">
                       {reviewedList.map((item) => {
@@ -695,7 +698,7 @@ export function RunMonitor() {
                           <button
                             key={item.ticketNo}
                             onClick={() => jumpToReviewed(item)}
-                            title={`跳转查看 ${item.ticketNo} 审查结果（打开后提醒移出监控）`}
+                            title={t("runmonitor.reviewedTip", { no: item.ticketNo })}
                             className={`w-full flex items-center gap-2 px-2 py-1.5 rounded bg-raised/80 hover:bg-raised border text-left transition-colors cursor-pointer ${
                               rejected ? "border-danger/20 hover:border-danger/50" : "border-accent/20 hover:border-accent/50"
                             }`}
@@ -718,16 +721,16 @@ export function RunMonitor() {
                                 rejected ? "text-danger/80" : "text-dim"
                               }`}>
                                 {item.verdict === "PASS"
-                                  ? "审查通过 · 已签发发布授权"
+                                  ? t("runmonitor.verdict.pass")
                                   : item.verdict === "REQUIRES_HUMAN"
-                                    ? "审查完成 · 需人工核准放行"
-                                    : "审查驳回 · 存在阻断项，点击查看"}
+                                    ? t("runmonitor.verdict.human")
+                                    : t("runmonitor.verdict.reject")}
                               </span>
                             </span>
                             <span className={`text-[10.5px] font-medium shrink-0 ${
                               rejected ? "text-danger" : "text-accent"
                             }`}>
-                              {rejected ? "查看驳回" : "查看"}
+                              {rejected ? t("runmonitor.viewReject") : t("runmonitor.view")}
                             </span>
                           </button>
                         );
@@ -743,7 +746,7 @@ export function RunMonitor() {
           <div className="divider my-1.5" />
           <div className="px-2 pb-0.5 pt-0.5 text-[10.5px] text-faint flex items-center gap-1.5">
             <Sparkle size={10} className="text-faint shrink-0" />
-            {pinned ? "已钉住：移开鼠标面板不会关闭" : "移入面板保持开启 · 待回答/中断条目点击跳转后移出监控"}
+            {pinned ? t("runmonitor.pinnedHint") : t("runmonitor.hoverHint")}
           </div>
         </motion.div>
       )}

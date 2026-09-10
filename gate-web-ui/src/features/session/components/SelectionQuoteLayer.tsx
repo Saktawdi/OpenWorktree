@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 全局划选引用层（SelectionQuoteLayer）：监听整页的左键划选，选区非空时在选区
  * 附近浮出动作菜单——内置两个宿主一等能力：「询问小助手」（T-109 原生 LLM 助手，
  * 偏好里可关）与「添加到对话框」（写入当前工单的 pendingQuotes，Composer 渲染成
@@ -20,6 +20,7 @@ import { askAssistant } from "@/features/assistant";
 import { ASSISTANT_SETTINGS_DEFAULTS } from "@/store/prefs";
 import { focusComposer, insertIntoComposer } from "../composerBridge";
 import { QUOTE_MAX_CHARS } from "@/shared/quotes";
+import { useT, type Translate } from "@/i18n";
 
 /** 菜单估宽（px）：单行图标 + 文案，用于水平方向收进视口。 */
 const MENU_W = 150;
@@ -43,28 +44,33 @@ function inEditableHost(target: EventTarget | null): boolean {
 }
 
 /** 划选来源的展示标注：优先按命中元素的特征容器，退回当前视图/页签。 */
-function describeSource(target: EventTarget | null): string {
+function describeSource(target: EventTarget | null, t: Translate): string {
   if (target instanceof Element && target.closest("[data-chat-msg]")) {
-    return "会话消息";
+    return t("quote.src.chatMessage");
   }
   const st = appStore.getState();
   if (st.view === "workbench") {
-    const byTab: Record<string, string> = { chat: "会话", diff: "变更对比", findings: "审查发现" };
-    return byTab[st.centerTab] ?? "工作台";
+    const byTab: Record<string, string> = {
+      chat: t("wb.tab.chat"),
+      diff: t("wb.tab.diff"),
+      findings: t("wb.tab.findings"),
+    };
+    return byTab[st.centerTab] ?? t("quote.src.workbench");
   }
   const byView: Record<string, string> = {
-    kanban: "看板",
-    projects: "项目",
-    repo: "仓库视图",
-    agents: "智能体",
-    plugins: "插件",
-    settings: "设置",
-    "plugin-page": "插件页",
+    kanban: t("topbar.view.kanban"),
+    projects: t("topbar.view.projects"),
+    repo: t("quote.src.repo"),
+    agents: t("topbar.view.agents"),
+    plugins: t("topbar.view.plugins"),
+    settings: t("topbar.openSettings"),
+    "plugin-page": t("quote.src.pluginPage"),
   };
-  return byView[st.view] ?? "工作台";
+  return byView[st.view] ?? t("quote.src.workbench");
 }
 
 export function SelectionQuoteLayer() {
+  const t = useT();
   const [anchor, setAnchor] = useState<Anchor | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const contributions = usePlugins((s) => s.contributions);
@@ -114,7 +120,7 @@ export function SelectionQuoteLayer() {
         top: below ? rect.bottom + 6 : rect.top - 6,
         below,
         text: text.slice(0, QUOTE_MAX_CHARS),
-        source: describeSource(e.target),
+        source: describeSource(e.target, t),
       });
     };
 
@@ -155,12 +161,12 @@ export function SelectionQuoteLayer() {
     const st = appStore.getState();
     const no = st.selectedNo;
     if (!no) {
-      showToast("请先在会话工作台选择一个工单");
+      showToast(t("quote.selectTicketFirst"));
       return null;
     }
     const stage = st.tickets.find((t) => t.ticketNo === no)?.stage;
     if (stage === "DONE" || stage === "CANCELLED") {
-      showToast("该工单已结束，无法再往对话框添加内容");
+      showToast(t("quote.ticketEnded"));
       return null;
     }
     return no;
@@ -175,7 +181,7 @@ export function SelectionQuoteLayer() {
     const no = quoteTarget();
     if (!no) return;
     addPendingQuote(no, text, anchor.source);
-    showToast("已添加到对话框");
+    showToast(t("quote.addedToast"));
     focusComposer();
     dismiss();
   };
@@ -199,7 +205,7 @@ export function SelectionQuoteLayer() {
     try {
       action.run(pluginApi, anchor.text);
     } catch (e) {
-      showToast(`插件动作执行失败：${(e as Error).message}`);
+      showToast(t("quote.pluginActionFailed", { err: (e as Error).message }));
     }
   };
 
@@ -219,23 +225,23 @@ export function SelectionQuoteLayer() {
         {askEnabled && (
           <button
             className="menu-action"
-            title="把选中的文字发给 LLM 小助手（悬浮面板中可再编辑后发送）"
+            title={t("quote.askAssistantTip")}
             onClick={() => {
               askAssistant(`${askPrompt || ASSISTANT_SETTINGS_DEFAULTS.selectionAskPrompt}${anchor.text}`);
               dismiss();
             }}
           >
             <Sparkle size={12} weight="fill" className="text-accent" />
-            询问小助手
+            {t("quote.askAssistant")}
           </button>
         )}
         <button
           className="menu-action"
-          title="把划选的文字作为引用胶囊加入当前工单的对话框"
+          title={t("quote.addToComposerTip")}
           onClick={() => addToComposer(anchor.text)}
         >
           <Quotes size={12} weight="fill" className="text-info" />
-          添加到对话框
+          {t("quote.addToChat")}
         </button>
         {visiblePluginActions.map(({ pluginId, action }) => {
           const QIcon = pluginIcon(action.icon);
@@ -243,7 +249,7 @@ export function SelectionQuoteLayer() {
             <button
               key={`${pluginId}:${action.id}`}
               className="menu-action"
-              title={`来自插件：${pluginId}`}
+              title={t("quote.fromPlugin", { id: pluginId })}
               onClick={() => runPluginAction(action)}
             >
               <QIcon size={12} weight="fill" className="opacity-60" />

@@ -1,5 +1,6 @@
-import { Check, X } from "@phosphor-icons/react";
+﻿import { Check, X } from "@phosphor-icons/react";
 import { shortHash } from "@/shared/format";
+import { useT } from "@/i18n";
 import type { Snapshot } from "@/shared/types";
 
 /** 横向门禁流水线（编码→快照→审查→发布四节点）。
@@ -15,6 +16,7 @@ export function Stepper({
   commitSha?: string;
   ticketNo?: string;
 }) {
+  const t = useT();
   // 节点点击 → 证据链定位（懒 import 避免与 EvidenceView 循环依赖）
   const gotoEvidence = (round: number) => {
     if (!ticketNo) return;
@@ -44,10 +46,10 @@ export function Stepper({
   };
 
   const nodes: Array<{ index: number; label: string; sub?: string }> = [
-    { index: 0, label: "编码协作", sub: coded ? "已完成" : "工作中" },
-    { index: 1, label: "预提审快照", sub: snap ? `R${snap.round}·${shortHash(snap.treeHash, 8, 4)}` : undefined },
-    { index: 2, label: "门禁审查", sub: rejected ? "已驳回" : reviewed ? "已放行" : undefined },
-    { index: 3, label: "发布主分支", sub: commitSha ? shortHash(commitSha, 8, 4) : undefined },
+    { index: 0, label: t("gate.step.code"), sub: coded ? t("gate.step.done") : t("gate.step.working") },
+    { index: 1, label: t("gate.step.snapshot"), sub: snap ? `R${snap.round}·${shortHash(snap.treeHash, 8, 4)}` : undefined },
+    { index: 2, label: t("gate.step.review"), sub: rejected ? t("stage.REJECTED") : reviewed ? t("gate.step.released") : undefined },
+    { index: 3, label: t("gate.step.publish"), sub: commitSha ? shortHash(commitSha, 8, 4) : undefined },
   ];
 
   const circleSize = "w-[24px] h-[24px]";
@@ -69,7 +71,7 @@ export function Stepper({
           return (
             <W
               key={n.index}
-              title={clickable ? `在证据链中查看${n.label}` : undefined}
+              title={clickable ? t("gate.step.evidenceTip", { step: n.label }) : undefined}
               onClick={clickable ? () => gotoEvidence(snap?.round ?? 1) : undefined}
               className={`${circleBase} ${clickable ? "cursor-pointer hover:scale-110 transition-transform" : ""} ${
                 s === "done"

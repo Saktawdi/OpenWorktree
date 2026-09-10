@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 证据链视图（需求文档 §四/§五）：以 review round 为骨架的垂直时间线。
  * 不是日志查看器——每一类事件都有人话模板；判决用卡片、其余用行；
  * 发布回执展示三行对账等式（审查树=发布树 / 授权基线=推送前 tip / 授权分支=实际分支）；
@@ -22,7 +22,7 @@ import {
 } from "@phosphor-icons/react";
 import { appStore, useApp } from "@/store";
 import { jumpToFinding, setCenterTab, showToast } from "@/store/ui";
-import { formatBytes, shortHash } from "@/shared/format";
+import { formatBytes, shortHash, stageChangeKindLabel } from "@/shared/format";
 import { CopyButton, HashReveal } from "@/shared/components/ui";
 import { parseUnifiedDiff } from "@/shared/diff";
 import type {
@@ -34,6 +34,7 @@ import type {
   Finding,
 } from "@/shared/types";
 import { explainDecision } from "./decisionCard";
+import { useT, type Translate } from "@/i18n";
 import { loadEvidence } from "../api";
 
 /* ── 小工具 ── */
@@ -53,44 +54,44 @@ export function focusEvidenceRound(no: string, round: number) {
 }
 
 /** 审计事件的人话模板（需求文档 §七.1：每种事件都要有一个人话模板）。 */
-function auditEventLabel(ev: EvidenceAuditEvent): { icon: "snapshot" | "review" | "publish" | "sync" | "anomaly" | "generic"; text: string; detail: string[]; anomaly: boolean } {
+function auditEventLabel(ev: EvidenceAuditEvent, t: Translate): { icon: "snapshot" | "review" | "publish" | "sync" | "anomaly" | "generic"; text: string; detail: string[]; anomaly: boolean } {
   const f = ev.fields ?? {};
   switch (ev.kind) {
     case "presubmit.ok":
-      return { icon: "snapshot", text: `快照锁定 · ${f.paths ?? ""}`.trim(), detail: Object.entries(f).map(([k, v]) => `${k}=${v}`), anomaly: false };
+      return { icon: "snapshot", text: t("ev.presubmit.ok", { paths: String(f.paths ?? "") }), detail: Object.entries(f).map(([k, v]) => `${k}=${v}`), anomaly: false };
     case "presubmit.blocked":
-      return { icon: "anomaly", text: "预提审被拒绝", detail: Object.entries(f).map(([k, v]) => `${k}=${v}`), anomaly: true };
+      return { icon: "anomaly", text: t("ev.presubmit.blocked"), detail: Object.entries(f).map(([k, v]) => `${k}=${v}`), anomaly: true };
     case "review.pass":
-      return { icon: "review", text: "审查通过，发布授权已签发", detail: [`原因 ${f.reason ?? ""}`, `引擎 ${f.engine ?? ""}`], anomaly: false };
+      return { icon: "review", text: t("ev.review.pass"), detail: [t("ev.reason", { v: String(f.reason ?? "") }), t("ev.engine", { v: String(f.engine ?? "") })], anomaly: false };
     case "review.reject":
-      return { icon: "review", text: "审查驳回", detail: [`原因 ${f.reason ?? ""}`, `引擎 ${f.engine ?? ""}`], anomaly: false };
+      return { icon: "review", text: t("ev.review.reject"), detail: [t("ev.reason", { v: String(f.reason ?? "") }), t("ev.engine", { v: String(f.engine ?? "") })], anomaly: false };
     case "review.requires_human":
-      return { icon: "review", text: "引擎请求人工核准", detail: [`原因 ${f.reason ?? ""}`], anomaly: false };
+      return { icon: "review", text: t("ev.review.human"), detail: [t("ev.reason", { v: String(f.reason ?? "") })], anomaly: false };
     case "publish.done":
       return {
         icon: "publish",
-        text: `已发布 ${shortHash(f.commit ?? "", 7, 0)} → ${f.ref_after ?? ""}`.trim(),
-        detail: [`分支 ${f.ref_after ?? ""}：${shortHash(f.ref_before ?? "", 7, 0)} → ${shortHash(f.commit ?? "", 7, 0)}`, "CAS 校验通过 · 授权 nonce 已消费"],
+        text: t("ev.publish.done", { commit: shortHash(f.commit ?? "", 7, 0), ref: String(f.ref_after ?? "") }),
+        detail: [t("ev.publish.branchLine", { ref: String(f.ref_after ?? ""), before: shortHash(f.ref_before ?? "", 7, 0), commit: shortHash(f.commit ?? "", 7, 0) }), t("ev.publish.casNote")],
         anomaly: false,
       };
     case "publish.pending":
-      return { icon: "anomaly", text: "推送未落地，状态 PENDING，需要 reconcile", detail: Object.entries(f).map(([k, v]) => `${k}=${v}`), anomaly: true };
+      return { icon: "anomaly", text: t("ev.publish.pending"), detail: Object.entries(f).map(([k, v]) => `${k}=${v}`), anomaly: true };
     case "publish.toctou":
-      return { icon: "anomaly", text: "审查后工作区又发生了变化，发布被拒绝（TOCTOU 防护）", detail: [`审查树 ${shortHash(f.reviewed_tree ?? "", 8, 4)}`, `当前树 ${shortHash(f.worktree_tree ?? "", 8, 4)}`], anomaly: true };
+      return { icon: "anomaly", text: t("ev.publish.toctou"), detail: [t("ev.publish.reviewedTree", { v: shortHash(f.reviewed_tree ?? "", 8, 4) }), t("ev.publish.currentTree", { v: shortHash(f.worktree_tree ?? "", 8, 4) })], anomaly: true };
     case "publish.idempotent":
-      return { icon: "publish", text: "重复发布请求：该提交已在目标分支，本次为无操作", detail: [`提交 ${shortHash(f.commit ?? "", 8, 4)}`], anomaly: false };
+      return { icon: "publish", text: t("ev.publish.idempotent"), detail: [t("ev.commitLine", { v: shortHash(f.commit ?? "", 8, 4) })], anomaly: false };
     case "publish.workspace_sync":
-      return { icon: "sync", text: `工作区同步 ${f.status ?? ""}`, detail: f.note ? [f.note] : [], anomaly: f.status === "DEFERRED" };
+      return { icon: "sync", text: t("ev.publish.workspaceSync", { status: String(f.status ?? "") }), detail: f.note ? [String(f.note)] : [], anomaly: f.status === "DEFERRED" };
     case "publish.clone_sync":
-      return { icon: "sync", text: `克隆快进 ${f.status ?? ""}`, detail: f.reason ? [f.reason] : [], anomaly: f.status === "ERROR" || f.status === "SKIPPED" };
+      return { icon: "sync", text: t("ev.publish.cloneSync", { status: String(f.status ?? "") }), detail: f.reason ? [String(f.reason)] : [], anomaly: f.status === "ERROR" || f.status === "SKIPPED" };
     case "reconcile":
-      return { icon: "sync", text: `对账完成：提交 ${shortHash(f.commit ?? "", 8, 4)} ${f.published === "true" ? "已确认在目标分支" : "未在目标分支"}`, detail: [], anomaly: f.published !== "true" };
+      return { icon: "sync", text: t("ev.reconcile", { commit: shortHash(f.commit ?? "", 8, 4), on: f.published === "true" ? t("ev.reconcileOn") : t("ev.reconcileOff") }), detail: [], anomaly: f.published !== "true" };
     case "ticket.restart":
-      return { icon: "generic", text: "工单重启", detail: [f.reason ?? ""], anomaly: false };
+      return { icon: "generic", text: t("ev.restart"), detail: [String(f.reason ?? "")], anomaly: false };
     case "ticket.force_complete":
-      return { icon: "generic", text: "强制标记完成", detail: [f.reason ?? ""], anomaly: false };
+      return { icon: "generic", text: t("ev.forceComplete"), detail: [String(f.reason ?? "")], anomaly: false };
     case "ticket.cancel":
-      return { icon: "generic", text: "工单取消", detail: [f.reason ?? ""], anomaly: false };
+      return { icon: "generic", text: t("ev.cancel"), detail: [String(f.reason ?? "")], anomaly: false };
     default:
       return { icon: "generic", text: ev.kind, detail: Object.entries(f).map(([k, v]) => `${k}=${v}`), anomaly: false };
   }
@@ -99,6 +100,7 @@ function auditEventLabel(ev: EvidenceAuditEvent): { icon: "snapshot" | "review" 
 /* ── 顶部：链完整性 + 导出 ── */
 
 function ChainStatusBar({ bundle, onRefresh, refreshing }: { bundle: EvidenceBundle; onRefresh: () => void; refreshing: boolean }) {
+  const t = useT();
   const chain = bundle.chain;
   const ok = chain.ok;
   return (
@@ -116,17 +118,16 @@ function ChainStatusBar({ bundle, onRefresh, refreshing }: { bundle: EvidenceBun
       )}
       {ok ? (
         <span>
-          链完整性 <span className="text-ink font-medium">✓ 完整</span>
-          <span className="text-faint font-mono"> · {chain.totalLines} 条记录 · 哈希链可检测篡改（检测而非阻止）</span>
+          {t("ev.chain.intact", { n: chain.totalLines })}
         </span>
       ) : (
         <span className="text-danger">
-          链完整性 ✗ 自第 {chain.brokenAtLine} 条记录起链断裂，之后的记录不可信
+          {t("ev.chain.broken", { n: chain.brokenAtLine })}
         </span>
       )}
       <span className="flex-1" />
       <button className="btn btn-sm h-7 text-[11.5px]" onClick={onRefresh} disabled={refreshing}>
-        {refreshing ? "验证中…" : "验证链"}
+        {refreshing ? t("ev.chain.verifying") : t("ev.chain.verify")}
       </button>
       <ExportButton bundle={bundle} />
     </div>
@@ -134,33 +135,34 @@ function ChainStatusBar({ bundle, onRefresh, refreshing }: { bundle: EvidenceBun
 }
 
 function ExportButton({ bundle }: { bundle: EvidenceBundle }) {
+  const t = useT();
   const onClick = () => {
     const lines = [
-      `# 证据链导出 · ${bundle.ticketNo}`,
-      `导出时间：${new Date().toISOString()}`,
-      `哈希链验证：${bundle.chain.ok ? "完整" : `自第 ${bundle.chain.brokenAtLine} 条断裂`}（共 ${bundle.chain.totalLines} 条）`,
+      t("ev.export.header", { no: bundle.ticketNo }),
+      t("ev.export.exportedAt", { at: new Date().toISOString() }),
+      t("ev.export.chain", { ok: bundle.chain.ok ? t("ev.chain.intactWord") : t("ev.chain.brokenAt", { n: bundle.chain.brokenAtLine }), n: bundle.chain.totalLines }),
       "",
-      "## 审查轮次",
+      t("ev.export.roundsTitle"),
       ...bundle.rounds.map((r) =>
         [
-          `### 第 ${r.reviewRound} 轮（${r.createdAt}）`,
+          t("ev.export.roundHeader", { n: r.reviewRound, at: r.createdAt }),
           `tree=${r.treeHash} base=${r.baseCommit} target=${r.targetRef}`,
           `diff ${r.diffBytes}B sha256=${r.diffSha256}`,
-          r.review ? `判决 ${r.review.verdict} · 引擎 ${r.review.engineId} · covered_ok=${r.review.coveredOk} · degraded=${r.review.degraded}` : "（无审查结果行）",
-          r.decision ? `理由 ${r.decision.reason}${r.decision.detail.length ? `\n依据:\n${r.decision.detail.map((d) => `  - ${d}`).join("\n")}` : ""}` : "",
+          r.review ? t("ev.export.verdictLine", { verdict: r.review.verdict, engine: r.review.engineId, coveredOk: String(r.review.coveredOk), degraded: String(r.review.degraded) }) : t("ev.export.noVerdict"),
+          r.decision ? `${t("ev.export.reasonLine", { reason: r.decision.reason })}${r.decision.detail.length ? `\n${t("ev.export.pointsTitle")}:\n${r.decision.detail.map((d) => `  - ${d}`).join("\n")}` : ""}` : "",
           "",
         ].filter(Boolean).join("\n"),
       ),
-      "## 发布意图",
+      t("ev.export.intentsTitle"),
       ...bundle.publishIntents.map(
         (p) =>
-          `- R${p.reviewRound} ${p.status} commit=${p.commitSha ?? "-"} ${p.targetRef} ${p.refBefore ?? "?"} → ${p.refAfter ?? "?"} approval=${p.approvalId ?? "-"}${p.approvalConsumed ? "（已消费）" : ""}`,
+          `${t("ev.export.intentLine", { round: p.reviewRound, status: p.status, commit: p.commitSha ?? "-", target: p.targetRef, before: p.refBefore ?? "?", after: p.refAfter ?? "?", approval: p.approvalId ?? "-" })}${p.approvalConsumed ? t("ev.export.consumed") : ""}`,
       ),
       "",
-      "## 状态变更",
-      ...bundle.stageChanges.map((s) => `- R${s.round} ${s.kind}: ${s.fromStage} → ${s.toStage} 理由：${s.reason}`),
+      t("ev.export.stageChangesTitle"),
+      ...bundle.stageChanges.map((s) => t("ev.export.stageChangeLine", { round: s.round, kind: s.kind, from: s.fromStage, to: s.toStage, reason: s.reason })),
       "",
-      "## 审计事件（本工单）",
+      t("ev.export.auditTitle"),
       ...bundle.auditEvents.map((e) => `${e.at} ${e.kind} ${JSON.stringify(e.fields ?? {})}`),
     ];
     const blob = new Blob([lines.join("\n")], { type: "text/markdown;charset=utf-8" });
@@ -170,12 +172,12 @@ function ExportButton({ bundle }: { bundle: EvidenceBundle }) {
     a.download = `evidence-${bundle.ticketNo}.md`;
     a.click();
     URL.revokeObjectURL(url);
-    showToast("证据包已导出（Markdown）");
+    showToast(t("ev.export.doneToast"));
   };
   return (
-    <button className="btn btn-sm h-7 text-[11.5px]" onClick={onClick} title="导出该工单全部证据（轮次/判决/发布/审计）">
+    <button className="btn btn-sm h-7 text-[11.5px]" onClick={onClick} title={t("ev.export.tip")}>
       <Download size={13} />
-      导出
+      {t("ev.export.button")}
     </button>
   );
 }
@@ -218,6 +220,7 @@ function EventRow({ icon, anomaly, title, detail, children }: { icon: string; an
 /* ── 发布回执：三行对账等式（需求文档 §五.4） ── */
 
 function PublishReceipt({ intent, round }: { intent: EvidencePublishIntent; round?: EvidenceRound }) {
+  const t = useT();
   const branch = intent.targetRef.replace("refs/heads/", "");
   const eq1 = !!round && !!intent.commitSha && round.treeHash === intent.treeHash;
   const eq2 = intent.baseCommit === (intent.refBefore ?? "").slice(0, intent.baseCommit.length) || intent.refBefore === intent.baseCommit || (intent.refBefore ?? "").startsWith(intent.baseCommit.slice(0, 12));
@@ -233,10 +236,10 @@ function PublishReceipt({ intent, round }: { intent: EvidencePublishIntent; roun
   );
   return (
     <div className="mt-1.5 rounded-lg border border-edge bg-sunken px-3 py-2">
-      {row("审查通过的 tree", round?.treeHash ?? intent.treeHash, intent.treeHash, eq1)}
-      {row("授权基线 = 推送前 tip", intent.baseCommit, intent.refBefore ?? "", eq2)}
+      {row(t("ev.receipt.reviewedTree"), round?.treeHash ?? intent.treeHash, intent.treeHash, eq1)}
+      {row(t("ev.receipt.baselineEqTip"), intent.baseCommit, intent.refBefore ?? "", eq2)}
       <div className="flex items-center gap-2 font-mono text-[11.5px] py-0.5">
-        <span className="text-faint w-[118px] shrink-0">授权目标分支</span>
+        <span className="text-faint w-[118px] shrink-0">{t("ev.receipt.authBranch")}</span>
         <span className="text-dim">{branch}</span>
         <span className={eq3 ? "text-accent" : "text-danger"}>{eq3 ? "═" : "≠"}</span>
         <span className="text-dim">{branch}</span>
@@ -247,8 +250,8 @@ function PublishReceipt({ intent, round }: { intent: EvidencePublishIntent; roun
           <GitBranch size={11} />
           {shortHash(intent.refBefore ?? "", 7, 0)} → {shortHash(intent.refAfter ?? "", 7, 0)}
         </span>
-        <span>授权 {shortHash(intent.approvalId ?? "", 8, 0)}{intent.approvalConsumed ? " · nonce 已消费" : ""}</span>
-        <span className="ml-auto">审查的就是发布的：CAS 原子推送保证</span>
+        <span>{t("ev.receipt.authorization", { id: shortHash(intent.approvalId ?? "", 8, 0) })}{intent.approvalConsumed ? t("ev.receipt.nonceConsumed") : ""}</span>
+        <span className="ml-auto">{t("ev.receipt.casNote")}</span>
       </div>
     </div>
   );
@@ -257,6 +260,7 @@ function PublishReceipt({ intent, round }: { intent: EvidencePublishIntent; roun
 /* ── 轮次卡 ── */
 
 function RoundSection({ round, intents, isLatest, focused }: { round: EvidenceRound; intents: EvidencePublishIntent[]; isLatest: boolean; focused: boolean }) {
+  const t = useT();
   const rootRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (focused) {
@@ -285,7 +289,7 @@ function RoundSection({ round, intents, isLatest, focused }: { round: EvidenceRo
           severity: "BLOCKER" as const,
           path: "",
           ruleId: `engine/${ev.failure_kind ?? "CRASH"}`,
-          message: ev.detail ?? "审查引擎未能完成本轮判决",
+          message: ev.detail ?? t("ev.engineFailed"),
         },
       ];
     }
@@ -316,7 +320,7 @@ function RoundSection({ round, intents, isLatest, focused }: { round: EvidenceRo
   const verdict = round.review;
   const tone = verdict?.verdict === "PASS" ? "pass" : verdict?.verdict === "REQUIRES_HUMAN" ? "human" : "reject";
   const verdictLabel =
-    verdict?.verdict === "PASS" ? "审查通过" : verdict?.verdict === "REQUIRES_HUMAN" ? "需人工核准" : verdict?.degraded ? "引擎故障驳回" : "审查驳回";
+    verdict?.verdict === "PASS" ? t("ev.verdict.pass") : verdict?.verdict === "REQUIRES_HUMAN" ? t("ev.verdict.human") : verdict?.degraded ? t("ev.verdict.engineFail") : t("ev.verdict.reject");
   const counts = useMemo(() => {
     const c = { BLOCKER: 0, WARNING: 0, NIT: 0, INFO: 0 };
     for (const f of evidenceFindings) c[f.severity] = (c[f.severity] ?? 0) + 1;
@@ -332,20 +336,20 @@ function RoundSection({ round, intents, isLatest, focused }: { round: EvidenceRo
       }`} />
       <div className="pb-5">
         <div className="flex items-center gap-2 pb-1.5">
-          <span className="text-[12.5px] font-semibold text-ink">第 {round.reviewRound} 轮</span>
-          {isLatest && <span className="chip border border-accent/30 text-accent bg-accent/10">最新</span>}
+          <span className="text-[12.5px] font-semibold text-ink">{t("gate.history.round", { n: round.reviewRound })}</span>
+          {isLatest && <span className="chip border border-accent/30 text-accent bg-accent/10">{t("ev.latest")}</span>}
           <span className="font-mono text-[10.5px] text-faint">{timeLabel(round.createdAt)}</span>
         </div>
 
         {/* 快照锁定 */}
-        <EventRow icon="snapshot" title="快照锁定 · 所见即所审">
+        <EventRow icon="snapshot" title={t("ev.snapshotTitle")}>
           <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[11px] text-faint">
             <span className="text-dim">tree {shortHash(round.treeHash, 8, 4)}</span>
             <span>base {shortHash(round.baseCommit, 7, 0)}</span>
-            <span>{round.changedPaths.length} 文件</span>
+            <span>{t("ev.fileCount", { n: round.changedPaths.length })}</span>
             <span>{formatBytes(round.diffBytes)}</span>
             <button className="text-info hover:underline cursor-pointer bg-transparent border-0 p-0 font-mono text-[11px]" onClick={openDiff}>
-              查看锁定差异
+              {t("ev.viewLockedDiff")}
             </button>
           </div>
           <div className="font-mono text-[10.5px] text-faint">diff sha256 {shortHash(round.diffSha256, 8, 6)}</div>
@@ -353,7 +357,7 @@ function RoundSection({ round, intents, isLatest, focused }: { round: EvidenceRo
             <div className="mt-2 max-h-[420px] overflow-auto rounded-lg border border-edge bg-canvas">
               {diffLoading ? (
                 <div className="p-3 text-[12px] text-faint flex items-center gap-2">
-                  <CircleNotch size={13} className="animate-[spin_0.9s_linear_infinite]" /> 加载中…
+                  <CircleNotch size={13} className="animate-[spin_0.9s_linear_infinite]" /> {t("common.loading")}
                 </div>
               ) : (
                 (diffText ?? "").trim() ? (
@@ -364,7 +368,7 @@ function RoundSection({ round, intents, isLatest, focused }: { round: EvidenceRo
                     </div>
                   ))
                 ) : (
-                  <div className="p-3 text-[12px] text-faint">（差异为空）</div>
+                  <div className="p-3 text-[12px] text-faint">{t("ev.emptyDiff")}</div>
                 )
               )}
             </div>
@@ -373,10 +377,10 @@ function RoundSection({ round, intents, isLatest, focused }: { round: EvidenceRo
 
         {/* 审查 */}
         {verdict ? (
-          <EventRow icon="review" title={`审查 · ${verdict.engineId}${verdict.modelName ? ` / ${verdict.modelName}` : ""}`}>
+          <EventRow icon="review" title={t("ev.reviewTitle", { engine: verdict.engineId, model: verdict.modelName ?? "" })}>
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[11px] text-faint">
-              <span>覆盖 {round.evidence && "covered_paths" in round.evidence && Array.isArray(round.evidence.covered_paths) ? round.evidence.covered_paths.length : "?"}/{round.changedPaths.length}</span>
-              {verdict.degraded && <span className="text-warn">未降级可信</span>}
+              <span>{t("ev.coverage", { covered: round.evidence && "covered_paths" in round.evidence && Array.isArray(round.evidence.covered_paths) ? round.evidence.covered_paths.length : "?", total: round.changedPaths.length })}</span>
+              {verdict.degraded && <span className="text-warn">{t("ev.degradedUntrusted")}</span>}
               {verdict.cost?.totalTokens ? <span>{verdict.cost.totalTokens} tok</span> : null}
               {verdict.cost?.reviewWallMs ? <span>{(verdict.cost.reviewWallMs / 1000).toFixed(1)}s</span> : null}
             </div>
@@ -400,7 +404,7 @@ function RoundSection({ round, intents, isLatest, focused }: { round: EvidenceRo
                     <ShieldWarning size={15} weight="fill" className="text-danger" />
                   )}
                   <span className={`text-[12.5px] font-semibold ${tone === "pass" ? "text-accent" : tone === "human" ? "text-warn" : "text-danger"}`}>
-                    判决 {verdictLabel}
+                    {t("ev.verdictPrefix", { v: verdictLabel })}
                   </span>
                   <span className="flex-1" />
                   <span className="font-mono text-[10.5px] text-faint">{timeLabel(verdict.createdAt)}</span>
@@ -414,7 +418,7 @@ function RoundSection({ round, intents, isLatest, focused }: { round: EvidenceRo
                       round: round.reviewRound,
                       degraded: verdict.degraded,
                       detail: round.decision?.detail ?? [],
-                    });
+                    }, t);
                     return (
                       <>
                         <div className="mt-1.5 text-[12.5px] leading-relaxed text-ink">{expl.summary}</div>
@@ -423,14 +427,14 @@ function RoundSection({ round, intents, isLatest, focused }: { round: EvidenceRo
                             {expl.points.slice(0, 6).map((p, i) => (
                               <li key={i} className="font-mono text-[11px] text-dim break-all">• {p}</li>
                             ))}
-                            {expl.points.length > 6 && <li className="text-[10.5px] text-faint">… 共 {expl.points.length} 条</li>}
+                            {expl.points.length > 6 && <li className="text-[10.5px] text-faint">{t("decision.morePoints", { n: expl.points.length })}</li>}
                           </ul>
                         )}
                       </>
                     );
                   })()
                 ) : (
-                  <div className="mt-1.5 text-[12px] text-dim">{verdict.verdict === "PASS" ? "全部策略通过，发布授权已签发" : "该工单的历史判决未记录结构化理由"}</div>
+                  <div className="mt-1.5 text-[12px] text-dim">{verdict.verdict === "PASS" ? t("decision.passDefault") : t("ev.noStructuredReason")}</div>
                 )}
                 {counts.BLOCKER + counts.WARNING + counts.NIT > 0 && (
                   <div className="mt-1.5 flex flex-wrap gap-1.5">
@@ -452,28 +456,28 @@ function RoundSection({ round, intents, isLatest, focused }: { round: EvidenceRo
                       }}
                     >
                       <MagnifyingGlass size={12} />
-                      查看全部发现
+                      {t("ev.viewAllFindings")}
                     </button>
                     {evidenceFindings[0]?.path && (
                       <button
                         className="btn btn-sm h-7 text-[11.5px]"
                         onClick={() => jumpToFinding(evidenceFindings[0].path, evidenceFindings[0].lineStart ?? 1)}
                       >
-                        定位首个发现
+                        {t("ev.locateFirstFinding")}
                       </button>
                     )}
                   </div>
                 )}
                 {tone === "pass" && (
                   <div className="mt-1.5 font-mono text-[10.5px] text-faint">
-                    授权：绑定 tree {shortHash(round.treeHash, 8, 4)} / base {shortHash(round.baseCommit, 7, 0)} · 目标 {round.targetRef.replace("refs/heads/", "")}
+                    {t("ev.authorizationLine", { tree: shortHash(round.treeHash, 8, 4), base: shortHash(round.baseCommit, 7, 0), target: round.targetRef.replace("refs/heads/", "") })}
                   </div>
                 )}
               </div>
             </div>
           </EventRow>
         ) : (
-          <EventRow icon="review" title="尚未审查" />
+          <EventRow icon="review" title={t("ev.notReviewed")} />
         )}
 
         {/* 发布 */}
@@ -483,8 +487,8 @@ function RoundSection({ round, intents, isLatest, focused }: { round: EvidenceRo
             anomaly={intent.status !== "PUBLISHED"}
             title={
               intent.status === "PUBLISHED"
-                ? `发布 · ${timeLabel(intent.finishedAt ?? intent.createdAt)}`
-                : "发布未落地（PENDING）· 待对账"
+                ? t("ev.publishTitle", { at: timeLabel(intent.finishedAt ?? intent.createdAt) })
+                : t("ev.publishPending")
             }
           >
             <PublishReceipt intent={intent} round={round} />
@@ -498,6 +502,7 @@ function RoundSection({ round, intents, isLatest, focused }: { round: EvidenceRo
 /* ── 主视图 ── */
 
 export function EvidenceView({ ticketNo }: { ticketNo: string }) {
+  const t = useT();
   const bundle = useApp((s) => s.evidence[ticketNo]);
   const mode = useApp((s) => s.mode);
   const focus = useApp((s) => s.evidenceFocus);
@@ -508,7 +513,7 @@ export function EvidenceView({ ticketNo }: { ticketNo: string }) {
     await loadEvidence(ticketNo);
     setRefreshing(false);
     const b = appStore.getState().evidence[ticketNo];
-    showToast(b?.chain.ok ? `链验证通过：共 ${b.chain.totalLines} 条记录` : `链验证失败：自第 ${b?.chain.brokenAtLine} 条记录起断裂`);
+    showToast(b?.chain.ok ? t("ev.chain.verifyOk", { n: b.chain.totalLines }) : t("ev.chain.verifyFailed", { n: b?.chain.brokenAtLine ?? 0 }));
   };
 
   const stageChangeRows: Array<EvidenceStageChange & { key: string }> = (bundle?.stageChanges ?? []).map((s, i) => ({ ...s, key: `sc-${i}` }));
@@ -520,9 +525,9 @@ export function EvidenceView({ ticketNo }: { ticketNo: string }) {
           <div className="mx-auto w-11 h-11 rounded-xl border border-dashed border-edge-strong grid place-items-center mb-3">
             <FileText size={20} className="text-faint" />
           </div>
-          <div className="text-[13.5px] text-dim">证据链尚未加载</div>
+          <div className="text-[13.5px] text-dim">{t("ev.notLoaded")}</div>
           <div className="mt-1 text-[12px] text-faint leading-relaxed">
-            预提审、审查与发布的事实会按轮次沉淀在这里；刷新页面或重新打开工单可重试加载。
+            {t("ev.notLoadedHint")}
           </div>
         </div>
       </div>
@@ -539,7 +544,7 @@ export function EvidenceView({ ticketNo }: { ticketNo: string }) {
         <div className="sticky top-0 z-20 -mx-5 px-5 pb-2">
           <div className="rounded-lg border border-warn/40 bg-warn/10 px-3 py-1.5 text-[11.5px] text-warn flex items-center gap-2">
             <ShieldWarning size={13} weight="fill" />
-            演示模式：本页所有判决、哈希与发布回执均为演示数据，不构成真实证据。
+            {t("ev.demoNote")}
           </div>
         </div>
       )}
@@ -547,11 +552,11 @@ export function EvidenceView({ ticketNo }: { ticketNo: string }) {
         {/* 工单头 + 链完整性 */}
         <div>
           <div className="flex items-center gap-2 pb-2">
-            <span className="text-[14px] font-semibold">证据链</span>
+            <span className="text-[14px] font-semibold">{t("ev.title")}</span>
             <span className="font-mono text-[11px] text-faint">{bundle.ticketNo}</span>
             <span className="flex-1" />
             {bundle.auditTruncated && (
-              <span className="text-[10.5px] text-faint">审计事件仅显示最近 {bundle.auditEvents.length} / {bundle.auditEventsTotal} 条</span>
+              <span className="text-[10.5px] text-faint">{t("ev.auditTruncated", { shown: bundle.auditEvents.length, total: bundle.auditEventsTotal })}</span>
             )}
           </div>
           <ChainStatusBar bundle={bundle} onRefresh={verify} refreshing={refreshing} />
@@ -559,7 +564,7 @@ export function EvidenceView({ ticketNo }: { ticketNo: string }) {
 
         {noEvidence && (
           <div className="text-center py-10 text-[12.5px] text-faint">
-            这张工单还没有走过门禁：预提审后会在这里锁定第一份快照证据。
+            {t("ev.noEvidence")}
           </div>
         )}
 
@@ -570,11 +575,11 @@ export function EvidenceView({ ticketNo }: { ticketNo: string }) {
             <span className="absolute left-0 top-[7px] w-[11px] h-[11px] rounded-full border-2 bg-canvas border-edge-strong" />
             <div className="pb-4">
               <div className="flex items-center gap-2">
-                <span className="text-[12.5px] text-dim font-medium">工单创建</span>
+                <span className="text-[12.5px] text-dim font-medium">{t("ev.created")}</span>
                 <span className="font-mono text-[10.5px] text-faint">{timeLabel(bundle.createdAt)}</span>
               </div>
               <div className="mt-0.5 pl-7 font-mono text-[11px] text-faint">
-                目标分支 {rounds[0]?.targetRef.replace("refs/heads/", "") ?? "-"}
+                {t("ev.targetBranch", { ref: rounds[0]?.targetRef.replace("refs/heads/", "") ?? "-" })}
               </div>
             </div>
           </div>
@@ -596,15 +601,21 @@ export function EvidenceView({ ticketNo }: { ticketNo: string }) {
           <div className="relative pl-5 pt-2 border-t border-edge">
             <div className="flex items-center gap-2 py-1.5">
               <PencilSimpleLine size={14} weight="fill" className="text-warn" />
-              <span className="text-[12.5px] font-semibold text-dim">人工干预记录</span>
-              <span className="font-mono text-[10.5px] text-faint">{stageChangeRows.length} 次 · 理由必填</span>
+              <span className="text-[12.5px] font-semibold text-dim">{t("ev.stageChangesTitle")}</span>
+              <span className="font-mono text-[10.5px] text-faint">{t("ev.stageChangesCount", { n: stageChangeRows.length })}</span>
             </div>
             {stageChangeRows.map((s) => (
               <EventRow
                 key={s.key}
                 icon="human"
-                title={`${timeLabel(s.createdAt)} · ${s.kind === "restart" ? "重启" : s.kind === "force_complete" ? "强制已完成" : "取消工单"}（第 ${s.round} 轮前后）· ${s.fromStage} → ${s.toStage}`}
-                detail={[`理由：${s.reason}`]}
+                title={t("ev.stageChangeLine", {
+                  at: timeLabel(s.createdAt),
+                  kind: stageChangeKindLabel(s.kind, t),
+                  round: s.round,
+                  from: s.fromStage,
+                  to: s.toStage,
+                })}
+                detail={[t("ev.reasonLine", { reason: s.reason })]}
               />
             ))}
           </div>
@@ -615,10 +626,10 @@ export function EvidenceView({ ticketNo }: { ticketNo: string }) {
           <div className="rounded-xl border border-danger/30 bg-danger/[0.06] p-3 space-y-1.5">
             <div className="flex items-center gap-2">
               <WarningCircle size={14} weight="fill" className="text-danger" />
-              <span className="text-[12.5px] font-semibold text-danger">需要留意的异常事件</span>
+              <span className="text-[12.5px] font-semibold text-danger">{t("ev.anomaliesTitle")}</span>
             </div>
             {anomalies.map((e, i) => {
-              const l = auditEventLabel(e);
+              const l = auditEventLabel(e, t);
               return (
                 <div key={i} className="text-[12px] text-danger leading-relaxed">
                   {timeLabel(e.at)} · {l.text}
@@ -632,11 +643,11 @@ export function EvidenceView({ ticketNo }: { ticketNo: string }) {
         {bundle.auditEvents.length > 0 && (
           <details className="rounded-xl border border-edge bg-canvas">
             <summary className="px-3 py-2 text-[12px] text-dim cursor-pointer select-none">
-              原始审计事件（{bundle.auditEvents.length} 条 · 含哈希链字段）
+              {t("ev.rawAudit", { n: bundle.auditEvents.length })}
             </summary>
             <div className="px-3 pb-3 max-h-[360px] overflow-auto space-y-1">
               {bundle.auditEvents.map((e, i) => {
-                const l = auditEventLabel(e);
+                const l = auditEventLabel(e, t);
                 return (
                   <div key={i} className={`font-mono text-[10.5px] leading-relaxed border-l-2 pl-2 ${l.anomaly ? "border-danger/50" : "border-edge"}`}>
                     <span className="text-faint">{timeLabel(e.at)}</span>{" "}

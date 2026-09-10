@@ -1,7 +1,8 @@
-/**
+﻿/**
  * 插件系统（app/plugins）：后端插件设施的 HTTP 接入。
  * 全部走 net 层同源相对路径（dev 经 vite proxy /plugins、/api → 后端）。
  */
+import { t } from "@/i18n";
 import { appStore } from "@/store";
 import type { HostFetchRequest, PluginListItem } from "./types";
 
@@ -92,7 +93,7 @@ export async function kvDel(pluginId: string, key: string): Promise<void> {
 /** ctx.hostFetch 的实现：仅放行同源 /api/ 相对路径，注入 Web Token。 */
 export async function hostFetch<T>(path: string, init: HostFetchRequest = {}): Promise<T> {
   if (!path.startsWith("/api/")) {
-    throw new Error("hostFetch 仅允许 /api/ 相对路径");
+    throw new Error(t("plugins.hostFetchRelOnly"));
   }
   const res = await fetch(path, {
     method: init.method ?? "GET",

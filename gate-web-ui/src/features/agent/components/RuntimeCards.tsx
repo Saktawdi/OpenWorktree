@@ -1,10 +1,12 @@
-import { ArrowClockwise, CheckCircle, Plug, TerminalWindow, WarningCircle } from "@phosphor-icons/react";
+﻿import { ArrowClockwise, CheckCircle, Plug, TerminalWindow, WarningCircle } from "@phosphor-icons/react";
 import { actions } from "@/app/actions";
 import { useApp } from "@/store";
 import { CLI_LABEL } from "./labels";
+import { useT } from "@/i18n";
 
 /** 本地 CLI 运行时检测卡（含 opencode 供应商管理入口）。 */
 export function RuntimeCards({ onManageProviders }: { onManageProviders: () => void }) {
+  const t = useT();
   const runtimes = useApp((s) => s.runtimes);
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -25,27 +27,27 @@ export function RuntimeCards({ onManageProviders }: { onManageProviders: () => v
                 }`}
               >
                 {r.available ? <CheckCircle size={12} weight="fill" /> : <WarningCircle size={12} weight="fill" />}
-                {r.available ? "已安装 · 可托管会话" : (r.note ?? "未安装")}
+                {r.available ? t("runtime.available") : (r.note ?? t("runtime.notInstalled"))}
               </div>
             </div>
             <span className="flex-1" />
             {r.name === "opencode" && (
-              <button className="btn h-7 text-[12px]" title="管理 opencode.json 里的供应商" onClick={onManageProviders}>
+              <button className="btn h-7 text-[12px]" title={t("runtime.manageProviders")} onClick={onManageProviders}>
                 <Plug size={12} />
-                供应商管理
+                {t("oc.modalTitle")}
               </button>
             )}
             <button
               className="icon-btn"
-              title="重新检测"
-              aria-label="重新检测"
+              title={t("runtime.redetect")}
+              aria-label={t("runtime.redetect")}
               onClick={() => actions.refreshRuntimes()}
             >
               <ArrowClockwise size={14} />
             </button>
           </div>
           <div className="mt-3 pt-3 border-t border-edge">
-            <div className="field-label mb-1.5">可用模型 · {r.modelSource === "cli" ? "来自 CLI 探测" : r.modelSource === "cli-hints" ? "CLI 常用别名" : "默认"}<span className="ml-1 normal-case tracking-normal">共 {r.models.length > 0 ? r.models.length : 1} 个</span></div>
+            <div className="field-label mb-1.5">{t("runtime.availableModels")} · {r.modelSource === "cli" ? t("runtime.modelsFrom.cli") : r.modelSource === "cli-hints" ? t("runtime.modelsFrom.cliHints") : t("runtime.modelsFrom.builtin")}<span className="ml-1 normal-case tracking-normal">{t("runtime.modelsCount", { n: r.models.length > 0 ? r.models.length : 1 })}</span></div>
             <div
               className="font-mono text-[11px] text-dim whitespace-nowrap overflow-hidden text-ellipsis"
               title={(r.models.length > 0 ? r.models : ["default"]).join("  ")}

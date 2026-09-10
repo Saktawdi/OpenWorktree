@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+﻿import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ReactElement } from "react";
 import { motion } from "motion/react";
+import { useT } from "@/i18n";
 import {
   ArrowsClockwise,
   ArrowsOutSimple,
@@ -82,6 +83,7 @@ function CommitGraph({ commits }: { commits: GitCommit[] }) {
 }
 
 function GraphTab({ git, projectId, onReload }: { git: GitRepoView; projectId: string; onReload: () => Promise<void> }) {
+  const t = useT();
   const [syncing, setSyncing] = useState(false);
   const laneCount = Math.max(1, ...git.commits.map((c) => c.lane)) + 1;
   const graphW = laneCount * LANE_W;
@@ -113,7 +115,7 @@ function GraphTab({ git, projectId, onReload }: { git: GitRepoView; projectId: s
           <div className="flex items-center gap-2">
             <WarningCircle size={15} weight="fill" className="shrink-0" />
             <span>
-              工作区落后于权威库（<span className="font-mono">{shortHash(authTip!, 8, 0)}</span>）
+              {t("repo.behindAuth", { sha: shortHash(authTip!, 8, 0) })}
             </span>
           </div>
           <button
@@ -124,10 +126,10 @@ function GraphTab({ git, projectId, onReload }: { git: GitRepoView; projectId: s
             {syncing ? (
               <>
                 <ArrowsClockwise size={12} className="animate-spin mr-1 inline" />
-                同步中…
+                {t("repo.syncing")}
               </>
             ) : (
-              "同步工作区"
+              t("repo.syncWorkspace")
             )}
           </button>
         </div>
@@ -180,14 +182,14 @@ function GraphTab({ git, projectId, onReload }: { git: GitRepoView; projectId: s
                 <span className="mx-1 text-faint/50">·</span>
                 {relativeTime(c.time)}
               </span>
-              <CopyButton text={c.sha} label="复制提交 ID" />
+              <CopyButton text={c.sha} label={t("repo.copyCommitId")} />
             </div>
           ))}
         </div>
       </div>
       {git.truncated && (
         <div className="px-4 py-2.5 border-t border-edge text-[11.5px] text-faint">
-          仅显示最近 100 条提交，更早的历史未在图中呈现
+          {t("repo.recentOnly")}
         </div>
       )}
     </div>
@@ -196,6 +198,7 @@ function GraphTab({ git, projectId, onReload }: { git: GitRepoView; projectId: s
 
 /** 文件树：目录按需懒加载（每次展开拉取一层），子目录结果缓存在组件内。 */
 function RepoTreeTab({ projectId, root }: { projectId: string; root: GitTreeEntry[] }) {
+  const t = useT();
   const mode = useApp((s) => s.mode);
   const [children, setChildren] = useState<Record<string, GitTreeEntry[]>>({});
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
@@ -210,7 +213,7 @@ function RepoTreeTab({ projectId, root }: { projectId: string; root: GitTreeEntr
       const list = await loadProjectTree(projectId, dir);
       setChildren((c) => ({ ...c, [dir]: list }));
     } catch (e) {
-      showToast(`读取目录失败：${(e as Error).message}`);
+      showToast(t("repo.readDirFailed", { err: (e as Error).message }));
       setExpanded((e) => ({ ...e, [dir]: false }));
     } finally {
       setBusy(null);
@@ -232,7 +235,7 @@ function RepoTreeTab({ projectId, root }: { projectId: string; root: GitTreeEntr
               <button
                 className="shrink-0 w-4 h-4 grid place-items-center text-faint hover:text-ink cursor-pointer bg-transparent border-0 p-0"
                 onClick={() => void toggle(e.path)}
-                aria-label={isOpen ? `折叠 ${e.path}` : `展开 ${e.path}`}
+                aria-label={isOpen ? t("repo.collapseAria", { path: e.path }) : t("repo.expandAria", { path: e.path })}
               >
                 <CaretRight size={12} className={`transition-transform ${isOpen ? "rotate-90" : ""}`} />
               </button>
@@ -246,7 +249,7 @@ function RepoTreeTab({ projectId, root }: { projectId: string; root: GitTreeEntr
           )}
           <span className="font-mono text-[12.5px] text-ink truncate">{e.path.split("/").pop()}</span>
           <span className="flex-1" />
-          {busy === e.path && <span className="text-[11px] text-faint shrink-0">加载中…</span>}
+          {busy === e.path && <span className="text-[11px] text-faint shrink-0">{t("common.loading")}</span>}
           <span className="hidden md:inline text-[11.5px] text-faint truncate max-w-[280px]">{e.lastMessage}</span>
           <span className="font-mono text-[11px] text-faint w-[60px] text-right shrink-0">
             {e.type === "file" ? `${((e.size ?? 0) / 1024).toFixed(1)} KB` : ""}
@@ -262,15 +265,15 @@ function RepoTreeTab({ projectId, root }: { projectId: string; root: GitTreeEntr
   render(root, 0);
 
   if (root.length === 0) {
-    return <div className="p-8 text-center text-[12.5px] text-faint">HEAD 中没有已提交的文件</div>;
+    return <div className="p-8 text-center text-[12.5px] text-faint">{t("repo.noFiles")}</div>;
   }
   return <div className="p-2">{rows}</div>;
 }
 
 type RepoTab = "graph" | "tree";
-const REPO_TABS: Array<{ key: RepoTab; label: string }> = [
-  { key: "graph", label: "分支图 · 提交历史" },
-  { key: "tree", label: "文件树" },
+const REPO_TABS: Array<{ key: RepoTab; labelKey: "repo.tab.graph" | "repo.tab.tree" }> = [
+  { key: "graph", labelKey: "repo.tab.graph" },
+  { key: "tree", labelKey: "repo.tab.tree" },
 ];
 
 /** 弹窗/整页共用的数据加载与 tab 状态。 */
@@ -303,17 +306,18 @@ function useRepoViewData(project: Project) {
 }
 
 function TabButtons({ tab, setTab }: { tab: RepoTab; setTab: (t: RepoTab) => void }) {
+  const tr = useT();
   return (
     <>
-      {REPO_TABS.map((t) => (
+      {REPO_TABS.map((tab2) => (
         <button
-          key={t.key}
-          onClick={() => setTab(t.key)}
+          key={tab2.key}
+          onClick={() => setTab(tab2.key)}
           className={`h-7 px-2.5 rounded-md text-[12px] cursor-pointer transition-colors ${
-            tab === t.key ? "bg-raised text-ink border border-edge" : "text-dim hover:text-ink border border-transparent"
+            tab === tab2.key ? "bg-raised text-ink border border-edge" : "text-dim hover:text-ink border border-transparent"
           }`}
         >
-          {t.label}
+          {tr(tab2.labelKey)}
         </button>
       ))}
     </>
@@ -337,18 +341,19 @@ function RepoViewBody({
   error: string | null;
   reload: () => Promise<void>;
 }) {
+  const t = useT();
   return (
     <div className="flex-1 min-h-0 overflow-auto">
       {error ? (
         <div className="p-8 text-center">
           <div className="text-[12.5px] text-warn leading-relaxed">{error}</div>
           <button className="btn mt-3" onClick={() => void reload()}>
-            重试
+            {t("common.retry")}
           </button>
         </div>
       ) : !git ? (
         <div className="p-8 text-center text-[12.5px] text-faint">
-          {loading ? "仓库视图加载中…" : "当前项目暂无仓库数据"}
+          {loading ? t("repo.loading") : t("repo.noData")}
         </div>
       ) : (
         <>
@@ -362,6 +367,7 @@ function RepoViewBody({
 
 /** 仓库视图弹窗：live 模式打开即拉取分支图与文件树根目录，失败可重试；放大按钮跳转整页。 */
 export function RepoViewDialog({ project, onClose }: { project: Project; onClose: () => void }) {
+  const t = useT();
   const { git, treeRoot, tab, setTab, loading, error, reload } = useRepoViewData(project);
   const backdrop = useBackdropClose(onClose);
 
@@ -374,13 +380,13 @@ export function RepoViewDialog({ project, onClose }: { project: Project; onClose
         <div className="flex items-center gap-2 px-4 h-11 border-b border-edge shrink-0">
           <TreeStructure size={14} className="text-dim" />
           <span className="text-[13px] font-semibold">{project.name}</span>
-          <span className="font-mono text-[11px] text-faint">· 仓库视图</span>
+          <span className="font-mono text-[11px] text-faint">· {t("project.repoView")}</span>
           <span className="flex-1" />
           <TabButtons tab={tab} setTab={setTab} />
           <button
             className="icon-btn ml-1"
-            title="放大为整页"
-            aria-label="放大为整页"
+            title={t("repo.expandPage")}
+            aria-label={t("repo.expandPage")}
             onClick={() => {
               openRepoView(project.id);
               onClose();
@@ -391,7 +397,7 @@ export function RepoViewDialog({ project, onClose }: { project: Project; onClose
           <button
             className="icon-btn"
             onClick={onClose}
-            aria-label="关闭"
+            aria-label={t("common.close")}
           >
             <svg width="13" height="13" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
               <path d="M2 2l8 8M10 2l-8 8" />
@@ -415,6 +421,7 @@ export function RepoViewDialog({ project, onClose }: { project: Project; onClose
 
 /** 仓库视图整页：与弹窗同一套布局（分支图/文件树），仅把弹窗外壳换成页面容器。 */
 export function RepoViewPage() {
+  const t = useT();
   const project = useApp((s) => s.projects.find((p) => p.id === s.repoViewProjectId));
 
   if (!project) {
@@ -422,7 +429,7 @@ export function RepoViewPage() {
     return (
       <div className="flex-1 min-h-0 grid place-items-center">
         <button className="btn" onClick={() => closeRepoView()}>
-          返回项目列表
+          {t("repo.backToProjects")}
         </button>
       </div>
     );
@@ -432,6 +439,7 @@ export function RepoViewPage() {
 }
 
 function RepoViewPageInner({ project }: { project: Project }) {
+  const t = useT();
   const { git, treeRoot, tab, setTab, loading, error, reload } = useRepoViewData(project);
 
   return (
@@ -447,11 +455,11 @@ function RepoViewPageInner({ project }: { project: Project }) {
             <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
               <path d="M7.5 2L3.5 6l4 4" />
             </svg>
-            返回项目
+            {t("repo.backToProject")}
           </button>
           <TreeStructure size={14} className="text-dim ml-1" />
           <span className="text-[13px] font-semibold">{project.name}</span>
-          <span className="font-mono text-[11px] text-faint">· 仓库视图</span>
+          <span className="font-mono text-[11px] text-faint">· {t("project.repoView")}</span>
           <span className="flex-1" />
           <TabButtons tab={tab} setTab={setTab} />
         </div>

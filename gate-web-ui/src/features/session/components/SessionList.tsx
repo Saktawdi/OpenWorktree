@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState, type CSSProperties, type ReactNode } from "react";
+﻿import { useCallback, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import {
   Archive,
@@ -39,6 +39,7 @@ import {
 import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { SessionDialogs, sessionDialogKey, type SessionDialogState } from "./SessionDialogs";
+import { getLocale, useT, type Translate } from "@/i18n";
 
 /**
  * 会话列表段（collapsible）：活跃/归档两 tab + 新建会话草稿 + 分组管理。
@@ -123,10 +124,10 @@ function dotPresentation(
   };
 }
 
-const DOT_TITLES: Record<SessionDotState, string | undefined> = {
-  running: "会话运行中",
-  interrupted: "上次回合已中断（出错或中止）",
-  ask: "智能体在等待你回答/授权",
+const DOT_TITLES: Record<SessionDotState, "sess.dot.running" | "sess.dot.interrupted" | "sess.dot.ask" | undefined> = {
+  running: "sess.dot.running",
+  interrupted: "sess.dot.interrupted",
+  ask: "sess.dot.ask",
   idle: undefined,
 };
 
@@ -144,10 +145,18 @@ function RunDot({ session }: { session: ChatSession }) {
   });
   const { className, style } = dotPresentation(state, session.status === "archived");
   return (
+    <RunDotInner className={className} style={style} state={state} />
+  );
+}
+
+function RunDotInner({ className, style, state }: { className: string; style: CSSProperties; state: SessionDotState }) {
+  const t = useT();
+  const key = DOT_TITLES[state];
+  return (
     <span
       className={`w-1.5 h-1.5 rounded-full shrink-0 ${className}`}
       style={style}
-      title={DOT_TITLES[state]}
+      title={key ? t(key) : undefined}
     />
   );
 }
@@ -233,6 +242,7 @@ function canonicalPinnedOrder(
 }
 
 export function SessionSection({ ticketNo, locked = false }: { ticketNo: string; locked?: boolean }) {
+  const t = useT();
   const expanded = useApp((s) => s.gateSections.sessions);
   const activeCount = useApp(
     (s) => (s.sessions[ticketNo] ?? NO_SESSIONS).filter((x) => x.status === "active").length,
@@ -245,9 +255,9 @@ export function SessionSection({ ticketNo, locked = false }: { ticketNo: string;
         onClick={() => setGateSection("sessions", !expanded)}
       >
         <Chats size={14} className="text-faint shrink-0" />
-        <span className="text-[12px] font-medium text-dim">会话列表</span>
+        <span className="text-[12px] font-medium text-dim">{t("sess.list.title")}</span>
         {activeCount > 0 && (
-          <span className="chip border border-edge-strong bg-raised text-dim font-mono">{activeCount} 活跃</span>
+          <span className="chip border border-edge-strong bg-raised text-dim font-mono">{t("sess.activeCount", { n: activeCount })}</span>
         )}
         <span className="flex-1" />
         <CaretDown
@@ -284,6 +294,7 @@ export function SessionSection({ ticketNo, locked = false }: { ticketNo: string;
 }
 
 function SessionList({ ticketNo, locked = false }: { ticketNo: string; locked?: boolean }) {
+  const t = useT();
   const sessions = useApp((s) => s.sessions[ticketNo] ?? NO_SESSIONS);
   const groups = useApp((s) => s.sessionGroups[ticketNo] ?? NO_GROUPS);
   const members = useApp((s) => s.sessionGroupMembers);
@@ -452,7 +463,7 @@ function SessionList({ ticketNo, locked = false }: { ticketNo: string; locked?: 
           }`}
           onClick={() => setTab("active")}
         >
-          活跃
+          {t("sess.tab.active")}
           {activeTotal > 0 && <span className="ml-1 font-mono text-[10px] text-faint">{activeTotal}</span>}
         </button>
         <button
@@ -463,7 +474,7 @@ function SessionList({ ticketNo, locked = false }: { ticketNo: string; locked?: 
           }`}
           onClick={() => setTab("archived")}
         >
-          归档
+          {t("sess.tab.archived")}
           {archivedTotal > 0 && <span className="ml-1 font-mono text-[10px] text-faint">{archivedTotal}</span>}
         </button>
         <span className="flex-1" />
@@ -471,8 +482,8 @@ function SessionList({ ticketNo, locked = false }: { ticketNo: string; locked?: 
           <button
             className="icon-btn !w-6 !h-6"
             onClick={toggleAllSegments}
-            title={allCollapsed ? "展开全部分组" : "收叠全部分组"}
-            aria-label={allCollapsed ? "展开全部分组" : "收叠全部分组"}
+            title={allCollapsed ? t("sess.expandAllGroups") : t("sess.collapseAllGroups")}
+            aria-label={allCollapsed ? t("sess.expandAllGroups") : t("sess.collapseAllGroups")}
           >
             {allCollapsed ? <ArrowsOutSimple size={13} weight="bold" /> : <ArrowsInSimple size={13} weight="bold" />}
           </button>
@@ -482,8 +493,8 @@ function SessionList({ ticketNo, locked = false }: { ticketNo: string; locked?: 
             <button
               className="icon-btn !w-6 !h-6"
               onClick={() => openDialog({ kind: "group-create" })}
-              title="新建分组"
-              aria-label="新建分组"
+              title={t("sess.group.create")}
+              aria-label={t("sess.group.create")}
             >
               <FolderPlus size={13} weight="bold" />
             </button>
@@ -491,17 +502,17 @@ function SessionList({ ticketNo, locked = false }: { ticketNo: string; locked?: 
               className="icon-btn !w-6 !h-6 disabled:opacity-50 disabled:pointer-events-none"
               onClick={() => actions.startSessionDraft(ticketNo)}
               disabled={(activeSessionId ?? "") === ""}
-              title={(activeSessionId ?? "") === "" ? "已在新会话草稿中" : "新建会话"}
-              aria-label="新建会话"
+              title={(activeSessionId ?? "") === "" ? t("sess.alreadyDrafting") : t("sess.newSession")}
+              aria-label={t("sess.newSession")}
             >
               <Plus size={13} weight="bold" />
             </button>
           </>
         )}
         {locked && (
-          <span className="inline-flex items-center gap-1 text-[10.5px] text-faint" title="工单已取消 · 会话操作已锁定">
+          <span className="inline-flex items-center gap-1 text-[10.5px] text-faint" title={t("sess.lockedTip")}>
             <LockKey size={11} weight="fill" />
-            已锁定
+            {t("sess.locked")}
           </span>
         )}
       </div>
@@ -579,7 +590,7 @@ function SessionList({ ticketNo, locked = false }: { ticketNo: string; locked?: 
         <div className="absolute inset-0 z-20 grid place-items-center bg-canvas/70 backdrop-blur-[1.5px] rounded-lg">
           <div className="flex items-center gap-2 rounded-lg border border-edge bg-raised px-3.5 py-2 shadow-lg shadow-black/30 animate-rise">
             <CircleNotch size={14} className="text-accent animate-[spin_0.9s_linear_infinite]" />
-            <span className="text-[12px] text-dim">正在创建会话…</span>
+            <span className="text-[12px] text-dim">{t("composer.placeholder.creating")}</span>
           </div>
         </div>
       )}
@@ -599,25 +610,26 @@ function SessionEmptyState({
   drafting: boolean;
   onCreateDraft: () => void;
 }) {
+  const t = useT();
   return (
     <div className="py-6 text-center">
       <div className="text-[12px] text-faint">
         {tab === "active"
           ? drafting
-            ? "新会话草稿已就绪 · 选择 Agent 后发送首条消息"
-            : "暂无活跃会话"
-          : "暂无归档会话"}
+            ? t("sess.empty.drafting")
+            : t("sess.empty.active")
+          : t("sess.empty.archived")}
       </div>
       {tab === "active" && !locked && !drafting && (
         <button className="btn btn-sm mt-2 text-[11px]" onClick={onCreateDraft}>
           <Plus size={12} />
-          新建会话
+          {t("sess.newSession")}
         </button>
       )}
       {tab === "active" && locked && (
         <div className="mt-2 inline-flex items-center gap-1 text-[11px] text-faint">
           <LockKey size={11} weight="fill" />
-          工单已取消，无法新建会话
+          {t("sess.empty.locked")}
         </div>
       )}
     </div>
@@ -649,6 +661,7 @@ function Segment({
   onOpenMenu: (sessionId: string, x: number, y: number) => void;
   onOpenDialog: (d: SessionDialogState) => void;
 }) {
+  const t = useT();
   // 分组的整段区域（含分组头与空隙）都是落点：拖拽会话至此即移入该分组。
   // flat 模式没有分组语义，落点禁用。
   const { setNodeRef, isOver } = useDroppable({
@@ -681,9 +694,9 @@ function Segment({
           {/* 置顶区：独立 SortableContext，区内拖拽直接重写置顶序列 */}
           {seg.pinned.length > 0 && (
             <SortableContext items={seg.pinned.map((x) => x.id)} strategy={verticalListSortingStrategy}>
-              <div className="flex items-center gap-1 px-2.5 pb-0.5 pt-1 select-none" title="置顶会话 · 区内可拖拽排序，离开此区即取消置顶">
+              <div className="flex items-center gap-1 px-2.5 pb-0.5 pt-1 select-none" title={t("sess.pinnedZoneTip")}>
                 <PushPin size={9} weight="fill" className="text-faint/80" />
-                <span className="text-[10px] font-medium text-faint/80">置顶</span>
+                <span className="text-[10px] font-medium text-faint/80">{t("sess.pinned")}</span>
                 <span className="ml-1 h-px flex-1 bg-edge/60" />
               </div>
               <div className={grouped ? "pl-1" : ""}>
@@ -723,7 +736,7 @@ function Segment({
           </SortableContext>
           {grouped && seg.pinned.length + seg.rest.length === 0 && (
             <div className="px-2.5 pb-2 pt-0.5 text-[11px] text-faint/80 italic">
-              暂无会话 · 可将列表中的会话拖到这里
+              {t("sess.groupEmpty")}
             </div>
           )}
         </>
@@ -757,6 +770,7 @@ function SegmentHeader({
   onEdit: () => void;
   onDelete: () => void;
 }) {
+  const t = useT();
   const g = seg.group;
   // 分组聚合运行态（原语选择器）：只决定文件夹图标是否同色呼吸，不参与改色。
   // 呼吸动画走 currentColor（透明度 + 光晕），颜色恒为分组自定义色（第 11 轮修正：
@@ -770,7 +784,7 @@ function SegmentHeader({
       className="flex h-[26px] items-center gap-1.5 px-2.5 cursor-pointer select-none rounded-md hover:bg-raised/60 transition-colors"
       onClick={onToggle}
       role="button"
-      title={collapsed ? "展开该分组" : "收起该分组"}
+      title={collapsed ? t("common.expand") : t("common.collapse")}
     >
       <CaretDown
         size={10}
@@ -787,10 +801,10 @@ function SegmentHeader({
             segState === "idle"
               ? undefined
               : segState === "ask"
-                ? "分组内有会话待回答/待授权"
+                ? t("sess.groupState.ask")
                 : segState === "running"
-                  ? "分组内有会话运行中"
-                  : "分组内有会话已中断"
+                  ? t("sess.groupState.running")
+                  : t("sess.groupState.interrupted")
           }
         >
           <FolderIcon size={11} weight="fill" />
@@ -798,7 +812,7 @@ function SegmentHeader({
       ) : (
         <Chats size={11} className="text-faint shrink-0" />
       )}
-      <span className="text-[11.5px] font-medium text-faint truncate max-w-[140px]">{g?.name ?? "未分组"}</span>
+      <span className="text-[11.5px] font-medium text-faint truncate max-w-[140px]">{g?.name ?? t("sess.ungrouped")}</span>
       <span className="font-mono text-[10px] text-faint/70">{count}</span>
       <span className="flex-1" />
       {!locked && (
@@ -808,21 +822,21 @@ function SegmentHeader({
         >
           <button
             className="icon-btn !w-5 !h-5"
-            title={g ? `新建会话并归入「${g.name}」` : "新建会话（不归组）"}
-            aria-label={g ? `新建会话并归入「${g.name}」` : "新建会话"}
+            title={g ? t("sess.createInGroup", { name: g.name }) : t("sess.createNoGroup")}
+            aria-label={g ? t("sess.createInGroup", { name: g.name }) : t("sess.newSession")}
             onClick={onCreate}
           >
             <Plus size={11} weight="bold" />
           </button>
           {g && (
             <>
-              <button className="icon-btn !w-5 !h-5" title="编辑分组" aria-label="编辑分组" onClick={onEdit}>
+              <button className="icon-btn !w-5 !h-5" title={t("sess.group.edit")} aria-label={t("sess.group.edit")} onClick={onEdit}>
                 <NotePencil size={11} />
               </button>
               <button
                 className="icon-btn !w-5 !h-5 text-danger/70 hover:text-danger"
-                title="删除分组"
-                aria-label="删除分组"
+                title={t("sess.group.delete")}
+                aria-label={t("sess.group.delete")}
                 onClick={onDelete}
               >
                 <Trash size={11} />
@@ -877,6 +891,7 @@ function SessionItem({
   onOpenMenu: (sessionId: string, x: number, y: number) => void;
   onOpenDialog: (d: SessionDialogState) => void;
 }) {
+  const t = useT();
   const [showActions, setShowActions] = useState(false);
   // 会话绑定的协作 Agent（创建时固化）：claude 紫 / opencode 蓝色点，与 Composer 选择器一致。
   const agent = useApp((s) => s.agents.find((a) => a.id === session.agentConfigId));
@@ -929,7 +944,7 @@ function SessionItem({
             {...listeners}
             className="cursor-grab active:cursor-grabbing text-faint/50 hover:text-dim shrink-0 touch-none select-none"
             onClick={(e) => e.stopPropagation()}
-            title="拖拽排序 / 拖入分组"
+            title={t("sess.dragHandleTip")}
           >
             <DotsSixVertical size={12} weight="bold" />
           </span>
@@ -939,7 +954,7 @@ function SessionItem({
         <div className="flex-1 min-w-0">
           <div className="text-[12px] text-dim truncate flex items-center gap-1">
             {pinned && (
-              <span title="已置顶" className="shrink-0">
+              <span title={t("sess.pinned")} className="shrink-0">
                 <PushPin size={9} weight="fill" className="text-faint rotate-45" />
               </span>
             )}
@@ -951,22 +966,22 @@ function SessionItem({
               <>
                 <span
                   className={`font-sans truncate ${agent ? "" : "text-faint/70"}`}
-                  title={agent ? `${agent.name} · ${agent.model}` : "该会话绑定的智能体已被删除"}
+                  title={agent ? `${agent.name} · ${agent.model}` : t("sess.agentDeletedTip")}
                 >
-                  {agent ? agent.name : "已删除"}
+                  {agent ? agent.name : t("sess.agentDeleted")}
                 </span>
                 <span className="text-edge-strong shrink-0">·</span>
               </>
             )}
             <span className="shrink-0">
-              {new Date(session.createdAt).toLocaleDateString("zh-CN", { month: "short", day: "numeric" })}
+              {new Date(session.createdAt).toLocaleDateString(getLocale(), { month: "short", day: "numeric" })}
             </span>
           </div>
         </div>
         {showActions && !locked && (
           <div className="flex items-center gap-0.5 shrink-0">
             <span className="[&>.icon-btn]:!w-5 [&>.icon-btn]:!h-5" onClick={(e) => e.stopPropagation()}>
-              <RowCopyButton text={session.id} label="复制会话 ID" />
+              <RowCopyButton text={session.id} label={t("sess.copyId")} />
             </span>
             {session.status === "active" ? (
               <button
@@ -975,8 +990,8 @@ function SessionItem({
                   e.stopPropagation();
                   actions.archiveSession(ticketNo, session.id);
                 }}
-                title="归档"
-                aria-label="归档"
+                title={t("sess.archive")}
+                aria-label={t("sess.archive")}
               >
                 <Archive size={11} />
               </button>
@@ -987,8 +1002,8 @@ function SessionItem({
                   e.stopPropagation();
                   actions.restoreSession(ticketNo, session.id);
                 }}
-                title="恢复"
-                aria-label="恢复"
+                title={t("sess.restore")}
+                aria-label={t("sess.restore")}
               >
                 <ArrowUUpLeft size={11} />
               </button>
@@ -999,8 +1014,8 @@ function SessionItem({
                 e.stopPropagation();
                 onOpenDialog({ kind: "delete", sessionId: session.id });
               }}
-              title="删除"
-              aria-label="删除"
+              title={t("common.delete")}
+              aria-label={t("common.delete")}
             >
               <Trash size={11} />
             </button>
@@ -1013,13 +1028,14 @@ function SessionItem({
 
 /** 行内复制按钮：走全局 copyText（Clipboard API + execCommand 回退），成功闪 ✓。 */
 function RowCopyButton({ text, label }: { text: string; label?: string }) {
+  const t = useT();
   const [done, setDone] = useState(false);
   return (
     <button
       type="button"
       className="icon-btn"
-      title={label ?? "复制"}
-      aria-label={label ?? "复制"}
+      title={label ?? t("common.copy")}
+      aria-label={label ?? t("common.copy")}
       onClick={() => {
         void copyText(text).then((ok) => {
           if (!ok) return;
@@ -1078,6 +1094,7 @@ function ContextMenu({
   onClose: () => void;
   onOpenDialog: (d: SessionDialogState) => void;
 }) {
+  const t = useT();
   // 边缘防溢出：右钳 200（菜单宽约 188），下钳 300（六项菜单估高）
   const pos = {
     left: Math.min(position.x, window.innerWidth - 200),
@@ -1108,7 +1125,7 @@ function ContextMenu({
       >
         <MenuItem
           icon={<NotePencil size={12} className="text-faint" />}
-          label="重命名"
+          label={t("common.rename")}
           onClick={() => runThen(() => onOpenDialog({ kind: "rename", sessionId: session.id }))}
         />
         {!archived && (
@@ -1116,27 +1133,27 @@ function ContextMenu({
             icon={
               pinned ? <PushPinSlash size={12} className="text-faint" /> : <PushPin size={12} className="text-faint" />
             }
-            label={pinned ? "取消置顶" : "置顶"}
+            label={pinned ? t("sess.unpin") : t("sess.pin")}
             onClick={() => runThen(() => void actions.setSessionPinned(session.ticketNo, session.id, !pinned))}
           />
         )}
         <MenuItem
           icon={<Copy size={12} className="text-faint" />}
-          label="复制会话 ID"
+          label={t("sess.copyId")}
           onClick={() =>
             runThen(() => {
-              void copyText(session.id).then((ok) => showToast(ok ? "已复制会话 ID" : "复制失败"));
+              void copyText(session.id).then((ok) => showToast(ok ? t("sess.copiedId") : t("common.copyFailed")));
             })
           }
         />
         <MenuItem
           icon={<FolderOpen size={12} className="text-faint" />}
-          label="移入分组"
+          label={t("sess.moveToGroup")}
           onClick={() => runThen(() => onOpenDialog({ kind: "move-group", sessionId: session.id }))}
         />
         <MenuItem
           icon={archived ? <ArrowUUpLeft size={12} className="text-faint" /> : <Archive size={12} className="text-faint" />}
-          label={archived ? "恢复" : "归档"}
+          label={archived ? t("sess.restore") : t("sess.archive")}
           onClick={() =>
             runThen(() => {
               if (archived) actions.restoreSession(session.ticketNo, session.id);
@@ -1148,7 +1165,7 @@ function ContextMenu({
         <MenuItem
           icon={<Trash size={12} />}
           danger
-          label="删除"
+          label={t("common.delete")}
           onClick={() => runThen(() => onOpenDialog({ kind: "delete", sessionId: session.id }))}
         />
       </motion.div>

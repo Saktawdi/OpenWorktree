@@ -1,31 +1,33 @@
-import { useState } from "react";
+﻿import { useState } from "react";
 import { CaretDown, CaretRight, Check, CircleNotch, ShieldCheck, X } from "@phosphor-icons/react";
 import { pushPermissionRequest, pushSystemMessage, resolvePermission, revertPermission, answerSessionPermission } from "@/features/session";
 import type { ChatItem, PermissionStatus } from "@/shared/types";
+import { useT, type Translate } from "@/i18n";
 
 type PermissionItem = Extract<ChatItem, { kind: "permission" }>;
 
-const PERMISSION_LABEL: Record<string, string> = {
-  bash: "终端命令",
-  shell: "终端命令",
-  edit: "文件修改",
-  write: "文件修改",
-  read: "文件读取",
-  grep: "文件读取",
-  glob: "文件读取",
-  webfetch: "网络请求",
-  external_directory: "访问会话外目录",
+const PERMISSION_LABEL: Record<string, "perm.bash" | "perm.edit" | "perm.read" | "perm.webfetch" | "perm.externalDir"> = {
+  bash: "perm.bash",
+  shell: "perm.bash",
+  edit: "perm.edit",
+  write: "perm.edit",
+  read: "perm.read",
+  grep: "perm.read",
+  glob: "perm.read",
+  webfetch: "perm.webfetch",
+  external_directory: "perm.externalDir",
 };
 
-function permissionLabel(permission: string): string {
-  return PERMISSION_LABEL[permission] ?? permission;
+function permissionLabel(permission: string, t: Translate): string {
+  const key = PERMISSION_LABEL[permission];
+  return key ? t(key) : permission;
 }
 
-const DECIDED_BADGE: Record<Exclude<PermissionStatus, "pending">, { text: string; cls: string }> = {
-  once: { text: "已允许", cls: "badge-accent" },
-  always: { text: "已始终允许", cls: "badge-accent" },
-  reject: { text: "已拒绝", cls: "badge-danger" },
-  auto: { text: "已自动允许", cls: "badge-info" },
+const DECIDED_BADGE: Record<Exclude<PermissionStatus, "pending">, { textKey: "perm.allowedOnce" | "perm.allowedAlways" | "perm.rejected" | "perm.allowedAuto"; cls: string }> = {
+  once: { textKey: "perm.allowedOnce", cls: "badge-accent" },
+  always: { textKey: "perm.allowedAlways", cls: "badge-accent" },
+  reject: { textKey: "perm.rejected", cls: "badge-danger" },
+  auto: { textKey: "perm.allowedAuto", cls: "badge-info" },
 };
 
 const str = (v: unknown): string | undefined =>
@@ -119,6 +121,7 @@ export function PermissionCard({
   /** 工单已取消等终态：禁止应答，仅展示。 */
   locked?: boolean;
 }) {
+  const t = useT();
   const { request, status } = item;
   const [busy, setBusy] = useState<"once" | "always" | "reject" | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
@@ -137,7 +140,14 @@ export function PermissionCard({
       pushPermissionRequest(ticketNo, request);
       pushSystemMessage(
         ticketNo,
-        `权限应答提交失败（${response === "once" ? "允许一次" : response === "always" ? "始终允许" : "拒绝"}），已恢复待决`,
+        t("perm.failToast", {
+          action:
+            response === "once"
+              ? t("perm.once")
+              : response === "always"
+                ? t("perm.always")
+                : t("perm.reject"),
+        }),
         "warn",
       );
     }
@@ -145,7 +155,7 @@ export function PermissionCard({
   };
 
   const alwaysTitle =
-    request.always.length > 0 ? `始终允许以下匹配：${request.always.join(", ")}` : "始终允许该类权限";
+    request.always.length > 0 ? t("perm.alwaysPatterns", { patterns: request.always.join(", ") }) : t("perm.alwaysThisKind");
 
   const badge = decided ? DECIDED_BADGE[status as Exclude<PermissionStatus, "pending">] : null;
 
@@ -154,12 +164,12 @@ export function PermissionCard({
       <div className="px-3 py-2.5">
         <div className="flex items-center gap-2">
           <ShieldCheck size={15} weight="fill" className={decided ? "text-faint" : "text-warn"} />
-          <span className="text-[13px] font-semibold text-ink">需要权限确认</span>
+          <span className="text-[13px] font-semibold text-ink">{t("perm.title")}</span>
           <span className={`chip ${decided ? "badge-dim border border-edge text-dim" : "text-warn bg-warn/10"}`}>
-            {permissionLabel(request.permission)}
+            {permissionLabel(request.permission, t)}
           </span>
           <span className="flex-1" />
-          {badge && <span className={badge.cls}>{badge.text}</span>}
+          {badge && <span className={badge.cls}>{t(badge.textKey)}</span>}
         </div>
         {request.patterns.length > 0 && (
           <div className="mt-2">
@@ -173,7 +183,7 @@ export function PermissionCard({
               onClick={() => setDetailOpen(!detailOpen)}
             >
               {detailOpen ? <CaretDown size={11} /> : <CaretRight size={11} />}
-              详情
+              {t("common.details")}
             </button>
             {detailOpen && (
               <div className="mt-1.5">
@@ -186,24 +196,24 @@ export function PermissionCard({
       <div className="px-3 py-2 bg-panel/40">
         {!decided && !locked && (
           <div className="flex items-center gap-2">
-            <button className="btn btn-primary btn-sm" disabled={!!busy} onClick={() => void respond("once")} title="允许这一次执行">
+            <button className="btn btn-primary btn-sm" disabled={!!busy} onClick={() => void respond("once")} title={t("perm.onceTip")}>
               {busy === "once" ? <CircleNotch size={12} className="animate-[spin_0.9s_linear_infinite]" /> : <Check size={12} weight="bold" />}
-              允许一次
+              {t("perm.once")}
             </button>
             <button className="btn btn-outline btn-sm" disabled={!!busy} onClick={() => void respond("always")} title={alwaysTitle}>
               {busy === "always" ? <CircleNotch size={12} className="animate-[spin_0.9s_linear_infinite]" /> : <ShieldCheck size={12} weight="regular" />}
-              始终允许
+              {t("perm.always")}
             </button>
-            <button className="btn btn-danger-ghost btn-sm" disabled={!!busy} onClick={() => void respond("reject")} title="拒绝本次并中断该权限">
+            <button className="btn btn-danger-ghost btn-sm" disabled={!!busy} onClick={() => void respond("reject")} title={t("perm.rejectTip")}>
               {busy === "reject" ? <CircleNotch size={12} className="animate-[spin_0.9s_linear_infinite]" /> : <X size={12} weight="bold" />}
-              拒绝
+              {t("perm.reject")}
             </button>
           </div>
         )}
         {!decided && locked && (
           <div className="flex items-center gap-1.5 text-[11.5px] text-faint">
             <ShieldCheck size={12} />
-            工单已取消 · 权限应答已锁定
+            {t("perm.lockedNote")}
           </div>
         )}
       </div>

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 插件系统（app/plugins）：顶栏「插件」一级页面的核心面板。
  * 每个插件一张卡：插件信息（启停/重载/错误展示）与其挂件管理面板（settings.plugins
  * 槽位）同卡分区呈现——面板是插件的一部分，不再是飘在列表后面的独立卡片。
@@ -17,9 +17,11 @@ import { usePlugins } from "@/app/plugins/state";
 import { PluginSlot } from "./PluginSlot";
 import type { PanelWidgetContribution } from "@/app/plugins/types";
 import type { PluginView } from "@/app/plugins/state";
+import { useT, type Translate } from "@/i18n";
 
 /** 启停开关（原生语义 role=switch，样式与 LlmBlock 控件一致）。 */
 function EnabledSwitch({ on, onToggle, disabled }: { on: boolean; onToggle: () => void; disabled?: boolean }) {
+  const t = useT();
   return (
     <button
       type="button"
@@ -30,7 +32,7 @@ function EnabledSwitch({ on, onToggle, disabled }: { on: boolean; onToggle: () =
       className={`relative w-8 h-[18px] rounded-full transition-colors cursor-pointer shrink-0 ${
         on ? "bg-accent" : "bg-raised border border-edge-strong"
       } ${disabled ? "opacity-40 pointer-events-none" : ""}`}
-      title={on ? "点击禁用插件（贡献点随即移除）" : "点击启用插件"}
+      title={on ? t("plugins.toggleDisable") : t("plugins.toggleEnable")}
     >
       <span
         className={`absolute top-[1.5px] size-[15px] rounded-full transition-all duration-150 ${
@@ -41,13 +43,14 @@ function EnabledSwitch({ on, onToggle, disabled }: { on: boolean; onToggle: () =
   );
 }
 
-function statusView(p: PluginView): { label: string; cls: string } {
-  if (p.status === "active") return { label: "运行中", cls: "text-accent border-accent/30 bg-accent/10" };
-  if (p.status === "error") return { label: "激活失败", cls: "text-danger border-danger/30 bg-danger/10" };
-  return { label: "已停用", cls: "text-faint border-edge-strong bg-raised" };
+function statusView(p: PluginView, t: Translate): { label: string; cls: string } {
+  if (p.status === "active") return { label: t("plugins.status.active"), cls: "text-accent border-accent/30 bg-accent/10" };
+  if (p.status === "error") return { label: t("plugins.status.error"), cls: "text-danger border-danger/30 bg-danger/10" };
+  return { label: t("plugins.status.disabled"), cls: "text-faint border-edge-strong bg-raised" };
 }
 
 function PluginCard({ plugin }: { plugin: PluginView }) {
+  const t = useT();
   const [busy, setBusy] = useState(false);
   // 管理面板默认折叠：点头部（编辑图标/箭头）展开，避免多插件时设置页被各插件面板撑爆
   const [expanded, setExpanded] = useState(false);
@@ -55,7 +58,7 @@ function PluginCard({ plugin }: { plugin: PluginView }) {
   const hasPanel = usePlugins(
     (s) => s.contributions.some((c) => c.pluginId === plugin.id && c.slot === "settings.plugins"),
   );
-  const status = statusView(plugin);
+  const status = statusView(plugin, t);
   const enabled = plugin.status !== "off";
 
   const withBusy = (fn: () => Promise<void>) => async () => {
@@ -63,7 +66,7 @@ function PluginCard({ plugin }: { plugin: PluginView }) {
     try {
       await fn();
     } catch (e) {
-      console.warn("[plugins] 操作失败", e);
+      console.warn("[plugins] operation failed", e);
     } finally {
       setBusy(false);
     }
@@ -74,7 +77,7 @@ function PluginCard({ plugin }: { plugin: PluginView }) {
       <div
         className={`px-4 py-3.5 flex items-start gap-3 ${hasPanel ? "cursor-pointer select-none" : ""}`}
         onClick={hasPanel ? () => setExpanded((v) => !v) : undefined}
-        title={hasPanel ? (expanded ? "收起设置面板" : "展开设置面板") : undefined}
+        title={hasPanel ? (expanded ? t("plugins.collapsePanel") : t("plugins.expandPanel")) : undefined}
       >
         <span className="w-8 h-8 rounded-lg bg-raised border border-edge grid place-items-center shrink-0">
           <PuzzlePiece size={15} className={enabled ? "text-accent" : "text-faint"} />
@@ -90,8 +93,8 @@ function PluginCard({ plugin }: { plugin: PluginView }) {
             {hasPanel && expanded && (
               <button
                 className="icon-btn"
-                title="收起设置面板"
-                aria-label={`收起设置面板 ${plugin.name}`}
+                title={t("plugins.collapsePanel")}
+                aria-label={t("plugins.collapsePanelAria", { name: plugin.name })}
                 onClick={(e) => {
                   e.stopPropagation();
                   setExpanded(false);
@@ -103,8 +106,8 @@ function PluginCard({ plugin }: { plugin: PluginView }) {
             {hasPanel && !expanded && (
               <button
                 className="icon-btn"
-                title="编辑：展开设置面板"
-                aria-label={`编辑插件 ${plugin.name}`}
+                title={t("plugins.editTip")}
+                aria-label={t("plugins.editAria", { name: plugin.name })}
                 onClick={(e) => {
                   e.stopPropagation();
                   setExpanded(true);
@@ -115,8 +118,8 @@ function PluginCard({ plugin }: { plugin: PluginView }) {
             )}
             <button
               className="icon-btn"
-              title="重载：停用后以最新产物重新加载（改了插件 dist 后点这里）"
-              aria-label={`重载插件 ${plugin.name}`}
+              title={t("plugins.reloadTip")}
+              aria-label={t("plugins.reloadAria", { name: plugin.name })}
               disabled={busy}
               onClick={(e) => {
                 e.stopPropagation();
@@ -176,6 +179,7 @@ function PluginCard({ plugin }: { plugin: PluginView }) {
 }
 
 export function PluginsBlock() {
+  const t = useT();
   const plugins = usePlugins((s) => s.plugins);
   const loaded = usePlugins((s) => s.loaded);
   const listError = usePlugins((s) => s.listError);
@@ -198,10 +202,10 @@ export function PluginsBlock() {
     return (
       <div className="card p-8 flex items-center gap-2 text-[12.5px] text-faint">
         <Spinner />
-        {listError ?? "正在读取插件目录 …"}
+        {listError ?? t("plugins.readingCatalog")}
         {listError && (
           <button className="btn btn-sm ml-2" onClick={() => void refresh()}>
-            重试
+            {t("common.retry")}
           </button>
         )}
       </div>
@@ -216,18 +220,17 @@ export function PluginsBlock() {
           <PuzzlePiece size={16} className="text-accent" />
         </span>
         <div className="min-w-0">
-          <div className="text-[13.5px] font-semibold">本地插件</div>
+          <div className="text-[13.5px] font-semibold">{t("plugins.localPlugins")}</div>
           <div className="text-[11.5px] text-faint">
-            将插件目录拷入 <code className="font-mono">gate-home/plugins/</code> 后刷新即可发现
+            {t("plugins.copyHintPrefix")} <code className="font-mono">gate-home/plugins/</code> {t("plugins.copyHintSuffix")}
           </div>
         </div>
         <span className="flex-1" />
         <span className="text-[11.5px] text-faint whitespace-nowrap">
-          共 <span className="font-mono text-ink">{plugins.length}</span> 个 · 运行中{" "}
-          <span className="font-mono text-accent">{plugins.filter((p) => p.status === "active").length}</span>
+          {t("plugins.count", { n: plugins.length, active: plugins.filter((p) => p.status === "active").length })}
         </span>
         <button className="btn btn-sm" disabled={refreshing} onClick={() => void refresh()}>
-          {refreshing ? <Spinner /> : <ArrowClockwise size={13} />}刷新
+          {refreshing ? <Spinner /> : <ArrowClockwise size={13} />}{t("plugins.refresh")}
         </button>
       </div>
 
@@ -243,10 +246,10 @@ export function PluginsBlock() {
           <div className="w-12 h-12 rounded-xl bg-raised border border-edge grid place-items-center mx-auto">
             <PuzzlePiece size={22} className="text-faint" />
           </div>
-          <div className="mt-4 text-[15px] font-semibold">暂无本地插件</div>
+          <div className="mt-4 text-[15px] font-semibold">{t("plugins.empty")}</div>
           <div className="mt-1.5 text-[12.5px] text-faint leading-relaxed max-w-[420px] mx-auto">
-            复制仓库根的 <code className="font-mono">plugin-template/</code> 为起点开发插件，
-            构建后把整个目录拷入 <code className="font-mono">gate-home/plugins/</code>，回到本页刷新即可加载
+            {t("plugins.emptyHintPrefix")} <code className="font-mono">plugin-template/</code> {t("plugins.emptyHintMid")}{" "}
+            <code className="font-mono">gate-home/plugins/</code>{t("plugins.emptyHintSuffix")}
           </div>
         </div>
       ) : (

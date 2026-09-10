@@ -1,4 +1,5 @@
-import type { TodoItem } from "@/shared/types";
+﻿import type { TodoItem } from "@/shared/types";
+import { t as i18nT, type Translate } from "@/i18n";
 
 const TODO_STATUSES: TodoItem["status"][] = ["pending", "in_progress", "completed", "cancelled"];
 
@@ -96,33 +97,33 @@ export function isClaudeTaskWriteTool(name: string | undefined | null): boolean 
   return n === "taskcreate" || n === "taskupdate";
 }
 
-/** 常见工具的中文友好名（仅用于展示，未匹配时返回原名）。 */
-export function friendlyToolName(name: string | undefined): string {
-  if (!name) return "工具调用";
+/** 常见工具的友好名（仅用于展示，未匹配时返回原名）。 */
+export function friendlyToolName(name: string | undefined, tr: Translate = i18nT): string {
+  if (!name) return tr("tool.generic");
   const n = name.toLowerCase();
-  if (n.includes("todowrite") || n === "todo_write") return "任务清单";
-  if (n.includes("todoread") || n === "todo_read") return "读取清单";
-  if (n === "taskcreate") return "创建任务";
-  if (n === "taskupdate") return "更新任务";
-  if (n === "tasklist") return "列出任务";
-  if (n === "bash" || n === "shell") return "运行命令";
-  if (n === "read" || n === "view") return "读取文件";
-  if (n === "edit" || n === "multiedit" || n === "apply_patch") return "编辑文件";
-  if (n === "write" || n === "create") return "写入文件";
-  if (n === "glob" || n === "ls" || n === "list") return "列出文件";
-  if (n === "grep" || n === "search") return "全局搜索";
-  if (n === "webfetch" || n === "fetch") return "抓取网页";
-  if (n === "websearch" || n === "search_web") return "网络搜索";
-  if (n === "task") return "子任务";
+  if (n.includes("todowrite") || n === "todo_write") return tr("tool.todowrite");
+  if (n.includes("todoread") || n === "todo_read") return tr("tool.todoread");
+  if (n === "taskcreate") return tr("tool.taskcreate");
+  if (n === "taskupdate") return tr("tool.taskupdate");
+  if (n === "tasklist") return tr("tool.tasklist");
+  if (n === "bash" || n === "shell") return tr("tool.bash");
+  if (n === "read" || n === "view") return tr("tool.read");
+  if (n === "edit" || n === "multiedit" || n === "apply_patch") return tr("tool.edit");
+  if (n === "write" || n === "create") return tr("tool.write");
+  if (n === "glob" || n === "ls" || n === "list") return tr("tool.list");
+  if (n === "grep" || n === "search") return tr("tool.search");
+  if (n === "webfetch" || n === "fetch") return tr("tool.webfetch");
+  if (n === "websearch" || n === "search_web") return tr("tool.websearch");
+  if (n === "task") return tr("tool.task");
   return name;
 }
 
 /** todo 类工具行参数列的简短摘要（避免整段 JSON 刷屏）。 */
-export function todoArgsSummary(argsJson?: string): string {
+export function todoArgsSummary(argsJson?: string, tr: Translate = i18nT): string {
   const todos = parseTodos(argsJson);
-  if (!todos) return "任务清单";
-  const done = todos.filter((t) => t.status === "completed").length;
-  return `${todos.length} 项任务 · 已完成 ${done}`;
+  if (!todos) return tr("tool.todowrite");
+  const done = todos.filter((td) => td.status === "completed").length;
+  return tr("tool.todoSummary", { n: todos.length, done });
 }
 
 const COMPACT_MAX = 96;

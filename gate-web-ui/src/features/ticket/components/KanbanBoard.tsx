@@ -27,26 +27,23 @@ import { KANBAN_DEFAULT_STAGES,
   KANBAN_LANE_COUNT,
   KANBAN_STAGE_ORDER,
   relativeTime,
-  STAGE_LABEL, } from "@/shared/format";
+  stageLabel, } from "@/shared/format";
 import { appStore, setView, showToast, useApp } from "@/store";
 import { openStageChangeConfirm, openTicketCreator, setKanbanStages, setTicketOrder } from "@/features/ticket";
+import { useT } from "@/i18n";
 import type { Stage, Ticket } from "@/shared/types";
 import { PriorityChip, StageDot } from "@/shared/components/ui";
 
-const LANES: Array<{ key: Stage; title: string }> = [
-  { key: "PENDING", title: "待处理" },
-  { key: "IN_PROGRESS", title: "进行中" },
-  { key: "PRESUBMITTED", title: "已预提交" },
-  { key: "IN_REVIEW", title: "审查中" },
-  { key: "READY_TO_PUBLISH", title: "可发布" },
-  { key: "DONE", title: "已完成" },
+const LANES: Stage[] = [
+  "PENDING",
+  "IN_PROGRESS",
+  "PRESUBMITTED",
+  "IN_REVIEW",
+  "READY_TO_PUBLISH",
+  "DONE",
 ];
 
-const OTHER_LANES: Array<{ key: Stage; title: string }> = [
-  { key: "REJECTED", title: "已驳回" },
-  { key: "NEEDS_HUMAN", title: "需人工" },
-  { key: "CANCELLED", title: "已取消" },
-];
+const OTHER_LANES: Stage[] = ["REJECTED", "NEEDS_HUMAN", "CANCELLED"];
 type PriorityFilter = "ALL" | Ticket["priority"];
 
 function groupByStage(tickets: Ticket[], orderMap: Record<string, number>): Map<Stage, Ticket[]> {
@@ -68,6 +65,7 @@ function CardFace({
   rejected?: boolean;
   dragging?: boolean;
 }) {
+  const t = useT();
   return (
     <div
       className={`rounded-xl border p-3 text-left transition-colors ${
@@ -77,7 +75,7 @@ function CardFace({
       }`}
     >
       {rejected && (
-        <div className="mb-2 chip border border-danger/40 bg-danger/10 text-danger">已驳回 · 存在未达标项</div>
+        <div className="mb-2 chip border border-danger/40 bg-danger/10 text-danger">{t("kanban.card.rejectedNote")}</div>
       )}
       <div className="flex items-center gap-2">
         <span className="font-mono text-[11.5px] text-faint">{ticket.ticketNo}</span>
@@ -114,9 +112,9 @@ function CardFace({
       <div className="mt-2 pt-2 border-t border-edge/50 flex items-center gap-2 text-[11px] text-faint">
         <span
           className="inline-flex items-center h-[18px] rounded-md border border-edge-strong bg-raised px-1.5 font-mono text-[10px] leading-none text-dim"
-          title="工单轮次：每次预提审锁定快照进入新一轮，重启亦轮次加一"
+          title={t("kanban.card.roundTip")}
         >
-          第 {ticket.round ?? 1} 轮
+          {t("kanban.card.round", { n: ticket.round ?? 1 })}
         </span>
         <span className="flex-1" />
         <span>{relativeTime(ticket.updatedAt)}</span>
@@ -169,17 +167,16 @@ function dragJustEnded(): boolean {
 
 function Lane({
   stage,
-  title,
   tickets,
   rejectedTickets,
   shakenId,
 }: {
   stage: Stage;
-  title: string;
   tickets: Ticket[];
   rejectedTickets: Ticket[];
   shakenId: string | null;
 }) {
+  const t = useT();
   const { setNodeRef, isOver } = useDroppable({ id: `lane:${stage}` });
   const all = [...rejectedTickets, ...tickets];
 
@@ -187,7 +184,7 @@ function Lane({
     <section className="flex-1 min-w-[224px] flex flex-col rounded-2xl border border-edge/70 bg-sunken/70 overflow-hidden">
       <header className="flex items-center gap-2 px-3 pt-3 pb-2 shrink-0">
         <StageDot stage={stage} />
-        <span className="text-[12.5px] font-medium">{title}</span>
+        <span className="text-[12.5px] font-medium">{stageLabel(stage, t)}</span>
         <span className="font-mono text-[11px] text-faint">{all.length}</span>
         <span className="flex-1" />
       </header>
@@ -211,7 +208,7 @@ function Lane({
               isOver ? "border-accent/40 text-accent" : "border-edge text-faint"
             }`}
           >
-            {isOver ? "松手流转到此处" : "暂无工单"}
+            {isOver ? t("kanban.dropHere") : t("kanban.emptyLane")}
           </div>
         )}
       </div>
@@ -245,6 +242,7 @@ function KanbanFilterButton({
   priorityFilter: PriorityFilter;
   setPriorityFilter: (p: PriorityFilter) => void;
 }) {
+  const t = useT();
   // 面板用 fixed 定位并夹紧到视口内：absolute right-0 在窄窗口会把面板推出屏幕被裁剪
   const [panelPos, setPanelPos] = useState<{ top: number; left: number }>({ top: 0, left: 8 });
   const btnRef = useRef<HTMLButtonElement>(null);
@@ -292,7 +290,7 @@ function KanbanFilterButton({
     const incoming = markedOn ? st : markedStage;
     setKanbanStages(stages.filter((x) => x !== out).concat(incoming));
     setMarkedStage(null);
-    showToast(`已用「${STAGE_LABEL[incoming]}」替换「${STAGE_LABEL[out]}」`);
+    showToast(t("kanban.laneReplaceNotice", { from: stageLabel(incoming, t), to: stageLabel(out, t) }));
   };
 
   const reset = () => {
@@ -328,10 +326,10 @@ function KanbanFilterButton({
         }`}
         title={
           marked
-            ? "再点一次取消，点选状态相反的甬道完成互换"
+            ? t("kanban.rowTip.marked")
             : on
-              ? "已上板 · 点选后与一个未上板甬道互换"
-              : "未上板 · 点选后与一个已上板甬道互换"
+              ? t("kanban.rowTip.on")
+              : t("kanban.rowTip.off")
         }
         onClick={() => pick(st)}
       >
@@ -343,10 +341,10 @@ function KanbanFilterButton({
           <Check size={10} weight="bold" />
         </span>
         <StageDot stage={st} />
-        <span className="flex-1 truncate">{STAGE_LABEL[st]}</span>
+        <span className="flex-1 truncate">{stageLabel(st, t)}</span>
         {marked && (
           <span className="inline-flex items-center h-[16px] px-1 rounded-md border border-accent/40 bg-accent/10 text-[9.5px] leading-none font-medium text-accent">
-            {on ? "换下" : "换上"}
+            {on ? t("kanban.swapOut") : t("kanban.swapIn")}
           </span>
         )}
         <span className={`font-mono text-[10.5px] ${n > 0 && !on ? "text-warn" : "text-faint"}`}>{n}</span>
@@ -361,8 +359,8 @@ function KanbanFilterButton({
       <button
         ref={btnRef}
         className={`btn h-7 px-2 text-[12px] ${active ? "!border-accent/50 !text-accent" : ""}`}
-        title="筛选甬道与优先级"
-        aria-label="筛选甬道与优先级"
+        title={t("kanban.filterTip")}
+        aria-label={t("kanban.filterTip")}
         onClick={() => {
           if (!open) placePanel();
           else setMarkedStage(null);
@@ -370,7 +368,7 @@ function KanbanFilterButton({
         }}
       >
         <Funnel size={13} weight={active ? "fill" : "regular"} />
-        筛选
+        {t("ticket.list.filter")}
       </button>
       {open && (
         <>
@@ -380,10 +378,10 @@ function KanbanFilterButton({
             style={{ top: panelPos.top, left: panelPos.left, width: PANEL_WIDTH }}
           >
             <div className="flex items-center gap-2 px-2 h-8">
-              <span className="text-[11px] font-medium text-dim flex-1">显示的甬道</span>
+              <span className="text-[11px] font-medium text-dim flex-1">{t("kanban.lanesShown")}</span>
               <span
                 className="inline-flex items-center h-[18px] px-1.5 rounded-md border border-accent/40 bg-accent/10 font-mono text-[10.5px] text-accent"
-                title="甬道数量固定为 6，恰好铺满一行"
+                title={t("kanban.laneCountTip")}
               >
                 {stages.length}/{KANBAN_LANE_COUNT}
               </span>
@@ -391,26 +389,28 @@ function KanbanFilterButton({
                 className="text-[11px] text-faint hover:text-accent cursor-pointer transition-colors"
                 onClick={reset}
               >
-                重置
+                {t("ticket.list.filterReset")}
               </button>
             </div>
             {markedStage !== null && (
               <div
                 className="mx-0.5 mb-1 rounded-lg border border-accent/30 bg-accent/[0.07] px-2 py-1.5 text-[10.5px] leading-snug text-accent truncate"
-                title="再点一次标记的甬道可取消"
+                title={t("kanban.unmarkTip")}
               >
-                再点一个<b>{markedOn ? "未勾选" : "已勾选"}</b>甬道，与「{STAGE_LABEL[markedStage]}
-                」互换
+                {t("kanban.laneSwapHint", {
+                  marked: markedOn ? t("kanban.laneSwapMarkedOff") : t("kanban.laneSwapMarkedOn"),
+                  stage: stageLabel(markedStage, t),
+                })}
               </div>
             )}
             <div className="max-h-[324px] overflow-y-auto">
-              <div className="px-2 pt-1 pb-0.5 text-[10px] text-faint/70">默认甬道</div>
-              {LANES.map((lane) => row(lane.key))}
-              <div className="px-2 pt-1.5 pb-0.5 text-[10px] text-faint/70">其他状态</div>
-              {OTHER_LANES.map((lane) => row(lane.key))}
+              <div className="px-2 pt-1 pb-0.5 text-[10px] text-faint/70">{t("kanban.defaultLanes")}</div>
+              {LANES.map((lane) => row(lane))}
+              <div className="px-2 pt-1.5 pb-0.5 text-[10px] text-faint/70">{t("kanban.otherStages")}</div>
+              {OTHER_LANES.map((lane) => row(lane))}
             </div>
             <div className="border-t border-edge mt-1 pt-1.5 px-1.5 pb-1">
-              <div className="px-0.5 pb-1 text-[10px] text-faint/70">优先级</div>
+              <div className="px-0.5 pb-1 text-[10px] text-faint/70">{t("kanban.priority")}</div>
               <div className="flex gap-1">
                 {(["ALL", "P0", "P1", "P2", "P3"] as const).map((p) => (
                   <button
@@ -422,7 +422,7 @@ function KanbanFilterButton({
                     }`}
                     onClick={() => setPriorityFilter(p)}
                   >
-                    {p === "ALL" ? "全部" : p}
+                    {p === "ALL" ? t("common.all") : p}
                   </button>
                 ))}
               </div>
@@ -435,6 +435,7 @@ function KanbanFilterButton({
 }
 
 export function KanbanBoard() {
+  const t = useT();
   const ticketsAll = useApp((s) => s.tickets);
   const activeProjectId = useApp((s) => s.activeProjectId);
   const orderMap = useApp((s) => s.order);
@@ -514,24 +515,24 @@ export function KanbanBoard() {
 
   const attemptTransition = (no: string, from: Stage, to: Stage) => {
     const st = appStore.getState();
-    const t = st.tickets.find((x) => x.ticketNo === no);
-    if (!t) return;
+    const tk = st.tickets.find((x) => x.ticketNo === no);
+    if (!tk) return;
 
     if (st.gateBusy[no]) {
-      bounce(no, "门禁操作执行中，请稍候");
+      bounce(no, t("kanban.block.busy"));
       return;
     }
 
     // 快速模式超级工单（V19）永远进行中：不参与任何流转
-    if (t.isSuper) {
-      bounce(no, "快速模式超级工单永不关闭，状态不可变更");
+    if (tk.isSuper) {
+      bounce(no, t("kanban.block.superNeverCloses"));
       return;
     }
 
     // 终态不出门（V19 口径）：已完成/已取消的唯一出口是「重启工单」（带理由转回进行中，
     // 见右侧门禁面板按钮），其余任何拖拽目标都在后端被拒——这里直接拦下，不让假路径走到弹窗。
     if (from === "DONE" || from === "CANCELLED") {
-      bounce(no, from === "DONE" ? "工单已归档，如需继续请在右侧面板「重启工单」" : "工单已取消，如需继续请在右侧面板「重启工单」");
+      bounce(no, from === "DONE" ? t("kanban.block.archived") : t("kanban.block.cancelled"));
       return;
     }
 
@@ -539,7 +540,7 @@ export function KanbanBoard() {
     // 「可发布 → 已完成」保留安全发布通道——那是门禁的正常收尾，无需绕行。
     if (to === "DONE") {
       if (from === "READY_TO_PUBLISH") {
-        showToast("正在发布至权威库主分支…");
+        showToast(t("kanban.toast.publishing"));
         void actions.publish(no);
         return;
       }
@@ -558,31 +559,31 @@ export function KanbanBoard() {
       READY_TO_PUBLISH: ["DONE"],
     };
     if (!(allowed[from] ?? []).includes(to)) {
-      bounce(no, "该流转由门禁驱动：工单必须先完成预提审与门禁审查");
+      bounce(no, t("kanban.block.gateDriven"));
       return;
     }
 
     if (to === "IN_PROGRESS") {
-      showToast("工单已开始，进入编码协作");
+      showToast(t("kanban.toast.started"));
       void actions.startTicket(no);
       return;
     }
     if (to === "PENDING") {
-      showToast("工单已退回待处理");
+      showToast(t("kanban.toast.backToPending"));
       void actions.backToPending(no);
       return;
     }
     if (to === "PRESUBMITTED") {
       if ((st.diffs[no]?.length ?? 0) === 0) {
-        bounce(no, "沙箱内暂无变更，先让 Agent 完成编码");
+        bounce(no, t("kanban.block.noChanges"));
         return;
       }
-      showToast("正在锁定快照…");
+      showToast(t("kanban.toast.lockingSnapshot"));
       void actions.presubmit(no);
       return;
     }
     if (to === "IN_REVIEW") {
-      showToast("门禁审查已触发…");
+      showToast(t("kanban.toast.reviewTriggered"));
       void actions.review(no);
     }
   };
@@ -632,9 +633,9 @@ export function KanbanBoard() {
   return (
     <div className="flex-1 min-h-0 flex flex-col">
       <div className="flex flex-wrap items-center gap-2 px-4 pt-3 pb-2 shrink-0">
-        <span className="kicker">看板</span>
+        <span className="kicker">{t("topbar.view.kanban")}</span>
         <span className="font-mono text-[11px] text-faint">
-          {hasFilters ? `${visibleTickets.length} / ${tickets.length}` : tickets.length} 个工单
+          {hasFilters ? `${visibleTickets.length} / ${tickets.length}` : tickets.length} {t("kanban.ticketsUnit")}
         </span>
         <div className="relative w-[190px]">
           <MagnifyingGlass
@@ -644,8 +645,8 @@ export function KanbanBoard() {
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="搜索工单"
-            aria-label="搜索工单"
+            placeholder={t("ticket.list.search")}
+            aria-label={t("ticket.list.search")}
             className="w-full h-7 rounded-lg border border-edge bg-sunken pl-7 pr-7 text-[12px] placeholder:text-faint focus:border-accent/50 focus:outline-none transition-colors"
           />
           {query && (
@@ -653,8 +654,8 @@ export function KanbanBoard() {
               type="button"
               className="icon-btn absolute right-0 top-0"
               onClick={() => setQuery("")}
-              title="清除搜索"
-              aria-label="清除搜索"
+              title={t("kanban.clearSearch")}
+              aria-label={t("kanban.clearSearch")}
             >
               <X size={12} />
             </button>
@@ -671,20 +672,20 @@ export function KanbanBoard() {
             type="button"
             className="chip border border-warn/40 bg-warn/10 text-warn cursor-pointer hover:border-warn/60 transition-colors"
             onClick={() => setFilterOpen(true)}
-            title="点击打开筛选面板，勾选对应甬道查看这些工单"
+            title={t("kanban.hiddenTip")}
           >
-            另有 {hiddenCount} 条工单未显示
+            {t("kanban.hiddenCount", { n: hiddenCount })}
           </button>
         )}
         {hasFilters && (
           <button type="button" className="btn btn-sm btn-ghost text-faint" onClick={clearFilters}>
             <X size={12} />
-            清除筛选
+            {t("kanban.clearFilters")}
           </button>
         )}
         <span className="flex-1" />
         <span className="hidden lg:inline text-[11.5px] text-faint">
-          拖拽卡片即可流转 · 门禁泳道会执行对应操作
+          {t("kanban.dragHint")}
         </span>
         <button
           className="btn btn-sm btn-primary"
@@ -693,7 +694,7 @@ export function KanbanBoard() {
             openTicketCreator();
           }}
         >
-          新建工单
+          {t("kanban.addTicket")}
         </button>
       </div>
       <DndContext
@@ -713,7 +714,6 @@ export function KanbanBoard() {
               <Lane
                 key={key}
                 stage={key}
-                title={STAGE_LABEL[key]}
                 tickets={byLane.get(key) ?? []}
                 rejectedTickets={
                   key === "IN_PROGRESS" && rejectEmbedded ? byLane.get("REJECTED") ?? [] : []

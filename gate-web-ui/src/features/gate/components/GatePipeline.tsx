@@ -1,4 +1,4 @@
-import { useState } from "react";
+﻿import { useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { ListChecks } from "@phosphor-icons/react";
 import { actions } from "@/app/actions";
@@ -8,6 +8,7 @@ import type { Snapshot } from "@/shared/types";
 import { Stepper } from "./Stepper";
 import { TaskCard, TreeHashCard, VerdictBanner, OutcomeCard } from "./cards";
 import { ManualReviewDialog } from "./ManualReviewDialog";
+import { useT } from "@/i18n";
 
 /** 门禁流水线段（Stepper + 快照/进度/判决/结果卡片 + NEEDS_HUMAN 双按钮）。 */
 export function GatePipeline({
@@ -31,6 +32,7 @@ export function GatePipeline({
   gateBusy: boolean;
   outcome?: { commitSha: string; refBefore: string; refAfter: string; targetRef: string; publishedAt: number };
 }) {
+  const t = useT();
   const expanded = useApp((s) => s.gateSections.pipeline);
   const [humanDialog, setHumanDialog] = useState(false);
 
@@ -41,9 +43,9 @@ export function GatePipeline({
         onClick={() => setGateSection("pipeline", !expanded)}
       >
         <ListChecks size={14} className="text-faint shrink-0" />
-        <span className="text-[12px] font-medium text-dim">门禁流水线</span>
+        <span className="text-[12px] font-medium text-dim">{t("gate.pipeline.title")}</span>
         {round > 0 && (
-          <span className="chip border border-edge-strong bg-raised text-dim font-mono">第 {round} 轮</span>
+          <span className="chip border border-edge-strong bg-raised text-dim font-mono">{t("gate.history.round", { n: round })}</span>
         )}
         <span className="flex-1" />
         <span
@@ -75,16 +77,16 @@ export function GatePipeline({
                     className="btn btn-primary h-9"
                     disabled={gateBusy}
                     onClick={() => setHumanDialog(true)}
-                    title="人工核准需填写理由（记入证据链）"
+                    title={t("gate.pipeline.humanApproveTip")}
                   >
-                    人工核准放行
+                    {t("gate.pipeline.humanApprove")}
                   </button>
                   <button
                     className="btn btn-danger-ghost h-9"
                     disabled={gateBusy}
                     onClick={() => actions.rejectTicket(ticketNo)}
                   >
-                    驳回重修
+                    {t("gate.pipeline.reject")}
                   </button>
                 </div>
               )}

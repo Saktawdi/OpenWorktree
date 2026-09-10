@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+﻿import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDown,
   ArrowUp,
@@ -69,6 +69,7 @@ import type {
   QueuedMessage,
   SessionModelSel,
 } from "@/shared/types";
+import { useT } from "@/i18n";
 
 /** 粘贴/拖入文件的大小上限（MB）：与后端 /chat-files 端点的落盘上限一致。 */
 const MAX_CHAT_FILE_MB = 50;
@@ -96,6 +97,7 @@ function isPasteQuoteWorthy(text: string): boolean {
 }
 
 function AgentPicker({ ticketNo }: { ticketNo: string }) {
+  const t = useT();
   const agents = useApp((s) => s.agents);
   const agentId = useApp((s) => s.agentId);
   // agent 是会话级 1:1 且创建时固化：会话一激活（哪怕还没发过消息）选择器即锁定，
@@ -144,10 +146,10 @@ function AgentPicker({ ticketNo }: { ticketNo: string }) {
           className="composer-btn disabled:opacity-50 disabled:pointer-events-none"
           onClick={() => setOpen(!open)}
           disabled={locked}
-          title={locked ? "会话已创建 · 协作 Agent 已锁定，新建会话可重新选择" : "选择协作的 Agent"}
+          title={locked ? t("composer.agentLockedTip") : t("composer.agentPickTip")}
         >
           <Sparkle size={12} className={locked ? "text-faint" : "text-accent"} weight="fill" />
-          {current ? (current.model ? `${current.name} · ${current.model}` : current.name) : "选择 Agent"}
+          {current ? (current.model ? `${current.name} · ${current.model}` : current.name) : t("composer.pickAgent")}
           {locked ? <Lock size={11} className="text-faint" weight="fill" /> : <CaretDown size={11} />}
         </button>
       </div>
@@ -196,12 +198,12 @@ const CLAUDE_EFFORTS = ["low", "medium", "high", "max"];
  * "默认"=清空覆盖、不传 --model，由 claude 自身配置决定；其余以别名直传。
  * 与目录无关——网关自定义模型仍走下方自定义输入。
  */
-const CLAUDE_MODEL_PRESETS: { label: string; id?: string; clear?: boolean }[] = [
-  { label: "默认", clear: true },
-  { label: "Haiku", id: "haiku" },
-  { label: "Sonnet", id: "sonnet" },
-  { label: "Opus", id: "opus" },
-  { label: "Fable", id: "fable" },
+const CLAUDE_MODEL_PRESETS: { labelKey: "composer.modelDefault" | "composer.modelPreset"; id?: string; clear?: boolean }[] = [
+  { labelKey: "composer.modelDefault", clear: true },
+  { labelKey: "composer.modelPreset", id: "haiku" },
+  { labelKey: "composer.modelPreset", id: "sonnet" },
+  { labelKey: "composer.modelPreset", id: "opus" },
+  { labelKey: "composer.modelPreset", id: "fable" },
 ];
 
 interface EffectiveSel extends SessionModelSel {
@@ -291,6 +293,7 @@ function ModelPicker({
   /** 草稿态：选择暂存草稿，随首条消息创建会话时一并生效。 */
   draft?: boolean;
 }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [customModel, setCustomModel] = useState("");
@@ -334,7 +337,7 @@ function ModelPicker({
   };
 
   /** claude 专属：原生预设（默认=清空覆盖；别名=直接作为 model ID）。 */
-  const pickPreset = async (p: (typeof CLAUDE_MODEL_PRESETS)[number]) => {
+  const pickPreset = async (p: { labelKey: "composer.modelDefault" | "composer.modelPreset"; id?: string; clear?: boolean }) => {
     setOpen(false);
     if (p.clear) {
       await actions.switchSessionModel(ticketNo, { providerId: "", modelId: "", variant: "" });
@@ -357,13 +360,13 @@ function ModelPicker({
         title={
           catalogEmpty && !isClaude
             ? draft
-              ? "草稿态没有可浏览的模型目录：首条消息将使用 Agent 默认模型，会话创建后可切换"
-              : "模型目录不可用"
+              ? t("composer.modelDraftNoCatalog")
+              : t("composer.modelNoCatalog")
             : isClaude && catalogEmpty
-              ? "输入 Claude 网关可用的模型 ID（目录未配置）"
+              ? t("composer.claudeCustomTip")
               : draft
-                ? "选择首条消息使用的模型（创建会话时一并生效）"
-                : "切换本会话使用的模型（下一回合生效，可随时切换）"
+                ? t("composer.modelDraftTip")
+                : t("composer.modelSwitchTip")
         }
       >
         <Cpu size={12} className="text-info" weight="fill" />
@@ -371,11 +374,11 @@ function ModelPicker({
           {sel
             ? `${sel.providerId} · ${sel.modelId}`
             : draft
-              ? "跟随 Agent 默认"
-              : "模型"}
+              ? t("composer.followAgentDefault")
+              : t("composer.model")}
         </span>
         {sel?.overridden ? (
-          <span className="size-1.5 rounded-full bg-success shrink-0" title="已覆盖默认模型" />
+          <span className="size-1.5 rounded-full bg-success shrink-0" title={t("composer.modelOverridden")} />
         ) : null}
         <CaretDown size={11} />
       </button>
@@ -389,13 +392,13 @@ function ModelPicker({
                   const active = p.clear ? !sel?.overridden : sel?.modelId === p.id;
                   return (
                     <button
-                      key={p.label}
+                      key={p.labelKey + (p.id ?? "")}
                       className={`px-2 h-6 rounded-lg text-[11px] cursor-pointer transition-colors ${
                         active ? "bg-raised text-ink" : "text-dim hover:bg-raised hover:text-ink"
                       }`}
                       onClick={() => void pickPreset(p)}
                     >
-                      {p.label}
+                      {p.clear ? t(p.labelKey) : p.id}
                     </button>
                   );
                 })}
@@ -408,7 +411,7 @@ function ModelPicker({
                   autoFocus
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
-                  placeholder="搜索模型…"
+                  placeholder={t("composer.searchModel")}
                   className="w-full bg-transparent text-[12px] text-ink placeholder:text-faint focus:outline-none"
                 />
               </div>
@@ -421,16 +424,16 @@ function ModelPicker({
                   id: m.id,
                   label: m.id,
                   active: sel?.providerId === p.id && sel?.modelId === m.id,
-                  trailing: m.variants.length > 0 ? `${m.variants.length} 档强度` : null,
+                  trailing: m.variants.length > 0 ? t("composer.variantCount", { n: m.variants.length }) : null,
                 })),
               }))}
               onPick={(providerId, modelId) => void pick(providerId, modelId)}
-              emptyText={catalogEmpty ? "无目录模型，可直接在下方输入模型 ID" : "无匹配模型"}
+              emptyText={catalogEmpty ? t("composer.noCatalogModels") : t("composer.noMatchModels")}
             />
             {isClaude && (
               <div className="border-t border-[color:var(--line)] mt-1 px-2 pt-1.5 pb-1">
                 <div className="text-[10.5px] font-medium uppercase tracking-wide text-faint pb-1">
-                  自定义模型 ID（claude 网关实际可用为准）
+                  {t("composer.customModelLabel")}
                 </div>
                 <div className="flex items-center gap-1.5">
                   <input
@@ -439,7 +442,7 @@ function ModelPicker({
                     onKeyDown={(e) => {
                       if (e.key === "Enter") void pickCustom();
                     }}
-                    placeholder="如 glm-5.2"
+                    placeholder={t("composer.customModelPlaceholder")}
                     className="w-full bg-raised rounded-lg px-2 h-7 font-mono text-[11.5px] text-ink placeholder:text-faint focus:outline-none"
                   />
                   <button
@@ -447,7 +450,7 @@ function ModelPicker({
                     onClick={() => void pickCustom()}
                     disabled={!customModel.trim()}
                   >
-                    使用
+                    {t("composer.use")}
                   </button>
                 </div>
               </div>
@@ -468,6 +471,7 @@ function VariantPicker({
   sel: EffectiveSel | null;
   variants: string[];
 }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   if (!sel || variants.length === 0) return null;
 
@@ -486,10 +490,10 @@ function VariantPicker({
       <button
         className="composer-btn"
         onClick={() => setOpen(!open)}
-        title="切换本会话的推理强度（variant，下一回合生效）"
+        title={t("composer.variantTip")}
       >
         <Brain size={12} className="text-warning" weight="fill" />
-        {sel.variant ? `推理·${variantLabel(sel.variant)}` : "推理"}
+        {sel.variant ? t("composer.variantWith", { v: variantLabel(sel.variant) }) : t("composer.variant")}
         <CaretDown size={11} />
       </button>
       {open && (
@@ -508,9 +512,9 @@ function VariantPicker({
                 >
                   {v === null ? (
                     <>
-                      <span className="font-medium">默认</span>
+                      <span className="font-medium">{t("common.default")}</span>
                       <span className="flex-1" />
-                      <span className="text-[10.5px] text-faint">不传 variant</span>
+                      <span className="text-[10.5px] text-faint">{t("composer.variantNone")}</span>
                     </>
                   ) : (
                     <>
@@ -531,6 +535,7 @@ function VariantPicker({
 }
 
 export function Composer({ ticketNo }: { ticketNo: string }) {
+  const t = useT();
   const mode = useApp((s) => s.mode);
   const activeSessionId = useApp((s) => s.activeSessionId[ticketNo] ?? "");
   // 按钮状态跟随「当前查看的会话」：A 在生成、切到 B 时 B 应显示发送而非中止。
@@ -621,7 +626,7 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
         const att = await toPendingAttachment(file);
         if (att) setPendingAttachments((prev) => [...prev, att]);
       } catch {
-        showToast(`读取图片失败：${file.name}`);
+        showToast(t("composer.imageReadFailed", { name: file.name }));
       }
     }
   };
@@ -638,7 +643,7 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
     if (imageFiles.length > 0) {
       // 需求①：判断当前选择模型是否支持输入 image。
       if (live && sel && imageSupported === false) {
-        showToast(`当前模型 ${sel.providerId}/${sel.modelId} 不支持图片输入，已忽略 ${imageFiles.length} 张图片`);
+        showToast(t("composer.imageUnsupported", { model: `${sel.providerId}/${sel.modelId}`, n: imageFiles.length }));
         return;
       }
       await addPendingImages(imageFiles);
@@ -649,7 +654,7 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
     const absPath = extractAbsolutePath(payloads);
     if (absPath) {
       insertAtCursor(absPath + " ");
-      showToast(`已将「${files[0].name}」转为绝对路径`);
+      showToast(t("composer.absPathDone", { name: files[0].name }));
       return;
     }
     await insertChatFiles(files);
@@ -660,32 +665,32 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
    * 再把落盘相对路径插进光标处。demo 没有后端，维持占位提示。 */
   const insertChatFiles = async (files: File[]) => {
     if (!live) {
-      insertAtCursor(`[文件] ${files[0].name} `);
-      showToast("demo 模式没有后端：文件无法随消息送达 Agent，请切到 live 模式后重试");
+      insertAtCursor(`[${t("composer.fileMarker")}] ${files[0].name} `);
+      showToast(t("composer.demoNoBackend"));
       return;
     }
     const paths: string[] = [];
     const failed: string[] = [];
     for (const file of files) {
       if (file.size > MAX_CHAT_FILE_MB * 1024 * 1024) {
-        failed.push(`${file.name} 超过 ${MAX_CHAT_FILE_MB}MB 上限`);
+        failed.push(t("composer.fileTooLarge", { name: file.name, max: MAX_CHAT_FILE_MB }));
         continue;
       }
       try {
         paths.push(await uploadChatFile(ticketNo, file));
       } catch (e) {
-        failed.push(`${file.name}：${(e as Error).message}`);
+        failed.push(`${file.name}: ${(e as Error).message}`);
       }
     }
     if (paths.length > 0) insertAtCursor(paths.map((p) => p + " ").join(""));
     if (paths.length > 0 && failed.length === 0) {
-      showToast(`已上传「${files[0].name}」到工单工作区并插入路径`);
+      showToast(t("composer.uploadDone", { name: files[0].name }));
     } else if (failed.length > 0) {
-      if (paths.length === 0) insertAtCursor(`[文件] ${files[0].name} `);
+      if (paths.length === 0) insertAtCursor(`[${t("composer.fileMarker")}] ${files[0].name} `);
       showToast(
         paths.length > 0
-          ? `已上传 ${paths.length}/${files.length} 个文件；失败：${failed[0]}`
-          : `文件上传失败：${failed[0]}`,
+          ? t("composer.uploadPartial", { ok: paths.length, total: files.length, err: failed[0] })
+          : t("composer.uploadFailed", { err: failed[0] }),
       );
     }
   };
@@ -735,8 +740,8 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
       return;
     }
     if (isPasteQuoteWorthy(text)) {
-      addPendingQuote(ticketNo, text, "剪贴板");
-      showToast("已收进引用胶囊 · 点胶囊可编辑原文或转为正文");
+      addPendingQuote(ticketNo, text, t("quote.sourceClipboard"));
+      showToast(t("composer.quoteAddedToast"));
     } else {
       insertAtCursor(text);
     }
@@ -845,8 +850,8 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
     clearComposerInput();
     showToast(
       followUpBehavior === "steer"
-        ? "已加入排队队列（Ctrl+Enter 可在当前回合插队）"
-        : "已加入排队队列 · Agent 空闲后自动发送（Ctrl+Enter 插队）",
+        ? t("composer.queuedToastSteer")
+        : t("composer.queuedToastQueue"),
     );
   };
 
@@ -857,7 +862,7 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
     if (!steerSupported || !activeSessionId) {
       if (busy) {
         queueComposed();
-        showToast("当前 Agent 不支持实时插队，消息已加入排队队列");
+        showToast(t("composer.steerFallbackToast"));
       } else {
         send();
       }
@@ -883,7 +888,7 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
     if (!activeSessionId) return;
     if (busy) {
       if (!steerSupported) {
-        showToast("当前 Agent 不支持实时插队；消息仍留在队列，空闲后自动发送");
+        showToast(t("composer.steerUnsupportedToast"));
         return;
       }
       // 插队成功前消息先留在队列：失败则原样保留，避免静默丢失。
@@ -918,23 +923,23 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
    */
   const quick = [
     diffs > 0 && !terminal
-      ? { label: "预提审", prompt: "__presubmit__", Icon: LockKey }
+      ? { label: t("composer.quick.presubmit"), prompt: "__presubmit__", Icon: LockKey }
       : null,
-    diffs > 0 ? { label: "解释当前变更", prompt: "请解释当前工作区的全部改动", Icon: Eye } : null,
+    diffs > 0 ? { label: t("composer.quick.explain"), prompt: t("composer.quick.explainPrompt"), Icon: Eye } : null,
     // 派单：指导 Agent 现在不要建单，等用户下一条消息给出需求描述后，
     // 再走 MCP（服务器注册名 gate）的 ticket_create 建单，并据此补全标题与描述
     {
-      label: "派单",
+      label: t("composer.quick.dispatch"),
       prompt:
-        "现在不要创建工单。请等我下一条消息描述完需求后，再使用 MCP（服务器注册名 gate）的 ticket_create 工具创建工单，届时用该需求补全工单标题与描述。",
+        t("composer.dispatchPrompt"),
       Icon: Ticket,
     },
     // 重启过的活跃工单才有「重启理由」注入上下文（AgentContextPrompt），语录才有意义
     restartCount > 0
-      ? { label: "完成此工单", prompt: "完成此工单，处理下重启理由", Icon: CheckCircle }
+      ? { label: t("composer.quick.finish"), prompt: t("composer.quick.finishPrompt"), Icon: CheckCircle }
       : null,
     findingsCount > 0 && stage === "REJECTED"
-      ? { label: "按审查意见修复", prompt: "__findings__", Icon: Wrench }
+      ? { label: t("composer.quick.fixFindings"), prompt: "__findings__", Icon: Wrench }
       : null,
   ].filter(Boolean) as Array<{ label: string; prompt: string; Icon: Icon }>;
 
@@ -968,7 +973,7 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
             {usage && (
               <span
                 className="font-mono text-[11px] text-faint tabular-nums whitespace-nowrap"
-                title="本工单累计 token 用量（↑ 输入 / ↓ 输出）"
+                title={t("composer.usageTip")}
               >
                 ↑ {formatTokens(usage.promptTokens)} · ↓ {formatTokens(usage.completionTokens)}
               </span>
@@ -981,10 +986,10 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
           <div className="queue-panel">
             <div className="queue-panel-header">
               <Clock size={11} className="text-faint" />
-              排队消息
+              {t("composer.queueTitle")}
               <span className="font-mono text-[10.5px] text-faint">{queue.length}</span>
               <span className="flex-1" />
-              <span className="text-[10.5px] text-faint">空闲后自动发送 · 编辑即取回输入框</span>
+              <span className="text-[10.5px] text-faint">{t("composer.queueHint")}</span>
             </div>
             <div className="queue-panel-list">
               {queue.map((m, i) => {
@@ -994,8 +999,8 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
                     <button
                       className="queue-icon-btn"
                       disabled={i === 0}
-                      title="移到上一位"
-                      aria-label="移到上一位"
+                      title={t("composer.moveUp")}
+                      aria-label={t("composer.moveUp")}
                       onClick={() => reorderQueuedMessages(activeSessionId, m.id, queue[i - 1].id)}
                     >
                       <ArrowUp size={11} weight="bold" />
@@ -1003,8 +1008,8 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
                     <button
                       className="queue-icon-btn"
                       disabled={i === queue.length - 1}
-                      title="移到下一位"
-                      aria-label="移到下一位"
+                      title={t("composer.moveDown")}
+                      aria-label={t("composer.moveDown")}
                       onClick={() => reorderQueuedMessages(activeSessionId, m.id, queue[i + 1].id)}
                     >
                       <ArrowDown size={11} weight="bold" />
@@ -1017,28 +1022,28 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
                       {firstLine.length > 80 ? firstLine.slice(0, 80) + "…" : firstLine}
                     </span>
                     {m.attachments && m.attachments.length > 0 && (
-                      <span className="queue-item-meta">图 {m.attachments.length}</span>
+                      <span className="queue-item-meta">{t("composer.imageCount", { n: m.attachments.length })}</span>
                     )}
                     <button
                       className="queue-icon-btn queue-icon-btn-go"
-                      title={busy ? (steerSupported ? "立即插队发送到当前回合" : "Agent 忙碌中，插队暂不可用") : "立即发送"}
-                      aria-label="立即发送"
+                      title={busy ? (steerSupported ? t("composer.steerNowTip") : t("composer.steerUnavailableTip")) : t("composer.sendNowTip")}
+                      aria-label={t("composer.sendNowTip")}
                       onClick={() => sendQueuedNow(m)}
                     >
                       <Lightning size={11} weight="fill" />
                     </button>
                     <button
                       className="queue-icon-btn"
-                      title="编辑（取回输入框）"
-                      aria-label="编辑"
+                      title={t("composer.editBackTip")}
+                      aria-label={t("common.edit")}
                       onClick={() => editQueued(m)}
                     >
                       <PencilSimple size={11} />
                     </button>
                     <button
                       className="queue-icon-btn"
-                      title="移除"
-                      aria-label="移除"
+                      title={t("common.remove")}
+                      aria-label={t("common.remove")}
                       onClick={() => removeQueuedMessage(activeSessionId, m.id)}
                     >
                       <XIcon size={11} weight="bold" />
@@ -1073,14 +1078,14 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
                   <img src={att.dataUrl} alt={att.filename} className="composer-attach-thumb" />
                   <div className="min-w-0">
                     <div className="truncate text-[11px] font-medium text-ink max-w-[120px]">
-                      [图片 #{i + 1}] {att.filename}
+                      [{t("composer.imageRef", { n: i + 1 })}] {att.filename}
                     </div>
                     <div className="font-mono text-[10px] text-faint">{att.mime}</div>
                   </div>
                   <button
                     className="ml-1 grid place-items-center size-5 rounded-full text-faint hover:text-ink hover:bg-raised cursor-pointer transition-colors"
-                    title="移除附件"
-                    aria-label={`移除附件 ${att.filename}`}
+                    title={t("composer.removeAttachment")}
+                    aria-label={t("composer.removeAttachmentName", { name: att.filename })}
                     onClick={() => removeAttachment(att.id)}
                   >
                     <XIcon size={11} weight="bold" />
@@ -1089,7 +1094,7 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
               ))}
               {live && sel && imageSupported === false && (
                 <span className="self-center text-[11px] text-warning">
-                  当前模型不支持图片输入，发送前请切换模型
+                  {t("composer.imageUnsupportedInline")}
                 </span>
               )}
             </div>
@@ -1135,16 +1140,16 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
             rows={1}
             placeholder={
               cancelled
-                ? "工单已取消 · 协作已锁定，不可继续操作"
+                ? t("composer.placeholder.cancelled")
                 : stage === "DONE"
-                  ? "工单已完成并归档"
+                  ? t("composer.placeholder.done")
                   : busy
                     ? live && !activeSessionId
-                      ? "正在创建会话…"
+                      ? t("composer.placeholder.creating")
                       : followUpBehavior === "steer"
-                        ? "Agent 正在工作 · 回车插队当前回合（Ctrl+Enter 排队，点击 Stop 可中断）…"
-                        : "Agent 正在工作 · 输入后回车排队，空闲自动发送（Ctrl+Enter 插队，点击 Stop 中断）…"
-                    : "向 Agent 描述任务…（Enter 发送，Shift+Enter 换行，可粘贴图片/文件）"
+                        ? t("composer.placeholder.busySteer")
+                        : t("composer.placeholder.busyQueue")
+                    : t("composer.placeholder.idle")
             }
             className="composer-ta"
           />
@@ -1177,13 +1182,13 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
                         className={`composer-btn ${autoAccept ? "composer-btn-active" : ""}`}
                         title={
                           autoAccept
-                            ? "权限请求将被服务端自动允许，不再弹出确认卡片"
-                            : "开启自动允许：权限请求将被服务端自动允许，不再弹出确认卡片"
+                            ? t("composer.autoAcceptOnTip")
+                            : t("composer.autoAcceptOffTip")
                         }
                         onClick={() => void actions.setSessionAutoAccept(ticketNo, !autoAccept)}
                       >
                         <ShieldCheck size={13} weight={autoAccept ? "fill" : "regular"} />
-                        {autoAccept ? "权限：自动允许" : "权限：询问"}
+                        {autoAccept ? t("composer.autoAcceptOn") : t("composer.autoAcceptOff")}
                       </button>
                     ))}
                 </>
@@ -1194,8 +1199,8 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
             {busy ? (
               <button
                 className="composer-stop"
-                title="中断生成"
-                aria-label="中断生成"
+                title={t("composer.abortTip")}
+                aria-label={t("composer.abortTip")}
                 onClick={() => actions.abort(ticketNo)}
               >
                 <Stop size={14} weight="fill" />
@@ -1205,12 +1210,12 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
                 className="composer-send"
                 title={
                   pendingQuotes.length > 0
-                    ? "发送（含引用片段）"
+                    ? t("composer.sendWithQuotes")
                     : pendingAttachments.length > 0
-                      ? "发送（含图片附件）"
-                      : "发送"
+                      ? t("composer.sendWithAttachments")
+                      : t("common.send")
                 }
-                aria-label="发送"
+                aria-label={t("common.send")}
                 disabled={
                   (!text.trim() && pendingQuotes.length === 0 && pendingAttachments.length === 0) ||
                   terminal

@@ -1,10 +1,11 @@
-/**
+﻿/**
  * 会话域流管道（session）：发送消息（含草稿建会话三步）、SSE 事件流消费与中止。
  * 这是唯一持有 EventSource 的模块；工具行累积、todo/上下文回写、
  * 权限/提问卡片挂载都在这里驱动。
  */
 import { api } from "@/net";
 import { appStore, showToast } from "@/store";
+import { t } from "@/i18n";
 import type { PendingAttachment, ToolIconKind } from "@/shared/types";
 import {
   friendlyToolName,
@@ -69,7 +70,7 @@ export async function abortLive(no: string) {
     await api(`/api/sessions/${sid}/abort`, { method: "POST" });
   } catch (e) {
     abortingSessions.delete(sid);
-    showToast(`中断失败：${(e as Error).message}`);
+    showToast(t("stream.abortFailed", { err: (e as Error).message }));
   }
   await loadTicketSessions(no).catch(() => {});
 }
@@ -152,7 +153,7 @@ async function steerIntoRunning(
   const result = await postSessionMessage(no, sid, userText, attachments, "steer", userItem.id);
   if (result.error) {
     removeChatItem(no, userItem.id);
-    pushSystemMessage(no, `插队失败：${result.error}`, "warn");
+    pushSystemMessage(no, t("stream.steerFailed", { err: result.error ?? "" }), "warn");
     return false;
   }
   if (result.images?.length) attachUserImages(no, userItem.id, result.images);
@@ -234,7 +235,7 @@ export async function liveSendPrompt(
     setSessionBusy(sid, true);
     await consumeSessionStream(no, sid);
   } catch (e) {
-    pushSystemMessage(no, `会话失败：${(e as Error).message}`, "warn");
+    pushSystemMessage(no, t("stream.sessionFailed", { err: (e as Error).message }), "warn");
     if (!sid) {
       // 连会话都没建成（如端口占用）：回滚用户消息恢复草稿——选择全保留，
       // 输入框原文由 Composer 还原，用户直接重发即可，不打「已中断」标记。
@@ -283,7 +284,7 @@ export async function liveSendToSession(
     await consumeSessionStream(no, sid);
     return true;
   } catch (e) {
-    pushSystemMessage(no, `会话失败：${(e as Error).message}`, "warn");
+    pushSystemMessage(no, t("stream.sessionFailed", { err: (e as Error).message }), "warn");
     markSessionEnded(no, "failed", sid);
     return false;
   } finally {
@@ -480,7 +481,7 @@ async function consumeSessionStream(no: string, sessionId: string) {
           updateLiveTurn(sessionId, (a) => ({ ...a, streaming: false }));
           pushSystemMessage(
             no,
-            "会话连接中断（多次重连失败）。回合仍在服务端运行，重新打开工单可恢复视图与交互。",
+            t("stream.reconnectLost"),
             "warn",
           );
           break;
@@ -778,7 +779,7 @@ async function consumeSessionEvents(
         settle("network");
         return;
       }
-      let msg = "会话连接中断";
+      let msg = t("stream.connInterrupted");
       try {
         const d = JSON.parse(data);
         if (d.error_message) {
@@ -790,9 +791,9 @@ async function consumeSessionEvents(
           } catch {
             /* 非结构化错误体，原样展示 */
           }
-          msg = `Agent 出错：${detail}`;
+          msg = t("stream.agentError", { err: detail });
         } else if (d.error_code) {
-          msg = `Agent 出错：${d.error_code}`;
+          msg = t("stream.agentErrorCode", { code: d.error_code });
         }
       } catch {
         /* ignore */

@@ -19,6 +19,7 @@ import {
   X,
 } from "@phosphor-icons/react";
 import { appStore, openConnect, openPluginPage, setView, switchProject, toggleTheme, useApp } from "@/store";
+import { useT } from "@/i18n";
 import { usePlugins } from "@/app/plugins/state";
 import { HEADER_ORDER_DEFAULT, PAGE_ORDER_DEFAULT, SLOT_HEADER_ACTIONS, SLOT_NAV_PAGES } from "@/app/plugins/slots";
 import { PluginBoundary } from "@/app/plugins/components/PluginBoundary";
@@ -72,14 +73,15 @@ function BrandMark() {
 }
 
 const VIEWS = [
-  { key: "workbench", label: "工作台", Icon: SquaresFour },
-  { key: "kanban", label: "看板", Icon: Kanban },
-  { key: "projects", label: "项目", Icon: FolderOpen },
-  { key: "agents", label: "智能体", Icon: Sparkle },
-  { key: "plugins", label: "插件", Icon: PuzzlePiece },
+  { key: "workbench", labelKey: "topbar.view.workbench", Icon: SquaresFour },
+  { key: "kanban", labelKey: "topbar.view.kanban", Icon: Kanban },
+  { key: "projects", labelKey: "topbar.view.projects", Icon: FolderOpen },
+  { key: "agents", labelKey: "topbar.view.agents", Icon: Sparkle },
+  { key: "plugins", labelKey: "topbar.view.plugins", Icon: PuzzlePiece },
 ] as const;
 
 function ViewSwitch() {
+  const t = useT();
   const view = useApp((s) => s.view);
   const pluginPageId = useApp((s) => s.pluginPageId);
   const contributions = usePlugins((s) => s.contributions);
@@ -94,7 +96,7 @@ function ViewSwitch() {
   );
   return (
     <div className="flex items-center gap-0.5 bg-sunken rounded-lg p-0.5 border border-edge">
-      {VIEWS.map(({ key, label, Icon }) => (
+      {VIEWS.map(({ key, labelKey, Icon }) => (
         <button
           key={key}
           onClick={() => setView(key)}
@@ -111,7 +113,7 @@ function ViewSwitch() {
           )}
           <span className="relative z-10 inline-flex items-center gap-1.5">
             <Icon size={14} weight={view === key ? "fill" : "regular"} />
-            {label}
+            {t(labelKey)}
           </span>
         </button>
       ))}
@@ -145,6 +147,7 @@ function ViewSwitch() {
 }
 
 function ProjectSwitcher() {
+  const t = useT();
   const projects = useApp((s) => s.projects);
   const activeId = useApp((s) => s.activeProjectId);
   const [open, setOpen] = useState(false);
@@ -155,10 +158,10 @@ function ProjectSwitcher() {
       <button
         onClick={() => setView("projects")}
         className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md text-[12.5px] text-warn hover:bg-raised transition-colors cursor-pointer"
-        title="尚未接入项目，点击前往接入"
+        title={t("topbar.project.none")}
       >
         <FolderPlus size={14} />
-        接入项目
+        {t("topbar.project.connect")}
       </button>
     );
   }
@@ -183,7 +186,7 @@ function ProjectSwitcher() {
             transition={{ type: "spring", stiffness: 500, damping: 30 }}
             className="absolute right-0 top-9 z-40 w-[280px] card p-1.5 shadow-xl shadow-black/50"
           >
-            <div className="kicker px-2.5 pt-1.5 pb-1">切换项目</div>
+            <div className="kicker px-2.5 pt-1.5 pb-1">{t("topbar.project.switch")}</div>
             {projects.map((p) => (
               <button
                 key={p.id}
@@ -211,7 +214,7 @@ function ProjectSwitcher() {
               }}
             >
               <Plus size={14} weight="bold" />
-              接入新项目…
+              {t("topbar.project.connectNew")}
             </button>
           </motion.div>
         </>
@@ -221,13 +224,14 @@ function ProjectSwitcher() {
 }
 
 function ThemeToggle() {
+  const t = useT();
   const theme = useApp((s) => s.theme);
   return (
     <motion.button
       className="icon-btn"
       onClick={toggleTheme}
-      title={theme === "dark" ? "切换亮色模式" : "切换暗色模式"}
-      aria-label={theme === "dark" ? "切换亮色模式" : "切换暗色模式"}
+      title={theme === "dark" ? t("topbar.theme.toLight") : t("topbar.theme.toDark")}
+      aria-label={theme === "dark" ? t("topbar.theme.toLight") : t("topbar.theme.toDark")}
       whileTap={{ scale: 0.9, rotate: 15 }}
       transition={{ type: "spring", stiffness: 400, damping: 15 }}
     >
@@ -283,6 +287,7 @@ function HeaderActionsSlot() {
  *  关闭钮悬停红，对齐 Windows 标题栏惯例；浏览器/非壳环境整组不渲染。
  *  兼承载托盘桥：收「打开项目工作台」、发「当前选中项目」（托盘绿点数据源）。 */
 function WindowControls() {
+  const t = useT();
   const [maximized, setMaximized] = useState(false);
   const desktop = isDesktopShell();
   useEffect(() => {
@@ -332,22 +337,22 @@ function WindowControls() {
   if (!desktop) return null;
   return (
     <>
-      <button className="icon-btn" onClick={() => shellPost("minimize")} title="最小化" aria-label="最小化">
+      <button className="icon-btn" onClick={() => shellPost("minimize")} title={t("topbar.win.minimize")} aria-label={t("topbar.win.minimize")}>
         <Minus size={16} />
       </button>
       <button
         className="icon-btn"
         onClick={() => shellPost("toggle-maximize")}
-        title={maximized ? "向下还原" : "最大化"}
-        aria-label={maximized ? "向下还原" : "最大化"}
+        title={maximized ? t("topbar.win.restore") : t("topbar.win.maximize")}
+        aria-label={maximized ? t("topbar.win.restore") : t("topbar.win.maximize")}
       >
         {maximized ? <CornersIn size={16} /> : <CornersOut size={16} />}
       </button>
       <button
         className="icon-btn hover:text-danger hover:bg-danger/10 active:scale-95"
         onClick={() => shellPost("close")}
-        title="关闭"
-        aria-label="关闭"
+        title={t("topbar.win.close")}
+        aria-label={t("topbar.win.close")}
       >
         <X size={16} />
       </button>
@@ -356,6 +361,7 @@ function WindowControls() {
 }
 
 export function TopBar() {
+  const t = useT();
   const conn = useApp((s) => s.conn);
   const mode = useApp((s) => s.mode);
 
@@ -376,11 +382,11 @@ export function TopBar() {
   const connLabel =
     mode === "live"
       ? conn === "ok"
-        ? "已连接后端"
+        ? t("topbar.conn.connected")
         : conn === "unauth"
-          ? "待授权"
-          : "连接异常"
-      : "演示数据";
+          ? t("topbar.conn.unauth")
+          : t("topbar.conn.error")
+      : t("topbar.conn.demo");
   const connColor =
     mode === "live" && conn === "ok"
       ? "text-accent border-accent/30 bg-accent/10"
@@ -424,7 +430,7 @@ export function TopBar() {
       <button
         onClick={openConnect}
         className={`chip border cursor-pointer transition-opacity hover:opacity-80 ${connColor}`}
-        title="连接设置"
+        title={t("topbar.conn.settings")}
       >
         <span
           className={`inline-block w-1.5 h-1.5 rounded-full ${
@@ -434,7 +440,7 @@ export function TopBar() {
         <span className="hidden sm:inline">{connLabel}</span>
       </button>
 
-      <button className="icon-btn hidden sm:inline-flex" onClick={() => setView("settings")} title="设置" aria-label="设置">
+      <button className="icon-btn hidden sm:inline-flex" onClick={() => setView("settings")} title={t("topbar.openSettings")} aria-label={t("topbar.openSettings")}>
         <GearSix size={16} />
       </button>
       <ThemeToggle />

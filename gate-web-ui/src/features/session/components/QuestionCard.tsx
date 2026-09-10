@@ -1,7 +1,8 @@
-import { useState } from "react";
+﻿import { useState } from "react";
 import { Check, CircleNotch, Question as QuestionIcon, X } from "@phosphor-icons/react";
 import { pushQuestionRequest, pushSystemMessage, resolveQuestion, revertQuestion, answerSessionQuestion, rejectSessionQuestion } from "@/features/session";
 import type { ChatItem, QuestionPromptView } from "@/shared/types";
+import { useT, type Translate } from "@/i18n";
 
 type QuestionItem = Extract<ChatItem, { kind: "question" }>;
 
@@ -68,6 +69,7 @@ function QuestionBlock({
   index: number;
   onChange: (next: AnswerState) => void;
 }) {
+  const t = useT();
   const toggle = (label: string) => {
     if (prompt.multiple) {
       const picked = state.picked.includes(label)
@@ -84,8 +86,8 @@ function QuestionBlock({
   return (
     <div className="px-3 py-2.5 space-y-2">
       <div className="flex items-center gap-2">
-        <span className="chip border border-edge-strong bg-raised text-info">{prompt.header || `问题 ${index + 1}`}</span>
-        {prompt.multiple && <span className="text-[10.5px] text-faint">可多选</span>}
+        <span className="chip border border-edge-strong bg-raised text-info">{prompt.header || t("question.nth", { n: index + 1 })}</span>
+        {prompt.multiple && <span className="text-[10.5px] text-faint">{t("question.multi")}</span>}
         {answered && <Check size={12} className="text-accent" weight="bold" />}
       </div>
       <div className="text-[13px] leading-relaxed text-ink">{prompt.question}</div>
@@ -107,12 +109,12 @@ function QuestionBlock({
               }`}
               onClick={() => onChange({ ...state, customOpen: !state.customOpen })}
             >
-              {state.customOpen ? "− 自定义回答" : "+ 自定义回答…"}
+              {state.customOpen ? t("question.customOpen") : t("question.customClose")}
             </button>
             {state.customOpen && (
               <input
                 className="mt-1.5 w-full rounded-md border border-edge bg-sunken px-2.5 py-1.5 text-[12.5px] text-ink outline-none focus:border-accent/60"
-                placeholder="输入自定义答案后回车提交"
+                placeholder={t("question.customPlaceholder")}
                 value={state.customText}
                 onChange={(e) => onChange({ ...state, customText: e.target.value })}
               />
@@ -136,6 +138,7 @@ export function QuestionCard({
   /** 工单已取消等终态：禁止作答，仅展示。 */
   locked?: boolean;
 }) {
+  const t = useT();
   const { request, status } = item;
   const [answers, setAnswers] = useState<AnswerState[]>(() => initialAnswers(request.questions));
   const [busy, setBusy] = useState<"submit" | "skip" | null>(null);
@@ -170,7 +173,7 @@ export function QuestionCard({
     if (!ok) {
       revertQuestion(ticketNo, request.requestId);
       pushQuestionRequest(ticketNo, request);
-      pushSystemMessage(ticketNo, "回答提交失败，已恢复待答状态", "warn");
+      pushSystemMessage(ticketNo, t("question.submitFailed"), "warn");
     }
     setBusy(null);
   };
@@ -183,7 +186,7 @@ export function QuestionCard({
     if (!ok) {
       revertQuestion(ticketNo, request.requestId);
       pushQuestionRequest(ticketNo, request);
-      pushSystemMessage(ticketNo, "跳过提交失败，已恢复待答状态", "warn");
+      pushSystemMessage(ticketNo, t("question.skipFailed"), "warn");
     }
     setBusy(null);
   };
@@ -192,13 +195,13 @@ export function QuestionCard({
     <div className={`rounded-lg border divide-y divide-edge overflow-hidden ${decided ? "border-edge permission-decided" : "border-info/50 question-pending"}`}>
       <div className="px-3 py-2.5 flex items-center gap-2">
         <QuestionIcon size={15} weight="fill" className={decided ? "text-faint" : "text-info"} />
-        <span className="text-[13px] font-semibold text-ink">Agent 需要你的回答</span>
+        <span className="text-[13px] font-semibold text-ink">{t("question.title")}</span>
         <span className={`chip ${decided ? "badge-dim border border-edge text-dim" : "text-info bg-info/10"}`}>
-          {request.questions.length} 个问题
+          {t("question.count", { n: request.questions.length })}
         </span>
         <span className="flex-1" />
-        {status === "answered" && <span className="badge-accent">已回答</span>}
-        {status === "rejected" && <span className="badge-danger">已跳过</span>}
+        {status === "answered" && <span className="badge-accent">{t("question.answered")}</span>}
+        {status === "rejected" && <span className="badge-danger">{t("question.skipped")}</span>}
       </div>
       {request.questions.map((q, i) => (
         <QuestionBlock
@@ -217,33 +220,33 @@ export function QuestionCard({
                 className="btn btn-primary btn-sm disabled:opacity-40 disabled:cursor-not-allowed"
                 disabled={!allAnswered || !!busy}
                 onClick={() => void submit()}
-                title={allAnswered ? "提交全部回答" : "请先为每个问题作出选择"}
+                title={allAnswered ? t("question.submitTip") : t("question.submitBlockedTip")}
               >
                 {busy === "submit" ? (
                   <CircleNotch size={12} className="animate-[spin_0.9s_linear_infinite]" />
                 ) : (
                   <Check size={12} weight="bold" />
                 )}
-                提交回答
+                {t("question.submit")}
               </button>
               <button
                 className="btn btn-danger-ghost btn-sm"
                 disabled={!!busy}
                 onClick={() => void skip()}
-                title="跳过本次提问，Agent 会收到提问被搁置的通知"
+                title={t("question.skipTip")}
               >
                 {busy === "skip" ? (
                   <CircleNotch size={12} className="animate-[spin_0.9s_linear_infinite]" />
                 ) : (
                   <X size={12} weight="bold" />
                 )}
-                跳过
+                {t("common.skip")}
               </button>
             </div>
           ) : (
             <div className="flex items-center gap-1.5 text-[11.5px] text-faint">
               <QuestionIcon size={12} />
-              工单已取消 · 提问已锁定
+              {t("question.lockedNote")}
             </div>
           )}
         </div>

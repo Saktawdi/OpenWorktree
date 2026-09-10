@@ -1,9 +1,10 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+﻿import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { CaretDown, CaretUp, FileCode, Warning } from "@phosphor-icons/react";
 import { NO_DIFF, useApp } from "@/store";
 import type { DiffFile, DiffHunk } from "@/shared/types";
 import { diffTotals } from "@/shared/diff";
+import { useT } from "@/i18n";
 
 /* 超大 diff（如未加入 git 忽略的 node_modules 整目录入库）下渲染层根治：
    文件列表采用窗口化虚拟渲染——只挂载视口 ± 缓冲范围内的文件块，滚出即卸载，
@@ -55,6 +56,7 @@ const FileBlock = memo(
     /** 审查跳转要求文件至少展开到该行数（配合文件内行分片也能定位到目标行）。 */
     minLines?: number;
   }) {
+    const t = useT();
     const [cap, setCap] = useState(FILE_LINES_PER_BATCH);
     const effCap = Math.max(cap, minLines ?? 0);
     const { hunks, shown } = useMemo(() => sliceHunks(file.hunks, effCap), [file, effCap]);
@@ -75,7 +77,7 @@ const FileBlock = memo(
                 : "border-info/25 bg-info/10 text-info"
             }`}
           >
-            {file.status === "added" ? "新增" : "修改"}
+            {file.status === "added" ? t("diff.added") : t("diff.modified")}
           </span>
           <span className="flex-1" />
           <span className="font-mono text-[11.5px] tabular-nums">
@@ -138,9 +140,9 @@ const FileBlock = memo(
                     onClick={() => setCap((c) => c + FILE_LINES_PER_BATCH)}
                   >
                     <CaretDown size={12} className="text-faint shrink-0" />
-                    展开该文件剩余 {more} 行
+                    {t("diff.expandMoreLines", { n: more })}
                     <span className="flex-1" />
-                    <span className="text-faint tabular-nums">已展示 {shown} / {total} 行</span>
+                    <span className="text-faint tabular-nums">{t("diff.shownLines", { shown, total })}</span>
                   </button>
                 </div>
               )}
@@ -238,6 +240,7 @@ function buildSlots(
 }
 
 export function DiffView({ ticketNo }: { ticketNo: string }) {
+  const tr = useT();
   const files = useApp((s) => s.diffs[ticketNo] ?? NO_DIFF);
   const eolWarning = useApp((s) => s.diffWarnings[ticketNo] ?? "");
   // 与 Workbench 分支徽标同源：项目主分支（建单基线）优先，未挂项目的工单退回自身锁定的目标分支
@@ -437,9 +440,9 @@ export function DiffView({ ticketNo }: { ticketNo: string }) {
           <div className="mx-auto w-11 h-11 rounded-xl border border-dashed border-edge-strong grid place-items-center mb-3">
             <FileCode size={20} className="text-faint" />
           </div>
-          <div className="text-[13.5px] text-dim">沙箱内暂无变更</div>
+          <div className="text-[13.5px] text-dim">{tr("diff.noChanges")}</div>
           <div className="mt-1 text-[12px] text-faint leading-relaxed">
-            Agent 在会话中的每次编辑都会实时反映到这里，预提审时将整体锁定为快照。
+            {tr("diff.realtimeHint")}
           </div>
         </div>
       </div>
@@ -481,24 +484,24 @@ export function DiffView({ ticketNo }: { ticketNo: string }) {
           </div>
         )}
         <div className="flex items-center gap-2 pb-1 flex-wrap">
-          <span className="text-[12.5px] text-dim">{totals.files} 个文件变更</span>
+          <span className="text-[12.5px] text-dim">{tr("diff.filesChanged", { n: totals.files })}</span>
           <span className="font-mono text-[12px] text-accent">+{totals.additions}</span>
           <span className="font-mono text-[12px] text-danger">−{totals.deletions}</span>
           <span className="flex-1" />
-          {targetRef && <span className="text-[11.5px] text-faint">相对基线 {targetRef}</span>}
+          {targetRef && <span className="text-[11.5px] text-faint">{tr("diff.vsBase", { ref: targetRef })}</span>}
           <span className="text-[11.5px] text-faint">·</span>
           <button
             className="text-[11.5px] text-dim hover:text-ink cursor-pointer transition-colors"
             onClick={() => setOpenPaths(new Set(files.map((f) => f.path)))}
           >
-            展开全部
+            {tr("common.expandAll")}
           </button>
           <span className="text-[11.5px] text-faint">·</span>
           <button
             className="text-[11.5px] text-dim hover:text-ink cursor-pointer transition-colors"
             onClick={() => setOpenPaths(new Set())}
           >
-            收起全部
+            {tr("common.collapseAll")}
           </button>
         </div>
         <div ref={listRef} className="relative" style={{ height: totalH }}>

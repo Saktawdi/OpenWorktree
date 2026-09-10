@@ -1,7 +1,8 @@
-/**
+﻿/**
  * 项目域终端接入（project）：WebSocket shell 连接。
  * 按服务端 JSON 信封收发（TerminalController）；心跳防 Jetty idle timeout。
  */
+import { t } from "@/i18n";
 import { appStore } from "@/store";
 
 /** 打开项目终端 WebSocket；返回的连接按 JSON 信封收发（服务端 TerminalController）。 */
@@ -46,7 +47,7 @@ export function openTerminalSocket(
       };
       if (msg.op === "data") handlers.onData(msg.data ?? "");
       else if (msg.op === "exit") handlers.onExit(msg.code ?? -1);
-      else if (msg.op === "error") handlers.onError(msg.message ?? "未知错误");
+      else if (msg.op === "error") handlers.onError(msg.message ?? t("common.unknown"));
       else if (msg.op === "started") handlers.onStarted();
     } catch {
       /* 忽略无法解析的帧 */

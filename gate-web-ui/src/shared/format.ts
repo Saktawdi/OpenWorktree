@@ -1,4 +1,5 @@
 import type { Stage, Priority } from "@/shared/types";
+import { t as i18nT, type Translate } from "@/i18n";
 
 const HEX = "0123456789abcdef";
 
@@ -52,63 +53,67 @@ export function hhmmss(ts: number): string {
   return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 }
 
-/** 时长格式化："52 分 46 秒" / "46 秒"；0 或缺省返回 null（调用方改用步数表述）。 */
-export function formatDuration(ms: number): string | null {
-  if (!(ms > 0)) return null;
-  const total = Math.round(ms / 1000);
-  if (total < 60) return `${total} 秒`;
-  return `${Math.floor(total / 60)} 分 ${total % 60} 秒`;
-}
-
-export function relativeTime(iso: string): string {
+export function relativeTime(iso: string, tr: Translate = i18nT): string {
   const then = new Date(iso).getTime();
   const diff = Date.now() - then;
   if (Number.isNaN(then)) return "";
   const min = Math.floor(diff / 60000);
-  if (min < 1) return "刚刚";
-  if (min < 60) return `${min} 分钟前`;
+  if (min < 1) return tr("time.justNow");
+  if (min < 60) return tr("time.minutesAgo", { n: min });
   const hr = Math.floor(min / 60);
-  if (hr < 24) return `${hr} 小时前`;
-  return `${Math.floor(hr / 24)} 天前`;
+  if (hr < 24) return tr("time.hoursAgo", { n: hr });
+  return tr("time.daysAgo", { n: Math.floor(hr / 24) });
 }
 
-export const STAGE_LABEL: Record<Stage, string> = {
-  PENDING: "待处理",
-  IN_PROGRESS: "进行中",
-  PRESUBMITTED: "已预提交",
-  IN_REVIEW: "审查中",
-  REJECTED: "已驳回",
-  READY_TO_PUBLISH: "可发布",
-  NEEDS_HUMAN: "需人工",
-  DONE: "已完成",
-  CANCELLED: "已取消",
+/** 时长格式化："52 分 46 秒" / "46 秒"；0 或缺省返回 null（调用方改用步数表述）。 */
+export function formatDuration(ms: number, tr: Translate = i18nT): string | null {
+  if (!(ms > 0)) return null;
+  const total = Math.round(ms / 1000);
+  if (total < 60) return tr("time.seconds", { n: total });
+  return tr("time.minSec", { m: Math.floor(total / 60), s: total % 60 });
+}
+
+/** 工单状态标签（当前语言）。 */
+const STAGE_KEYS: Record<Stage, `stage.${Stage}`> = {
+  PENDING: "stage.PENDING",
+  IN_PROGRESS: "stage.IN_PROGRESS",
+  PRESUBMITTED: "stage.PRESUBMITTED",
+  IN_REVIEW: "stage.IN_REVIEW",
+  REJECTED: "stage.REJECTED",
+  READY_TO_PUBLISH: "stage.READY_TO_PUBLISH",
+  NEEDS_HUMAN: "stage.NEEDS_HUMAN",
+  DONE: "stage.DONE",
+  CANCELLED: "stage.CANCELLED",
 };
 
-/** 状态变更记录（V19）的动作标签：重启 / 强制已完成 / 取消。 */
-export const STAGE_CHANGE_KIND_LABEL: Record<import("@/shared/types").StageChangeRecord["kind"], string> = {
-  restart: "重启",
-  force_complete: "强制已完成",
-  cancel: "取消工单",
+export function stageLabel(stage: Stage, tr: Translate = i18nT): string {
+  return tr(STAGE_KEYS[stage]);
+}
+
+/** 状态变更记录动作标签（重启/强制已完成/取消）。 */
+const STAGE_CHANGE_KEYS: Record<"restart" | "force_complete" | "cancel", `stageChange.${"restart" | "force_complete" | "cancel"}`> = {
+  restart: "stageChange.restart",
+  force_complete: "stageChange.force_complete",
+  cancel: "stageChange.cancel",
 };
 
-export const SEVERITY_LABEL: Record<string, string> = {
-  BLOCKER: "阻断",
-  WARNING: "警告",
-  NIT: "细微",
-  INFO: "提示",
-};
+export function stageChangeKindLabel(
+  kind: "restart" | "force_complete" | "cancel",
+  tr: Translate = i18nT,
+): string {
+  return tr(STAGE_CHANGE_KEYS[kind]);
+}
 
-export const VARIANT_LABELS: Record<string, string> = {
-  high: "高",
-  medium: "中",
-  low: "低",
-  max: "最高",
-  minimal: "极简",
-  none: "关闭",
-};
+/** 审查严重度标签（阻断/警告/细微/提示）；未知严重度原样返回。 */
+export function severityLabel(sev: string, tr: Translate = i18nT): string {
+  const key = `severity.${sev}`;
+  return tr(`severity.${sev}` as never) !== key ? tr(`severity.${sev}` as never) : sev;
+}
 
-export function variantLabel(v: string): string {
-  return VARIANT_LABELS[v.toLowerCase()] ?? v;
+/** 推理力度档位标签（高/中/低/最高/极简/关闭；未知值原样返回）。 */
+export function variantLabel(v: string, tr: Translate = i18nT): string {
+  const key = `variant.${v.toLowerCase()}`;
+  return tr(key as never) !== key ? tr(key as never) : v;
 }
 
 export const PRIORITY_COLOR: Record<Priority, string> = {

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * LLM 小助手悬浮面板（T-109 原生内置）：跨视图常驻、标题栏拖拽、右下角缩放。
  * 界面完全复用本体会话的共享原语（ChatPrimitives：用户气泡壳 / 助手 Shell /
  * ReplyBody / ReplyFooter；useStickyScroll 贴底滚动；composer-shell 输入区），
@@ -8,6 +8,7 @@
  * - 流式增量只进 store，关闭面板不打断生成；
  * - 布局（位置/尺寸/开合/最小化）与历史持久化在 localStorage（store/prefs）。
  */
+import { useT } from "@/i18n";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import {
@@ -57,7 +58,7 @@ const EDGE = 8;
 const HEADER_H = 40;
 
 /** 空态快捷提问（点击填入草稿，可再编辑）。 */
-const SUGGESTIONS = ["帮我起草一封周报邮件", "解释一段代码的作用", "翻译并润色这段英文", "总结要点并列出行动项"];
+const SUGGESTION_KEYS = ["asst.suggestions.0", "asst.suggestions.1", "asst.suggestions.2", "asst.suggestions.3"] as const;
 
 function clamp(v: number, lo: number, hi: number): number {
   return Math.min(Math.max(v, lo), Math.max(lo, hi));
@@ -66,6 +67,7 @@ function clamp(v: number, lo: number, hi: number): number {
 type DragMode = "move" | "resize";
 
 export function AssistantPanel() {
+  const t = useT();
   const open = useApp((s) => s.assistantOpen);
   const minimized = useApp((s) => s.assistantMinimized);
   const pos = useApp((s) => s.assistantPos);
@@ -200,39 +202,39 @@ export function AssistantPanel() {
     mode !== "live" ? (
       <GateCard
         Icon={PlugsConnected}
-        title="连接后端后可用"
-        desc="小助手调用「LLM 设置」中的 Provider，演示模式下不可用。"
+        title={t("asst.needBackendTitle")}
+        desc={t("asst.needBackendDesc")}
         action={
           <button className="btn btn-primary btn-sm" onClick={openConnect}>
-            连接后端
+            {t("settings.needBackend.connect")}
           </button>
         }
       />
     ) : providersLoading ? (
       <div className="flex items-center gap-2 text-[12px] text-faint">
         <span className="w-1.5 h-1.5 rounded-full bg-accent animate-breathe" />
-        正在加载 Provider…
+        {t("llm.loadingProviders")}
       </div>
     ) : providersError ? (
       <GateCard
         Icon={WarningCircle}
-        title="Provider 加载失败"
+        title={t("asst.providerFailed")}
         desc={providersError}
         tone="warn"
         action={
           <button className="btn btn-sm" onClick={() => void loadAssistantProviders(true)}>
-            <ArrowClockwise size={12} /> 重试
+            <ArrowClockwise size={12} /> {t("common.retry")}
           </button>
         }
       />
     ) : providers.length === 0 || !modelSel.model ? (
       <GateCard
         Icon={Sparkle}
-        title="还没有可用的模型"
-        desc="在「设置中心 · LLM 设置」配置 Provider 与密钥后即可开始对话。"
+        title={t("asst.noModelsTitle")}
+        desc={t("asst.noModelsDesc")}
         action={
           <button className="btn btn-primary btn-sm" onClick={() => goSettingsTab("llm")}>
-            前往 LLM 设置
+            {t("assistant.settings.gotoLlm")}
           </button>
         }
       />
@@ -270,18 +272,18 @@ export function AssistantPanel() {
             <span className="w-6 h-6 rounded-md bg-accent-dim grid place-items-center text-accent shrink-0">
               <Sparkle size={13} weight="fill" />
             </span>
-            <span className="shrink-0 text-[12.5px] font-semibold text-ink">LLM 小助手</span>
+            <span className="shrink-0 text-[12.5px] font-semibold text-ink">{t("asst.title")}</span>
             {loading && <span className="w-1.5 h-1.5 shrink-0 rounded-full bg-accent animate-breathe" />}
             <span className="flex-1 min-w-0" />
             {!minimized && messages.length > 0 && !loading && (
-              <button className="icon-btn" title="清空对话" onClick={clearAssistantHistory}>
+              <button className="icon-btn" title={t("asst.clearChat")} onClick={clearAssistantHistory}>
                 <Eraser size={13} />
               </button>
             )}
-            <button className="icon-btn" title={minimized ? "展开" : "最小化"} onClick={() => setAssistantMinimized(!minimized)}>
+            <button className="icon-btn" title={minimized ? t("asst.expand") : t("asst.minimize")} onClick={() => setAssistantMinimized(!minimized)}>
               {minimized ? <CornersOut size={13} /> : <Minus size={13} />}
             </button>
-            <button className="icon-btn hover:!text-danger" title="关闭" onClick={() => setAssistantOpen(false)}>
+            <button className="icon-btn hover:!text-danger" title={t("common.close")} onClick={() => setAssistantOpen(false)}>
               <X size={13} />
             </button>
           </div>
@@ -297,22 +299,22 @@ export function AssistantPanel() {
                     <div className="mx-auto grid place-items-center w-11 h-11 rounded-2xl bg-accent-dim border border-accent/25">
                       <Sparkle size={20} weight="fill" className="text-accent" />
                     </div>
-                    <div className="mt-3 text-[13px] font-medium text-ink">问我任何技术与文字问题</div>
+                    <div className="mt-3 text-[13px] font-medium text-ink">{t("asst.welcomeTitle")}</div>
                     <div className="mt-1 text-[11.5px] text-faint leading-relaxed">
-                      回复使用「LLM 设置」中的模型 · 页面划选文字可直接提问
+                      {t("asst.welcomeHint")}
                     </div>
                     <div className="mt-4 flex flex-wrap justify-center gap-1.5 px-2">
-                      {SUGGESTIONS.map((tip) => (
+                      {SUGGESTION_KEYS.map((key) => (
                         <button
-                          key={tip}
+                          key={key}
                           data-no-drag
                           className="composer-chip"
                           onClick={() => {
-                            setAssistantDraft(tip);
+                            setAssistantDraft(t(key));
                             taRef.current?.focus();
                           }}
                         >
-                          {tip}
+                          {t(key)}
                         </button>
                       ))}
                     </div>
@@ -333,16 +335,16 @@ export function AssistantPanel() {
                 <div className="mx-3 mb-1 rounded-lg border border-warn/30 bg-warn/10 px-2.5 py-1.5 text-[11.5px] text-warn">
                   {mode !== "live" ? (
                     <>
-                      演示模式无法对话 ——{" "}
+                      {t("asst.demoBlocked")}{" "}
                       <button className="underline underline-offset-2 cursor-pointer" onClick={openConnect}>
-                        连接后端
+                        {t("settings.needBackend.connect")}
                       </button>
                     </>
                   ) : (
                     <>
-                      模型不可用，回复已暂停 ——{" "}
+                      {t("asst.modelUnavailable")}{" "}
                       <button className="underline underline-offset-2 cursor-pointer" onClick={() => goSettingsTab("llm")}>
-                        前往 LLM 设置修复
+                        {t("asst.gotoLlmFix")}
                       </button>
                     </>
                   )}
@@ -360,7 +362,7 @@ export function AssistantPanel() {
                       data-no-drag
                       onChange={(e) => setAssistantDraft(e.target.value)}
                       onKeyDown={onKeyDown}
-                      placeholder="向小助手提问…（Enter 发送，Shift+Enter 换行）"
+                      placeholder={t("asst.inputPlaceholder")}
                       className="composer-ta"
                       style={{ maxHeight: 140 }}
                     />
@@ -369,14 +371,14 @@ export function AssistantPanel() {
                       <span className="flex-1" />
                       {draft.length > 0 && <span className="composer-count">{draft.length}</span>}
                       {loading ? (
-                        <button className="composer-stop" title="中断生成" aria-label="中断生成" onClick={stopAssistantMessage}>
+                        <button className="composer-stop" title={t("composer.abortTip")} aria-label={t("composer.abortTip")} onClick={stopAssistantMessage}>
                           <Stop size={14} weight="fill" />
                         </button>
                       ) : (
                         <button
                           className="composer-send"
-                          title={modelSel.model ? "发送" : "先在左侧选择模型"}
-                          aria-label="发送"
+                          title={modelSel.model ? t("asst.sendTip") : t("asst.sendPickModel")}
+                          aria-label={t("asst.sendTip")}
                           disabled={!canSend}
                           onClick={() => void sendAssistantMessage()}
                         >
@@ -413,6 +415,7 @@ export function AssistantPanel() {
 /* ─── 消息行（共享原语组装，无第二份渲染实现） ─── */
 
 function AssistantEntryRow({ entry, onRetry }: { entry: AssistantChatEntry; onRetry: () => void }) {
+  const t = useT();
   if (entry.role === "user") {
     return (
       <UserBubble>
@@ -423,14 +426,14 @@ function AssistantEntryRow({ entry, onRetry }: { entry: AssistantChatEntry; onRe
 
   if (entry.error) {
     return (
-      <AssistantShell name="请求失败" ts={entry.ts} tone="danger" badge={<WarningCircle size={13} weight="fill" />}>
+      <AssistantShell name={t("asst.requestFailed")} ts={entry.ts} tone="danger" badge={<WarningCircle size={13} weight="fill" />}>
         <div className="rounded-lg border border-danger/35 bg-danger/10 px-3 py-2">
           <div className="text-[12.5px] leading-relaxed text-danger break-words">{entry.content}</div>
           <button
             className="mt-1.5 text-[11px] text-dim underline underline-offset-2 hover:text-ink cursor-pointer"
             onClick={onRetry}
           >
-            重试上一条提问
+            {t("asst.retryLast")}
           </button>
         </div>
       </AssistantShell>
@@ -447,6 +450,7 @@ function AssistantEntryRow({ entry, onRetry }: { entry: AssistantChatEntry; onRe
 
 /** 流式中的回合行：「思考中 N 秒」状态条（无正文时）/ md-body + 闪烁光标（有正文时）。 */
 function AssistantLiveRow({ streaming }: { streaming: string }) {
+  const t = useT();
   const [tick, setTick] = useState(0);
   useEffect(() => {
     const t = setInterval(() => setTick((x) => x + 1), 1000);
@@ -460,8 +464,8 @@ function AssistantLiveRow({ streaming }: { streaming: string }) {
       {!streaming ? (
         <div className="w-full flex items-center gap-2 px-3 h-8 rounded-lg border border-edge bg-sunken text-[12px] text-dim">
           <Brain size={14} className="text-info" weight="fill" />
-          <span>思考中</span>
-          <span className="text-faint tabular-nums">{formatDuration(elapsed) ?? "0 秒"}</span>
+          <span>{t("asst.thinking")}</span>
+          <span className="text-faint tabular-nums">{formatDuration(elapsed) ?? t("chat.zeroDuration")}</span>
           <span className="w-1.5 h-1.5 rounded-full bg-accent animate-breathe" />
         </div>
       ) : (

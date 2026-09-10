@@ -1,7 +1,8 @@
-/**
+﻿/**
  * 门禁域流程（gate flows）：预提审（锁定快照）、基座同步、审查（AI/人工）与发布。
  * 都是对后端异步任务（/presubmit、/review、/publish）的编排 + 进度回写。
  */
+import { t } from "@/i18n";
 import { api, pollTask } from "@/net";
 import { appStore } from "@/store";
 import { showToast } from "@/store/ui";
@@ -18,7 +19,7 @@ export async function livePresubmit(no: string) {
   setVerdict(no, null);
   clearReviewEnded(no);
   try {
-    setTask(no, { kind: "presubmit", percent: 50, label: "正在锁定快照", done: false });
+    setTask(no, { kind: "presubmit", percent: 50, label: t("kanban.toast.lockingSnapshot").replace("…", ""), done: false });
     const r = await api<{
       ticket_no: string;
       review_round: number;
@@ -38,9 +39,9 @@ export async function livePresubmit(no: string) {
       capturedAt: Date.now(),
     });
     await Promise.all([refreshTicket(no), loadEvidence(no)]);
-    pushSystemMessage(no, `第 ${r.review_round} 轮快照已锁定 · 指纹 ${r.tree_hash.slice(0, 10)}…`, "success");
+    pushSystemMessage(no, t("gateflow.snapshotLocked", { round: r.review_round, hash: r.tree_hash.slice(0, 10) }), "success");
   } catch (e) {
-    showToast(`预提审失败：${(e as Error).message}`);
+    showToast(t("gateflow.presubmitFailed", { err: (e as Error).message }));
   } finally {
     setTask(no, null);
     setGateBusy(no, false);
@@ -69,38 +70,38 @@ export async function liveSyncBase(no: string) {
     }>(`/api/tickets/${no}/sync-base`, { method: "POST", body: JSON.stringify({ allow_dirty: true }) });
     await refreshTicket(no);
     if (r.status === "skipped") {
-      showToast(`基座同步已跳过：${r.skipped_reason ?? "未知原因"}`);
+      showToast(t("gateflow.syncSkipped", { reason: r.skipped_reason ?? t("common.unknown") }));
     } else if (r.import_kind === "skipped" && r.import_reason) {
       // 基线本身没动（多为源仓库历史分叉等需人工处理的情况），必须可见，不能静默。
-      pushSystemMessage(no, `基座同步完成，但源仓库基线未导入：${r.import_reason}`, "warn");
+      pushSystemMessage(no, t("gateflow.syncNoImport", { reason: r.import_reason }), "warn");
     } else if (r.import_kind === "fast_forwarded" || r.import_kind === "adopted") {
       pushSystemMessage(
         no,
         r.import_kind === "adopted"
-          ? "已从源仓库采纳基线并同步工单基座：源仓库历史已进入克隆目录"
-          : `已从源仓库导入基线并同步工单基座（前进 ${r.behind} 个提交）`,
+          ? t("gateflow.syncAdopted")
+          : t("gateflow.syncImported", { n: r.behind }),
         "success",
       );
     } else if (r.status === "up_to_date") {
-      pushSystemMessage(no, "基座已是最新，无需同步", "info");
+      pushSystemMessage(no, t("gateflow.syncUpToDate"), "info");
     } else if (r.status === "replanted") {
-      pushSystemMessage(no, "工单分支已重锚到源仓库基线，未提交改动已原样保留", "success");
+      pushSystemMessage(no, t("gateflow.syncReplanted"), "success");
     } else if (r.conflicts.length > 0) {
       pushSystemMessage(
         no,
-        `基座已同步（前进 ${r.behind} 个提交），重放你的改动时出现冲突：${r.conflicts.join("、")}。请在沙箱中解决冲突标记后继续编码。`,
+        t("gateflow.syncConflicts", { n: r.behind, conflicts: r.conflicts.join(t("common.listSep")) }),
         "warn",
       );
     } else {
       pushSystemMessage(
         no,
-        `基座已同步：工单分支快进 ${r.behind} 个提交，未提交改动已原样保留` +
-          (r.stash_kept ? "（部分改动仍留在 stash 中）" : ""),
+        t("gateflow.syncDone", { n: r.behind }) +
+          (r.stash_kept ? t("gateflow.syncStashKept") : ""),
         "success",
       );
     }
   } catch (e) {
-    showToast(`基座同步失败：${(e as Error).message}`);
+    showToast(t("gateflow.syncFailed", { err: (e as Error).message }));
   } finally {
     setGateBusy(no, false);
   }
@@ -115,7 +116,7 @@ export async function liveReview(no: string, opts?: { humanPass?: boolean; note?
     setTask(no, {
       kind: "review",
       percent: 30,
-      label: opts ? "正在提交人工判决" : "引擎执行中",
+      label: opts ? t("gateflow.commitHumanVerdict") : t("findings.engineRunning"),
       done: false,
     });
     const body: Record<string, unknown> = {};
@@ -133,15 +134,15 @@ export async function liveReview(no: string, opts?: { humanPass?: boolean; note?
     });
     if (!outcome.ok) {
       // 失败原因必须可见：审查发现页挂错误卡片 + 会话流追加同文，替代笼统的"异常结束"。
-      const detail = outcome.error?.message || "未知错误";
+      const detail = outcome.error?.message || t("common.unknown");
       setReviewError(no, detail);
-      setTask(no, { kind: "review", percent: 100, label: "审查失败", done: true, failed: true });
-      pushSystemMessage(no, `审查任务失败：${detail}`, "warn");
-      showToast(`审查失败：${detail}`);
+      setTask(no, { kind: "review", percent: 100, label: t("gateflow.reviewFailed"), done: true, failed: true });
+      pushSystemMessage(no, t("gateflow.reviewTaskFailed", { err: detail }), "warn");
+      showToast(t("gateflow.reviewFailedToast", { err: detail }));
       await refreshTicket(no).catch(() => {});
       return;
     }
-    setTask(no, { kind: "review", percent: 100, label: "判决完成", done: true });
+    setTask(no, { kind: "review", percent: 100, label: t("gateflow.verdictDone"), done: true });
     await sleep(300);
     await Promise.all([loadReviewState(no), loadEvidence(no)]);
     await refreshTicket(no);
@@ -153,20 +154,20 @@ export async function liveReview(no: string, opts?: { humanPass?: boolean; note?
       if (!opts) {
         const text =
           verdict.verdict === "PASS"
-            ? "AI 审查通过 · 发布授权已签发，可在审查发现页查看详情"
+            ? t("gateflow.aiPass")
             : verdict.verdict === "REQUIRES_HUMAN"
-              ? "AI 审查完成 · 需人工核准后放行"
-              : `AI 审查驳回 · 共 ${(appStore.getState().findings[no] ?? []).length} 项发现，详见审查发现页`;
+              ? t("gateflow.aiHuman")
+              : t("gateflow.aiReject", { n: (appStore.getState().findings[no] ?? []).length });
         pushSystemMessage(no, text, verdict.verdict === "PASS" ? "success" : "warn");
       }
     }
-    if (opts?.humanPass === true) pushSystemMessage(no, "人工核准通过 · 发布授权已签发", "success");
-    if (opts?.humanPass === false) pushSystemMessage(no, "人工驳回 · 请根据审查意见修复后重新提审", "warn");
+    if (opts?.humanPass === true) pushSystemMessage(no, t("actions.overrideMsg"), "success");
+    if (opts?.humanPass === false) pushSystemMessage(no, t("actions.rejectMsg"), "warn");
   } catch (e) {
     const detail = (e as Error).message;
     setReviewError(no, detail);
-    showToast(`审查失败：${detail}`);
-    pushSystemMessage(no, `审查任务失败：${detail}`, "warn");
+    showToast(t("gateflow.reviewFailedToast", { err: detail }));
+    pushSystemMessage(no, t("gateflow.reviewTaskFailed", { err: detail }), "warn");
     await refreshTicket(no).catch(() => {
       /* 状态回刷失败忽略 */
     });
@@ -179,7 +180,7 @@ export async function liveReview(no: string, opts?: { humanPass?: boolean; note?
 export async function livePublish(no: string) {
   setGateBusy(no, true);
   try {
-    setTask(no, { kind: "publish", percent: 40, label: "原子推送中", done: false });
+    setTask(no, { kind: "publish", percent: 40, label: t("gateflow.publishingAtomic"), done: false });
     const { task_id } = await api<{ task_id: string }>(`/api/tickets/${no}/publish`, {
       method: "POST",
       body: "{}",
@@ -188,12 +189,12 @@ export async function livePublish(no: string) {
       setTask(no, { kind: "publish", percent, label, done: false });
     });
     if (!outcome.ok) {
-      const detail = outcome.error?.message || "未知错误";
-      showToast(`发布失败：${detail}`);
+      const detail = outcome.error?.message || t("common.unknown");
+      showToast(t("gateflow.publishFailed", { err: detail }));
       await refreshTicket(no).catch(() => {});
       return;
     }
-    setTask(no, { kind: "publish", percent: 100, label: "发布完成", done: true });
+    setTask(no, { kind: "publish", percent: 100, label: t("gateflow.publishDone"), done: true });
     await sleep(250);
     try {
       const t = await api<{ result_json?: string }>(`/api/tasks/${task_id}`);
@@ -213,9 +214,9 @@ export async function livePublish(no: string) {
       /* 忽略结果解析失败 */
     }
     await Promise.all([refreshTicket(no), loadEvidence(no)]);
-    if (outcome.ok) showToast("发布成功，主分支已更新");
+    if (outcome.ok) showToast(t("gateflow.publishSuccess"));
   } catch (e) {
-    showToast(`发布失败：${(e as Error).message}`);
+    showToast(t("gateflow.publishFailed", { err: (e as Error).message }));
   } finally {
     setTask(no, null);
     setGateBusy(no, false);

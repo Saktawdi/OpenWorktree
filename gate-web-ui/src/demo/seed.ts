@@ -1,7 +1,8 @@
-/**
+﻿/**
  * 演示模式种子（demo seed）：无后端时的初始工作台状态与快照恢复。
  * demo 引擎（脚本化回合模拟）见 engine.ts；示例数据见 scenario.ts。
  */
+import { t } from "@/i18n";
 import { appStore, readSnapshotRaw, type AppState } from "@/store";
 import { uid } from "@/shared/format";
 import type { ChatItem, DiffFile } from "@/shared/types";
@@ -36,7 +37,7 @@ export function seedDemo(force = false) {
       id: uid("sys"),
       tone: "info",
       ts: Date.now(),
-      text: "工单沙箱已就绪 · 独立克隆已创建，Agent 的全部改动不会触碰主分支",
+      text: t("ticket.sandboxReady"),
     },
   ];
   chats["T-102"] = [
@@ -45,7 +46,7 @@ export function seedDemo(force = false) {
       id: uid("sys"),
       tone: "info",
       ts: Date.now(),
-      text: "上一轮会话已归档 · 继续对话将追加到本工单",
+      text: t("demo.prevArchived"),
     },
   ];
   chats["T-201"] = [
@@ -54,7 +55,7 @@ export function seedDemo(force = false) {
       id: uid("sys"),
       tone: "info",
       ts: Date.now(),
-      text: "工单沙箱已就绪 · 独立克隆已创建，Agent 的全部改动不会触碰主分支",
+      text: t("ticket.sandboxReady"),
     },
   ];
   diffs["T-102"] = t102Diff();

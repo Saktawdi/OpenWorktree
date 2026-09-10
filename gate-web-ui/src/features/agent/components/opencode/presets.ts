@@ -1,4 +1,4 @@
-/**
+﻿/**
  * OpenCode 供应商管理的常量与模型配置解析（opencode presets）。
  * 面向 opencode.json(c) provider 节点的模型条目形状。
  */
@@ -40,8 +40,8 @@ export const OUTPUT_LIMIT_PRESETS = ["2K", "4K", "8K", "16K", "32K", "64K"];
 /** 模型变体一键模板：低/高 + 顶档两档，顶档推理强度分别为 max / xhigh。 */
 export const VARIANT_TEMPLATES = [
   {
-    label: "max 模板",
-    title: "填入 low/high/max 三档变体，最高推理到 max",
+    labelKey: "ocm.presetMax",
+    titleKey: "ocm.presetMaxTip",
     json: `{
   "low": {
     "reasoningEffort": "low"
@@ -55,8 +55,8 @@ export const VARIANT_TEMPLATES = [
 }`,
   },
   {
-    label: "xhigh 模板",
-    title: "填入 low/high/xhigh 三档变体，最高推理到 xhigh",
+    labelKey: "ocm.presetXhigh",
+    titleKey: "ocm.presetXhighTip",
     json: `{
   "low": {
     "reasoningEffort": "low"
@@ -69,7 +69,7 @@ export const VARIANT_TEMPLATES = [
   }
 }`,
   },
-];
+] as const;
 
 /** 200000 → "200K"、1000000 → "1M"；非整除的值原样显示。 */
 export function formatLimit(v: unknown): string {

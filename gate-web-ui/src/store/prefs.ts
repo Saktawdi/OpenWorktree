@@ -30,6 +30,10 @@ const ASSISTANT_SETTINGS_KEY = "gate-assistant-settings";
 const ASSISTANT_HISTORY_KEY = "gate-assistant-history";
 const ASSISTANT_MODEL_KEY = "gate-assistant-model";
 const ASSISTANT_LAYOUT_KEY = "gate-assistant-layout";
+/**
+ * 界面语言（T-115 i18n）：键名 "gate-locale" 由 i18n 域自持（见 src/i18n/index.ts）。
+ * 此处仅登记说明，避免 i18n ↔ prefs 的循环依赖（prefs → shared/format → i18n）。
+ */
 
 /** 会话分组的落盘形态（T-105）：分组表 + 会话归属表（sessionId → groupId）。 */
 export interface PersistedSessionGroups {

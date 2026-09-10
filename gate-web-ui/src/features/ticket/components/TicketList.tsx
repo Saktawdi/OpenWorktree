@@ -14,16 +14,18 @@ import { actions } from "@/app/actions";
 import { ALL_STAGES,
   PRIORITY_RANK,
   relativeTime,
-  STAGE_LABEL,
+  stageLabel,
   STAGE_SORT_RANK, } from "@/shared/format";
 import { closeTicketCreator, openTicketCreator, setVisibleStages } from "@/features/ticket";
 import { useApp, NO_DIFF } from "@/store";
+import { useT } from "@/i18n";
 import type { Priority, Stage } from "@/shared/types";
 import { LabelInput, PriorityChip, StageDot, useBackdropClose } from "@/shared/components/ui";
 
 const PRIORITIES: Priority[] = ["P0", "P1", "P2", "P3"];
 
 function NewTicketButton() {
+  const t = useT();
   const open = useApp((s) => s.ticketCreatorOpen);
   const [title, setTitle] = useState("");
   const [priority, setPriority] = useState<Priority>("P1");
@@ -51,7 +53,7 @@ function NewTicketButton() {
     <>
       <button className="btn h-7 px-2.5 text-[12px]" onClick={() => (open ? closeTicketCreator() : openTicketCreator())}>
         <Plus size={13} weight="bold" />
-        新建
+        {t("ticket.list.new")}
       </button>
       {open && (
         <div
@@ -63,20 +65,20 @@ function NewTicketButton() {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center gap-2.5 px-5 h-12 border-b border-edge">
-              <span className="text-[13px] font-semibold">新建工单</span>
+              <span className="text-[13px] font-semibold">{t("ticket.new.title")}</span>
               <span className="flex-1" />
-              <button className="icon-btn" onClick={() => closeTicketCreator()} aria-label="关闭">
+              <button className="icon-btn" onClick={() => closeTicketCreator()} aria-label={t("common.close")}>
                 ✕
               </button>
             </div>
 
             <div className="p-5 space-y-4 max-h-[70vh] overflow-y-auto">
               <div>
-                <label className="field-label">标题</label>
+                <label className="field-label">{t("ticket.new.titleLabel")}</label>
                 <input
                   autoFocus
                   className="text-input"
-                  placeholder="例如：为订单接口添加幂等保护"
+                  placeholder={t("ticket.new.titlePlaceholder")}
                   value={title}
                   onChange={(e) => setTitle(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && submit()}
@@ -84,7 +86,7 @@ function NewTicketButton() {
               </div>
 
               <div>
-                <label className="field-label">优先级</label>
+                <label className="field-label">{t("ticket.new.priorityLabel")}</label>
                 <div className="flex gap-1">
                   {PRIORITIES.map((p) => (
                     <button
@@ -103,40 +105,40 @@ function NewTicketButton() {
               </div>
 
               <div>
-                <label className="field-label">目标分支（可选，创建后锁定）</label>
+                <label className="field-label">{t("ticket.new.branchLabel")}</label>
                 <input
                   className="text-input font-mono"
-                  placeholder="默认 refs/heads/<工单号>"
+                  placeholder={t("ticket.new.branchPlaceholder")}
                   value={targetBranch}
                   onChange={(e) => setTargetBranch(e.target.value)}
                 />
                 <div className="mt-1 text-[10.5px] text-faint">
-                  每个工单在权威库拥有独立分支；填 main 则发布到共享主分支
+                  {t("ticket.new.branchHint")}
                 </div>
               </div>
 
               <div>
-                <label className="field-label">描述（可选）</label>
+                <label className="field-label">{t("ticket.new.descLabel")}</label>
                 <textarea
                   className="text-input h-40 py-2 resize-none"
-                  placeholder="背景、验收标准…"
+                  placeholder={t("ticket.new.descPlaceholder")}
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
                 />
               </div>
 
               <div>
-                <label className="field-label">标签（可选）</label>
+                <label className="field-label">{t("ticket.new.labelsLabel")}</label>
                 <LabelInput labels={labels} onChange={setLabels} />
               </div>
             </div>
 
             <div className="flex justify-end gap-2 px-5 py-4 border-t border-edge">
               <button className="btn" onClick={() => closeTicketCreator()}>
-                取消
+                {t("common.cancel")}
               </button>
               <button className="btn btn-primary" disabled={!title.trim()} onClick={submit}>
-                创建并打开沙箱
+                {t("ticket.new.submit")}
               </button>
             </div>
           </div>
@@ -148,6 +150,7 @@ function NewTicketButton() {
 
 /** 状态筛选：勾选要显示的状态（持久化），带各状态工单数与重置。 */
 function StageFilterButton() {
+  const t = useT();
   const [open, setOpen] = useState(false);
   // 面板用 fixed 定位并夹紧到视口内：侧栏仅 268px 宽，absolute right-0 会把面板左缘推出窗口被裁剪
   const [panelPos, setPanelPos] = useState<{ top: number; left: number }>({ top: 0, left: 8 });
@@ -190,15 +193,15 @@ function StageFilterButton() {
       <button
         ref={btnRef}
         className={`btn h-7 px-2 text-[12px] ${filtered ? "!border-accent/50 !text-accent" : ""}`}
-        title="按状态筛选"
-        aria-label="按状态筛选"
+        title={t("ticket.list.filterByStage")}
+        aria-label={t("ticket.list.filterByStage")}
         onClick={() => {
           if (!open) placePanel();
           setOpen(!open);
         }}
       >
         <Funnel size={13} weight={filtered ? "fill" : "regular"} />
-        筛选
+        {t("ticket.list.filter")}
       </button>
       {open && (
         <>
@@ -208,12 +211,12 @@ function StageFilterButton() {
             style={{ top: panelPos.top, left: panelPos.left, width: PANEL_WIDTH }}
           >
             <div className="flex items-center gap-2 px-2 h-8">
-              <span className="text-[11px] font-medium text-dim flex-1">显示的状态</span>
+              <span className="text-[11px] font-medium text-dim flex-1">{t("ticket.list.filterTitle")}</span>
               <button
                 className="text-[11px] text-faint hover:text-accent cursor-pointer transition-colors"
                 onClick={() => setVisibleStages([...ALL_STAGES])}
               >
-                重置
+                {t("ticket.list.filterReset")}
               </button>
             </div>
             <div className="max-h-[320px] overflow-y-auto">
@@ -236,7 +239,7 @@ function StageFilterButton() {
                       <Check size={10} weight="bold" />
                     </span>
                     <StageDot stage={st} />
-                    <span className="flex-1 truncate">{STAGE_LABEL[st]}</span>
+                    <span className="flex-1 truncate">{stageLabel(st, t)}</span>
                     <span className="font-mono text-[10.5px] text-faint">{n}</span>
                   </button>
                 );
@@ -251,36 +254,38 @@ function StageFilterButton() {
 
 /** T-120：工单列表运行徽标 —— 会话运行中（均衡器）与 AI 审查运行中（旋转环）动效不同。 */
 function RunBadge({ kind, count }: { kind: "agent" | "review"; count?: number }) {
+  const t = useT();
   if (kind === "review") {
     return (
-      <span className="run-badge run-badge-review" title="AI 审查运行中">
+      <span className="run-badge run-badge-review" title={t("ticket.badge.reviewRunningTip")}>
         <span className="review-spin" aria-hidden />
-        审查中
+        {t("ticket.badge.reviewRunning")}
       </span>
     );
   }
   return (
-    <span className="run-badge run-badge-agent" title="会话运行中">
+    <span className="run-badge run-badge-agent" title={t("ticket.badge.sessionRunningTip")}>
       <span className="eq-bars" aria-hidden>
         <i />
         <i />
         <i />
       </span>
-      {count !== undefined ? `${count} 运行中` : "运行中"}
+      {count !== undefined ? t("ticket.badge.runningCount", { count }) : t("ticket.badge.running")}
     </span>
   );
 }
 
 /** T-120 增强：待决询问徽标 —— 智能体的 question/permission 正等待用户处理。 */
 function AskBadge({ kind, count }: { kind: "question" | "permission"; count: number }) {
+  const t = useT();
   const isQuestion = kind === "question";
   return (
     <span
       className="run-badge run-badge-ask"
-      title={isQuestion ? "智能体在等待你回答问题" : "智能体在等待权限确认"}
+      title={isQuestion ? t("ticket.badge.waitAnswerTip") : t("ticket.badge.waitPermitTip")}
     >
       {isQuestion ? <Question size={9} weight="bold" /> : <ShieldWarning size={9} weight="bold" />}
-      {isQuestion ? "待回答" : "待授权"}
+      {isQuestion ? t("ticket.badge.waitAnswer") : t("ticket.badge.waitPermit")}
       {count > 1 ? ` ×${count}` : ""}
     </span>
   );
@@ -288,44 +293,47 @@ function AskBadge({ kind, count }: { kind: "question" | "permission"; count: num
 
 /** T-120 增强：会话结束提醒徽标 —— 正常结束（绿）与出错/中止（红）。 */
 function EndBadge({ kind }: { kind: "done" | "failed" }) {
+  const t = useT();
   if (kind === "failed") {
     return (
-      <span className="run-badge run-badge-end-failed" title="会话已异常结束（出错或中止）">
+      <span className="run-badge run-badge-end-failed" title={t("ticket.badge.interruptedTip")}>
         <WarningCircle size={9} weight="bold" />
-        已中断
+        {t("ticket.badge.interrupted")}
       </span>
     );
   }
   return (
-    <span className="run-badge run-badge-end-done" title="会话回合已结束">
+    <span className="run-badge run-badge-end-done" title={t("ticket.badge.endedTip")}>
       <CheckCircle size={9} weight="bold" />
-      已结束
+      {t("ticket.badge.ended")}
     </span>
   );
 }
 
 /** 审查结果徽标 —— 判决落盘后的列表位提醒：通过/需人工为绿「已审查」，驳回为红「驳回」。 */
 function ReviewBadge({ verdict }: { verdict: "PASS" | "REJECT" | "REQUIRES_HUMAN" }) {
+  const t = useT();
   if (verdict === "REJECT") {
     return (
-      <span className="run-badge run-badge-end-failed" title="审查驳回：存在阻断项，详见审查发现页">
+      <span className="run-badge run-badge-end-failed" title={t("ticket.badge.rejectedTip")}>
         <WarningCircle size={9} weight="bold" />
-        驳回
+        {t("ticket.badge.rejected")}
       </span>
     );
   }
   return (
     <span
       className="run-badge run-badge-end-done"
-      title={verdict === "PASS" ? "审查通过 · 发布授权已签发" : "审查完成 · 需人工核准后放行"}
+      title={verdict === "PASS" ? t("ticket.badge.reviewedPassTip") : t("ticket.badge.reviewedHumanTip")}
     >
       <CheckCircle size={9} weight="bold" />
-      已审查
+      {t("ticket.badge.reviewed")}
     </span>
   );
 }
 
 export function TicketList() {
+  const tr = useT();
   const ticketsAll = useApp((s) => s.tickets);
   const activeProjectId = useApp((s) => s.activeProjectId);
   const selectedNo = useApp((s) => s.selectedNo);
@@ -392,7 +400,7 @@ export function TicketList() {
   return (
     <aside className="w-[268px] shrink-0 border-r border-edge flex flex-col bg-canvas">
       <div className="flex items-center justify-between px-3 pt-3 pb-2">
-        <span className="kicker px-1">工单</span>
+        <span className="kicker px-1">{tr("ticket.list.title")}</span>
         <div className="flex items-center gap-1.5">
           <StageFilterButton />
           <NewTicketButton />
@@ -407,7 +415,7 @@ export function TicketList() {
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="搜索工单"
+            placeholder={tr("ticket.list.search")}
             className="w-full h-8 rounded-lg border border-edge bg-sunken pl-8 pr-2 text-[12.5px] placeholder:text-faint focus:border-accent/50 focus:outline-none transition-colors"
           />
         </div>
@@ -464,19 +472,19 @@ export function TicketList() {
               </div>
               <div className="mt-1.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] text-faint">
                 <StageDot stage={t.stage} />
-                <span className="shrink-0">{STAGE_LABEL[t.stage]}</span>
+                <span className="shrink-0">{stageLabel(t.stage, tr)}</span>
                 {t.isSuper && (
                   <span
                     className="chip border border-violet/30 bg-violet/10 text-violet"
-                    title="快速模式：直连项目原工作区，提交直达主分支，永不关闭"
+                    title={tr("ticket.list.quickModeTip")}
                   >
-                    快速模式
+                    {tr("ticket.list.quickMode")}
                   </span>
                 )}
                 {hasDiff && !running && !ended && !reviewed && !asks && (
                   <>
                     <span className="text-edge-strong">·</span>
-                    <span>有变更</span>
+                    <span>{tr("ticket.list.hasChanges")}</span>
                   </>
                 )}
                 {asks && (
@@ -499,7 +507,7 @@ export function TicketList() {
           );
         })}
         {filtered.length === 0 && (
-          <div className="mt-10 text-center text-[12.5px] text-faint">没有匹配的工单</div>
+          <div className="mt-10 text-center text-[12.5px] text-faint">{tr("ticket.list.noMatch")}</div>
         )}
       </div>
     </aside>
