@@ -5,7 +5,7 @@ export type SettingsTab = "prefs" | "storage" | "toml" | "mcp" | "llm" | "assist
 
 const NAV_ITEMS = [
   { key: "prefs", label: "偏好设置", desc: "输入 · 语言等本地偏好", Icon: Faders },
-  { key: "storage", label: "存储设置", desc: "数据目录 · 缓存清理", Icon: Database },
+  { key: "storage", label: "存储设置", desc: "数据目录 · 工作区 · 缓存", Icon: Database },
   { key: "toml", label: "系统设置", desc: "运行键值与默认值", Icon: Wrench },
   { key: "mcp", label: "MCP 状态", desc: "服务与工具清单", Icon: PlugsConnected },
   { key: "llm", label: "LLM 设置", desc: "Provider 与模型", Icon: Robot },

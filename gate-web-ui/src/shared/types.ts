@@ -741,6 +741,48 @@ export interface StorageCleanResult {
   removed_files: number;
 }
 
+/** 工作区关联的工单信息（克隆根目录名即工单号；查无工单或未启用关联时为 null）。 */
+export interface StorageWorkspaceTicket {
+  title: string;
+  project_id: string | null;
+}
+
+/** 工作区内的一个可再生目录（node_modules/构建产物等，相对路径用正斜杠）。 */
+export interface StoragePrunableDir {
+  name: string;
+  bytes: number;
+  files: number;
+  approx: boolean;
+}
+
+/** 克隆根下的一个工作区（占用为估算；last_active_ms 为 null 表示无工作文件改动记录）。 */
+export interface StorageWorkspace {
+  id: string;
+  path: string;
+  bytes: number;
+  approx: boolean;
+  /** 最后改动时间（epoch 毫秒）：只统计工作文件，重装依赖/git 操作不刷新。 */
+  last_active_ms: number | null;
+  ticket: StorageWorkspaceTicket | null;
+  prunable: StoragePrunableDir[];
+  prunable_bytes: number;
+  prunable_approx: boolean;
+}
+
+export interface StorageWorkspacesResponse {
+  clones_root: string;
+  workspaces: StorageWorkspace[];
+}
+
+export interface StoragePruneResult {
+  ok: boolean;
+  removed_bytes: number;
+  removed_files: number;
+  removed_dirs: number;
+  /** 本次删除成功的可再生目录（相对路径）。 */
+  dirs: string[];
+}
+
 export interface LlmProvider {
   id: string;
   name: string;

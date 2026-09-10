@@ -7,16 +7,24 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import gate.domain.config.GateConfig;
+import gate.domain.error.GateErrorCode;
 import gate.domain.error.GateException;
 import gate.domain.policy.Policy;
 import gate.domain.publish.CommitIdentity;
+import gate.domain.ticket.Ticket;
+import gate.domain.ticket.TicketStage;
+import gate.ports.store.TicketRepository;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.FileTime;
+import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -25,7 +33,8 @@ import org.junit.jupiter.api.io.TempDir;
  * 存储设置数据面（T-116）：目录概览、缓存清单、按类清理与「在系统中打开」。
  *
  * <p>目录打开器走注入的记录器缝，测试绝不真的拉起文件管理器；清理断言走真实临时
- * 文件系统（进程临时日志、git 临时目录、适配器日志三种类别逐一验证）。
+ * 文件系统（进程临时日志、git 临时目录、适配器日志三种类别逐一验证；工作区可再生
+ * 目录整树删除与路径穿越拒绝同样落盘验证）。
  */
 class StorageInfoServiceTest {
 
@@ -34,6 +43,7 @@ class StorageInfoServiceTest {
 
     private Path gateHome;
     private Path clonesRoot;
+    private FakeTickets tickets;
     private StorageInfoService service;
     private final List<Path> opened = new ArrayList<>();
 
@@ -41,7 +51,8 @@ class StorageInfoServiceTest {
     void setUp() {
         gateHome = dir.resolve("gate-home");
         clonesRoot = dir.resolve("clones");
-        service = new StorageInfoService(config(), null, opened::add);
+        tickets = new FakeTickets();
+        service = new StorageInfoService(config(), null, tickets, opened::add);
     }
 
     private GateConfig config() {
@@ -80,6 +91,95 @@ class StorageInfoServiceTest {
             }
         }
         throw new AssertionError("cache not found: " + id);
+    }
+
+    /** 工单仓库替身：只有 find 有行为，其余方法绝不参与本服务链路。 */
+    private static final class FakeTickets implements TicketRepository {
+
+        private final Map<String, Ticket> byNo = new HashMap<>();
+
+        void put(String no, String title, String projectId) {
+            byNo.put(no, new Ticket(no, title, "refs/heads/master", null, null, null, null, null,
+                    TicketStage.IN_PROGRESS, Instant.EPOCH, Instant.EPOCH,
+                    null, null, null, null, projectId, null, null, List.of(), false));
+        }
+
+        @Override
+        public void insert(Ticket ticket) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Optional<Ticket> find(String ticketNo) {
+            return Optional.ofNullable(byNo.get(ticketNo));
+        }
+
+        @Override
+        public void updateStage(String ticketNo, TicketStage stage, Instant now) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void updateExecTokens(String ticketNo, long totalTokens, String source, Instant now) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public List<Ticket> findByStage(TicketStage stage) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public List<Ticket> findAll() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Optional<Ticket> findSuperByProject(String projectId) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void updateSuperLocation(String ticketNo, String clonePath, String targetRef, Instant now) {
+            throw new UnsupportedOperationException();
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> workspaceOf(Map<String, Object> body, String id) {
+        for (Map<String, Object> w : (List<Map<String, Object>>) body.get("workspaces")) {
+            if (id.equals(w.get("id"))) {
+                return w;
+            }
+        }
+        throw new AssertionError("workspace not found: " + id);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> prunableOf(Map<String, Object> workspace, String name) {
+        for (Map<String, Object> p : (List<Map<String, Object>>) workspace.get("prunable")) {
+            if (name.equals(p.get("name"))) {
+                return p;
+            }
+        }
+        throw new AssertionError("prunable not found: " + name);
+    }
+
+    /** 造一个典型工作区：源文件（10 天前）+ node_modules（含嵌套）+ target + .git。 */
+    private Path seedWorkspace(String id) throws IOException {
+        Path root = Files.createDirectories(clonesRoot.resolve(id));
+        Files.createDirectories(root.resolve("src"));
+        Files.createDirectories(root.resolve("node_modules").resolve("packages").resolve("app")
+                .resolve("node_modules"));
+        Files.createDirectories(root.resolve("target").resolve("classes"));
+        Files.createDirectories(root.resolve(".git").resolve("objects"));
+        Files.writeString(root.resolve("src").resolve("Main.java"), "hello", StandardCharsets.UTF_8);
+        Files.writeString(root.resolve("node_modules").resolve("lib.js"), "abcdef", StandardCharsets.UTF_8);
+        Files.writeString(root.resolve("node_modules").resolve("packages").resolve("app")
+                .resolve("node_modules").resolve("inner.js"), "z", StandardCharsets.UTF_8);
+        Files.writeString(root.resolve("target").resolve("classes").resolve("A.class"), "xy", StandardCharsets.UTF_8);
+        Files.writeString(root.resolve(".git").resolve("objects").resolve("o"), "1234", StandardCharsets.UTF_8);
+        return root;
     }
 
     @Test
@@ -220,5 +320,134 @@ class StorageInfoServiceTest {
         GateException e = assertThrows(GateException.class, () -> service.open("db"));
         assertEquals(gate.domain.error.GateErrorCode.USAGE, e.code());
         assertEquals(2, opened.size(), "未知 target 不得触达启动器");
+    }
+
+    /* ─── 工作区存储管理 ─── */
+
+    @Test
+    void workspacesListOccupancyPrunableAndTicketAssociation() throws IOException {
+        seedWorkspace("T-116");
+        tickets.put("T-116", "存储设置分区", "openworktree");
+
+        Map<String, Object> body = service.workspaces();
+        assertEquals(clonesRoot.toAbsolutePath().normalize().toString(), body.get("clones_root"));
+        Map<String, Object> ws = workspaceOf(body, "T-116");
+
+        // 总占用 = src(5) + node_modules(6+1) + target(2) + .git(4)
+        assertEquals(18L, ws.get("bytes"));
+        assertEquals(Boolean.FALSE, ws.get("approx"));
+
+        // 可再生清单：node_modules 与 target（嵌套 node_modules 被外层整树覆盖，不重复单列）
+        assertEquals(7L, prunableOf(ws, "node_modules").get("bytes"), "嵌套内层文件计入外层占用");
+        assertEquals(2L, prunableOf(ws, "target").get("bytes"));
+        assertEquals(9L, ((Number) ws.get("prunable_bytes")).longValue());
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> prunable = (List<Map<String, Object>>) ws.get("prunable");
+        assertEquals(2, prunable.size(), "嵌套可再生目录不得重复单列");
+
+        // 工单关联：标题与项目透传
+        @SuppressWarnings("unchecked")
+        Map<String, Object> ticket = (Map<String, Object>) ws.get("ticket");
+        assertEquals("存储设置分区", ticket.get("title"));
+        assertEquals("openworktree", ticket.get("project_id"));
+    }
+
+    @Test
+    void lastActiveExcludesRegenerableAndGitContent() throws IOException {
+        Path root = seedWorkspace("T-116");
+        // 源文件时间锚在 10 天前；node_modules/.git 留在「现在」——重装依赖或 git 操作
+        // 不得把「最后改动」刷新，只有工作文件的 mtime 参与统计
+        FileTime tenDaysAgo = FileTime.fromMillis(System.currentTimeMillis() - 10L * 24 * 3600 * 1000);
+        Files.setLastModifiedTime(root.resolve("src").resolve("Main.java"), tenDaysAgo);
+
+        Map<String, Object> ws = workspaceOf(service.workspaces(), "T-116");
+        long lastActive = ((Number) ws.get("last_active_ms")).longValue();
+        long now = System.currentTimeMillis();
+        assertTrue(lastActive <= now - 9L * 24 * 3600 * 1000, "node_modules/.git 的 mtime 不算最后改动");
+        assertTrue(lastActive >= now - 11L * 24 * 3600 * 1000, "源文件 mtime 是唯一的最后改动来源");
+    }
+
+    @Test
+    void unassociatedWorkspaceAndMissingRepoEmitNullTicket() throws IOException {
+        seedWorkspace("GHOST-1"); // 库里没有这个工单
+        StorageInfoService noRepo = new StorageInfoService(config(), null, null, opened::add);
+
+        assertNull(workspaceOf(service.workspaces(), "GHOST-1").get("ticket"), "查无工单 → null");
+        assertNull(workspaceOf(noRepo.workspaces(), "GHOST-1").get("ticket"), "无工单仓库 → null");
+    }
+
+    @Test
+    void workspacesSkipLooseFilesAndMissingClonesRoot() throws IOException {
+        Files.createDirectories(clonesRoot);
+        Files.writeString(clonesRoot.resolve("stray.txt"), "x", StandardCharsets.UTF_8);
+        Map<String, Object> body = service.workspaces();
+        assertTrue(((List<?>) body.get("workspaces")).isEmpty(), "克隆根下的散文件不是工作区");
+
+        // clonesRoot 从未创建：安静返回空清单而不是失败
+        GateConfig missing = new GateConfig(
+                2, "storage-test",
+                dir.resolve("auth.git"),
+                dir.resolve("clones-missing"),
+                List.of("refs/heads/main"),
+                gateHome,
+                gateHome.resolve("approvals"),
+                gateHome.resolve("gate.db"),
+                gateHome.resolve("blobs"),
+                gateHome.resolve("audit.jsonl"),
+                gateHome.resolve("locks"),
+                gateHome.resolve("idx"),
+                new CommitIdentity("gate", "gate@localhost", "1700000000 +0000"),
+                Policy.defaults(),
+                null);
+        assertTrue(((List<?>) new StorageInfoService(missing, null, tickets, opened::add)
+                .workspaces().get("workspaces")).isEmpty());
+    }
+
+    @Test
+    void pruneDeletesRegenerableTreesOnly() throws IOException {
+        seedWorkspace("T-116");
+
+        Map<String, Object> result = service.pruneWorkspace("T-116");
+
+        assertEquals(true, result.get("ok"));
+        assertEquals(9L, ((Number) result.get("removed_bytes")).longValue());
+        assertEquals(3L, ((Number) result.get("removed_files")).longValue());
+        assertTrue(((Number) result.get("removed_dirs")).longValue() >= 4, "node_modules/target 及其子目录");
+        @SuppressWarnings("unchecked")
+        List<String> dirs = (List<String>) result.get("dirs");
+        assertTrue(dirs.contains("node_modules"));
+        assertTrue(dirs.contains("target"));
+
+        assertFalse(Files.exists(clonesRoot.resolve("T-116").resolve("node_modules")));
+        assertFalse(Files.exists(clonesRoot.resolve("T-116").resolve("target")));
+        assertTrue(Files.exists(clonesRoot.resolve("T-116").resolve("src").resolve("Main.java")),
+                "源代码绝不清理");
+        assertTrue(Files.exists(clonesRoot.resolve("T-116").resolve(".git").resolve("objects").resolve("o")),
+                ".git 绝不清理");
+    }
+
+    @Test
+    void pruneEmptyWorkspaceIsANoOp() throws IOException {
+        Files.createDirectories(clonesRoot.resolve("EMPTY-1"));
+        Map<String, Object> result = service.pruneWorkspace("EMPTY-1");
+        assertEquals(true, result.get("ok"));
+        assertEquals(0L, ((Number) result.get("removed_bytes")).longValue());
+        assertEquals(0L, ((Number) result.get("removed_dirs")).longValue());
+        assertTrue(((List<?>) result.get("dirs")).isEmpty());
+    }
+
+    @Test
+    void pruneRejectsInvalidOrUnknownIds() throws IOException {
+        seedWorkspace("T-116");
+        for (String bad : new String[]{"..", "../..", "a/b", "C:\\x", ".git", "", null}) {
+            GateException e = assertThrows(GateException.class, () -> service.pruneWorkspace(bad),
+                    "id=" + bad);
+            assertEquals(GateErrorCode.USAGE, e.code(), "id=" + bad);
+        }
+        // 合法形态但目录不存在同样拒绝
+        GateException e = assertThrows(GateException.class, () -> service.pruneWorkspace("T-999"));
+        assertEquals(GateErrorCode.USAGE, e.code());
+        // 校验失败绝不动真格删除
+        assertTrue(Files.exists(clonesRoot.resolve("T-116").resolve("node_modules")));
     }
 }

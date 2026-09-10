@@ -63,9 +63,10 @@ public final class ApiRoutes implements WebController {
                         c.ticketRepository(), c.clock(), new SessionModelCatalog(), c.credentials(),
                         c.providerRepository()),
                 new SettingsController(c.gateToml()),
-                // 存储设置（T-116）：数据目录/占用/缓存清理/在系统中打开
+                // 存储设置（T-116）：数据目录/占用/缓存清理/工作区存储管理/在系统中打开
                 new StorageController(
-                        new gate.web.service.StorageInfoService(c.config(), c.gateToml())),
+                        new gate.web.service.StorageInfoService(c.config(), c.gateToml(),
+                                c.ticketRepository())),
                 // 插件系统：manifest 扫描/启停/资产下发/KV 数据（目录都在 gateHome 下）
                 new PluginController(
                         new PluginCatalog(c.config().gateHome().resolve("plugins")),
