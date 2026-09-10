@@ -29,8 +29,16 @@ import java.util.function.Consumer;
  * <p>On timeout the whole process tree is destroyed: {@code descendants()} first, then the process
  * itself, since git spawns helpers (e.g. {@code git-receive-pack}) that would otherwise survive and
  * keep file handles on the repo — on Windows that leaves undeletable {@code .git} directories.
+ * A {@link StreamSpec#cancel() cancel signal} destroys the same tree, on the caller's command
+ * rather than the clock's (T-120).
  */
 public final class ProcessRunnerImpl implements ProcessRunner {
+
+    /**
+     * How often a streaming wait re-checks the cancel signal. Small enough that a user-visible
+     * abort feels immediate, large enough that a long run does not spin on the OS.
+     */
+    private static final long CANCEL_POLL_MILLIS = 100;
 
     private final Path tempRoot;
 
@@ -98,16 +106,11 @@ public final class ProcessRunnerImpl implements ProcessRunner {
 
     @Override
     public ProcRun runStreaming(List<String> argv, Path cwd, Map<String, String> env, Duration timeout,
-                                Consumer<String> stdoutConsumer, Consumer<String> stderrConsumer) {
-        return runStreaming(argv, cwd, env, timeout, null, stdoutConsumer, stderrConsumer);
-    }
-
-    @Override
-    public ProcRun runStreaming(List<String> argv, Path cwd, Map<String, String> env, Duration timeout,
-                                String stdin, Consumer<String> stdoutConsumer, Consumer<String> stderrConsumer) {
+                                StreamSpec spec, Consumer<String> stdoutConsumer, Consumer<String> stderrConsumer) {
         if (argv == null || argv.isEmpty()) {
             throw new IllegalArgumentException("argv must not be empty");
         }
+        StreamSpec stream = spec == null ? StreamSpec.NONE : spec;
         Instant started = Instant.now();
         StringBuilder stdoutAcc = new StringBuilder();
         StringBuilder stderrAcc = new StringBuilder();
@@ -121,7 +124,7 @@ public final class ProcessRunnerImpl implements ProcessRunner {
             }
 
             Process process = pb.start();
-            writeStdin(process, stdin);
+            writeStdin(process, stream.stdin());
 
             CompletableFuture<Void> outFuture = CompletableFuture.runAsync(() ->
                     drainStream(process.getInputStream(), line -> {
@@ -149,11 +152,29 @@ public final class ProcessRunnerImpl implements ProcessRunner {
                         }
                     }));
 
-            boolean exited = process.waitFor(timeout.toMillis(), TimeUnit.MILLISECONDS);
-            int exitCode;
+            // T-120: the wait is chopped into poll slices so a cancel signal can be honoured
+            // mid-run — a blocking waitFor(timeout) would keep the child alive until it finished
+            // on its own, which is exactly the abort-does-nothing bug. The deadline keeps the
+            // total wall time equal to the requested timeout, slices only make it interruptible.
+            long deadlineNanos = System.nanoTime() + timeout.toNanos();
+            boolean exited = false;
             boolean timedOut = false;
-            if (!exited) {
-                timedOut = true;
+            boolean cancelled = false;
+            while (!exited) {
+                long remainingMillis = (deadlineNanos - System.nanoTime()) / 1_000_000L;
+                if (remainingMillis <= 0) {
+                    timedOut = true;
+                    break;
+                }
+                exited = process.waitFor(Math.min(CANCEL_POLL_MILLIS, remainingMillis), TimeUnit.MILLISECONDS);
+                if (!exited && stream.cancel() != null && stream.cancel().cancelled()) {
+                    cancelled = true;
+                    break;
+                }
+            }
+
+            int exitCode;
+            if (timedOut || cancelled) {
                 killTree(process);
                 process.waitFor(5, TimeUnit.SECONDS);
                 exitCode = process.isAlive() ? -1 : process.exitValue();

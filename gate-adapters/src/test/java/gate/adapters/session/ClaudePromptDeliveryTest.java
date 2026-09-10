@@ -15,6 +15,7 @@ import gate.domain.session.AgentConfig;
 import gate.domain.session.Session;
 import gate.ports.infra.Clock;
 import gate.ports.infra.ProcessRunner;
+import gate.ports.infra.ProcessRunner.StreamSpec;
 import gate.ports.session.AgentSessionPort;
 import gate.ports.store.ProviderRepository;
 
@@ -173,9 +174,9 @@ class ClaudePromptDeliveryTest {
 
         @Override
         public ProcRun runStreaming(List<String> argv, Path cwd, Map<String, String> env, Duration timeout,
-                                    String stdin, Consumer<String> stdoutConsumer, Consumer<String> stderrConsumer) {
+                                    StreamSpec spec, Consumer<String> stdoutConsumer, Consumer<String> stderrConsumer) {
             this.argv = List.copyOf(argv);
-            this.stdin = stdin;
+            this.stdin = spec.stdin();
             return new ProcRun(argv, 0,
                     "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"ok\"}]}}",
                     "", Duration.ofMillis(1), false);

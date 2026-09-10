@@ -42,6 +42,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -81,6 +82,10 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
     // 有进行中回合的 session id 快照（入队即算运行，排队等待也算），用于顶栏 busy 统计
     // 同一 session 可能连续 send，两次都在 executor 队列中等待；用引用计数保证全部完成后才移出
     private final Map<String, AtomicInteger> inFlightCounts = new ConcurrentHashMap<>();
+    // T-120：进行中回合的取消信号，abort 逐个置位以真正杀掉对应 claude 进程树。
+    // 同一 session 可以有多个回合（排队中/运行中），故按 session 聚成集合；
+    // abort 整体移除该集合——移除后新入队的回合拿到全新信号，不会被上一次 abort 误伤。
+    private final Map<String, Set<TurnCancel>> turnCancels = new ConcurrentHashMap<>();
 
     public ClaudeHeadlessAdapter(ProcessRunner processRunner,
                                  AgentConfigRepository agentConfigs,
@@ -255,10 +260,16 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
         // 首个回合（initial_prompt 非空即开跑）同样计入 busy：会话创建即运行，
         // 此前不在统计内，顶栏在该回合运行期间会错误显示 0。
         incrementInFlight(sessionId);
+        TurnCancel turn = registerTurn(sessionId);
         try {
             StreamEcho echo = new StreamEcho(sessionId);
             ProcessRunner.ProcRun run = processRunner.runStreaming(argv.argv(), clone, request.env(), Duration.ofMinutes(10),
-                    request.initialPrompt(), echo::line, null);
+                    new ProcessRunner.StreamSpec(request.initialPrompt(), turn), echo::line, null);
+
+            // T-120：首回合被 abort 杀掉——不落助手/错误消息，会话保持刚插入时的状态。
+            if (turn.cancelled()) {
+                return sessions.find(sessionId).orElse(session);
+            }
 
             ParsedOutput parsed = parseStream(run.stdout());
             Session withUsage = session;
@@ -303,6 +314,7 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
             return sessions.find(sessionId).orElse(withUsage);
         } finally {
             // 覆盖正常完成、ErrorChunk、异常、中断所有出口，不得依赖是否存在 SSE 监听者
+            unregisterTurn(sessionId, turn);
             decrementInFlight(sessionId);
         }
     }
@@ -315,7 +327,9 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
         GateTask task = tasks.register("session-send", session.ticketNo(), session.id());
         // 入队即算运行：登记发生在提交 executor 之前，排队等待也算运行中；同一 session 多次 send 用引用计数
         incrementInFlight(session.id());
-        executor.submit(() -> runSend(task, session, request.message()));
+        // 取消信号同样在入队时登记：排队中的回合也要能被 abort 拦住（还没 spawn 就不该再 spawn）
+        TurnCancel turn = registerTurn(session.id());
+        executor.submit(() -> runSend(task, session, request.message(), turn));
         return task.id();
     }
 
@@ -323,11 +337,20 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
     public void abort(String sessionId) {
         // 兜底清除：abort 即视为回合终止，立即移出 busy 集合，避免 runSend 仍在阻塞时顶栏持续显示运行中
         inFlightCounts.remove(sessionId);
+        // T-120：真正终止本轮——置位取消信号，ProcessRunner 在轮询间隔内杀掉该回合的 claude
+        // 进程树（含子孙）；仍在 executor 队列里没 spawn 的回合会在启动前看到信号而整回合作废。
+        Set<TurnCancel> turns = turnCancels.remove(sessionId);
+        if (turns != null) {
+            turns.forEach(TurnCancel::cancel);
+        }
         sessions.find(sessionId).ifPresent(s -> {
-            Session aborted = s.withStatus(SessionStatus.ABORTED).withFinishedAt(clock.now());
-            sessions.update(aborted);
-            writeback(aborted);
-            emitChunk(sessionId, new SessionStreamChunk.ErrorChunk(sessionId, "ABORTED", "Session aborted by user", clock.now()));
+            if (s.status() == SessionStatus.ABORTED) {
+                // 删除/归档路径已把会话置为终态：只取消进程，不再发帧（该行随后即被删除）。
+                return;
+            }
+            // soft abort（对齐 OpenCode）：会话保持 ACTIVE、可立即继续对话，只打断这一轮。
+            // 这里的 Done 帧不能省——被取消的 runSend 不再自行发帧，没有它浏览器流要空等到 300s 兜底。
+            emitChunk(sessionId, new SessionStreamChunk.DoneChunk(sessionId, s.cliSessionId(), clock.now()));
         });
     }
 
@@ -376,6 +399,45 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
 
     private void decrementInFlight(String sessionId) {
         inFlightCounts.computeIfPresent(sessionId, (k, v) -> v.decrementAndGet() <= 0 ? null : v);
+    }
+
+    /**
+     * 登记一个回合的取消信号。信号只属于这一个回合：abort 置位的是当时登记在册的那些，
+     * 移除后新回合拿到的是新信号（见 {@link #turnCancels}）。
+     */
+    private TurnCancel registerTurn(String sessionId) {
+        TurnCancel turn = new TurnCancel();
+        turnCancels.compute(sessionId, (k, v) -> {
+            Set<TurnCancel> set = v == null ? ConcurrentHashMap.newKeySet() : v;
+            set.add(turn);
+            return set;
+        });
+        return turn;
+    }
+
+    private void unregisterTurn(String sessionId, TurnCancel turn) {
+        turnCancels.computeIfPresent(sessionId, (k, v) -> {
+            v.remove(turn);
+            return v.isEmpty() ? null : v;
+        });
+    }
+
+    /**
+     * 单回合取消信号：{@code claude -p} 的每回合是一个独立进程，于是"中断本轮"就是杀掉这个
+     * 进程树（T-120）。置位后由 ProcessRunner 在轮询间隔内落地，信号本身不做任何 IO。
+     */
+    private static final class TurnCancel implements ProcessRunner.CancelSignal {
+
+        private final AtomicBoolean flag = new AtomicBoolean();
+
+        @Override
+        public boolean cancelled() {
+            return flag.get();
+        }
+
+        void cancel() {
+            flag.set(true);
+        }
     }
 
     public void close() {
@@ -514,8 +576,16 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
             } catch (Exception ignored) {
             }
         }
-    }    private void runSend(GateTask task, Session session, String message) {
+    }
+
+    private void runSend(GateTask task, Session session, String message, TurnCancel turn) {
         try (AutoCloseable ignored = ticketLocks.acquire(session.ticketNo())) {
+            if (turn.cancelled()) {
+                // 排队期间就被中断：消息还没进过 CLI，整回合作废——不入历史、不 spawn、不发帧
+                // （abort 已经补过 Done 帧解除浏览器阻塞）。
+                tasks.update(cancelled(task));
+                return;
+            }
             // Fresh read: a live model switch persisted after enqueue must still win.
             Session latest = sessions.find(session.id()).orElse(session);
             AgentConfig config = agentConfigs.find(latest.agentConfigId()).orElseThrow();
@@ -541,8 +611,14 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
                     latest.permissionMode());
             StreamEcho echo = new StreamEcho(session.id());
             ProcessRunner.ProcRun run = processRunner.runStreaming(planned.argv(), clone, Map.of(), Duration.ofMinutes(10),
-                    message, echo::line, null);
+                    new ProcessRunner.StreamSpec(message, turn), echo::line, null);
 
+            if (turn.cancelled()) {
+                // T-120：本轮已被 abort 杀掉。不落任何助手/错误消息、不改会话状态（soft abort 保持
+                // ACTIVE 可继续），也不发帧——abort 已经补过 Done。
+                tasks.update(cancelled(task));
+                return;
+            }
             tasks.update(progress(task, 70, "解析 stream-json"));
             ParsedOutput parsed = parseStream(run.stdout());
             if (parsed.errorText() != null && !parsed.errorText().isBlank()) {
@@ -586,10 +662,16 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
             tasks.update(success(task, "{\"session_id\":\"" + (parsed.sessionId == null ? "" : parsed.sessionId)
                     + "\",\"message_count\":" + sessions.findMessages(session.id()).size() + "}"));
         } catch (Throwable e) {
+            if (turn.cancelled()) {
+                // 进程被杀时读流/解析会抛错：这不是故障，是中断的正常收尾，保持静默。
+                tasks.update(cancelled(task));
+                return;
+            }
             emitChunk(session.id(), new SessionStreamChunk.ErrorChunk(session.id(), "INTERNAL_ERROR", e.getMessage(), clock.now()));
             tasks.update(fail(task, e));
         } finally {
             // 必须覆盖正常完成、ErrorChunk、异常、中断所有出口，不得依赖 SSE 监听者
+            unregisterTurn(session.id(), turn);
             decrementInFlight(session.id());
         }
     }
@@ -1007,6 +1089,13 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
         Instant now = Instant.now();
         return new GateTask(task.id(), task.type(), task.ticketNo(), task.sessionId(),
                 GateTaskStatus.SUCCEEDED, task.startedAt(), now, resultJson, null);
+    }
+
+    /** T-120：回合被用户中断——终态是 CANCELLED，不是 SUCCEEDED（它没跑完）也不是 FAILED（它没出错）。 */
+    private static GateTask cancelled(GateTask task) {
+        Instant now = Instant.now();
+        return new GateTask(task.id(), task.type(), task.ticketNo(), task.sessionId(),
+                GateTaskStatus.CANCELLED, task.startedAt(), now, "{\"aborted\":true}", null);
     }
 
     private static GateTask fail(GateTask task, Throwable err) {

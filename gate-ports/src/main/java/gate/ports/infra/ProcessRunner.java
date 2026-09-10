@@ -19,27 +19,53 @@ public interface ProcessRunner {
     ProcRun run(List<String> argv, Path cwd, Map<String, String> env, Duration timeout);
 
     /**
-     * Run a process with {@code stdin} written to its standard input (then closed), streaming
-     * stdout and stderr line-by-line via consumers.
+     * Run a process with the given {@link StreamSpec}, streaming stdout and stderr line-by-line via
+     * consumers.
      *
-     * <p>Free text (agent prompts, user messages) must travel through {@code stdin}, never as an
-     * argv element: on Windows the CLI locator resolves a bare name to its npm {@code .cmd} shim,
-     * and the JDK launches a {@code .cmd} as {@code cmd.exe /c <shim> <args>} — cmd.exe ends the
-     * command at the first newline, so a multi-line argument reaches the CLI as its first line only
-     * (T-121: 引用 / 图片引用路径行 / 多行指令 all silently dropped). stdin also escapes the
-     * 32767-char command line ceiling.
+     * <p>{@link StreamSpec#stdin()} carries free text (agent prompts, user messages); on Windows the
+     * CLI locator resolves a bare name to its npm {@code .cmd} shim, and the JDK launches a
+     * {@code .cmd} as {@code cmd.exe /c <shim> <args>} — cmd.exe ends the command at the first
+     * newline, so a multi-line argument reaches the CLI as its first line only (T-121: 引用 /
+     * 图片引用路径行 / 多行指令 all silently dropped). stdin also escapes the 32767-char command
+     * line ceiling.
      *
-     * @param stdin UTF-8 text for the child's stdin; {@code null} closes stdin immediately
+     * <p>{@link StreamSpec#cancel()} is polled while waiting: once it reports true the whole process
+     * tree is destroyed and the run returns promptly instead of running to completion (T-120: a
+     * user-visible abort must actually stop the agent, not just mark a row).
      */
     ProcRun runStreaming(List<String> argv, Path cwd, Map<String, String> env, Duration timeout,
-                         String stdin, Consumer<String> stdoutConsumer, Consumer<String> stderrConsumer);
+                         StreamSpec spec, Consumer<String> stdoutConsumer, Consumer<String> stderrConsumer);
 
     /**
      * Run process while streaming stdout and stderr line-by-line via consumers, closing stdin.
      */
     default ProcRun runStreaming(List<String> argv, Path cwd, Map<String, String> env, Duration timeout,
                                  Consumer<String> stdoutConsumer, Consumer<String> stderrConsumer) {
-        return runStreaming(argv, cwd, env, timeout, null, stdoutConsumer, stderrConsumer);
+        return runStreaming(argv, cwd, env, timeout, StreamSpec.NONE, stdoutConsumer, stderrConsumer);
+    }
+
+    /**
+     * Cooperative cancellation of a running process. The signal is owned by the caller (a session
+     * adapter), so a cancel is not a timeout: implementations must not report {@code timedOut} for a
+     * run they killed this way.
+     */
+    @FunctionalInterface
+    interface CancelSignal {
+
+        boolean cancelled();
+    }
+
+    /**
+     * Streaming transport knobs that are not process identity: what to feed the child's stdin, and
+     * how to cancel it mid-run.
+     *
+     * @param stdin  UTF-8 text for the child's stdin; {@code null} closes stdin immediately
+     * @param cancel polled cancellation signal; {@code null} means the run cannot be cancelled
+     */
+    record StreamSpec(String stdin, CancelSignal cancel) {
+
+        /** No stdin, not cancellable. */
+        public static final StreamSpec NONE = new StreamSpec(null, null);
     }
 
     /**
@@ -59,4 +85,3 @@ public interface ProcessRunner {
         }
     }
 }
-
