@@ -1,6 +1,6 @@
 ﻿import { CaretDoubleLeft, CaretDoubleRight, GitBranch, NotePencil, Sparkle, TerminalWindow } from "@phosphor-icons/react";
 import { AnimatePresence, motion } from "motion/react";
-import { NO_CHAT, showToast, useApp, appStore, setCenterTab } from "@/store";
+import { showToast, useApp, appStore, setCenterTab } from "@/store";
 import { openTicketCreator, openTicketEditor, loadDiffFile } from "@/features/ticket";
 import { setGatePanelCollapsed } from "@/features/gate";
 import { openTerminalSession } from "@/features/project";
@@ -185,7 +185,6 @@ function CenterTabs({ ticketNo }: { ticketNo: string }) {
 export function Workbench() {
   const t = useT();
   const selectedNo = useApp((s) => s.selectedNo);
-  const chat = useApp((s) => (s.selectedNo ? s.chats[s.selectedNo] : undefined) ?? NO_CHAT);
   const tab = useApp((s) => s.centerTab);
   const panelCollapsed = useApp((s) => s.gatePanelCollapsed);
 
