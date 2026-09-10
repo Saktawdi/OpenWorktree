@@ -154,11 +154,11 @@ public final class WebComponents {
             gate.ports.git.BaseSynchronizer baseSynchronizer =
                     (no, allowDirty) -> this.gateService.syncBase(
                             new gate.application.basesync.SyncBaseCommand(no, allowDirty, "auto"));
+            AdapterLog adapterLog = AdapterLog.at(config.gateHome().resolve("adapters.log"));
             this.claudeAdapter = new ClaudeHeadlessAdapter(processRunner, this.agentConfigRepository, sessionRepo,
                     tickets, this.projectRepository, this.ticketStageChangeRepository, taskRegistry, ticketLockManager,
-                    clock, claudeCmd, List.of(), gateToml, baseSynchronizer);
+                    clock, claudeCmd, List.of(), gateToml, baseSynchronizer, adapterLog);
             int startTimeout = config.session() == null ? 60 : config.session().startTimeoutSeconds();
-            AdapterLog adapterLog = AdapterLog.at(config.gateHome().resolve("adapters.log"));
             gate.adapters.io.ServePidRegistry pidRegistry =
                     new gate.adapters.io.ServePidRegistry(config.gateHome().resolve("opencode-serve.pids"));
             this.opencodeAdapter = new OpenCodeServeAdapter(processRunner, this.agentConfigRepository, sessionRepo,

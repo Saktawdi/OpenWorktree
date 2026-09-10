@@ -45,6 +45,10 @@ import org.springframework.jdbc.core.JdbcTemplate;
  * <p>T-118 起 stdin 不再是一段裸正文，而是 {@code --input-format=stream-json} 要的一行 JSON
  * （{@link ClaudeStreamInput}）：正文进 text 块，图片进 image 块。断言相应地从"比对 stdin 原文"
  * 改成"解出 text 块比对"，图片另有一条用例盯着不得进 argv。
+ *
+ * <p>附件既然以 image 块直达，「路径行 + Agent 自己去 Read」那条绕道就没有存在理由了：带附件时
+ * 后端追加的 {@code [图片引用 #n]} 路径行会在编码这一步被剥掉（落库原文不动，UI 历史缩略图照旧
+ * 靠它还原）。下面三条用例盯死边界——只剥后端追加的那种、同行时不吞正文、无附件时一个字不动。
  */
 class ClaudePromptDeliveryTest {
 
@@ -135,8 +139,8 @@ class ClaudePromptDeliveryTest {
                 List.of(new AgentSessionPort.Attachment("a.png", "image/png", b64))));
         awaitDelivery(runner, 5);
 
-        // 正文那半：路径行与引用行照旧整段送达
-        assertEquals("看图\n[图片引用 #1] .gate/chat-images/a.png", stdinText(runner.stdin));
+        // 正文那半：后端追加的路径行已剥掉（附件改由 image 块直达），用户正文照旧整段送达
+        assertEquals("看图", stdinText(runner.stdin), "带附件时 [图片引用 #n] 路径行不得再进 text 块");
         // 图片那半：content 里多一个 image 块，裸 base64（无 data-URL 前缀）
         List<Map<String, Object>> images = stdinImages(runner.stdin);
         assertEquals(1, images.size(), "附件应编成一个 image 块: " + runner.stdin);
@@ -147,6 +151,62 @@ class ClaudePromptDeliveryTest {
         // 整条输入仍是单行 JSON（按行读的 stream-json 不能被正文换行破帧），图片字节不过 argv
         assertEquals(1, runner.stdin.lines().count());
         assertFalse(runner.argv.stream().anyMatch(a -> a.contains(b64)), "图片 base64 不得进 argv: " + runner.argv);
+        adapter.close();
+    }
+
+    // ---- 带附件时的真实形态（正文 + Composer 文件名标记 + 后端路径行）：只剥路径行 ----
+    @Test
+    void image_ref_line_is_stripped_only_when_attachments_ride_along() throws Exception {
+        CapturingRunner runner = new CapturingRunner();
+        ClaudeHeadlessAdapter adapter = adapter(runner, "DELIV-5");
+        Session s = adapter.start(new AgentSessionPort.StartRequest(
+                "DELIV-5", "claude-deliv", clone("DELIV-5").toString(), "refs/heads/main", "", Map.of()));
+
+        String b64 = Base64.getEncoder().encodeToString(new byte[]{9});
+        String msg = String.join("\n",
+                "这是什么",
+                "[图片 #1] image.png",
+                "[图片引用 #1] .gate/chat-images/a.png");
+        adapter.sendMessage(new AgentSessionPort.SendRequest(s.id(), msg, true,
+                List.of(new AgentSessionPort.Attachment("image.png", "image/png", b64))));
+        awaitDelivery(runner, 5);
+
+        assertEquals("这是什么\n[图片 #1] image.png", stdinText(runner.stdin),
+                "只剥后端追加的 [图片引用 #n] 路径行；Composer 侧的 [图片 #n] 文件名标记不是文件绕道，保持原样");
+        assertEquals(1, stdinImages(runner.stdin).size(), "图片本身仍以 image 块送达");
+        adapter.close();
+    }
+
+    // ---- 同行遗留形态（旧版把引用插在光标处）：只删 token，绝不整行吞掉 CJK 正文 ----
+    @Test
+    void inline_image_ref_never_eats_the_body_text() throws Exception {
+        CapturingRunner runner = new CapturingRunner();
+        ClaudeHeadlessAdapter adapter = adapter(runner, "DELIV-6");
+        Session s = adapter.start(new AgentSessionPort.StartRequest(
+                "DELIV-6", "claude-deliv", clone("DELIV-6").toString(), "refs/heads/main", "", Map.of()));
+
+        adapter.sendMessage(new AgentSessionPort.SendRequest(s.id(),
+                "看图 [图片引用 #1] .gate/chat-images/a.png", true,
+                List.of(new AgentSessionPort.Attachment(
+                        "a.png", "image/png", Base64.getEncoder().encodeToString(new byte[]{7})))));
+        awaitDelivery(runner, 5);
+
+        assertEquals("看图", stdinText(runner.stdin), "行级过滤会把整行正文一起吞掉（表现为“只发了图没有文字”）");
+        adapter.close();
+    }
+
+    // ---- 无附件时一个字都不许动：用户手打的同形文本必须原样到达（T-121 回归保持） ----
+    @Test
+    void text_without_attachments_is_never_touched() throws Exception {
+        CapturingRunner runner = new CapturingRunner();
+        ClaudeHeadlessAdapter adapter = adapter(runner, "DELIV-7");
+        Session s = adapter.start(new AgentSessionPort.StartRequest(
+                "DELIV-7", "claude-deliv", clone("DELIV-7").toString(), "refs/heads/main", "", Map.of()));
+
+        adapter.sendMessage(new AgentSessionPort.SendRequest(s.id(), MULTILINE, true));
+        awaitDelivery(runner, 5);
+
+        assertEquals(MULTILINE, stdinText(runner.stdin), "没有附件就没有后端追加的引用行，正文不得被改写");
         adapter.close();
     }
 

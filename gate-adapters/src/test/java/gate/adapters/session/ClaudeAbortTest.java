@@ -107,6 +107,9 @@ class ClaudeAbortTest {
         assertEquals(1, msgs.size(), "只应有用户那条消息，不得落助手回复或错误气泡: " + msgs);
         assertEquals(Role.USER, msgs.get(0).role());
 
+        // 任务终态要等——abort 里的 busy 清空是"兜底先清"（inFlightCounts.remove），它先于回合线程
+        // 落任务终态，直接读会撞见 RUNNING（本用例一度偶发红）。等到的必须是 CANCELLED，不是超时。
+        awaitTaskTerminal(taskId, 5);
         assertEquals(GateTaskStatus.CANCELLED, tasks.find(taskId).orElseThrow().status(),
                 "被中止的回合任务终态是 CANCELLED");
         adapter.close();

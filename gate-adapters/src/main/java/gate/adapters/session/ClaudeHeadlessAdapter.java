@@ -1,5 +1,6 @@
 package gate.adapters.session;
 
+import gate.adapters.io.AdapterLog;
 import gate.application.util.MiniJson;
 import gate.domain.error.GateErrorCode;
 import gate.domain.error.GateException;
@@ -78,6 +79,14 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
     private final Path gateToml;
     /** Null = auto base sync disabled (legacy wirings/tests); set, every session start re-syncs the clone base. */
     private final gate.ports.git.BaseSynchronizer baseSynchronizer;
+    /** Session-adapter trail (spawn/stream/send/backfill); {@code noop()} in legacy wirings/tests. */
+    private final AdapterLog log;
+    /**
+     * 每回合开跑前的历史对账，见 {@link ClaudeTranscriptBackfill}；它复用本类的 stream-json
+     * 解析件（{@code cast/extractText/extractUsage/strField/splitModelHalves}），故这几个方法
+     * 是包内可见而非 private——两条链路必须按同一套规则解读同一份格式。
+     */
+    private final ClaudeTranscriptBackfill transcriptBackfill;
     private final ExecutorService executor;
     private final Map<String, Set<Consumer<SessionStreamChunk>>> listeners = new ConcurrentHashMap<>();
     // 有进行中回合的 session id 快照（入队即算运行，排队等待也算），用于顶栏 busy 统计
@@ -130,10 +139,13 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
                                  List<String> claudePrefix,
                                  Path gateToml) {
         this(processRunner, agentConfigs, sessions, tickets, projects, restarts, tasks, ticketLocks,
-                clock, claudeExecutable, claudePrefix, gateToml, null);
+                clock, claudeExecutable, claudePrefix, gateToml, null, null);
     }
 
-    /** Fullest constructor: {@code baseSynchronizer} re-syncs the clone base on every session start (T-118). */
+    /**
+     * Fullest constructor: {@code baseSynchronizer} re-syncs the clone base on every session start (T-118);
+     * {@code log} is the session-adapter trail (null = noop, legacy wirings/tests).
+     */
     public ClaudeHeadlessAdapter(ProcessRunner processRunner,
                                  AgentConfigRepository agentConfigs,
                                  SessionRepository sessions,
@@ -146,7 +158,8 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
                                  String claudeExecutable,
                                  List<String> claudePrefix,
                                  Path gateToml,
-                                 gate.ports.git.BaseSynchronizer baseSynchronizer) {
+                                 gate.ports.git.BaseSynchronizer baseSynchronizer,
+                                 AdapterLog log) {
         this.processRunner = processRunner;
         this.agentConfigs = agentConfigs;
         this.sessions = sessions;
@@ -160,6 +173,8 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
         this.claudePrefix = claudePrefix == null ? List.of() : List.copyOf(claudePrefix);
         this.gateToml = gateToml;
         this.baseSynchronizer = baseSynchronizer;
+        this.log = log == null ? AdapterLog.noop() : log;
+        this.transcriptBackfill = new ClaudeTranscriptBackfill(sessions, clock, this.log, null);
         this.executor = Executors.newSingleThreadExecutor(r -> {
             Thread t = new Thread(r, "claude-session");
             t.setDaemon(true);
@@ -279,27 +294,13 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
             if (parsed.sessionId() != null) {
                 withUsage = withUsage.withCliSessionId(parsed.sessionId());
             }
+            persistAssistantTexts(sessionId, parsed, argv.requestProvider(),
+                    argv.requestModelId(), argv.requestVariant());
             if (parsed.errorText() != null && !parsed.errorText().isBlank()) {
                 // result.is_error：claude 以 exit 0 结束但回合失败（如网关 4xx），按错误落库。
                 insertErrorMessage(sessionId, parsed.errorText(), clock.now());
                 emitChunk(sessionId, new SessionStreamChunk.ErrorChunk(sessionId, "PROCESS_ERROR",
                         parsed.errorText(), now));
-            } else {
-                List<String> texts = parsed.assistantTexts();
-                for (int i = 0; i < texts.size(); i++) {
-                    // 一轮 run 只落一条 assistant：时间线（parts）与 usage 都挂最后一条，
-                    // 前面多条仅出现在多回合 run（rounds within one process）。
-                    // 时间戳逐条现取：与用户消息共用回合开始时刻会让历史排序只剩 UUID 破平
-                    // （随机序），live 与历史视图渲染顺序不一致（T-110 实测）。
-                    insertAssistantMessage(sessionId, texts.get(i),
-                            i == texts.size() - 1 ? parsed.parts() : List.of(),
-                            i == texts.size() - 1 ? parsed.usage() : null, parsed.degraded(), clock.now(),
-                            i == texts.size() - 1 ? actualModelProvider(parsed, argv.requestProvider()) : null,
-                            i == texts.size() - 1 ? actualModelId(parsed, argv.requestModelId()) : null,
-                            i == texts.size() - 1 ? argv.requestVariant() : null);
-                }
-                // claude 任务 journal 终态重放：parts 已持久化，按历史全量校正乐观 id/幽灵条目。
-                replayClaudeTasks(sessionId);
             }
             if (parsed.usage() != null) {
                 withUsage = withUsage.withCumulativeUsage(parsed.usage());
@@ -392,6 +393,11 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
         return Collections.unmodifiableSet(new LinkedHashSet<>(sorted));
     }
 
+    /** 测试钩子：让用例把转录根指向临时目录（生产不调，见 {@link ClaudeTranscriptBackfill}）。 */
+    ClaudeTranscriptBackfill transcriptBackfill() {
+        return transcriptBackfill;
+    }
+
     private void incrementInFlight(String sessionId) {
         inFlightCounts.compute(sessionId, (k, v) -> {
             if (v == null) return new AtomicInteger(1);
@@ -402,6 +408,12 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
 
     private void decrementInFlight(String sessionId) {
         inFlightCounts.computeIfPresent(sessionId, (k, v) -> v.decrementAndGet() <= 0 ? null : v);
+    }
+
+    /** 本会话在飞的回合数（含排队未 spawn 的）；回填对账只在 == 1 时跑，见 {@link #runSend}。 */
+    private int inFlight(String sessionId) {
+        AtomicInteger counter = inFlightCounts.get(sessionId);
+        return counter == null ? 0 : counter.get();
     }
 
     /**
@@ -599,6 +611,13 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
             Path mcpConfig = contextDir.resolve("mcp-config.json");
             tasks.update(progress(task, 10, "启动 claude"));
             Instant now = clock.now();
+            // 落库前先对账：把 CLI 转录里、门禁没落着的助手正文按转录原时间戳补回来（进程猝死、
+            // 网关 is_error 收尾、被中断的回合）。只在没有别的在飞回合时跑——本回合的锁拿到手时上一个
+            // 回合已经收尾落库，否则会把人家尚未落库的正文当成缺失先补一遍（内容去重能吃掉重复，
+            // 但补回来的时间戳会错位）。首回合 cliSessionId 还是空，reconcile 自己会直接返回。
+            if (inFlight(session.id()) == 1) {
+                transcriptBackfill.reconcile(session.id(), clone, latest.cliSessionId());
+            }
             insertUserMessage(session.id(), message, now);
 
             // Fresh read of the ticket row so 注入上下文 reflects edits made between turns.
@@ -628,35 +647,22 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
             }
             tasks.update(progress(task, 70, "解析 stream-json"));
             ParsedOutput parsed = parseStream(run.stdout());
+            int persisted = persistAssistantTexts(session.id(), parsed, planned.requestProvider(),
+                    planned.requestModelId(), planned.requestVariant());
             if (parsed.errorText() != null && !parsed.errorText().isBlank()) {
-                // result.is_error：claude 以 exit 0 结束但回合失败（如网关 4xx），按错误落库。
+                // result.is_error：claude 以 exit 0 结束但回合失败（如网关 4xx）。错误行接在已落库正文之后。
                 insertErrorMessage(session.id(), parsed.errorText(), clock.now());
                 emitChunk(session.id(), new SessionStreamChunk.ErrorChunk(session.id(), "PROCESS_ERROR",
                         parsed.errorText(), now));
-            } else if (!parsed.assistantTexts().isEmpty()) {
-                List<String> texts = parsed.assistantTexts();
-                for (int i = 0; i < texts.size(); i++) {
-                    // 时间线（parts）与 usage 都挂最后一条 assistant；前面多条仅在
-                    // 单个进程产出多回合时出现。时间戳逐条现取（同 startLocked：与用户
-                    // 消息共用回合开始时刻会让历史排序被随机 UUID 破平打乱）。
-                    insertAssistantMessage(session.id(), texts.get(i),
-                            i == texts.size() - 1 ? parsed.parts() : List.of(),
-                            i == texts.size() - 1 ? parsed.usage() : null, parsed.degraded(), clock.now(),
-                            i == texts.size() - 1 ? actualModelProvider(parsed, planned.requestProvider()) : null,
-                            i == texts.size() - 1 ? actualModelId(parsed, planned.requestModelId()) : null,
-                            i == texts.size() - 1 ? planned.requestVariant() : null);
-                }
-                // claude 任务 journal 终态重放：parts 已持久化，按历史全量校正乐观 id/幽灵条目。
-                replayClaudeTasks(session.id());
-                if (parsed.usage() != null) {
-                    emitChunk(session.id(), new SessionStreamChunk.UsageChunk(session.id(), parsed.usage(), now));
-                }
-            } else {
+            } else if (persisted == 0) {
                 String detail = run.timedOut()
                         ? "claude 运行超时被终止"
                         : "claude 未产生任何输出（exit=" + run.exitCode() + "）";
                 insertErrorMessage(session.id(), detail, clock.now());
                 emitChunk(session.id(), new SessionStreamChunk.ErrorChunk(session.id(), "PROCESS_ERROR", detail, now));
+            }
+            if (parsed.usage() != null) {
+                emitChunk(session.id(), new SessionStreamChunk.UsageChunk(session.id(), parsed.usage(), now));
             }
             SessionUsage cumulative = session.cumulativeUsage().add(parsed.usage == null ? SessionUsage.EMPTY : parsed.usage);
             Session updated = session.withCumulativeUsage(cumulative);
@@ -716,7 +722,7 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
     }
 
     /** Splits a model ref into {provider, bare id}; a bare id (or blank) yields a null provider. */
-    private static String[] splitModelHalves(String modelRef) {
+    static String[] splitModelHalves(String modelRef) {
         if (modelRef == null || modelRef.isBlank()) {
             return new String[]{null, null};
         }
@@ -902,6 +908,36 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
     }
 
     /**
+     * 把本回合已经产出的助手文本按序落库：时间线（parts）、usage、模型归属都挂最后一条，并重放
+     * claude 任务 journal。返回落库条数（0 = 本回合一个字都没产出）。
+     *
+     * <p>抽成一处是因为「正常收尾」和「{@code result.is_error} 收尾」要做的是同一件事。旧版两者
+     * 是 if/else 互斥，于是网关 4xx 那种<b>先吐正文、再以 is_error 收尾</b>的回合，正文整段静默
+     * 丢失——CLI 自己的转录里留着，门禁历史里没有（实测会话 e2795003：两条 assistant 文本只剩
+     * 一条 ERROR 行）。对账兜底见 {@link ClaudeTranscriptBackfill}。
+     */
+    private int persistAssistantTexts(String sessionId, ParsedOutput parsed, String requestProvider,
+                                      String requestModelId, String requestVariant) {
+        List<String> texts = parsed.assistantTexts();
+        for (int i = 0; i < texts.size(); i++) {
+            // 一轮 run 只落一条 assistant：时间线（parts）与 usage 都挂最后一条，前面多条仅
+            // 出现在多回合 run（rounds within one process）。时间戳逐条现取：与用户消息共用
+            // 回合开始时刻会让历史排序只剩 UUID 破平（随机序），live 与历史渲染顺序不一致（T-110 实测）。
+            insertAssistantMessage(sessionId, texts.get(i),
+                    i == texts.size() - 1 ? parsed.parts() : List.of(),
+                    i == texts.size() - 1 ? parsed.usage() : null, parsed.degraded(), clock.now(),
+                    i == texts.size() - 1 ? actualModelProvider(parsed, requestProvider) : null,
+                    i == texts.size() - 1 ? actualModelId(parsed, requestModelId) : null,
+                    i == texts.size() - 1 ? requestVariant : null);
+        }
+        if (!texts.isEmpty()) {
+            // claude 任务 journal 终态重放：parts 已持久化，按历史全量校正乐观 id/幽灵条目。
+            replayClaudeTasks(sessionId);
+        }
+        return texts.size();
+    }
+
+    /**
      * claude stream-json 的终态解析：每个 {@code assistant} 行是一个完整回合（一个进程可产生
      * 多个回合），{@code result} 行携带权威 usage 与 is_error。增量事件（stream_event）不参与
      * 终态解析——它们只经 {@link StreamEcho} 实时转发。
@@ -1042,7 +1078,7 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
     }
 
     /** claude/兼容网关的 usage 形状归一：input/output 优先，缺 total 时以 input+output 补齐。 */
-    private static SessionUsage extractUsage(Object usageObj) {
+    static SessionUsage extractUsage(Object usageObj) {
         if (!(usageObj instanceof Map<?, ?> um)) {
             return null;
         }
@@ -1065,7 +1101,7 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
         return new SessionUsage(prompt, completion, total);
     }
 
-    private static String extractText(Object message, Object text) {
+    static String extractText(Object message, Object text) {
         if (text instanceof String s && !s.isBlank()) {
             return s;
         }
@@ -1129,7 +1165,7 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
     }
 
     @SuppressWarnings("unchecked")
-    private static Map<String, Object> cast(Map<?, ?> raw) {
+    static Map<String, Object> cast(Map<?, ?> raw) {
         Map<String, Object> typed = new LinkedHashMap<>();
         for (Map.Entry<?, ?> e : raw.entrySet()) {
             typed.put(String.valueOf(e.getKey()), (Object) e.getValue());
@@ -1145,7 +1181,7 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
     }
 
     /** Null-safe string field read: non-String scalars stringify, null stays null. */
-    private static String strField(Map<String, Object> map, String key) {
+    static String strField(Map<String, Object> map, String key) {
         Object val = map.get(key);
         return val == null ? null : String.valueOf(val);
     }

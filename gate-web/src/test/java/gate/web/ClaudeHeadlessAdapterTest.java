@@ -124,11 +124,15 @@ class ClaudeHeadlessAdapterTest {
     }
 
     @Test
-    void start_passes_prompt_positionally_and_never_uses_stream_json_input() throws Exception {
+    void start_delivers_initial_prompt_on_stdin_stream_json_and_never_positionally() throws Exception {
+        // T-118/T-121：prompt 不再作为 argv 位置参数——`claude` 被解析成 npm 的 claude.cmd，
+        // JDK 对 .cmd 一律 cmd.exe /c 包装，cmd 的命令行在第一个换行处结束，多行 argv 活不到 CLI；
+        // 且 T-118 起输入改走 stream-json。start 的首回合与 send 同一条 stdin 通道。
         Path script = root.resolve("args-claude.cmd");
         Files.writeString(script, """
                 @echo off
                 echo %*>"%~dp0claude-args.txt"
+                findstr "." >"%~dp0claude-stdin.txt"
                 echo {"type":"session","session_id":"sess-args"}
                 """, StandardCharsets.UTF_8);
 
@@ -145,11 +149,13 @@ class ClaudeHeadlessAdapterTest {
                 "T-4", "claude-args", clone.toString(), "refs/heads/main", "please work", Map.of()));
 
         String args = Files.readString(root.resolve("claude-args.txt"), StandardCharsets.UTF_8);
-        assertTrue(args.contains("please work"),
-                "prompt must reach claude as a positional argument");
+        assertTrue(args.contains("--input-format stream-json"),
+                "stream-json 输入必须钉在 argv 上（stdin 是 JSON 行，不是裸正文）");
         assertTrue(args.contains("--output-format stream-json"));
-        assertFalse(args.contains("--input-format"),
-                "--input-format=stream-json makes claude ignore the positional prompt and exit 0 silently");
+        assertFalse(args.contains("please work"),
+                "prompt 不得再作为位置参数进 argv——多行会被 cmd.exe /c 的换行截断");
+        String stdin = Files.readString(root.resolve("claude-stdin.txt"), StandardCharsets.UTF_8);
+        assertTrue(stdin.contains("\"please work\""), "prompt 经 stdin 以 stream-json text 块送达: " + stdin);
     }
 
     @Test
@@ -255,6 +261,7 @@ class ClaudeHeadlessAdapterTest {
         Files.writeString(script, """
                 @echo off
                 echo %*>"%~dp0claude-args.txt"
+                findstr "." >"%~dp0claude-stdin.txt"
                 echo {"type":"session","session_id":"sess-sentinel"}
                 """, StandardCharsets.UTF_8);
 
@@ -276,7 +283,8 @@ class ClaudeHeadlessAdapterTest {
 
         String args = Files.readString(root.resolve("claude-args.txt"), StandardCharsets.UTF_8);
         assertFalse(args.contains("--model"), "cli-managed sentinel must not pin --model");
-        assertTrue(args.contains("hello"), "prompt still reaches claude positionally");
+        String stdin = Files.readString(root.resolve("claude-stdin.txt"), StandardCharsets.UTF_8);
+        assertTrue(stdin.contains("\"hello\""), "prompt still reaches claude, on stdin as stream-json: " + stdin);
     }
 
     @Test
@@ -326,7 +334,9 @@ class ClaudeHeadlessAdapterTest {
     void send_journals_claude_tasks_live_then_replays_authoritative_ids() throws Exception {
         // V24 任务链：live 阶段 TaskCreate 按 max+1 乐观入 journal（本例 1），回合终态
         // 从 parts 的 result_json 全量重放——真实 id 5 覆盖乐观 id，TaskUpdate 的状态
-        // 变更与全字段变更一并落定。journal 是历史的纯投影。
+        // 变更与全字段变更一并落定。journal 是历史的纯投影。真实的 CLAUDE 回合在工具
+        // 交换后还有一条带正文的收尾 assistant 行（只有 tool_use 的回合不落库——适配器
+        // 只落正文非空的 assistant 行），awaitAssistant 拿它当回合收尾的同步点。
         Path script = root.resolve("task-claude.cmd");
         Files.writeString(script, """
                 @echo off
@@ -338,6 +348,7 @@ class ClaudeHeadlessAdapterTest {
                 echo {"type":"user","message":{"content":[{"type":"tool_result","content":"Task #5 created successfully: fix the bug"}]}}
                 echo {"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu-2","name":"TaskUpdate","input":{"taskId":"5","status":"completed"}}]}}
                 echo {"type":"user","message":{"content":[{"type":"tool_result","content":"Updated task #5 status"}]}}
+                echo {"type":"assistant","message":{"content":[{"type":"text","text":"Task #5 created and completed."}]}}
                 echo {"type":"result","is_error":false,"usage":{"input_tokens":3,"output_tokens":2}}
                 """, StandardCharsets.UTF_8);
 
