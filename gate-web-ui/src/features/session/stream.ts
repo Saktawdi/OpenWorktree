@@ -53,6 +53,56 @@ import {
 } from "./chat";
 import { loadTicketDiff, refreshTicket } from "@/features/ticket/api";
 import { loadPresubmits } from "@/features/gate/api";
+import { applyDeltaRuns, sealThinkingPart, type DeltaRun } from "./liveDelta";
+
+/* ─── 增量合帧（T-119） ───
+ * 后端一个 token 一帧，高 t/s 时每秒上百次 store 更新；而每次更新的代价随正文长度增长
+ * （整段 Markdown 全量重解析 + 列表重渲染，见 liveDelta.ts 的实测），逐帧刷新会吃满主线程。
+ * 这里把 token/thinking 增量按固定间隔攒成一批，一次 updateLiveTurn 落进 live 回合。
+ */
+
+/** 合帧间隔：约 12 次/秒的文本刷新——流式文本上肉眼仍是连续输出，开销降到十分之一以下。 */
+const DELTA_FLUSH_INTERVAL_MS = 80;
+
+interface DeltaBuffer {
+  runs: DeltaRun[];
+  timer: ReturnType<typeof setTimeout> | null;
+}
+
+const deltaBuffers = new Map<string, DeltaBuffer>();
+
+/** 攒一个增量；首批到达时排一次 flush。 */
+function queueDelta(sessionId: string, run: DeltaRun) {
+  const buf = deltaBuffers.get(sessionId) ?? { runs: [], timer: null };
+  buf.runs.push(run);
+  if (buf.timer == null) {
+    buf.timer = setTimeout(() => flushDeltas(sessionId), DELTA_FLUSH_INTERVAL_MS);
+  }
+  deltaBuffers.set(sessionId, buf);
+}
+
+/**
+ * 把攒下的增量一次性写进 live 回合（无缓冲则 no-op）。
+ *
+ * 顺序敏感的事件——工具调用/插队注入/收尾/错误——动手前必须先调它：那些事件会直接往
+ * 时间线尾部追加段落，迟到的正文增量会被排到它们后面，段落顺序就错了。
+ */
+function flushDeltas(sessionId: string) {
+  const buf = deltaBuffers.get(sessionId);
+  if (!buf) return;
+  deltaBuffers.delete(sessionId);
+  if (buf.timer != null) clearTimeout(buf.timer);
+  if (buf.runs.length === 0) return;
+  const { runs } = buf;
+  const now = Date.now();
+  updateLiveTurn(sessionId, (a) => applyDeltaRuns(a, runs, now));
+}
+
+/** 收尾 live 回合：先把攒着的增量落干净，再定格（合帧缓冲不跨回合）。 */
+function endLiveTurn(sessionId: string) {
+  flushDeltas(sessionId);
+  finishLiveTurn(sessionId);
+}
 
 /* ─── 中止 ─── */
 
@@ -308,63 +358,9 @@ function scheduleDiffRefresh(no: string) {
 const FILE_EDIT_TOOLS = ["edit", "write", "patch", "multiedit"];
 
 /* ─── live 回合时间线（parts）维护 ───
- * parts 是 chronology 事实来源：thinking/text/tool 按到达序交错；
- * tools 平铺数组保留为兼容视图（旧渲染路径与 todo 侧栏依赖它）。
+ * 增量拼装（thinking/text 段的续写与封口）在 liveDelta.ts——那边是纯函数，
+ * 合帧回放与逐帧到达共用同一套拼装；这里管攒批调度与本文件内的工具段处理。
  */
-
-function lastThinkingIndex(parts: TimelinePart[] | undefined): number {
-  if (!parts || parts.length === 0) return -1;
-  const last = parts[parts.length - 1];
-  return last.type === "thinking" ? parts.length - 1 : -1;
-}
-
-/** thinking_delta 到达：延续最后一段未封口思考（末位恰为 thinking），否则开新段。 */
-function upsertThinkingPart(
-  parts: TimelinePart[] | undefined,
-  prevThinkingDone: boolean,
-  delta: string,
-  now: number,
-): TimelinePart[] {
-  const list = parts ?? [];
-  const idx = prevThinkingDone ? -1 : lastThinkingIndex(list);
-  if (idx >= 0) {
-    const seg = list[idx] as Extract<TimelinePart, { type: "thinking" }>;
-    const next = list.slice();
-    next[idx] = {
-      type: "thinking",
-      text: seg.text + delta,
-      startedAt: seg.startedAt ?? now,
-      endedAt: undefined,
-    };
-    return next;
-  }
-  return [...list, { type: "thinking", text: delta, startedAt: now, endedAt: undefined }];
-}
-
-/** 正文 token 到达：封口末段未封口思考（记录 endedAt）；无未封口段时原样返回。 */
-function sealThinkingPart(parts: TimelinePart[] | undefined, now: number): TimelinePart[] | undefined {
-  if (!parts || parts.length === 0) return parts;
-  const idx = lastThinkingIndex(parts);
-  if (idx < 0) return parts;
-  const seg = parts[idx] as Extract<TimelinePart, { type: "thinking" }>;
-  if (seg.endedAt) return parts;
-  const next = parts.slice();
-  next[idx] = { ...seg, endedAt: now };
-  return next;
-}
-
-/** 正文增量接入时间线：末位是文本段则续写（含流式光标锚点），否则新开一段；空增量跳过。 */
-function appendTextPart(parts: TimelinePart[] | undefined, delta: string): TimelinePart[] {
-  const list = parts ?? [];
-  if (!delta) return list;
-  const last = list[list.length - 1];
-  if (last && last.type === "text") {
-    const next = list.slice();
-    next[list.length - 1] = { type: "text", text: last.text + delta };
-    return next;
-  }
-  return [...list, { type: "text", text: delta }];
-}
 
 /** 工具 upsert：按 callID 原位更新（参数快照/终态输出），不存在则按到达序追加。 */
 function upsertToolPart(
@@ -469,7 +465,7 @@ async function consumeSessionStream(no: string, sessionId: string) {
           // 重建视图——断流窗口内的正文/工具事件浏览器永远收不到，重建是唯一补全路径
           // （finishLiveTurn 移出 liveTurns 后，loadSessionMessages 才能按纯历史回放）。
           markSessionEnded(no, abortingSessions.has(sessionId) ? "failed" : "done", sessionId);
-          finishLiveTurn(sessionId);
+          endLiveTurn(sessionId);
           await loadSessionMessages(no, sessionId);
           void syncSessionTodos(sessionId);
           void loadTicketDiff(no);
@@ -478,6 +474,8 @@ async function consumeSessionStream(no: string, sessionId: string) {
         }
         if (networkFailures >= 5) {
           markSessionEnded(no, "failed", sessionId);
+          // 放弃重连也先把攒着的增量落掉：占位条目会以定格态留在视图里。
+          flushDeltas(sessionId);
           updateLiveTurn(sessionId, (a) => ({ ...a, streaming: false }));
           pushSystemMessage(
             no,
@@ -494,11 +492,11 @@ async function consumeSessionStream(no: string, sessionId: string) {
       // 断流窗口内丢失的正文/工具段必须以落库历史为准重建，占位补不出没收到的事件。
       // 正常未断流的回合不动——finishLiveTurn 已把流式条目定格进 chats，重建反而抖动。
       if (streamInterrupted) {
-        finishLiveTurn(sessionId);
+        endLiveTurn(sessionId);
         await loadSessionMessages(no, sessionId).catch(() => {});
       }
     } finally {
-      finishLiveTurn(sessionId);
+      endLiveTurn(sessionId);
     }
   } finally {
     activeStreamingSessions.delete(sessionId);
@@ -554,35 +552,22 @@ async function consumeSessionEvents(
     es.addEventListener("token", (ev) => {
       arm();
       const d = JSON.parse((ev as MessageEvent).data);
-      const now = Date.now();
-      updateLiveTurn(sessionId, (a) => ({
-        ...a,
-        text: a.text + (d.text_delta ?? ""),
-        thinking: a.thinking && !a.thinking.done ? { ...a.thinking, done: true } : a.thinking,
-        // 时间线：先封口思考段（正文 token 到来即该段思考结束），再把正文增量接进
-        // 文本段（末位是文本则续写，否则开新段）——parts 是时间线渲染的事实来源，
-        // 漏掉这步 live 视图里所有正文段都会蒸发，重切入会话才从落库历史回来。
-        parts: appendTextPart(sealThinkingPart(a.parts, now), d.text_delta ?? ""),
-      }));
+      // 时间线：先封口思考段（正文 token 到来即该段思考结束），再把正文增量接进文本段
+      // （末位是文本则续写，否则开新段）——拼装语义在 liveDelta.applyDeltaRuns，合帧回放
+      // 与逐帧到达同一条路径，漏掉这步 live 视图里所有正文段都会蒸发。
+      queueDelta(sessionId, { kind: "text", text: d.text_delta ?? "" });
     });
     es.addEventListener("thinking", (ev) => {
       arm();
       const d = JSON.parse((ev as MessageEvent).data);
-      const now = Date.now();
-      updateLiveTurn(sessionId, (a) => ({
-        ...a,
-        thinking: {
-          text: (a.thinking?.text ?? "") + (d.thinking_delta ?? ""),
-          startedAt: a.thinking?.startedAt ?? now,
-          done: false,
-        },
-        // 时间线：当前思考段（可能已是本回合第 N 段）原位累积；段结束（token 到来）时
-        // 由 token 处理器封口 endedAt。
-        parts: upsertThinkingPart(a.parts, a.thinking?.done === true, d.thinking_delta ?? "", now),
-      }));
+      // 时间线：当前思考段（可能已是本回合第 N 段）原位累积；段结束（token 到来）时
+      // 由正文增量封口 endedAt。
+      queueDelta(sessionId, { kind: "thinking", text: d.thinking_delta ?? "" });
     });
     es.addEventListener("tool_call", (ev) => {
       arm();
+      // 工具段要按到达序追加进时间线：先把攒着的正文/思考增量落掉，段落顺序才正确。
+      flushDeltas(sessionId);
       const d = JSON.parse((ev as MessageEvent).data);
       // 编辑类工具落盘成功 → 防抖刷新该工单的变更对比，兑现"每次编辑实时反映"的文案；
       // bash 等其它工具可能改文件但太噪，回合结束的 done 刷新兜底。
@@ -727,6 +712,8 @@ async function consumeSessionEvents(
       // 兜住「受理时 liveTurn 缺位/跨页观察」等场景下残留在列表尾部的顶层气泡，
       // 以及时间线里缺失的 steer 段（reader 注入晚于本地乐观插入的竞态）。
       arm();
+      // 插队消息按到达序插入时间线：先落掉攒着的增量，steer 段才排在它该在的位置。
+      flushDeltas(sessionId);
       const d = JSON.parse((ev as MessageEvent).data);
       const messageId = String(d.message_id ?? "");
       if (!messageId) return;
@@ -749,6 +736,8 @@ async function consumeSessionEvents(
       }));
     });
     es.addEventListener("done", () => {
+      // 收尾前先落掉攒着的增量：否则最后一批正文/思考会被定格漏掉。
+      flushDeltas(sessionId);
       // T-120 增强：回合结束提醒（用户中止的会话按"已中断"呈现）。
       markSessionEnded(no, abortingSessions.has(sessionId) ? "failed" : "done", sessionId);
       // 时间线定格：工具段终态化（最后一拍 RUNNING→ok），思考段封口。
@@ -800,6 +789,8 @@ async function consumeSessionEvents(
       }
       // T-120 增强：意外失败中止也属于"会话结束"，工单列表按"已中断"提醒。
       markSessionEnded(no, "failed", sessionId);
+      // 失败帧同样要先把攒着的增量落掉，再翻掉流式标记（否则尾部正文丢在半路）。
+      flushDeltas(sessionId);
       updateLiveTurn(sessionId, (a) => ({ ...a, streaming: false }));
       pushSystemMessage(no, msg, "warn");
       // 断流≠回合结束：agent 可能仍在服务端运行，立即按（尚未落库的）空历史重建

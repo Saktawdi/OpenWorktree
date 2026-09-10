@@ -644,8 +644,13 @@ function ChatRail({
     setContainerW(el.clientWidth);
   }, [scrollRef]);
 
+  // T-119：流式期间 chat 每个增量都换引用，这里若直接 measure()，等于每个 token 都做一次
+  // querySelectorAll + 逐行 getBoundingClientRect——而这些读操作会强制同步布局（上一条
+  // 消息的正文刚变长，布局本就是脏的），高 t/s 下每帧都在为刻度条重排整列消息。
+  // 合并到下一帧跑一次：几何量在帧内只会取到最新值，语义不变，成本每帧封顶一次。
   useEffect(() => {
-    measure();
+    const raf = requestAnimationFrame(measure);
+    return () => cancelAnimationFrame(raf);
   }, [measure, chat]);
 
   useEffect(() => {
