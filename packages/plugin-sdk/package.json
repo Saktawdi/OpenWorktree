@@ -2,6 +2,7 @@
   "name": "@gate/plugin-sdk",
   "private": true,
   "version": "0.1.0",
+  "license": "Apache-2.0",
   "type": "module",
   "description": "gate 插件契约与 React 桥接 SDK：宿主与插件共用的唯一契约来源（类型 + 共享 React shim + vite alias 助手）",
   "exports": {

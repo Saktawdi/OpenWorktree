@@ -18,6 +18,13 @@
   <version>${revision}</version>
   <packaging>pom</packaging>
   <name>gate-parent</name>
+  <licenses>
+    <license>
+      <name>Apache License, Version 2.0</name>
+      <url>https://www.apache.org/licenses/LICENSE-2.0.txt</url>
+      <distribution>repo</distribution>
+    </license>
+  </licenses>
 
   <modules>
     <module>gate-domain</module>

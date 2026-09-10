@@ -11,7 +11,7 @@
 <p align="center">
   <a href="https://github.com/Saktawdi/OpenWorktree/releases"><img src="https://img.shields.io/github/downloads/Saktawdi/OpenWorktree/total?style=flat-square&label=downloads" alt="Total downloads"></a>
   <a href="https://hub.docker.com/r/saktawdi/openworktree"><img src="https://img.shields.io/docker/pulls/saktawdi/openworktree?style=flat-square&label=docker%20pulls" alt="Docker pulls"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0-2ea44f?style=flat-square" alt="License GPL-3.0"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue?style=flat-square" alt="License Apache-2.0"></a>
   <img src="https://img.shields.io/badge/Java-17-ED8B00?style=flat-square&logo=openjdk&logoColor=white" alt="Java 17">
   <img src="https://img.shields.io/badge/React-19-149eca?style=flat-square&logo=react&logoColor=white" alt="React 19">
   <img src="https://img.shields.io/badge/opencode-supported-7c5cff?style=flat-square" alt="opencode supported">
@@ -146,7 +146,7 @@ Tools are split into two permission domains, and credentials are issued per sess
 - **Local first**: the service binds to loopback, and SQLite, local blobs and tokens all live inside the run directory — copy the directory and you have migrated.
 - **Dual theme**: dark / light switch instantly, with a matching day-night transition animation for the OW badge.
 - **Multilingual UI**: ships with Simplified Chinese and English copy; one click in Settings switches the whole UI (text, time and date formats follow, and the choice is persisted locally). Adding a language only needs one more dictionary — missing keys fall back to the default language instead of showing raw key names.
-- **First-run guide**: the first launch opens a six-step setup wizard (language → connect a project → agents → LLM settings → board → workbench). It can be skipped in one click and replayed anytime from Settings → Preferences → Getting-started tour.
+- **First-run guide**: the first launch opens a seven-step setup wizard (language → connect to the backend → connect a project → agents → LLM settings → board → workbench). It can be skipped in one click and replayed anytime from Settings → Preferences → Getting-started tour.
 
 ## Plugins
 
@@ -182,7 +182,11 @@ gate-web-ui        frontend (React 19 + Vite + Tailwind v4 + zustand + motion + 
 
 ## Quick start
 
-### Option 1: Windows desktop app (recommended, double-click to run)
+### Option 1: Windows desktop app and single-file native build (recommended, double-click to run)
+
+Same backend, two shapes: the desktop app has an installer and a resident system tray (it embeds exactly the single-file native binary below), the native build needs no installation and starts with one command. Pick the desktop app for daily use; go straight for the native build on servers / no-install setups.
+
+#### Windows desktop app
 
 Installers are published on [GitHub Releases](https://github.com/Saktawdi/OpenWorktree/releases): download the latest `OpenWorktree_<version>_x64-setup.exe` and double-click to install — it signs in automatically on start, so you never paste a token by hand.
 
@@ -190,9 +194,35 @@ The only prerequisite is `git` on the machine (install the matching CLI, such as
 
 - Installers are built by CI (attached to the Release when a `v*` tag is pushed; you can also build it yourself following [`desktop/README.md`](desktop/README.md));
 - Data goes to `data\` under the install directory by default (ticket clones follow the install drive). On uninstall you can keep it (moved to `%APPDATA%\OpenWorktree`) or delete it;
-- The backend embedded in the desktop shell is exactly the binary from “Option 3: single-file native build”, so behavior matches the Docker and from-source options.
+- The backend embedded in the desktop shell is exactly the single-file native binary below, so behavior matches the from-source option.
 
-### Option 2: Docker (no local environment needed)
+#### Single-file native build (Linux / Windows, no Java / Node required)
+
+A single-file binary produced by GraalVM native-image — **backend and frontend in one**: the SPA is embedded into the binary at build time, so running it gives you a complete service with no separate frontend. No Java, Maven or Node required — double-click or one command and it is up.
+
+- The only prerequisite is `git` on the machine (install the matching CLI, such as opencode or Claude Code, when you run agent sessions);
+- **Linux glibc requirement**: the binary is built on a recent distribution and needs the `GLIBC_2.32` / `GLIBC_2.34` symbols — **Ubuntu 21.10+ / Debian 12+ / RHEL 9+** or equivalent (older systems such as CentOS 7 fail with `GLIBC_2.34 not found`); on older systems use the Docker option (Option 2) or build it yourself on the target platform;
+- **CPU / architecture**: native builds cover Linux x86_64 / **Linux arm64** (`ow-linux-arm64`) / Windows x86_64. No special instruction-set requirements (x86-64 baseline, no AVX needed) and 2 cores are enough — sessions spend their time waiting on the model API, not on local compute. For other architectures use the Docker option (multi-arch amd64/arm64) or build from source;
+- Binaries are published on [GitHub Releases](https://github.com/Saktawdi/OpenWorktree/releases) (a `v*` tag attaches `ow-linux-x86_64` / `ow-linux-arm64` / `ow-windows-x86_64` automatically); day-to-day master builds are available as the `ow-native-Linux` / `ow-native-Linux-arm64` / `ow-native-Windows` Actions artifacts (kept for 14 days);
+- Start it (run it in the directory where you want the data to live):
+
+```bash
+# Linux (x86_64)
+./ow-linux-x86_64
+
+# Linux (ARM64)
+./ow-linux-arm64
+
+# Windows (PowerShell; the file runs even without an .exe suffix)
+.\ow-windows-x86_64
+```
+
+- The first start generates `local-run/gate.toml` (loopback `127.0.0.1:18080` by default) and `gate-home/` (database, token, mirror repos, ticket clones); the layout is identical to the from-source option, so copying the whole directory migrates everything. Use `--config your-gate.toml` to change the port etc.;
+- When you see `GATE_WEB_TOKEN=...` and `listening on http://127.0.0.1:18080/` in the log, it is up: open <http://127.0.0.1:18080> in a browser; the token is on that log line or in `local-run/gate-home/web-token`.
+
+### Option 2: Docker (fallback — not recommended for cloud use)
+
+> The image is still published, but **not recommended for everyday use — and even less for cloud deployment**: the container keeps a JDK + nginx + opencode resident, so its memory footprint is noticeably higher than the native options. It only makes sense for a quick trial or an evaluation box with no local environment.
 
 Multi-arch images (amd64/arm64) are published on Docker Hub: [`saktawdi/openworktree`](https://hub.docker.com/r/saktawdi/openworktree). No need to clone the repository — save the following as `compose.yaml` (in any directory):
 
@@ -236,26 +266,7 @@ RUN npm install -g @anthropic-ai/claude-code && npm cache clean --force
 
 To build from source (for development): run `docker compose up -d --build` at the repository root; the build-arg `INSTALL_CLAUDE=true` bakes Claude Code into the image.
 
-### Option 3: Single-file native build (Linux / Windows, no Java / Node required)
-
-A single-file binary produced by GraalVM native-image — **backend and frontend in one**: the SPA is embedded into the binary at build time, so running it gives you a complete service with no separate frontend. No Java, Maven or Node required — double-click or one command and it is up.
-
-- The only prerequisite is `git` on the machine (install the matching CLI, such as opencode or Claude Code, when you run agent sessions);
-- Binaries are published on [GitHub Releases](https://github.com/Saktawdi/OpenWorktree/releases) (a `v*` tag attaches `ow-linux-x86_64` / `ow-windows-x86_64` automatically); day-to-day master builds are available as the `ow-native-Linux` / `ow-native-Windows` Actions artifacts (kept for 14 days);
-- Start it (run it in the directory where you want the data to live):
-
-```bash
-# Linux
-./ow-linux-x86_64
-
-# Windows (PowerShell; the file runs even without an .exe suffix)
-.\ow-windows-x86_64
-```
-
-- The first start generates `local-run/gate.toml` (loopback `127.0.0.1:18080` by default) and `gate-home/` (database, token, mirror repos, ticket clones); the layout is identical to the from-source option, so copying the whole directory migrates everything. Use `--config your-gate.toml` to change the port etc.;
-- When you see `GATE_WEB_TOKEN=...` and `listening on http://127.0.0.1:18080/` in the log, it is up: open <http://127.0.0.1:18080> in a browser; the token is on that log line or in `local-run/gate-home/web-token`.
-
-### Option 4: Local development (from source)
+### Option 3: Local development (from source)
 
 #### Requirements
 
@@ -388,4 +399,4 @@ Near-term direction:
 
 ## License
 
-This project is open source under [GPL-3.0](LICENSE).
+This project is open source under [Apache-2.0](LICENSE).

@@ -11,7 +11,7 @@
 <p align="center">
   <a href="https://github.com/Saktawdi/OpenWorktree/releases"><img src="https://img.shields.io/github/downloads/Saktawdi/OpenWorktree/total?style=flat-square&label=%E4%B8%8B%E8%BD%BD" alt="Releases 下载总数"></a>
   <a href="https://hub.docker.com/r/saktawdi/openworktree"><img src="https://img.shields.io/docker/pulls/saktawdi/openworktree?style=flat-square&label=docker%20%E6%8B%89%E5%8F%96" alt="Docker 镜像拉取数"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0-2ea44f?style=flat-square" alt="License GPL-3.0"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue?style=flat-square" alt="License Apache-2.0"></a>
   <img src="https://img.shields.io/badge/Java-17-ED8B00?style=flat-square&logo=openjdk&logoColor=white" alt="Java 17">
   <img src="https://img.shields.io/badge/React-19-149eca?style=flat-square&logo=react&logoColor=white" alt="React 19">
   <img src="https://img.shields.io/badge/opencode-已适配-7c5cff?style=flat-square" alt="opencode 已适配">
@@ -146,7 +146,7 @@ OpenWorktree 内置一套 MCP（Model Context Protocol）stdio 服务器，是 A
 - **本地优先**：服务绑定回环地址，SQLite、本地 blob 和令牌都存放在运行目录内，拷贝即可迁移。
 - **双主题**：暗 / 亮主题随切，OW 徽章配套昼夜过渡动画。
 - **多语言界面**：内置简体中文与 English 两套界面文案，设置中心一点即切（全站文案、时间与日期格式同步切换，选择本地持久化）；新增语言只需补一份字典，键缺失会回退默认语言而不是显示键名。
-- **首次启动引导**：第一次打开自动弹出六步配置向导（语言偏好 → 接入项目 → 智能体设置 → LLM 设置 → 看板 → 工作台），可一键跳过，之后随时可在「设置中心 → 偏好 → 新手引导」重看。
+- **首次启动引导**：第一次打开自动弹出七步配置向导（语言偏好 → 连接后端 → 接入项目 → 智能体设置 → LLM 设置 → 看板 → 工作台），可一键跳过，之后随时可在「设置中心 → 偏好 → 新手引导」重看。
 
 ## 插件
 
@@ -182,7 +182,11 @@ gate-web-ui        前端（React 19 + Vite + Tailwind v4 + zustand + motion + x
 
 ## 快速开始
 
-### 方式一：Windows 桌面版（推荐，双击即用）
+### 方式一：Windows 桌面版与单文件原生版（推荐，双击即用）
+
+同一个后端、两种落地形态：桌面版带安装界面、随系统托盘常驻（内嵌的正是下方单文件原生版那份二进制），原生版免安装、一条命令即起。日常使用推荐桌面版；服务器 / 免安装场景直接用原生版。
+
+#### Windows 桌面版
 
 安装包随 [GitHub Releases](https://github.com/Saktawdi/OpenWorktree/releases) 发布：下载最新的 `OpenWorktree_<版本>_x64-setup.exe`，双击安装即用——启动自动登录，不必手动粘贴令牌。
 
@@ -190,9 +194,35 @@ gate-web-ui        前端（React 19 + Vite + Tailwind v4 + zustand + motion + x
 
 - 安装包由 CI 自动构建（打 `v*` tag 时随 Release 附带；也可按 [`desktop/README.md`](desktop/README.md) 自行构建）；
 - 数据默认落安装目录 `data\`（工单克隆随安装盘走），卸载时可保留（移至 `%APPDATA%\OpenWorktree`）或一并删除；
-- 桌面壳内嵌的后端就是「方式三：单文件原生版」那份二进制，行为与 Docker / 源码方式完全一致。
+- 桌面壳内嵌的后端就是下方「单文件原生版」那份二进制，行为与源码方式完全一致。
 
-### 方式二：Docker（无需本地环境）
+#### 单文件原生版（Linux / Windows，无需 Java / Node）
+
+GraalVM native-image 编译的单文件二进制——**后端与前端一体**：前端 SPA 在构建期直接嵌入二进制，运行起来就是一个完整服务，不需要再启动任何前端。无需安装 Java、Maven、Node，双击 / 一条命令即起。
+
+- 前置只需本机 `git`（跑 Agent 会话再按需装对应 CLI，如 opencode / Claude Code）；
+- **Linux 版 glibc 要求**：二进制在较新的发行版上编译，依赖 `GLIBC_2.32` / `GLIBC_2.34` 符号——需要 **Ubuntu 21.10+ / Debian 12+ / RHEL 9+** 等较新系统（CentOS 7 等老系统会报 `GLIBC_2.34 not found`）；老系统请改用 Docker 方式（方式二）或自行在目标平台构建；
+- **CPU / 架构**：原生版覆盖 Linux x86_64 / **Linux arm64**（`ow-linux-arm64`）/ Windows x86_64；对 CPU 指令集无特殊要求（x86-64 基线，不依赖 AVX），2 核即可——会话耗时主要在等待模型 API 而非本地计算；其余架构请走 Docker 方式（镜像多架构 amd64/arm64）或从源码构建；
+- 二进制随 [GitHub Releases](https://github.com/Saktawdi/OpenWorktree/releases) 发布（打 `v*` tag 时自动附带 `ow-linux-x86_64` / `ow-linux-arm64` / `ow-windows-x86_64`）；日常 master 产物在 Actions 的 `ow-native-Linux` / `ow-native-Linux-arm64` / `ow-native-Windows` artifact（保留 14 天）；
+- 启动（在想要存放数据的目录下运行）：
+
+```bash
+# Linux (x86_64)
+./ow-linux-x86_64
+
+# Linux (ARM64)
+./ow-linux-arm64
+
+# Windows（PowerShell，文件无 .exe 后缀也可直接执行）
+.\ow-windows-x86_64
+```
+
+- 首次启动自动生成 `local-run/gate.toml`（默认 loopback `127.0.0.1:18080`）与 `gate-home/`（数据库、令牌、镜像仓、工单克隆），布局与源码方式完全一致，整目录拷走即可迁移；要换端口等可加 `--config 你的gate.toml`；
+- 看到日志 `GATE_WEB_TOKEN=...` 与 `listening on http://127.0.0.1:18080/` 即成功，浏览器打开 <http://127.0.0.1:18080>，令牌在日志行或 `local-run/gate-home/web-token` 文件。
+
+### 方式二：Docker（备选，不推荐云端）
+
+> 镜像仍在发布，但**不推荐日常使用，云端部署更不推荐**：容器常驻 JDK + nginx + opencode，内存占用明显高于原生方式；只建议在临时体验、或本机完全没有环境的评估场景使用。
 
 镜像以多架构（amd64/arm64）发布在 Docker Hub：[`saktawdi/openworktree`](https://hub.docker.com/r/saktawdi/openworktree)。不必克隆仓库，把下面这份存成 `compose.yaml`（放任意目录）：
 
@@ -236,26 +266,7 @@ RUN npm install -g @anthropic-ai/claude-code && npm cache clean --force
 
 从源码自构建（开发时）：仓库根目录 `docker compose up -d --build`，build-arg `INSTALL_CLAUDE=true` 让 Claude Code 随镜像出来。
 
-### 方式三：单文件原生版（Linux / Windows，无需 Java / Node）
-
-GraalVM native-image 编译的单文件二进制——**后端与前端一体**：前端 SPA 在构建期直接嵌入二进制，运行起来就是一个完整服务，不需要再启动任何前端。无需安装 Java、Maven、Node，双击 / 一条命令即起。
-
-- 前置只需本机 `git`（跑 Agent 会话再按需装对应 CLI，如 opencode / Claude Code）；
-- 二进制随 [GitHub Releases](https://github.com/Saktawdi/OpenWorktree/releases) 发布（打 `v*` tag 时自动附带 `ow-linux-x86_64` / `ow-windows-x86_64`）；日常 master 产物在 Actions 的 `ow-native-Linux` / `ow-native-Windows` artifact（保留 14 天）；
-- 启动（在想要存放数据的目录下运行）：
-
-```bash
-# Linux
-./ow-linux-x86_64
-
-# Windows（PowerShell，文件无 .exe 后缀也可直接执行）
-.\ow-windows-x86_64
-```
-
-- 首次启动自动生成 `local-run/gate.toml`（默认 loopback `127.0.0.1:18080`）与 `gate-home/`（数据库、令牌、镜像仓、工单克隆），布局与源码方式完全一致，整目录拷走即可迁移；要换端口等可加 `--config 你的gate.toml`；
-- 看到日志 `GATE_WEB_TOKEN=...` 与 `listening on http://127.0.0.1:18080/` 即成功，浏览器打开 <http://127.0.0.1:18080>，令牌在日志行或 `local-run/gate-home/web-token` 文件。
-
-### 方式四：本地开发（源码）
+### 方式三：本地开发（源码）
 
 #### 环境要求
 
@@ -388,4 +399,4 @@ java -cp "gate-cli/target/classes:gate-cli/target/dependency/*" gate.cli.GateApp
 
 ## 许可证
 
-本项目以 [GPL-3.0](LICENSE) 协议开源。
+本项目以 [Apache-2.0](LICENSE) 协议开源。
