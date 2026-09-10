@@ -1,6 +1,8 @@
 package gate.web;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -20,9 +22,9 @@ import org.junit.jupiter.api.Tag;
 
 /**
  * 存储设置端点（T-116，设置中心「存储设置」页）：概览 / 缓存清单 / 按类清理 /
- * 「在系统中打开」的真实 HTTP 契约。目录打开动作由 StorageInfoService 的默认启动器
- * 交给 OS——CI 环境无桌面时 open 会失败，因此 open 的行为断言只覆盖 401 鉴权与
- * 未知 target 的 400；真实拉起逻辑由 StorageInfoServiceTest 的注入缝覆盖。
+ * 工作区存储管理 /「在系统中打开」的真实 HTTP 契约。目录打开动作由 StorageInfoService
+ * 的默认启动器交给 OS——CI 环境无桌面时 open 会失败，因此 open 的行为断言只覆盖 401
+ * 鉴权与未知 target 的 400；真实拉起逻辑由 StorageInfoServiceTest 的注入缝覆盖。
  */
 @Tag("slow")
 class StorageRoutesTest {
@@ -144,5 +146,52 @@ class StorageRoutesTest {
     void openRejectsUnknownTarget() throws Exception {
         HttpResponse<String> res = post("/api/storage/open", "{\"target\":\"db\"}");
         assertEquals(400, res.statusCode(), res.body());
+    }
+
+    @Test
+    void workspacesRouteListsClonesWithFields() throws Exception {
+        // 种一个带可再生目录与源文件的工单工作区
+        Path clone = harness.components().config().clonesRoot().resolve("RT-1");
+        Files.createDirectories(clone.resolve("node_modules"));
+        Files.writeString(clone.resolve("src.txt"), "abc", StandardCharsets.UTF_8);
+        Files.writeString(clone.resolve("node_modules").resolve("lib.js"), "abcdef", StandardCharsets.UTF_8);
+
+        HttpResponse<String> res = get("/api/storage/workspaces");
+        assertEquals(200, res.statusCode(), res.body());
+        Map<String, Object> body = JSON.readValue(res.body(), Map.class);
+        assertTrue(body.containsKey("clones_root"));
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> workspaces = (List<Map<String, Object>>) body.get("workspaces");
+        Map<String, Object> ws = workspaces.stream()
+                .filter(w -> "RT-1".equals(w.get("id"))).findFirst().orElseThrow();
+        assertTrue(ws.containsKey("path"));
+        assertTrue(ws.containsKey("bytes"));
+        assertTrue(ws.containsKey("last_active_ms"));
+        assertTrue(ws.containsKey("ticket"), "未知工单关联为 null，字段必须下发");
+        assertNull(ws.get("ticket"), "RT-1 不在工单库中 → null 关联");
+        assertTrue(((Number) ws.get("prunable_bytes")).longValue() >= 6, res.body());
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> prunable = (List<Map<String, Object>>) ws.get("prunable");
+        assertTrue(prunable.stream().anyMatch(p -> "node_modules".equals(p.get("name"))));
+    }
+
+    @Test
+    void pruneRouteDeletesAndRejectsUnknown() throws Exception {
+        Path clone = harness.components().config().clonesRoot().resolve("RT-2");
+        Files.createDirectories(clone.resolve("node_modules"));
+        Files.writeString(clone.resolve("node_modules").resolve("lib.js"), "abcdef", StandardCharsets.UTF_8);
+
+        HttpResponse<String> res = post("/api/storage/workspaces/RT-2/prune", "{}");
+        assertEquals(200, res.statusCode(), res.body());
+        Map<String, Object> body = JSON.readValue(res.body(), Map.class);
+        assertEquals(true, body.get("ok"));
+        assertEquals(6, ((Number) body.get("removed_bytes")).longValue(), res.body());
+        assertFalse(Files.exists(clone.resolve("node_modules")), "可再生目录整树删除");
+        assertTrue(Files.isDirectory(clone), "工作区本身保留");
+
+        HttpResponse<String> unknown = post("/api/storage/workspaces/NOPE-1/prune", "{}");
+        assertEquals(400, unknown.statusCode(), unknown.body());
+        HttpResponse<String> traversal = post("/api/storage/workspaces/..%2F..%2Fgate-home/prune", "{}");
+        assertEquals(400, traversal.statusCode(), traversal.body());
     }
 }

@@ -1,13 +1,14 @@
 /**
- * 设置域存储设置（settings storage，T-116）：数据目录概览、可清理缓存与
- * 「在系统中打开」的 HTTP 接入。本地偏好数据（localStorage）的管理不走后端，
- * 见 components/storage/localData.ts。
+ * 设置域存储设置（settings storage，T-116）：数据目录概览、可清理缓存、工作区
+ * 存储管理与「在系统中打开」的 HTTP 接入。
  */
 import { api } from "@/net";
 import type {
   StorageCachesResponse,
   StorageCleanResult,
   StorageOverview,
+  StoragePruneResult,
+  StorageWorkspacesResponse,
 } from "@/shared/types";
 
 export async function fetchStorageOverview(): Promise<StorageOverview> {
@@ -21,6 +22,19 @@ export async function fetchStorageCaches(): Promise<StorageCachesResponse> {
 /** 按类别清理缓存（破坏性操作，调用方负责二次确认与结果提示）。 */
 export async function cleanStorageCache(id: string): Promise<StorageCleanResult> {
   return api<StorageCleanResult>(`/api/storage/caches/${encodeURIComponent(id)}/clean`, {
+    method: "POST",
+    body: "{}",
+  });
+}
+
+/** 工作区存储清单（克隆根下各工作区的占用/最后改动/可再生目录）。 */
+export async function fetchStorageWorkspaces(): Promise<StorageWorkspacesResponse> {
+  return api<StorageWorkspacesResponse>("/api/storage/workspaces");
+}
+
+/** 清理一个工作区的全部可再生目录（node_modules/构建产物等；破坏性操作，调用方负责二次确认）。 */
+export async function pruneStorageWorkspace(id: string): Promise<StoragePruneResult> {
+  return api<StoragePruneResult>(`/api/storage/workspaces/${encodeURIComponent(id)}/prune`, {
     method: "POST",
     body: "{}",
   });

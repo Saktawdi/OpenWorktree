@@ -101,17 +101,6 @@ export function clearSessionQueue(sessionId: string) {
   });
 }
 
-/** 清空全部会话的排队消息（存储设置「一键清空」入口，T-116）；返回清理的消息条数。 */
-export function clearAllQueuedMessages(): number {
-  let count = 0;
-  set((st) => {
-    for (const list of Object.values(st.queuedMessages)) count += list.length;
-    saveQueuedMessages({});
-    return { queuedMessages: {} };
-  });
-  return count;
-}
-
 /* ─── 自动出队泵 ─── */
 
 /** 正在泵某个会话队列（并发守卫：每会话同时至多一条在途发送）。 */

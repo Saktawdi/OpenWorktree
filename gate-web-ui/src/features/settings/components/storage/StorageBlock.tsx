@@ -1,13 +1,11 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ArrowClockwise,
+  ArrowDown,
   Broom,
-  ChatCircleDots,
-  Database,
   FolderOpen,
   HardDrives,
-  NotePencil,
-  Quotes,
+  Package,
   Trash,
   Warning,
   WarningCircle,
@@ -16,10 +14,16 @@ import {
   cleanStorageCache,
   fetchStorageCaches,
   fetchStorageOverview,
+  fetchStorageWorkspaces,
   openStorageDir,
+  pruneStorageWorkspace,
 } from "@/features/settings";
-import { collectLocalData, clearAllLocalData, clearLocalDataCategory, type LocalDataEntry } from "./localData";
-import type { StorageCachesResponse, StorageOverview } from "@/shared/types";
+import type {
+  StorageCachesResponse,
+  StorageOverview,
+  StorageWorkspace,
+  StorageWorkspacesResponse,
+} from "@/shared/types";
 import { CopyButton, Spinner, useBackdropClose } from "@/shared/components/ui";
 import { formatBytes } from "@/shared/format";
 import { showToast, useApp } from "@/store";
@@ -40,24 +44,6 @@ const CACHE_META: Record<string, { label: string; desc: string }> = {
   adapters_log: { label: "适配器诊断日志", desc: "会话适配器的结构化运行日志，清空后从零重新记录" },
 };
 
-const LOCAL_ICONS: Record<LocalDataEntry["id"], typeof ChatCircleDots> = {
-  queued_messages: ChatCircleDots,
-  composer_drafts: NotePencil,
-  pending_quotes: Quotes,
-  assistant_history: ChatCircleDots,
-};
-
-const LOCAL_IMPACT: Record<LocalDataEntry["id"], string> = {
-  queued_messages:
-    "将删除全部会话的排队消息（含图片附件）。这些消息尚未发送，清空后不会再投递给 Agent，且无法恢复。",
-  composer_drafts:
-    "将删除全部工单的输入框草稿，包括当前输入框中的文字（立即清空，无法找回）。已发送的消息不受影响。",
-  pending_quotes:
-    "将删除全部工单挂起的引用胶囊。已随消息发送过的引用不受影响，仅丢弃尚未发送的胶囊。",
-  assistant_history:
-    "将删除 LLM 小助手的全部本地对话气泡（不上传后端，无法恢复）。小助手的偏好设置不受影响。",
-};
-
 /** 二次确认弹窗请求（清理/清空共用）：impact 必须写清影响范围。 */
 interface ConfirmRequest {
   title: string;
@@ -66,6 +52,9 @@ interface ConfirmRequest {
   run: () => Promise<void>;
 }
 
+/** 排序键：闲置最久在前（默认，方便找出可以下手清理的工作区）/ 占用从大到小。 */
+type WorkspaceSort = "idle" | "bytes";
+
 /** 卡片头（图标 + 标题 + 右侧动作位）。 */
 function CardHead({
   Icon,
@@ -73,7 +62,7 @@ function CardHead({
   hint,
   actions,
 }: {
-  Icon: typeof Database;
+  Icon: typeof HardDrives;
   title: string;
   hint?: string;
   actions?: React.ReactNode;
@@ -99,6 +88,41 @@ function BytesChip({ bytes, approx }: { bytes: number; approx?: boolean }) {
       {formatBytes(bytes)}
     </span>
   );
+}
+
+/** 排序切换 chip（active 高亮）。 */
+function SortChip({
+  active,
+  label,
+  onClick,
+}: {
+  active: boolean;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      className={
+        "chip border text-[10.5px] cursor-pointer " +
+        (active
+          ? "border-accent/40 bg-accent-dim text-accent"
+          : "border-edge bg-raised text-faint hover:text-dim")
+      }
+      onClick={onClick}
+    >
+      <ArrowDown size={10} className={active ? "" : "opacity-60"} />
+      {label}
+    </button>
+  );
+}
+
+/** 「最后改动距今」的展示文案（与排序同口径：无工作文件改动记录视为最久闲置）。 */
+function formatIdle(lastActiveMs: number | null): string {
+  if (lastActiveMs == null) return "无改动记录";
+  const days = Math.floor((Date.now() - lastActiveMs) / 86_400_000);
+  if (days <= 0) return "今天有改动";
+  if (days === 1) return "1 天前";
+  return `${days} 天前`;
 }
 
 /** 数据目录分区（live）：配置文件 + 五个核心数据位置，支持在系统中打开。 */
@@ -288,99 +312,138 @@ function CacheCleanCard({
   );
 }
 
-/** 本地数据管理分区（端侧）：排队消息 / 草稿 / 引用胶囊 / 小助手历史，查看占用与一键清空。 */
-function LocalDataCard({
-  entries,
+/**
+ * 工作区存储管理分区（live）：克隆根下各工作区的关联工单、总占用、最后改动距今
+ * 天数（可按闲置/占用排序）与可再生目录（node_modules/构建产物）一键清理。
+ */
+function WorkspacesCard({
+  data,
+  loading,
+  error,
   onRefresh,
   onAsk,
 }: {
-  entries: LocalDataEntry[];
+  data: StorageWorkspacesResponse | null;
+  loading: boolean;
+  error: string | null;
   onRefresh: () => void;
   onAsk: (req: ConfirmRequest) => void;
 }) {
-  const askClear = (entry: LocalDataEntry) => {
+  const [sort, setSort] = useState<WorkspaceSort>("idle");
+
+  // 排序（展示层职责，后端保持事实原序）：闲置最久在前（无改动记录视为最久）；占用从大到小。
+  const sorted = useMemo(() => {
+    const list = [...(data?.workspaces ?? [])];
+    const idleMs = (w: StorageWorkspace) =>
+      w.last_active_ms == null ? Number.MAX_SAFE_INTEGER : Date.now() - w.last_active_ms;
+    list.sort(sort === "bytes" ? (a, b) => b.bytes - a.bytes : (a, b) => idleMs(b) - idleMs(a));
+    return list;
+  }, [data, sort]);
+
+  const askPrune = (ws: StorageWorkspace) => {
+    const dirs = ws.prunable.filter((p) => p.bytes > 0 || p.files > 0);
+    if (dirs.length === 0) return;
+    const listing = dirs
+      .map((p) => `· ${p.name}（${p.files} 个文件，约 ${formatBytes(p.bytes)}）`)
+      .join("\n");
     onAsk({
-      title: `清空「${entry.label}」`,
-      impact: `${LOCAL_IMPACT[entry.id as keyof typeof LOCAL_IMPACT] ?? "该操作不可恢复。"}当前占用 ${formatBytes(entry.bytes)}。仅清空这一类数据，其他类别不受影响。`,
-      confirmLabel: "确认清空",
+      title: `清理工作区 ${ws.id} 的可再生文件`,
+      impact:
+        `将删除以下 ${dirs.length} 个可再生目录（合计约 ${formatBytes(ws.prunable_bytes)}）：\n${listing}\n\n` +
+        "依赖与构建产物删后可由包管理器/构建工具重新生成；源代码与 Git 历史不受影响。正在运行的构建/IDE 若持有文件，对应文件会跳过删除。",
+      confirmLabel: "确认清理",
       run: async () => {
-        const removed = clearLocalDataCategory(entry.id);
-        showToast(removed > 0 ? `已清空「${entry.label}」· ${removed} 项` : `「${entry.label}」当前为空`);
-        onRefresh();
+        try {
+          const r = await pruneStorageWorkspace(ws.id);
+          showToast(
+            r.removed_bytes > 0
+              ? `已清理工作区 ${ws.id} · 释放 ${formatBytes(r.removed_bytes)}`
+              : `工作区 ${ws.id} 没有可清理的内容`,
+          );
+          onRefresh();
+        } catch (e) {
+          showToast(`清理失败：${(e as Error).message}`);
+        }
       },
     });
   };
 
-  const totalBytes = entries.reduce((n, e) => n + e.bytes, 0);
-
   return (
     <div className="card p-5">
       <CardHead
-        Icon={Database}
-        title="本地数据管理"
-        hint="仅存于本浏览器，不上传后端"
+        Icon={Package}
+        title="工作区存储管理"
+        hint="克隆工作区是磁盘占用大头，可清理可再生文件"
         actions={
-          <button className="icon-btn" onClick={onRefresh} title="重新统计占用" aria-label="重新统计占用">
-            <ArrowClockwise size={14} />
-          </button>
+          <div className="flex items-center gap-2">
+            <SortChip active={sort === "idle"} label="按闲置" onClick={() => setSort("idle")} />
+            <SortChip active={sort === "bytes"} label="按占用" onClick={() => setSort("bytes")} />
+            <button className="icon-btn" onClick={onRefresh} title="重新统计占用" aria-label="重新统计占用">
+              {loading ? <Spinner /> : <ArrowClockwise size={14} />}
+            </button>
+          </div>
         }
       />
-      <div className="mt-3 grid gap-2">
-        {entries.map((entry) => {
-          const Icon = LOCAL_ICONS[entry.id as keyof typeof LOCAL_ICONS] ?? Database;
-          const empty = (entry.count ?? 0) === 0;
-          return (
-            <div key={entry.id} className="rounded-lg border border-edge bg-sunken px-3 py-2.5">
-              <div className="flex items-center gap-2 flex-wrap">
-                <Icon size={14} className="text-faint shrink-0" />
-                <span className="text-[12.5px] font-medium text-ink">{entry.label}</span>
-                <BytesChip bytes={entry.bytes} />
-                {entry.count !== null && (
-                  <span className="text-[11px] text-faint font-mono">{entry.count} 条</span>
-                )}
-                <span className="flex-1" />
-                <button
-                  className="btn btn-sm btn-danger-ghost"
-                  disabled={empty}
-                  onClick={() => askClear(entry)}
-                  title={empty ? "当前为空" : "清空该类数据（需确认）"}
-                >
-                  <Trash size={13} />
-                  清空
-                </button>
+      {error && (
+        <div className="mt-3 text-[12.5px] text-danger flex items-center gap-1.5">
+          <WarningCircle size={14} weight="fill" /> {error}
+          <button className="btn btn-sm ml-1" onClick={onRefresh}>重试</button>
+        </div>
+      )}
+      {loading && !data && (
+        <div className="mt-4 flex items-center gap-2 text-[12.5px] text-faint">
+          <Spinner /> 正在统计工作区占用 …
+        </div>
+      )}
+      {data && sorted.length === 0 && (
+        <div className="mt-3 rounded-lg border border-edge bg-sunken px-3.5 py-3 text-[12px] text-faint">
+          克隆根下暂无工作区。新建工单后，其隔离工作区会出现在这里。
+        </div>
+      )}
+      {sorted.length > 0 && (
+        <div className="mt-3 grid gap-2">
+          {sorted.map((ws) => {
+            const cleanable = ws.prunable_bytes > 0;
+            return (
+              <div key={ws.id} className="rounded-lg border border-edge bg-sunken px-3 py-2.5">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-[12.5px] font-medium text-ink font-mono">{ws.id}</span>
+                  {ws.ticket?.title && (
+                    <span className="text-[11.5px] text-dim truncate max-w-[320px]" title={ws.ticket.title}>
+                      {ws.ticket.title}
+                    </span>
+                  )}
+                  {ws.ticket?.project_id && (
+                    <span className="chip border border-edge bg-raised text-faint text-[10px]">
+                      {ws.ticket.project_id}
+                    </span>
+                  )}
+                  {!ws.ticket && <span className="text-[11px] text-faint">未关联工单</span>}
+                  <BytesChip bytes={ws.bytes} approx={ws.approx} />
+                  {cleanable && <BytesChip bytes={ws.prunable_bytes} approx={ws.prunable_approx} />}
+                  <span className="flex-1" />
+                  <span
+                    className="text-[11px] text-faint font-mono whitespace-nowrap"
+                    title="最后改动（重装依赖/git 操作不计入）"
+                  >
+                    最后改动 {formatIdle(ws.last_active_ms)}
+                  </span>
+                  <button
+                    className="btn btn-sm btn-danger-ghost"
+                    disabled={!cleanable}
+                    onClick={() => askPrune(ws)}
+                    title={cleanable ? "清理 node_modules/构建产物等可再生目录（需确认）" : "没有可清理的可再生目录"}
+                  >
+                    <Trash size={13} />
+                    清理
+                  </button>
+                </div>
+                <div className="mt-1 font-mono text-[10.5px] text-faint/80 break-all">{ws.path}</div>
               </div>
-              <div className="mt-0.5 text-[11px] text-faint">{entry.hint}</div>
-            </div>
-          );
-        })}
-      </div>
-      <div className="mt-3 flex items-center gap-2.5 flex-wrap">
-        <span className="text-[11.5px] text-faint">
-          合计约 <span className="font-mono text-dim">{formatBytes(totalBytes)}</span>
-        </span>
-        <span className="flex-1" />
-        <button
-          className="btn btn-sm btn-danger-ghost"
-          disabled={totalBytes === 0}
-          onClick={() =>
-            onAsk({
-              title: "一键清空本地数据",
-              impact:
-                `将同时清空排队消息、输入框草稿、引用胶囊与小助手对话历史（合计约 ${formatBytes(totalBytes)}）。` +
-                "清空后无法恢复；已发送的消息与后端工单数据不受影响。",
-              confirmLabel: "全部清空",
-              run: async () => {
-                const touched = clearAllLocalData();
-                showToast(touched > 0 ? `已清空本地偏好数据（${touched} 类）` : "没有可清空的本地数据");
-                onRefresh();
-              },
-            })
-          }
-        >
-          <Trash size={13} />
-          一键清空全部
-        </button>
-      </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -426,7 +489,7 @@ function StorageConfirm({
           </button>
         </div>
         <div className="p-5">
-          <div className="rounded-lg border border-warn/30 bg-warn-dim/60 px-3.5 py-2.5 text-[12px] text-dim leading-relaxed">
+          <div className="rounded-lg border border-warn/30 bg-warn-dim/60 px-3.5 py-2.5 text-[12px] text-dim leading-relaxed whitespace-pre-wrap">
             {req.impact}
           </div>
         </div>
@@ -454,29 +517,30 @@ function StorageConfirm({
 }
 
 /**
- * 存储设置（T-116）：数据目录 / 本地缓存清理 / 本地数据管理。
- * 前两类依赖后端 API（live），本地数据管理仅读写本浏览器，两种模式下均可用。
+ * 存储设置（T-116）：数据目录 / 工作区存储管理 / 本地缓存清理。
+ * live 模式下依赖后端 API；demo 模式只展示能力说明，不发起必然失败的存储请求。
  */
 export function StorageBlock() {
   const mode = useApp((s) => s.mode);
   const [overview, setOverview] = useState<StorageOverview | null>(null);
   const [caches, setCaches] = useState<StorageCachesResponse | null>(null);
+  const [workspaces, setWorkspaces] = useState<StorageWorkspacesResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [localEntries, setLocalEntries] = useState<LocalDataEntry[]>(() => collectLocalData());
   const [confirm, setConfirm] = useState<ConfirmRequest | null>(null);
-
-  const refreshLocal = useCallback(() => {
-    setLocalEntries(collectLocalData());
-  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const [ov, ca] = await Promise.all([fetchStorageOverview(), fetchStorageCaches()]);
+      const [ov, ca, ws] = await Promise.all([
+        fetchStorageOverview(),
+        fetchStorageCaches(),
+        fetchStorageWorkspaces(),
+      ]);
       setOverview(ov);
       setCaches(ca);
+      setWorkspaces(ws);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -484,15 +548,12 @@ export function StorageBlock() {
     }
   }, []);
 
-  // 本地数据管理两端可用；目录/缓存统计仅 live 有后端，demo 下只展示能力说明，
-  // 不发起必然失败的存储 API 请求。
   const live = mode === "live";
 
   useEffect(() => {
-    // 本地数据管理两端可用；目录/缓存统计仅 live 有后端（demo 下不发请求、只展示能力说明）
-    refreshLocal();
+    // 目录/缓存/工作区统计仅 live 有后端（demo 下不发请求、只展示能力说明）
     if (live) void load();
-  }, [live, load, refreshLocal]);
+  }, [live, load]);
 
   const ask = (req: ConfirmRequest) => setConfirm(req);
 
@@ -501,6 +562,13 @@ export function StorageBlock() {
       {live ? (
         <>
           <DataDirsCard overview={overview} loading={loading} error={error} onRefresh={() => void load()} />
+          <WorkspacesCard
+            data={workspaces}
+            loading={loading}
+            error={error}
+            onRefresh={() => void load()}
+            onAsk={ask}
+          />
           <CacheCleanCard
             caches={caches}
             loading={loading}
@@ -511,15 +579,14 @@ export function StorageBlock() {
         </>
       ) : (
         <div className="card p-5">
-          <CardHead Icon={HardDrives} title="数据目录 · 本地缓存清理" hint="需要连接后端" />
+          <CardHead Icon={HardDrives} title="数据目录 · 工作区存储 · 本地缓存" hint="需要连接后端" />
           <div className="mt-3 rounded-lg border border-edge bg-sunken px-3.5 py-3 text-[12px] text-faint leading-relaxed">
-            演示模式没有后端：数据目录占用统计、缓存清理与「在系统中打开」需要连接本地后端（live
-            模式）后使用——届时将展示数据主目录/工单克隆根/数据库/Blob/审计日志的路径与占用，并可按类清理进程临时日志、Git
-            临时目录与适配器诊断日志。
+            演示模式没有后端：连接本地后端（live 模式）后，这里将展示数据主目录/工单克隆根/数据库/Blob/审计日志的路径与占用，
+            并支持「在系统中打开」；可查看各工单工作区的关联项目、总占用与最后改动距今天数（支持按闲置/占用排序），一键清理
+            node_modules/构建产物等可再生文件；还可按类清理进程临时日志、Git 临时目录与适配器诊断日志。
           </div>
         </div>
       )}
-      <LocalDataCard entries={localEntries} onRefresh={refreshLocal} onAsk={ask} />
       {confirm && <StorageConfirm req={confirm} onClose={() => setConfirm(null)} />}
     </div>
   );
