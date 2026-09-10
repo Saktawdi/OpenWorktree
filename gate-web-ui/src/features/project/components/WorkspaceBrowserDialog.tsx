@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+﻿import { useEffect, useState } from "react";
 import {
   ArrowUp,
   CaretRight,
@@ -11,6 +11,7 @@ import {
 import { actions } from "@/app/actions";
 import type { WorkspaceListing } from "@/shared/types";
 import { Spinner, useBackdropClose } from "@/shared/components/ui";
+import { useT } from "@/i18n";
 
 /**
  * 本地目录浏览器（后端 /api/workspaces 驱动）— 为「接入新项目」表单选择工作区绝对路径。
@@ -26,6 +27,7 @@ export function WorkspaceBrowserDialog({
   onPick: (path: string) => void;
   onClose: () => void;
 }) {
+  const t = useT();
   const [listing, setListing] = useState<WorkspaceListing | null>(null);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<string | null>(null);
@@ -88,9 +90,9 @@ export function WorkspaceBrowserDialog({
       >
         <div className="flex items-center gap-2 px-4 h-11 border-b border-edge shrink-0">
           <FolderOpen size={15} className="text-accent" />
-          <span className="text-[13px] font-semibold">选择工作区目录</span>
+          <span className="text-[13px] font-semibold">{t("wsb.title")}</span>
           <span className="flex-1" />
-          <button className="icon-btn" aria-label="关闭" title="关闭" onClick={onClose}>
+          <button className="icon-btn" aria-label={t("common.close")} title={t("common.close")} onClick={onClose}>
             <X size={14} />
           </button>
         </div>
@@ -100,7 +102,7 @@ export function WorkspaceBrowserDialog({
             <input
               autoFocus
               className="text-input h-8 font-mono text-[12px] flex-1"
-              placeholder="D:\path\to\workspace 或 /home/you/workspace"
+              placeholder={t("wsb.pathPlaceholder")}
               value={address}
               onChange={(e) => setAddress(e.target.value)}
               onKeyDown={(e) => {
@@ -112,12 +114,12 @@ export function WorkspaceBrowserDialog({
               disabled={!address.trim()}
               onClick={() => void load(address.trim())}
             >
-              跳转
+              {t("wsb.go")}
             </button>
             <button
               className="icon-btn h-8 w-8"
-              title="上一级目录"
-              aria-label="上一级目录"
+              title={t("wsb.parent")}
+              aria-label={t("wsb.parent")}
               disabled={!listing?.parent}
               onClick={() => listing?.parent && void load(listing.parent)}
             >
@@ -125,8 +127,8 @@ export function WorkspaceBrowserDialog({
             </button>
             <button
               className="icon-btn h-8 w-8"
-              title="在此目录下新建文件夹"
-              aria-label="新建文件夹"
+              title={t("wsb.mkdirTip")}
+              aria-label={t("wsb.mkdir")}
               disabled={!listing?.exists || creating}
               onClick={startCreate}
             >
@@ -138,7 +140,7 @@ export function WorkspaceBrowserDialog({
               <input
                 autoFocus
                 className="text-input h-8 font-mono text-[12px] flex-1"
-                placeholder="新文件夹名称"
+                placeholder={t("wsb.mkdirPlaceholder")}
                 value={newName}
                 onChange={(e) => setNewName(e.target.value)}
                 onKeyDown={(e) => {
@@ -151,10 +153,10 @@ export function WorkspaceBrowserDialog({
                 disabled={!newName.trim() || creatingDir}
                 onClick={() => void submitCreate()}
               >
-                {creatingDir ? "创建中…" : "创建"}
+                {creatingDir ? t("wsb.creating") : t("wsb.create")}
               </button>
               <button className="btn h-8 px-2.5" onClick={() => setCreating(false)}>
-                取消
+                {t("common.cancel")}
               </button>
             </div>
           )}
@@ -184,18 +186,18 @@ export function WorkspaceBrowserDialog({
             </div>
           ) : !listing ? (
             <div className="h-40 grid place-items-center text-[12.5px] text-faint">
-              目录浏览需要连接本地后端（live 模式）
+              {t("project.browseNeedLive")}
             </div>
           ) : (
             <>
               {!listing.exists && (
                 <div className="mx-2 mb-2 rounded-lg border border-warn/30 bg-warn/10 px-3 py-2 text-[12px] text-warn">
-                  目录不存在：选择后将按此路径自动创建并接入
+                  {t("wsb.notExists")}
                 </div>
               )}
               {listing.directories.length === 0 ? (
                 <div className="h-36 grid place-items-center text-[12.5px] text-faint">
-                  {listing.exists ? "此目录下没有子目录" : ""}
+                  {listing.exists ? t("wsb.noSubdirs") : ""}
                 </div>
               ) : (
                 <ul className="space-y-0.5">
@@ -209,7 +211,7 @@ export function WorkspaceBrowserDialog({
                         }`}
                         onClick={() => setSelected(d.path)}
                         onDoubleClick={() => void load(d.path)}
-                        title={`${d.path}（双击进入）`}
+                        title={t("wsb.dirTip", { path: d.path })}
                       >
                         <FolderIcon
                           size={15}
@@ -225,7 +227,7 @@ export function WorkspaceBrowserDialog({
                         )}
                         {d.isRegisteredProject && (
                           <span className="chip border border-edge-strong bg-raised text-faint">
-                            已接入
+                            {t("wsb.registered")}
                           </span>
                         )}
                         <span className="flex-1" />
@@ -233,7 +235,7 @@ export function WorkspaceBrowserDialog({
                           role="button"
                           tabIndex={-1}
                           className="grid place-items-center w-6 h-6 rounded-md text-faint hover:text-ink hover:bg-overlay"
-                          title="进入此目录"
+                          title={t("wsb.enter")}
                           onClick={(e) => {
                             e.stopPropagation();
                             void load(d.path);
@@ -255,14 +257,14 @@ export function WorkspaceBrowserDialog({
             {selected ?? listing?.path ?? ""}
           </div>
           <button className="btn" onClick={onClose}>
-            取消
+            {t("common.cancel")}
           </button>
           <button
             className="btn btn-primary"
             disabled={loading || !(selected ?? listing?.path)}
             onClick={confirm}
           >
-            选择此目录
+            {t("wsb.pick")}
           </button>
         </div>
       </div>

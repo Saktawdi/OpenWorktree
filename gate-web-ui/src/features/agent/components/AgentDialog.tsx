@@ -1,20 +1,21 @@
-import { useEffect, useMemo, useState } from "react";
+﻿import { useEffect, useMemo, useState } from "react";
 import { ArrowClockwise, CaretDown, CheckCircle, CircleNotch, Sparkle, TerminalWindow } from "@phosphor-icons/react";
 import { actions } from "@/app/actions";
 import { useApp } from "@/store";
 import type { AgentConfig } from "@/shared/types";
 import { useBackdropClose } from "@/shared/components/ui";
 import { CLI_LABEL } from "./labels";
+import { useT, type Translate } from "@/i18n";
 
 /* ── 模型选择（抄 OpenDesign SettingsDialog 的 agent-model 字段）── */
 
 const CUSTOM_MODEL_SENTINEL = "__custom__";
 
 /** 与后端 RuntimeInfoService 的 model_source 对齐：cli=实时探测，其余为内置/兜底列表。 */
-function modelSourceBadge(source: string | undefined): { label: string; live: boolean } {
-  if (source === "cli" || source === "cli-loading") return { label: "来自 CLI 的实时列表", live: true };
-  if (source === "cli-hints") return { label: "CLI 常用别名", live: false };
-  return { label: "内置列表", live: false };
+function modelSourceBadge(source: string | undefined, t: Translate): { label: string; live: boolean } {
+  if (source === "cli" || source === "cli-loading") return { label: t("agent.source.cli"), live: true };
+  if (source === "cli-hints") return { label: t("agent.source.cliHints"), live: false };
+  return { label: t("agent.source.builtin"), live: false };
 }
 
 function splitModelOptions(models: string[]): { flat: string[]; groups: Array<[string, string[]]> } {
@@ -37,6 +38,7 @@ function splitModelOptions(models: string[]): { flat: string[]; groups: Array<[s
 
 /** 新增/编辑智能体弹窗：CLI 选择、模型目录（实时拉取轮询）、系统提示词与启动参数。 */
 export function AgentDialog({ initial, onClose }: { initial: AgentConfig | null; onClose: () => void }) {
+  const t = useT();
   const runtimes = useApp((s) => s.runtimes);
   const backdrop = useBackdropClose(onClose);
   const [name, setName] = useState(initial?.name ?? "");
@@ -53,7 +55,7 @@ export function AgentDialog({ initial, onClose }: { initial: AgentConfig | null;
   const models = runtime?.models ?? [];
   const modelSource = runtime?.modelSource;
   const loadingModels = modelSource === "cli-loading";
-  const badge = modelSourceBadge(modelSource);
+  const badge = modelSourceBadge(modelSource, t);
   const knownIds = useMemo(
     () => ["default", ...models.filter((m) => m !== "default")],
     [models],
@@ -106,13 +108,13 @@ export function AgentDialog({ initial, onClose }: { initial: AgentConfig | null;
       <div className="w-[500px] card shadow-2xl shadow-black/60 animate-rise" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-2 px-5 h-12 border-b border-edge">
           <Sparkle size={15} className="text-accent" weight="fill" />
-          <span className="text-[13.5px] font-semibold">{initial ? "编辑智能体" : "新增智能体员工"}</span>
+          <span className="text-[13.5px] font-semibold">{initial ? t("agent.dialog.edit") : t("agent.dialog.new")}</span>
         </div>
 
         <div className="p-5 space-y-4 max-h-[70vh] overflow-y-auto">
           {!initial && (
             <div>
-              <label className="field-label">第一步 · 选择本地 CLI</label>
+              <label className="field-label">{t("agent.step1")}</label>
               <div className="grid grid-cols-2 gap-2">
                 {(["opencode", "claude"] as const).map((c) => {
                   const rt = runtimes.find((r) => r.name === c);
@@ -137,7 +139,7 @@ export function AgentDialog({ initial, onClose }: { initial: AgentConfig | null;
                         {rt?.available && <CheckCircle size={13} className="text-accent" weight="fill" />}
                       </div>
                       <div className="mt-1 font-mono text-[10.5px] text-faint">
-                        {rt?.version ? `v${rt.version}` : (rt?.note ?? "未检测到")}
+                        {rt?.version ? `v${rt.version}` : (rt?.note ?? t("agent.notDetected"))}
                       </div>
                     </button>
                   );
@@ -147,23 +149,23 @@ export function AgentDialog({ initial, onClose }: { initial: AgentConfig | null;
           )}
 
           <div>
-            <label className="field-label">{initial ? "名称" : "第二步 · 命名与模型"}</label>
+            <label className="field-label">{initial ? t("common.name") : t("agent.step2")}</label>
             <input
               autoFocus={!initial}
               className="text-input mb-3"
-              placeholder="例如：Claude 主力"
+              placeholder={t("agent.namePlaceholder")}
               value={name}
               onChange={(e) => setName(e.target.value)}
             />
 
             <div className="flex items-center gap-2 mb-1.5">
-              <span className="text-[11px] font-medium uppercase tracking-[0.08em] text-faint">模型</span>
+              <span className="text-[11px] font-medium uppercase tracking-[0.08em] text-faint">{t("agent.modelLabel")}</span>
               <span className={`source-badge ${badge.live ? "live" : "fallback"}`}>{badge.label}</span>
               <span className="flex-1" />
               <button
                 className="icon-btn w-5 h-5"
-                title="重新拉取模型"
-                aria-label="重新拉取模型"
+                title={t("agent.refetchModels")}
+                aria-label={t("agent.refetchModels")}
                 onClick={() => actions.refreshRuntimes()}
               >
                 <ArrowClockwise size={12} className={loadingModels ? "animate-spin" : ""} />
@@ -173,14 +175,14 @@ export function AgentDialog({ initial, onClose }: { initial: AgentConfig | null;
             {loadingModels ? (
               <div className="text-input h-9 flex items-center gap-2 text-dim" role="status" aria-busy="true">
                 <CircleNotch size={13} className="animate-spin text-accent" />
-                正在从 CLI 拉取模型…
+                {t("agent.fetchingModels")}
               </div>
             ) : (
               <div className="relative">
                 <select
                   className="text-input appearance-none pr-8 cursor-pointer font-mono text-[12px]"
                   value={selectValue}
-                  aria-label="模型"
+                  aria-label={t("agent.modelAria")}
                   onChange={(e) => {
                     const v = e.target.value;
                     if (v === CUSTOM_MODEL_SENTINEL) {
@@ -192,7 +194,7 @@ export function AgentDialog({ initial, onClose }: { initial: AgentConfig | null;
                     }
                   }}
                 >
-                  <option value="default">CLI 默认设置</option>
+                  <option value="default">{t("agent.cliDefaultOption")}</option>
                   {(() => {
                     const { flat, groups } = splitModelOptions(models);
                     return (
@@ -214,7 +216,7 @@ export function AgentDialog({ initial, onClose }: { initial: AgentConfig | null;
                       </>
                     );
                   })()}
-                  <option value={CUSTOM_MODEL_SENTINEL}>自定义（在下方输入）…</option>
+                  <option value={CUSTOM_MODEL_SENTINEL}>{t("agent.customOption")}</option>
                 </select>
                 <CaretDown
                   size={12}
@@ -224,16 +226,16 @@ export function AgentDialog({ initial, onClose }: { initial: AgentConfig | null;
             )}
             <div className="mt-1.5 text-[11px] text-faint">
               {badge.live
-                ? "模型列表来自这个 CLI；选「CLI 默认设置」会沿用 CLI 自己的配置。"
-                : "正在显示内置默认值。点击右上角按钮可从 CLI 重新拉取实时模型。"}
+                ? t("agent.modelSourceCliHint")
+                : t("agent.modelSourceBuiltinHint")}
             </div>
 
             {customActive && (
               <div className="mt-2">
-                <label className="field-label">自定义模型 id</label>
+                <label className="field-label">{t("agent.customModelLabel")}</label>
                 <input
                   className="text-input font-mono text-[12px]"
-                  placeholder="例如：anthropic/claude-sonnet-4-5"
+                  placeholder={t("agent.customModelPlaceholder")}
                   value={model}
                   autoFocus
                   onChange={(e) => setModel(e.target.value)}
@@ -244,7 +246,7 @@ export function AgentDialog({ initial, onClose }: { initial: AgentConfig | null;
 
           <div>
             <div className="flex items-center gap-2 mb-1.5">
-              <span className="text-[11px] font-medium uppercase tracking-[0.08em] text-faint">系统提示词（可选）</span>
+              <span className="text-[11px] font-medium uppercase tracking-[0.08em] text-faint">{t("agent.systemPromptLabel")}</span>
               <span className="flex-1" />
               <button
                 type="button"
@@ -252,7 +254,7 @@ export function AgentDialog({ initial, onClose }: { initial: AgentConfig | null;
                 aria-checked={injectContext}
                 onClick={() => setInjectContext((v) => !v)}
                 className="flex items-center gap-1.5 cursor-pointer bg-transparent border-0 p-0 group"
-                title="开启后，会话启动时自动把项目信息与工单信息注入系统提示词"
+                title={t("agent.systemPromptTip")}
               >
                 <span
                   className={`relative inline-block w-8 h-[18px] rounded-full transition-colors duration-150 ${
@@ -266,25 +268,25 @@ export function AgentDialog({ initial, onClose }: { initial: AgentConfig | null;
                   />
                 </span>
                 <span className={`text-[11.5px] ${injectContext ? "text-accent" : "text-faint"} group-hover:text-ink transition-colors`}>
-                  注入项目与工单信息
+                  {t("agent.injectLabel")}
                 </span>
               </button>
             </div>
             <textarea
               className="text-input h-20 py-2 resize-none"
-              placeholder="为该智能体设定角色与约束…"
+              placeholder={t("agent.systemPromptPlaceholder")}
               value={systemPrompt}
               onChange={(e) => setSystemPrompt(e.target.value)}
             />
             {injectContext && (
               <div className="mt-1.5 text-[11px] text-faint">
-                会话启动时会自动附加项目名称、工作区、工单号/标题/需求描述等上下文；关闭后仅使用上方自定义提示词。
+                {t("agent.injectHint")}
               </div>
             )}
           </div>
 
           <div>
-            <label className="field-label">额外启动参数（空格分隔，可选）</label>
+            <label className="field-label">{t("agent.extraArgsLabel")}</label>
             <input
               className="text-input font-mono text-[12px]"
               placeholder="-c model_context_limit=200000"
@@ -294,10 +296,10 @@ export function AgentDialog({ initial, onClose }: { initial: AgentConfig | null;
           </div>
 
           <div>
-            <label className="field-label">职责描述（可选）</label>
+            <label className="field-label">{t("agent.dutyLabel")}</label>
             <input
               className="text-input"
-              placeholder="例如：大上下文重构与批量迁移"
+              placeholder={t("agent.dutyPlaceholder")}
               value={description}
               onChange={(e) => setDescription(e.target.value)}
             />
@@ -306,10 +308,10 @@ export function AgentDialog({ initial, onClose }: { initial: AgentConfig | null;
 
         <div className="flex justify-end gap-2 px-5 py-4 border-t border-edge">
           <button className="btn" onClick={onClose}>
-            取消
+            {t("common.cancel")}
           </button>
           <button className="btn btn-primary" disabled={!name.trim() || saving} onClick={save}>
-            {saving ? "保存中…" : initial ? "保存修改" : "创建智能体"}
+            {saving ? t("llm.saving") : initial ? t("llm.saveChanges") : t("agent.create")}
           </button>
         </div>
       </div>

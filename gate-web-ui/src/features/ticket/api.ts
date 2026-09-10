@@ -1,7 +1,8 @@
-/**
+﻿/**
  * 工单域 API（ticket）：工单 CRUD、工作区 diff、状态变更历史。
  * 门禁流水线（presubmit/review/publish）见 features/gate；打开工单的编排见 flows.ts。
  */
+import { t as i18nT } from "@/i18n";
 import { api } from "@/net";
 import { appStore, showToast } from "@/store";
 import { parseUnifiedDiff, approxDiffBytes } from "@/shared/diff";
@@ -32,7 +33,7 @@ interface RawTicket {
 function mapTicket(t: RawTicket): Ticket {
   return {
     ticketNo: t.ticket_no,
-    title: t.title || "(未命名工单)",
+    title: t.title || i18nT("ticket.untitled"),
     stage: t.stage as unknown as Stage,
     priority: ((t.priority as Priority) ?? "P2") as Priority,
     projectId: t.project_id ?? "",
@@ -71,7 +72,7 @@ export async function createTicketLive(body: Record<string, unknown>): Promise<s
     const t = await api<RawTicket>("/api/tickets", { method: "POST", body: JSON.stringify(body) });
     return t.ticket_no ?? null;
   } catch (e) {
-    showToast(`创建工单失败：${(e as Error).message}`);
+    showToast(i18nT("ticketapi.createFailed", { err: (e as Error).message }));
     return null;
   }
 }
@@ -100,7 +101,7 @@ export async function updateTicketLive(
     await refreshTicket(no);
     return true;
   } catch (e) {
-    showToast(`更新工单失败：${(e as Error).message}`);
+    showToast(i18nT("ticketapi.updateFailed", { err: (e as Error).message }));
     return false;
   }
 }

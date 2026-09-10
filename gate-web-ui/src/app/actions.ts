@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 应用动作 facade（app actions）：UI 层统一入口，按当前模式（live/demo）
  * 分发到对应 feature 包或演示引擎。跨域编排（连接/启动）见 boot.ts。
  */
@@ -87,6 +87,7 @@ import {
   upsertOcProvider,
 } from "@/features/agent/state";
 import { verifyToken } from "@/net";
+import { t } from "@/i18n";
 import type { AgentConfig, OpenCodeProvider, PendingAttachment, Project, Ticket } from "@/shared/types";
 
 export const actions = {
@@ -105,7 +106,7 @@ export const actions = {
     const findings = st.findings[no] ?? [];
     if (findings.length === 0) return;
     if (st.mode === "live") {
-      const text = ["请按以下审查意见逐条修复：", demo.findingsToPromptText(findings)].join("\n");
+      const text = [t("actions.fixPerFindingsPrefix"), demo.findingsToPromptText(findings)].join("\n");
       return liveSendPrompt(no, text);
     }
     return demo.demoReturnWithFindings(no);
@@ -120,17 +121,17 @@ export const actions = {
   /** 人工审查：弹窗确认"已审阅"并填写必填理由后，以人工判决落盘（human_pass=true）。 */
   reviewHuman(no: string, note?: string) {
     if (appStore.getState().mode === "live") {
-      return liveReview(no, { humanPass: true, note: note?.trim() || "人工审查通过（未填写理由）" });
+      return liveReview(no, { humanPass: true, note: note?.trim() || t("actions.humanPassNoNote") });
     }
     setVerdict(no, {
       verdict: "PASS",
-      reason: note?.trim() || "人工审查通过（确认已审阅）",
+      reason: note?.trim() || t("actions.humanPassNote"),
       engineId: "human/override",
       round: appStore.getState().snapshots[no]?.length ?? 1,
       authorizationId: "manual-" + Date.now().toString(36),
     });
     setStage(no, "READY_TO_PUBLISH");
-    pushSystemMessage(no, "人工审查通过 · 发布授权已签发", "success");
+    pushSystemMessage(no, t("actions.humanPassMsg"), "success");
     markReviewEnded(no, "PASS");
     return Promise.resolve();
   },
@@ -202,10 +203,10 @@ export const actions = {
     if (appStore.getState().mode === "live") {
       return cancelTicketLive(no, reason);
     }
-    const t = appStore.getState().tickets.find((x) => x.ticketNo === no);
+    const prev = appStore.getState().tickets.find((x) => x.ticketNo === no);
     setStage(no, "CANCELLED");
-    appendStageChange(no, from ?? t?.stage ?? "PENDING", "CANCELLED", reason);
-    pushSystemMessage(no, `工单已取消 · 理由：${reason}`, "warn");
+    appendStageChange(no, from ?? prev?.stage ?? "PENDING", "CANCELLED", reason);
+    pushSystemMessage(no, t("actions.cancelledMsg", { reason }), "warn");
     return Promise.resolve(true);
   },
   /** 强制已完成（V19）：任意非终态可强制收尾，理由必填并记入状态变更历史。 */
@@ -213,10 +214,10 @@ export const actions = {
     if (appStore.getState().mode === "live") {
       return completeTicketLive(no, reason);
     }
-    const t = appStore.getState().tickets.find((x) => x.ticketNo === no);
+    const prev = appStore.getState().tickets.find((x) => x.ticketNo === no);
     setStage(no, "DONE");
-    appendStageChange(no, from ?? t?.stage ?? "PENDING", "DONE", reason);
-    pushSystemMessage(no, `工单已强制完成 · 理由：${reason}`, "success");
+    appendStageChange(no, from ?? prev?.stage ?? "PENDING", "DONE", reason);
+    pushSystemMessage(no, t("actions.forceDoneMsg", { reason }), "success");
     return Promise.resolve(true);
   },
   createProject(body: {
@@ -261,7 +262,7 @@ export const actions = {
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     });
-    showToast(`项目「${body.name}」已接入`);
+    showToast(t("actions.projectConnected", { name: body.name }));
     return Promise.resolve(true);
   },
   editProject(
@@ -302,7 +303,7 @@ export const actions = {
       return deleteProjectLive(id);
     }
     removeProject(id);
-    showToast("项目已移除（工单保留为未分配）");
+    showToast(t("actions.projectRemoved"));
     return Promise.resolve(true);
   },
   /** 星标开关：置顶展示，不参与「更新于」时间刷新。 */
@@ -314,7 +315,7 @@ export const actions = {
     const p = st.projects.find((x) => x.id === id);
     if (!p) return Promise.resolve(false);
     upsertProject({ ...p, starred });
-    showToast(starred ? `已置顶「${p.name}」` : `已取消「${p.name}」置顶`);
+    showToast(starred ? t("actions.starred", { name: p.name }) : t("actions.unstarred", { name: p.name }));
     return Promise.resolve(true);
   },
   /** 拖拽排序结果落库（live 后端 + demo 本地 store）。 */
@@ -333,7 +334,7 @@ export const actions = {
   /** 目录浏览只走 live 后端；demo 模式下无本地文件系统可调。 */
   browseWorkspace(path: string) {
     if (appStore.getState().mode !== "live") {
-      showToast("目录浏览需要连接本地后端（live 模式）");
+      showToast(t("project.browseNeedLive"));
       return Promise.resolve(null);
     }
     return browseWorkspace(path);
@@ -341,7 +342,7 @@ export const actions = {
   /** 目录选择器的「新建文件夹」，同样只走 live 后端。 */
   createWorkspaceDir(parent: string, name: string) {
     if (appStore.getState().mode !== "live") {
-      showToast("新建文件夹需要连接本地后端（live 模式）");
+      showToast(t("actions.mkdirNeedLive"));
       return Promise.resolve(null);
     }
     return createWorkspaceDir(parent, name);
@@ -351,7 +352,7 @@ export const actions = {
       return upsertAgentConfigLive(c);
     }
     upsertAgentConfig(c);
-    showToast("智能体配置已保存");
+    showToast(t("actions.agentSaved"));
     return Promise.resolve(true);
   },
   deleteAgentConfig(id: string) {
@@ -359,7 +360,7 @@ export const actions = {
       return deleteAgentConfigLive(id);
     }
     removeAgentConfig(id);
-    showToast("智能体配置已删除");
+    showToast(t("actions.agentDeleted"));
     return Promise.resolve(true);
   },
   refreshRuntimes() {
@@ -377,7 +378,7 @@ export const actions = {
       return upsertOcProviderLive(p);
     }
     upsertOcProvider(p);
-    showToast("OpenCode 供应商已保存（demo）");
+    showToast(t("actions.ocSavedDemo"));
     return Promise.resolve(true);
   },
   deleteOcProvider(key: string) {
@@ -385,7 +386,7 @@ export const actions = {
       return deleteOcProviderLive(key);
     }
     removeOcProvider(key);
-    showToast("OpenCode 供应商已删除（demo）");
+    showToast(t("actions.ocDeletedDemo"));
     return Promise.resolve(true);
   },
   openTicket(no: string) {
@@ -432,26 +433,26 @@ export const actions = {
   },
   overridePass(no: string) {
     if (appStore.getState().mode === "live") {
-      return liveReview(no, { humanPass: true, note: "人工核准放行" });
+      return liveReview(no, { humanPass: true, note: t("actions.overrideNote") });
     }
     setVerdict(no, {
       verdict: "PASS",
-      reason: "人工核准放行",
+      reason: t("actions.overrideNote"),
       engineId: "human/override",
       round: appStore.getState().snapshots[no]?.length ?? 1,
       authorizationId: "manual-" + Date.now().toString(36),
     });
     setStage(no, "READY_TO_PUBLISH");
-    pushSystemMessage(no, "人工核准通过 · 发布授权已签发", "success");
+    pushSystemMessage(no, t("actions.overrideMsg"), "success");
     markReviewEnded(no, "PASS");
     return Promise.resolve();
   },
   rejectTicket(no: string) {
     if (appStore.getState().mode === "live") {
-      return liveReview(no, { humanPass: false, note: "人工驳回重修" });
+      return liveReview(no, { humanPass: false, note: t("actions.rejectNote") });
     }
     setStage(no, "REJECTED");
-    pushSystemMessage(no, "人工驳回 · 请根据审查意见修复后重新提审", "warn");
+    pushSystemMessage(no, t("actions.rejectMsg"), "warn");
     markReviewEnded(no, "REJECT");
     return Promise.resolve();
   },
@@ -460,7 +461,7 @@ export const actions = {
       return updateTicketLive(no, { stage: "IN_PROGRESS" });
     }
     setStage(no, "IN_PROGRESS");
-    pushSystemMessage(no, "工单已开始 · Agent 可以在沙箱内编码", "info");
+    pushSystemMessage(no, t("actions.startedMsg"), "info");
     return Promise.resolve(true);
   },
   /** 退回待处理：仅「进行中」可拖回待处理重新排队（队列内流转，无需理由，后端同口径放行）。 */
@@ -469,7 +470,7 @@ export const actions = {
       return updateTicketLive(no, { stage: "PENDING" });
     }
     setStage(no, "PENDING");
-    pushSystemMessage(no, "工单已退回待处理", "info");
+    pushSystemMessage(no, t("actions.backPendingMsg"), "info");
     return Promise.resolve(true);
   },
   /** 重启终态工单（T-117）：理由必填，轮次自动加一，进入 IN_PROGRESS。 */
@@ -478,7 +479,7 @@ export const actions = {
       return restartTicketLive(no, reason);
     }
     setStage(no, "IN_PROGRESS");
-    pushSystemMessage(no, `工单已重启 · 本轮理由：${reason}`, "info");
+    pushSystemMessage(no, t("actions.restartedMsg", { reason }), "info");
     return Promise.resolve(true);
   },
   /** 基座同步（T-118）：工单分支快进到主分支最新 tip，未提交改动原样保留。仅 live 模式可用。 */
@@ -486,7 +487,7 @@ export const actions = {
     if (appStore.getState().mode === "live") {
       return liveSyncBase(no);
     }
-    pushSystemMessage(no, "演示模式无主分支可同步", "info");
+    pushSystemMessage(no, t("actions.demoNoSync"), "info");
     return Promise.resolve();
   },
   /**

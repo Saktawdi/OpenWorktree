@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 判决卡片（需求文档 §五.1「判决卡片要能解释自己」）：
  * 把 GatePolicy 的结构化 reason/detail 翻译成人话，并给出每类原因对应的下一步动作。
  * 这是整条证据链上唯一需要用户"理解"的东西，视觉权重最高。
@@ -7,6 +7,7 @@ import { ArrowUUpLeft, CircleNotch, FileMagnifyingGlass, Question, SealCheck, Sh
 import { actions } from "@/app/actions";
 import { useApp } from "@/store";
 import type { VerdictInfo } from "@/shared/types";
+import { useT, type Translate } from "@/i18n";
 
 /** 每类判决原因的人话解释与建议动作类型。 */
 export interface DecisionExpl {
@@ -29,18 +30,18 @@ type DecisionAction =
  * reason → 人话 + 动作。GatePolicy 的 reason 文案是稳定的字符串前缀
  * （见 gate-domain GatePolicy.decide），按前缀匹配；未识别的回退为原文直出。
  */
-export function explainDecision(verdict: VerdictInfo): DecisionExpl {
+export function explainDecision(verdict: VerdictInfo, t: Translate): DecisionExpl {
   const reason = verdict.reason ?? "";
   const detail = verdict.detail ?? [];
 
   // coverage gap: NEEDS_HUMAN — 引擎没有覆盖全部变更文件
   if (reason.startsWith("coverage gap")) {
     return {
-      summary: "引擎没有审查到全部改动文件，无法自动放行",
-      points: detail.length > 0 ? detail : ["未覆盖的文件清单见审计日志"],
+      summary: t("decision.coverageGap"),
+      points: detail.length > 0 ? detail : [t("decision.coverageGapDetail")],
       actions: [
-        { kind: "humanApprove", label: "人工审阅后核准" },
-        { kind: "goFindings", label: "查看审查发现" },
+        { kind: "humanApprove", label: t("decision.humanApproveReview") },
+        { kind: "goFindings", label: t("decision.goFindings") },
       ],
     };
   }
@@ -48,63 +49,64 @@ export function explainDecision(verdict: VerdictInfo): DecisionExpl {
   if (reason.startsWith("diff exceeds")) {
     const bytes = reason.includes("byte");
     return {
-      summary: bytes ? "本轮改动体量超过字节上限" : "本轮改动体量超过行数上限",
+      summary: bytes ? t("decision.diffBytes") : t("decision.diffLines"),
       points: detail.length > 0 ? detail : [reason],
-      actions: [{ kind: "trimDiff", label: "拆分或缩减改动后重新提审" }],
+      actions: [{ kind: "trimDiff", label: t("decision.trimDiff") }],
     };
   }
   // 引擎降级/故障：REJECT（degraded）—— 可原地重试
   if (reason.startsWith("engine failure") || reason.startsWith("engine adapter reported degraded")) {
     return {
-      summary: "引擎输出不完整或未能完成判决，已按不可信处理",
+      summary: t("decision.engineFailure"),
       points: detail.length > 0 ? detail : [reason],
       actions: [
-        { kind: "retryReview", label: "重试 AI 审查（不消耗轮次）" },
-        { kind: "humanApprove", label: "人工审查放行" },
+        { kind: "retryReview", label: t("decision.retryReview") },
+        { kind: "humanApprove", label: t("decision.humanApprove") },
       ],
     };
   }
   // 旧快照重放
   if (reason.startsWith("evidence describes a different tree")) {
     return {
-      summary: "审查结果对应的是旧快照，已被拒绝重放",
+      summary: t("decision.staleSnapshot"),
       points: detail.length > 0 ? detail : [reason],
-      actions: [{ kind: "trimDiff", label: "重新预提审" }],
+      actions: [{ kind: "trimDiff", label: t("decision.represubmit") }],
     };
   }
   // 有达到严格度阈值的发现：REJECT
   if (reason.startsWith("findings at or above")) {
     return {
-      summary: "存在达到驳回阈值的发现，需修复后重新提审",
+      summary: t("decision.thresholdFindings"),
       points: detail,
-      actions: [{ kind: "returnWithFindings", label: "带着发现返回会话" }],
+      actions: [{ kind: "returnWithFindings", label: t("decision.returnWithFindings") }],
     };
   }
   if (reason.startsWith("cannot mint authorization")) {
     return {
-      summary: "快照缺少目标分支或基线绑定，无法签发发布授权",
+      summary: t("decision.cannotMint"),
       points: detail.length > 0 ? detail : [reason],
-      actions: [{ kind: "trimDiff", label: "重新预提审" }],
+      actions: [{ kind: "trimDiff", label: t("decision.represubmit") }],
     };
   }
   if (verdict.verdict === "PASS") {
     return {
-      summary: reason || "全部策略通过，发布授权已签发",
+      summary: reason || t("decision.passDefault"),
       points: [],
-      actions: [{ kind: "goFindings", label: "查看审查发现" }],
+      actions: [{ kind: "goFindings", label: t("decision.goFindings") }],
     };
   }
   return {
-    summary: reason || "需人工判断",
+    summary: reason || t("decision.needsHumanDefault"),
     points: detail,
     actions:
       verdict.verdict === "REQUIRES_HUMAN"
-        ? [{ kind: "humanApprove", label: "人工核准" }, { kind: "goFindings", label: "查看审查发现" }]
-        : [{ kind: "goFindings", label: "查看审查发现" }],
+        ? [{ kind: "humanApprove", label: t("decision.humanApprove") }, { kind: "goFindings", label: t("decision.goFindings") }]
+        : [{ kind: "goFindings", label: t("decision.goFindings") }],
   };
 }
 
 function ActionButtons({ ticketNo, items }: { ticketNo: string; items: DecisionAction[] }) {
+  const t = useT();
   const gateBusy = useApp((s) => s.gateBusy[ticketNo] ?? false);
   const engine = useApp((s) => s.engine);
   return (
@@ -123,7 +125,7 @@ function ActionButtons({ ticketNo, items }: { ticketNo: string; items: DecisionA
             key={a.kind}
             className="btn btn-sm h-8 text-[12px]"
             disabled={disabled}
-            title={disabled && a.kind === "retryReview" ? "未配置审查引擎，无法 AI 审查" : undefined}
+            title={disabled && a.kind === "retryReview" ? t("review.engineMissingRetry") : undefined}
             onClick={onClick}
           >
             {a.kind === "retryReview" && <CircleNotch size={13} />}
@@ -155,9 +157,10 @@ export function DecisionCard({
   findingsCount?: number;
   compact?: boolean;
 }) {
-  const expl = explainDecision(verdict);
+  const t = useT();
+  const expl = explainDecision(verdict, t);
   const title =
-    tone === "pass" ? "门禁放行" : tone === "human" ? "需人工核准" : verdict.degraded ? "审查引擎未完成判决" : "门禁驳回";
+    tone === "pass" ? t("gate.cards.pass") : tone === "human" ? t("gate.cards.needsHuman") : verdict.degraded ? t("gate.cards.degraded") : t("gate.cards.rejected");
   const cls =
     tone === "pass"
       ? "border-accent/30 bg-accent/[0.06]"
@@ -175,13 +178,13 @@ export function DecisionCard({
         <Icon size={16} weight="fill" className={titleCls} />
         <span className={`text-[13px] font-semibold ${titleCls}`}>{title}</span>
         {verdict.degraded && (
-          <span className="chip border border-warn/30 text-warn bg-warn/10">可重试 · 不消耗轮次</span>
+          <span className="chip border border-warn/30 text-warn bg-warn/10">{t("gate.cards.retriable")}</span>
         )}
         {tone === "reject" && !verdict.degraded && typeof findingsCount === "number" && (
-          <span className="chip border border-danger/30 text-danger bg-danger/10">{findingsCount} 项发现</span>
+          <span className="chip border border-danger/30 text-danger bg-danger/10">{t("gate.cards.findingsCount", { n: findingsCount })}</span>
         )}
         <span className="flex-1" />
-        <span className="font-mono text-[10.5px] text-faint">第 {verdict.round} 轮</span>
+        <span className="font-mono text-[10.5px] text-faint">{t("gate.history.round", { n: verdict.round })}</span>
       </div>
       <div className="mt-1.5 text-[12.5px] leading-relaxed text-ink">{expl.summary}</div>
       {expl.points.length > 0 && (
@@ -192,14 +195,14 @@ export function DecisionCard({
             </li>
           ))}
           {expl.points.length > 8 && (
-            <li className="text-[11px] text-faint">… 共 {expl.points.length} 条依据</li>
+            <li className="text-[11px] text-faint">{t("decision.morePoints", { n: expl.points.length })}</li>
           )}
         </ul>
       )}
       <ActionButtons ticketNo={ticketNo} items={expl.actions} />
       <div className="mt-2 font-mono text-[10.5px] text-faint">
-        引擎 {verdict.engineId}
-        {verdict.authorizationId ? ` · 授权 ${verdict.authorizationId}` : ""}
+        {t("gate.cards.engine", { id: verdict.engineId })}
+        {verdict.authorizationId ? t("gate.cards.authorizationTail", { id: verdict.authorizationId }) : ""}
       </div>
     </div>
   );

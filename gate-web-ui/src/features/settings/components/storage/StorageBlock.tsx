@@ -27,21 +27,22 @@ import type {
 import { CopyButton, Spinner, useBackdropClose } from "@/shared/components/ui";
 import { formatBytes } from "@/shared/format";
 import { showToast, useApp } from "@/store";
+import { useT, type MsgKey, type Translate } from "@/i18n";
 
 /* ─── 展示元数据：后端只下发事实（key/id/占用），文案与图标由前端持有 ─── */
 
-const DIR_META: Record<string, { label: string; desc: string }> = {
-  gate_home: { label: "数据主目录", desc: "配置、数据库、审计与缓存的根目录" },
-  clones_root: { label: "工单克隆根", desc: "各工单的隔离工作区（Git 克隆），删除会影响未发布工单" },
-  db: { label: "SQLite 数据库", desc: "工单、会话与 Provider 等结构化数据" },
-  blob_root: { label: "Blob 存储", desc: "快照差异与审查输出的原始内容（证据链）" },
-  audit: { label: "审计日志", desc: "哈希链审计流水，追加写（证据链）" },
+const DIR_META: Record<string, { labelKey: MsgKey; descKey: MsgKey }> = {
+  gate_home: { labelKey: "storage.dirMeta.gate_home.label", descKey: "storage.dirMeta.gate_home.desc" },
+  clones_root: { labelKey: "storage.dirMeta.clones_root.label", descKey: "storage.dirMeta.clones_root.desc" },
+  db: { labelKey: "storage.dirMeta.db.label", descKey: "storage.dirMeta.db.desc" },
+  blob_root: { labelKey: "storage.dirMeta.blob_root.label", descKey: "storage.dirMeta.blob_root.desc" },
+  audit: { labelKey: "storage.dirMeta.audit.label", descKey: "storage.dirMeta.audit.desc" },
 };
 
-const CACHE_META: Record<string, { label: string; desc: string }> = {
-  proc_temp: { label: "进程临时日志", desc: "git 等子进程的 stdout/stderr 临时文件，可安全清理" },
-  gate_tmp: { label: "Git 临时目录", desc: "门禁 git 操作的临时工作文件，可安全清理" },
-  adapters_log: { label: "适配器诊断日志", desc: "会话适配器的结构化运行日志，清空后从零重新记录" },
+const CACHE_META: Record<string, { labelKey: MsgKey; descKey: MsgKey }> = {
+  proc_temp: { labelKey: "storage.cacheMeta.proc_temp.label", descKey: "storage.cacheMeta.proc_temp.desc" },
+  gate_tmp: { labelKey: "storage.cacheMeta.gate_tmp.label", descKey: "storage.cacheMeta.gate_tmp.desc" },
+  adapters_log: { labelKey: "storage.cacheMeta.adapters_log.label", descKey: "storage.cacheMeta.adapters_log.desc" },
 };
 
 /** 二次确认弹窗请求（清理/清空共用）：impact 必须写清影响范围。 */
@@ -82,8 +83,9 @@ function CardHead({
 
 /** 字节占用徽标（approx 时加「约」）。 */
 function BytesChip({ bytes, approx }: { bytes: number; approx?: boolean }) {
+  const t = useT();
   return (
-    <span className="chip border border-edge-strong bg-raised text-dim font-mono text-[10.5px]" title="估算值">
+    <span className="chip border border-edge-strong bg-raised text-dim font-mono text-[10.5px]" title={t("storage.approxTip")}>
       {approx ? "≈" : ""}
       {formatBytes(bytes)}
     </span>
@@ -117,12 +119,11 @@ function SortChip({
 }
 
 /** 「最后改动距今」的展示文案（与排序同口径：无工作文件改动记录视为最久闲置）。 */
-function formatIdle(lastActiveMs: number | null): string {
-  if (lastActiveMs == null) return "无改动记录";
+function formatIdle(lastActiveMs: number | null, t: Translate): string {
+  if (lastActiveMs == null) return t("storage.idleNone");
   const days = Math.floor((Date.now() - lastActiveMs) / 86_400_000);
-  if (days <= 0) return "今天有改动";
-  if (days === 1) return "1 天前";
-  return `${days} 天前`;
+  if (days <= 0) return t("storage.idleToday");
+  return t("storage.idleDays", { n: days });
 }
 
 /** 数据目录分区（live）：配置文件 + 五个核心数据位置，支持在系统中打开。 */
@@ -137,6 +138,7 @@ function DataDirsCard({
   error: string | null;
   onRefresh: () => void;
 }) {
+  const t = useT();
   const [opening, setOpening] = useState<string | null>(null);
 
   const open = async (key: string) => {
@@ -144,9 +146,9 @@ function DataDirsCard({
     setOpening(key);
     try {
       await openStorageDir(key);
-      showToast("已请求系统打开目录");
+      showToast(t("storage.openRequested"));
     } catch (e) {
-      showToast(`打开失败：${(e as Error).message}`);
+      showToast(t("storage.openFailed", { err: (e as Error).message }));
     } finally {
       setOpening(null);
     }
@@ -156,10 +158,10 @@ function DataDirsCard({
     <div className="card p-5">
       <CardHead
         Icon={HardDrives}
-        title="数据目录"
-        hint="门禁数据在本机的存放位置"
+        title={t("storage.dirs.title")}
+        hint={t("storage.dirs.hint")}
         actions={
-          <button className="icon-btn" onClick={onRefresh} title="重新统计占用" aria-label="重新统计占用">
+          <button className="icon-btn" onClick={onRefresh} title={t("storage.refreshTip")} aria-label={t("storage.refreshTip")}>
             {loading ? <Spinner /> : <ArrowClockwise size={14} />}
           </button>
         }
@@ -167,12 +169,12 @@ function DataDirsCard({
       {error && (
         <div className="mt-3 text-[12.5px] text-danger flex items-center gap-1.5">
           <WarningCircle size={14} weight="fill" /> {error}
-          <button className="btn btn-sm ml-1" onClick={onRefresh}>重试</button>
+          <button className="btn btn-sm ml-1" onClick={onRefresh}>{t("common.retry")}</button>
         </div>
       )}
       {loading && !overview && (
         <div className="mt-4 flex items-center gap-2 text-[12.5px] text-faint">
-          <Spinner /> 正在统计数据目录占用 …
+          <Spinner /> {t("storage.loadDirs")}
         </div>
       )}
       {overview && (
@@ -180,37 +182,39 @@ function DataDirsCard({
           {overview.toml_path && (
             <div className="rounded-lg border border-edge bg-sunken px-3 py-2.5">
               <div className="flex items-center gap-2">
-                <span className="text-[12.5px] font-medium text-ink">配置文件 gate.toml</span>
+                <span className="text-[12.5px] font-medium text-ink">{t("storage.configFile")}</span>
                 <span className="flex-1" />
-                <CopyButton text={overview.toml_path} label="复制配置文件路径" />
+                <CopyButton text={overview.toml_path} label={t("storage.copyConfigPath")} />
               </div>
               <div className="mt-1 font-mono text-[11px] text-faint break-all">{overview.toml_path}</div>
             </div>
           )}
           {overview.dirs.map((d) => {
-            const meta = DIR_META[d.key] ?? { label: d.key, desc: "" };
+            const meta = DIR_META[d.key];
+            const label = meta ? t(meta.labelKey) : d.key;
+            const desc = meta ? t(meta.descKey) : "";
             return (
               <div key={d.key} className="rounded-lg border border-edge bg-sunken px-3 py-2.5">
                 <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-[12.5px] font-medium text-ink">{meta.label}</span>
+                  <span className="text-[12.5px] font-medium text-ink">{label}</span>
                   <BytesChip bytes={d.bytes} approx={d.approx} />
-                  {!d.exists && <span className="chip border border-edge bg-raised text-faint">未创建</span>}
+                  {!d.exists && <span className="chip border border-edge bg-raised text-faint">{t("storage.notCreated")}</span>}
                   <span className="flex-1" />
-                  <CopyButton text={d.path} label={`复制 ${meta.label} 路径`} />
+                  <CopyButton text={d.path} label={t("storage.copyPathOf", { name: label })} />
                   {d.openable && (
                     <button
                       className="btn btn-sm"
                       disabled={opening !== null}
                       onClick={() => void open(d.key)}
-                      title="在系统文件管理器中打开"
+                      title={t("storage.openInSystem")}
                     >
                       {opening === d.key ? <Spinner /> : <FolderOpen size={13} />}
-                      打开
+                      {t("storage.open")}
                     </button>
                   )}
                 </div>
                 <div className="mt-1 font-mono text-[11px] text-faint break-all">{d.path}</div>
-                {meta.desc && <div className="mt-0.5 text-[11px] text-faint">{meta.desc}</div>}
+                {desc && <div className="mt-0.5 text-[11px] text-faint">{desc}</div>}
               </div>
             );
           })}
@@ -234,24 +238,30 @@ function CacheCleanCard({
   onRefresh: () => void;
   onAsk: (req: ConfirmRequest) => void;
 }) {
+  const t = useT();
   const askClean = (id: string) => {
-    const meta = CACHE_META[id] ?? { label: id, desc: "" };
+    const meta = CACHE_META[id];
+    const label = meta ? t(meta.labelKey) : id;
+    const desc = meta ? t(meta.descKey) : "";
     const entry = caches?.caches.find((c) => c.id === id);
     const size = entry ? formatBytes(entry.bytes) : "";
     const files = entry?.files ?? 0;
     onAsk({
-      title: `清理「${meta.label}」`,
-      impact:
-        `将删除 ${entry?.path ?? "该类别"} 下的 ${files} 个临时文件（约 ${size}）。` +
-        `${meta.desc}工单数据、审查快照与审计记录不受影响。`,
-      confirmLabel: "确认清理",
+      title: t("storage.cache.confirmTitle", { label }),
+      impact: t("storage.cache.confirmImpact", {
+        path: entry?.path ?? label,
+        files,
+        size,
+        desc,
+      }),
+      confirmLabel: t("storage.cache.confirm"),
       run: async () => {
         try {
           const r = await cleanStorageCache(id);
-          showToast(`已清理「${meta.label}」· 释放 ${formatBytes(r.removed_bytes)}`);
+          showToast(t("storage.cache.cleaned", { label, bytes: formatBytes(r.removed_bytes) }));
           onRefresh();
         } catch (e) {
-          showToast(`清理失败：${(e as Error).message}`);
+          showToast(t("storage.cleanFailed", { err: (e as Error).message }));
         }
       },
     });
@@ -261,10 +271,10 @@ function CacheCleanCard({
     <div className="card p-5">
       <CardHead
         Icon={Broom}
-        title="本地缓存清理"
-        hint="仅清理可再生成的临时文件，不触碰证据链"
+        title={t("storage.cache.title")}
+        hint={t("storage.cache.hint")}
         actions={
-          <button className="icon-btn" onClick={onRefresh} title="重新统计占用" aria-label="重新统计占用">
+          <button className="icon-btn" onClick={onRefresh} title={t("storage.refreshTip")} aria-label={t("storage.refreshTip")}>
             {loading ? <Spinner /> : <ArrowClockwise size={14} />}
           </button>
         }
@@ -272,36 +282,38 @@ function CacheCleanCard({
       {error && (
         <div className="mt-3 text-[12.5px] text-danger flex items-center gap-1.5">
           <WarningCircle size={14} weight="fill" /> {error}
-          <button className="btn btn-sm ml-1" onClick={onRefresh}>重试</button>
+          <button className="btn btn-sm ml-1" onClick={onRefresh}>{t("common.retry")}</button>
         </div>
       )}
       {loading && !caches && (
         <div className="mt-4 flex items-center gap-2 text-[12.5px] text-faint">
-          <Spinner /> 正在统计缓存占用 …
+          <Spinner /> {t("storage.loadCaches")}
         </div>
       )}
       {caches && (
         <div className="mt-3 grid gap-2">
           {caches.caches.map((c) => {
-            const meta = CACHE_META[c.id] ?? { label: c.id, desc: "" };
+            const meta = CACHE_META[c.id];
+            const label = meta ? t(meta.labelKey) : c.id;
+            const desc = meta ? t(meta.descKey) : "";
             return (
               <div key={c.id} className="rounded-lg border border-edge bg-sunken px-3 py-2.5">
                 <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-[12.5px] font-medium text-ink">{meta.label}</span>
+                  <span className="text-[12.5px] font-medium text-ink">{label}</span>
                   <BytesChip bytes={c.bytes} approx={c.approx} />
-                  <span className="text-[11px] text-faint font-mono">{c.files} 个文件</span>
+                  <span className="text-[11px] text-faint font-mono">{t("storage.filesCount", { n: c.files })}</span>
                   <span className="flex-1" />
                   <button
                     className="btn btn-sm btn-danger-ghost"
                     disabled={c.files === 0}
                     onClick={() => askClean(c.id)}
-                    title={c.files === 0 ? "暂无可清理内容" : "清理该类缓存（需确认）"}
+                    title={c.files === 0 ? t("storage.cache.none") : t("storage.cache.cleanTip")}
                   >
                     <Trash size={13} />
-                    清理
+                    {t("storage.clean")}
                   </button>
                 </div>
-                <div className="mt-0.5 text-[11px] text-faint">{meta.desc}</div>
+                <div className="mt-0.5 text-[11px] text-faint">{desc}</div>
                 <div className="mt-1 font-mono text-[10.5px] text-faint/80 break-all">{c.path}</div>
               </div>
             );
@@ -329,6 +341,7 @@ function WorkspacesCard({
   onRefresh: () => void;
   onAsk: (req: ConfirmRequest) => void;
 }) {
+  const t = useT();
   const [sort, setSort] = useState<WorkspaceSort>("idle");
 
   // 排序（展示层职责，后端保持事实原序）：闲置最久在前（无改动记录视为最久）；占用从大到小。
@@ -344,25 +357,27 @@ function WorkspacesCard({
     const dirs = ws.prunable.filter((p) => p.bytes > 0 || p.files > 0);
     if (dirs.length === 0) return;
     const listing = dirs
-      .map((p) => `· ${p.name}（${p.files} 个文件，约 ${formatBytes(p.bytes)}）`)
+      .map((p) => t("storage.ws.pruneListing", { name: p.name, files: p.files, bytes: formatBytes(p.bytes) }))
       .join("\n");
     onAsk({
-      title: `清理工作区 ${ws.id} 的可再生文件`,
-      impact:
-        `将删除以下 ${dirs.length} 个可再生目录（合计约 ${formatBytes(ws.prunable_bytes)}）：\n${listing}\n\n` +
-        "依赖与构建产物删后可由包管理器/构建工具重新生成；源代码与 Git 历史不受影响。正在运行的构建/IDE 若持有文件，对应文件会跳过删除。",
-      confirmLabel: "确认清理",
+      title: t("storage.ws.pruneTitle", { id: ws.id }),
+      impact: t("storage.ws.pruneImpact", {
+        n: dirs.length,
+        bytes: formatBytes(ws.prunable_bytes),
+        listing,
+      }),
+      confirmLabel: t("storage.cache.confirm"),
       run: async () => {
         try {
           const r = await pruneStorageWorkspace(ws.id);
           showToast(
             r.removed_bytes > 0
-              ? `已清理工作区 ${ws.id} · 释放 ${formatBytes(r.removed_bytes)}`
-              : `工作区 ${ws.id} 没有可清理的内容`,
+              ? t("storage.ws.pruned", { id: ws.id, bytes: formatBytes(r.removed_bytes) })
+              : t("storage.ws.prunedNothing", { id: ws.id }),
           );
           onRefresh();
         } catch (e) {
-          showToast(`清理失败：${(e as Error).message}`);
+          showToast(t("storage.cleanFailed", { err: (e as Error).message }));
         }
       },
     });
@@ -372,13 +387,13 @@ function WorkspacesCard({
     <div className="card p-5">
       <CardHead
         Icon={Package}
-        title="工作区存储管理"
-        hint="克隆工作区是磁盘占用大头，可清理可再生文件"
+        title={t("storage.ws.title")}
+        hint={t("storage.ws.hint")}
         actions={
           <div className="flex items-center gap-2">
-            <SortChip active={sort === "idle"} label="按闲置" onClick={() => setSort("idle")} />
-            <SortChip active={sort === "bytes"} label="按占用" onClick={() => setSort("bytes")} />
-            <button className="icon-btn" onClick={onRefresh} title="重新统计占用" aria-label="重新统计占用">
+            <SortChip active={sort === "idle"} label={t("storage.ws.sortIdle")} onClick={() => setSort("idle")} />
+            <SortChip active={sort === "bytes"} label={t("storage.ws.sortBytes")} onClick={() => setSort("bytes")} />
+            <button className="icon-btn" onClick={onRefresh} title={t("storage.refreshTip")} aria-label={t("storage.refreshTip")}>
               {loading ? <Spinner /> : <ArrowClockwise size={14} />}
             </button>
           </div>
@@ -387,17 +402,17 @@ function WorkspacesCard({
       {error && (
         <div className="mt-3 text-[12.5px] text-danger flex items-center gap-1.5">
           <WarningCircle size={14} weight="fill" /> {error}
-          <button className="btn btn-sm ml-1" onClick={onRefresh}>重试</button>
+          <button className="btn btn-sm ml-1" onClick={onRefresh}>{t("common.retry")}</button>
         </div>
       )}
       {loading && !data && (
         <div className="mt-4 flex items-center gap-2 text-[12.5px] text-faint">
-          <Spinner /> 正在统计工作区占用 …
+          <Spinner /> {t("storage.loadWorkspaces")}
         </div>
       )}
       {data && sorted.length === 0 && (
         <div className="mt-3 rounded-lg border border-edge bg-sunken px-3.5 py-3 text-[12px] text-faint">
-          克隆根下暂无工作区。新建工单后，其隔离工作区会出现在这里。
+          {t("storage.ws.empty")}
         </div>
       )}
       {sorted.length > 0 && (
@@ -418,24 +433,24 @@ function WorkspacesCard({
                       {ws.ticket.project_id}
                     </span>
                   )}
-                  {!ws.ticket && <span className="text-[11px] text-faint">未关联工单</span>}
+                  {!ws.ticket && <span className="text-[11px] text-faint">{t("storage.ws.noTicket")}</span>}
                   <BytesChip bytes={ws.bytes} approx={ws.approx} />
                   {cleanable && <BytesChip bytes={ws.prunable_bytes} approx={ws.prunable_approx} />}
                   <span className="flex-1" />
                   <span
                     className="text-[11px] text-faint font-mono whitespace-nowrap"
-                    title="最后改动（重装依赖/git 操作不计入）"
+                    title={t("storage.ws.lastActiveTip")}
                   >
-                    最后改动 {formatIdle(ws.last_active_ms)}
+                    {t("storage.ws.lastActive", { idle: formatIdle(ws.last_active_ms, t) })}
                   </span>
                   <button
                     className="btn btn-sm btn-danger-ghost"
                     disabled={!cleanable}
                     onClick={() => askPrune(ws)}
-                    title={cleanable ? "清理 node_modules/构建产物等可再生目录（需确认）" : "没有可清理的可再生目录"}
+                    title={cleanable ? t("storage.ws.pruneTip") : t("storage.ws.pruneNoneTip")}
                   >
                     <Trash size={13} />
-                    清理
+                    {t("storage.clean")}
                   </button>
                 </div>
                 <div className="mt-1 font-mono text-[10.5px] text-faint/80 break-all">{ws.path}</div>
@@ -456,6 +471,7 @@ function StorageConfirm({
   req: ConfirmRequest;
   onClose: () => void;
 }) {
+  const t = useT();
   const [working, setWorking] = useState(false);
   const close = useCallback(() => {
     if (working) return;
@@ -484,7 +500,7 @@ function StorageConfirm({
           <Warning size={15} className="text-warn" weight="fill" />
           <span className="text-[13.5px] font-semibold">{req.title}</span>
           <span className="flex-1" />
-          <button className="icon-btn" onClick={close} aria-label="关闭">
+          <button className="icon-btn" onClick={close} aria-label={t("common.close")}>
             ✕
           </button>
         </div>
@@ -495,13 +511,13 @@ function StorageConfirm({
         </div>
         <div className="flex justify-end gap-2 px-5 py-4 border-t border-edge">
           <button className="btn" onClick={close} disabled={working}>
-            取消
+            {t("common.cancel")}
           </button>
           <button className="btn btn-danger-ghost" disabled={working} onClick={() => void run()}>
             {working ? (
               <>
                 <Spinner />
-                处理中…
+                {t("storage.working")}
               </>
             ) : (
               <>
@@ -521,6 +537,7 @@ function StorageConfirm({
  * live 模式下依赖后端 API；demo 模式只展示能力说明，不发起必然失败的存储请求。
  */
 export function StorageBlock() {
+  const t = useT();
   const mode = useApp((s) => s.mode);
   const [overview, setOverview] = useState<StorageOverview | null>(null);
   const [caches, setCaches] = useState<StorageCachesResponse | null>(null);
@@ -579,11 +596,9 @@ export function StorageBlock() {
         </>
       ) : (
         <div className="card p-5">
-          <CardHead Icon={HardDrives} title="数据目录 · 工作区存储 · 本地缓存" hint="需要连接后端" />
+          <CardHead Icon={HardDrives} title={t("storage.demo.title")} hint={t("storage.demo.hint")} />
           <div className="mt-3 rounded-lg border border-edge bg-sunken px-3.5 py-3 text-[12px] text-faint leading-relaxed">
-            演示模式没有后端：连接本地后端（live 模式）后，这里将展示数据主目录/工单克隆根/数据库/Blob/审计日志的路径与占用，
-            并支持「在系统中打开」；可查看各工单工作区的关联项目、总占用与最后改动距今天数（支持按闲置/占用排序），一键清理
-            node_modules/构建产物等可再生文件；还可按类清理进程临时日志、Git 临时目录与适配器诊断日志。
+            {t("storage.demo.desc")}
           </div>
         </div>
       )}

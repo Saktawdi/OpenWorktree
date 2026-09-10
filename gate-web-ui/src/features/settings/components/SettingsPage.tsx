@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { GearSix } from "@phosphor-icons/react";
 import { openConnect, useApp } from "@/store";
+import { useT } from "@/i18n";
 import { SettingsNav, type SettingsTab } from "./SettingsNav";
 import { GateTomlBlock } from "./toml/GateTomlBlock";
 import { McpBlock } from "./mcp/McpBlock";
@@ -13,6 +14,7 @@ import { StorageBlock } from "./storage/StorageBlock";
 
 /** 设置中心：偏好 / 存储 / 系统（gate.toml）/ MCP / LLM / LLM 助手 / 关于 七个分区（插件管理已移至顶栏一级视图）。 */
 export function SettingsPage() {
+  const t = useT();
   const mode = useApp((s) => s.mode);
   const [tab, setTab] = useState<SettingsTab>("prefs");
 
@@ -27,16 +29,27 @@ export function SettingsPage() {
   }, []);
 
   if (mode === "demo") {
+    // 演示模式：偏好分区（输入行为 / 语言）是纯端侧能力，照常可用；
+    // 其余分区依赖后端，统一给出连接引导。
     return (
       <div className="flex-1 min-h-0 overflow-y-auto scrollbar-none">
-        <div className="max-w-[880px] mx-auto px-6 py-10">
-          <div className="card p-10 text-center">
-            <div className="w-12 h-12 rounded-xl bg-raised border border-edge grid place-items-center mx-auto">
-              <GearSix size={22} className="text-faint" />
+        <div className="max-w-[1080px] mx-auto px-6 py-5">
+          <div className="md:grid md:grid-cols-[196px_minmax(0,1fr)] md:gap-5">
+            <SettingsNav tab={tab} onChange={setTab} />
+            <div className="min-w-0 mt-4 md:mt-0">
+              {tab === "prefs" ? (
+                <PrefsBlock />
+              ) : (
+                <div className="card p-10 text-center">
+                  <div className="w-12 h-12 rounded-xl bg-raised border border-edge grid place-items-center mx-auto">
+                    <GearSix size={22} className="text-faint" />
+                  </div>
+                  <div className="mt-4 text-[15px] font-semibold">{t("settings.needBackend.title")}</div>
+                  <div className="mt-1.5 text-[12.5px] text-faint leading-relaxed">{t("settings.needBackend.desc")}</div>
+                  <button className="btn btn-primary mt-5" onClick={openConnect}>{t("settings.needBackend.connect")}</button>
+                </div>
+              )}
             </div>
-            <div className="mt-4 text-[15px] font-semibold">设置中心需要连接后端</div>
-            <div className="mt-1.5 text-[12.5px] text-faint leading-relaxed">当前为演示模式，系统设置 / MCP / LLM / 关于仅在连接后端后可用</div>
-            <button className="btn btn-primary mt-5" onClick={openConnect}>连接后端</button>
           </div>
         </div>
       </div>

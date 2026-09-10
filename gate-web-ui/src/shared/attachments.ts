@@ -1,4 +1,5 @@
-import type { PendingAttachment } from "@/shared/types";
+﻿import type { PendingAttachment } from "@/shared/types";
+import { t } from "@/i18n";
 
 /* ─── 会话输入附件（参考 OpenChamber composer 的粘贴语义） ───
  * 图片：读为 data URL 随消息发送（模型需支持图片输入）；
@@ -37,7 +38,7 @@ function readAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : "");
-    reader.onerror = () => reject(reader.error ?? new Error("读取附件失败"));
+    reader.onerror = () => reject(reader.error ?? new Error(t("attach.readFailed")));
     reader.readAsDataURL(file);
   });
 }
@@ -94,7 +95,7 @@ export async function toPendingAttachment(file: File): Promise<PendingAttachment
 export async function fileToBase64(file: File): Promise<string> {
   const dataUrl = await readAsDataUrl(file);
   const comma = dataUrl.indexOf(",");
-  if (comma < 0) throw new Error("读取文件失败");
+  if (comma < 0) throw new Error(t("attach.readFailed"));
   return dataUrl.slice(comma + 1);
 }
 

@@ -1,12 +1,14 @@
-import { useState } from "react";
+﻿import { useState } from "react";
 import { Robot, X } from "@phosphor-icons/react";
 import { createProvider, setProviderCredential, updateProvider } from "@/features/settings";
 import { showToast } from "@/store";
 import type { LlmProvider } from "@/shared/types";
 import { useBackdropClose } from "@/shared/components/ui";
+import { useT } from "@/i18n";
 
 /** LLM Provider 新建/编辑弹窗（API Key 直填走凭据接口，KMS 加密落库）。 */
 export function ProviderDialog({ initial, onClose, onSaved }: { initial: LlmProvider | null; onClose: () => void; onSaved: () => void }) {
+  const t = useT();
   const isNew = !initial;
   const [id, setId] = useState(initial?.id ?? "");
   const [name, setName] = useState(initial?.name ?? "");
@@ -38,7 +40,7 @@ export function ProviderDialog({ initial, onClose, onSaved }: { initial: LlmProv
       if (apiKey.trim() && providerId) {
         await setProviderCredential(providerId, apiKey.trim());
       }
-      showToast(isNew ? "Provider 已创建" : "Provider 已更新");
+      showToast(isNew ? t("llm.providerCreated") : t("llm.providerUpdated"));
       onSaved();
       onClose();
     } catch (e) { setErr((e as Error).message); }
@@ -50,21 +52,21 @@ export function ProviderDialog({ initial, onClose, onSaved }: { initial: LlmProv
       <div className="w-[480px] card shadow-2xl shadow-black/60 animate-rise" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-2 px-5 h-12 border-b border-edge">
           <Robot size={15} className="text-accent" />
-          <span className="text-[13.5px] font-semibold">{isNew ? "新建 Provider" : "编辑 Provider"}</span>
+          <span className="text-[13.5px] font-semibold">{isNew ? t("llm.newProvider") : t("llm.editProvider")}</span>
           <span className="flex-1" />
-          <button className="icon-btn" onClick={onClose} aria-label="关闭"><X size={15} /></button>
+          <button className="icon-btn" onClick={onClose} aria-label={t("common.close")}><X size={15} /></button>
         </div>
         <div className="p-5 space-y-4">
           {isNew && (
             <div>
               <label className="field-label">ID *</label>
-              <input className="text-input font-mono text-[12px]" placeholder="例如：openai-main" value={id} onChange={(e) => setId(e.target.value)} />
+              <input className="text-input font-mono text-[12px]" placeholder={t("llm.idPlaceholder")} value={id} onChange={(e) => setId(e.target.value)} />
             </div>
           )}
-          {!isNew && <div className="text-[11.5px] text-faint">ID：<span className="font-mono text-ink">{initial!.id}</span>（不可修改）</div>}
+          {!isNew && <div className="text-[11.5px] text-faint">{t("llm.idLabel")}：<span className="font-mono text-ink">{initial!.id}</span>{t("llm.idImmutable")}</div>}
           <div>
-            <label className="field-label">名称 *</label>
-            <input className="text-input" placeholder="例如：OpenAI 主用" value={name} onChange={(e) => setName(e.target.value)} />
+            <label className="field-label">{t("common.name")} *</label>
+            <input className="text-input" placeholder={t("llm.namePlaceholder")} value={name} onChange={(e) => setName(e.target.value)} />
           </div>
           <div>
             <label className="field-label">Base URL *</label>
@@ -75,25 +77,25 @@ export function ProviderDialog({ initial, onClose, onSaved }: { initial: LlmProv
             <input className="text-input font-mono text-[12px]" placeholder="openai / anthropic / custom" value={type} onChange={(e) => setType(e.target.value)} />
           </div>
           <div>
-            <label className="field-label">API Key{initial?.credential_configured ? "（已配置）" : ""}</label>
+            <label className="field-label">API Key{initial?.credential_configured ? t("llm.keyConfiguredParens") : ""}</label>
             <input
               className="text-input font-mono text-[12px]"
               type="password"
-              placeholder={initial?.credential_configured ? "已配置 · 留空保持不变" : "sk-…"}
+              placeholder={initial?.credential_configured ? t("llm.keyKeepBlank") : "sk-…"}
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
               autoComplete="off"
             />
             <div className="mt-1.5 text-[11px] text-faint leading-relaxed">
-              加密存入本地库，审查引擎与模型拉取共用。
-              {initial?.credential_configured ? " 再次输入将覆盖旧密钥。" : ""}
+              {t("llm.keyEncryptedNote")}
+              {initial?.credential_configured ? t("llm.keyOverwriteNote") : ""}
             </div>
           </div>
           {err && <div className="text-[12.5px] text-danger">{err}</div>}
         </div>
         <div className="flex justify-end gap-2 px-5 py-4 border-t border-edge">
-          <button className="btn" onClick={onClose}>取消</button>
-          <button className="btn btn-primary" disabled={!valid || saving} onClick={() => void save()}>{saving ? "保存中…" : isNew ? "创建" : "保存修改"}</button>
+          <button className="btn" onClick={onClose}>{t("common.cancel")}</button>
+          <button className="btn btn-primary" disabled={!valid || saving} onClick={() => void save()}>{saving ? t("llm.saving") : isNew ? t("llm.create") : t("llm.saveChanges")}</button>
         </div>
       </div>
     </div>

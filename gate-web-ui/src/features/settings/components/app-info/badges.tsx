@@ -1,4 +1,5 @@
-/** 「关于」区的徽标与外链小工具（app-info）。 */
+﻿/** 「关于」区的徽标与外链小工具（app-info）。 */
+import { getLocale, useT } from "@/i18n";
 
 export function openExternal(url: string) {
   window.open(url, "_blank", "noopener,noreferrer");
@@ -9,7 +10,7 @@ export function releaseDate(iso?: string | null): string {
   if (!iso) return "";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleDateString("zh-CN", { year: "numeric", month: "long", day: "numeric" });
+  return d.toLocaleDateString(getLocale(), { year: "numeric", month: "long", day: "numeric" });
 }
 
 /**
@@ -17,6 +18,7 @@ export function releaseDate(iso?: string | null): string {
  * 斜向流光循环扫过 + 双色呼吸辉光。仅当远程最新发行 < 当前版本（本地是先行 beta 构建）时展示。
  */
 export function BetaAheadBadge({ className = "" }: { className?: string }) {
+  const t = useT();
   return (
     <svg
       className={`beta-ahead-badge ${className}`}
@@ -24,7 +26,7 @@ export function BetaAheadBadge({ className = "" }: { className?: string }) {
       height="30"
       viewBox="0 0 150 30"
       role="img"
-      aria-label="先行体验版：本地版本领先于远程最新发行"
+      aria-label={t("badge.betaAria")}
     >
       <defs>
         <linearGradient id="owb-border" x1="0%" y1="0%" x2="100%" y2="100%">
@@ -48,7 +50,7 @@ export function BetaAheadBadge({ className = "" }: { className?: string }) {
         </g>
       </g>
       <path d="M18.1 7.6 12.6 15.4h3.3l-1.3 7.2 5.9-8.9h-3.5z" fill="url(#owb-border)" />
-      <text x="25" y="19.5" fill="#e9fbf4" fontSize="12" fontWeight="600" letterSpacing="0.5">先行体验版</text>
+      <text x="25" y="19.5" fill="#e9fbf4" fontSize="12" fontWeight="600" letterSpacing="0.5">{t("badge.betaText")}</text>
       <text x="88" y="19.5" fill="url(#owb-border)" fontSize="11" fontWeight="800" letterSpacing="2">BETA</text>
     </svg>
   );
@@ -60,6 +62,7 @@ export function BetaAheadBadge({ className = "" }: { className?: string }) {
  * 比先行 beta 徽标更高一档——这个构建本身就是全网唯一版本。
  */
 export function PioneerBadge({ className = "" }: { className?: string }) {
+  const t = useT();
   return (
     <svg
       className={`pioneer-badge ${className}`}
@@ -67,7 +70,7 @@ export function PioneerBadge({ className = "" }: { className?: string }) {
       height="30"
       viewBox="0 0 170 30"
       role="img"
-      aria-label="先行者：远程仓库还没有任何已发行版本"
+      aria-label={t("badge.pioneerAria")}
     >
       <defs>
         <linearGradient id="owp-border" x1="0%" y1="0%" x2="100%" y2="100%">
@@ -105,7 +108,7 @@ export function PioneerBadge({ className = "" }: { className?: string }) {
         d="M0 -5 C0.8 -1.5 1.5 -0.8 5 0 C1.5 0.8 0.8 1.5 0 5 C-0.8 1.5 -1.5 0.8 -5 0 C-1.5 -0.8 -0.8 -1.5 0 -5 Z"
         fill="url(#owp-border)"
       />
-      <text x="32" y="19.5" fill="#eef0f6" fontSize="12" fontWeight="600" letterSpacing="0.5">先行者</text>
+      <text x="32" y="19.5" fill="#eef0f6" fontSize="12" fontWeight="600" letterSpacing="0.5">{t("badge.pioneerText")}</text>
       <text x="86" y="19.5" fill="url(#owp-border)" fontSize="10" fontWeight="800" letterSpacing="1.2">UNRELEASED</text>
     </svg>
   );

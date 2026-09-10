@@ -1,26 +1,28 @@
 import { motion } from "motion/react";
 import { Database, Faders, PlugsConnected, Robot, Rocket, Sparkle, Wrench } from "@phosphor-icons/react";
+import { useT } from "@/i18n";
 
 export type SettingsTab = "prefs" | "storage" | "toml" | "mcp" | "llm" | "assistant" | "app";
 
 const NAV_ITEMS = [
-  { key: "prefs", label: "偏好设置", desc: "输入 · 语言等本地偏好", Icon: Faders },
-  { key: "storage", label: "存储设置", desc: "数据目录 · 工作区 · 缓存", Icon: Database },
-  { key: "toml", label: "系统设置", desc: "运行键值与默认值", Icon: Wrench },
-  { key: "mcp", label: "MCP 状态", desc: "服务与工具清单", Icon: PlugsConnected },
-  { key: "llm", label: "LLM 设置", desc: "Provider 与模型", Icon: Robot },
-  { key: "assistant", label: "LLM 助手", desc: "划选提问 · 对话偏好", Icon: Sparkle },
-  { key: "app", label: "关于", desc: "版本 · 更新 · 仓库", Icon: Rocket },
+  { key: "prefs", labelKey: "settings.nav.prefs", descKey: "settings.nav.prefsDesc", Icon: Faders },
+  { key: "storage", labelKey: "settings.nav.storage", descKey: "settings.nav.storageDesc", Icon: Database },
+  { key: "toml", labelKey: "settings.nav.toml", descKey: "settings.nav.tomlDesc", Icon: Wrench },
+  { key: "mcp", labelKey: "settings.nav.mcp", descKey: "settings.nav.mcpDesc", Icon: PlugsConnected },
+  { key: "llm", labelKey: "settings.nav.llm", descKey: "settings.nav.llmDesc", Icon: Robot },
+  { key: "assistant", labelKey: "settings.nav.assistant", descKey: "settings.nav.assistantDesc", Icon: Sparkle },
+  { key: "app", labelKey: "settings.nav.app", descKey: "settings.nav.appDesc", Icon: Rocket },
 ] as const;
 
 /** 设置中心左侧分区导航（布局共享 layoutId 高亮）。 */
 export function SettingsNav({ tab, onChange }: { tab: SettingsTab; onChange: (t: SettingsTab) => void }) {
+  const t = useT();
   return (
     <nav
       className="flex md:flex-col gap-1 overflow-x-auto md:overflow-visible md:sticky md:top-5 md:self-start -mx-1 px-1 py-1 md:py-0"
-      aria-label="设置分区"
+      aria-label={t("settings.nav.aria")}
     >
-      {NAV_ITEMS.map(({ key, label, desc, Icon }) => {
+      {NAV_ITEMS.map(({ key, labelKey, descKey, Icon }) => {
         const active = tab === key;
         return (
           <button
@@ -46,8 +48,8 @@ export function SettingsNav({ tab, onChange }: { tab: SettingsTab; onChange: (t:
               <Icon size={15} weight={active ? "fill" : "regular"} />
             </span>
             <span className="relative z-10 min-w-0">
-              <span className="block text-[12.5px] font-medium leading-tight whitespace-nowrap">{label}</span>
-              <span className="hidden md:block text-[10.5px] text-faint leading-tight mt-px whitespace-nowrap">{desc}</span>
+              <span className="block text-[12.5px] font-medium leading-tight whitespace-nowrap">{t(labelKey)}</span>
+              <span className="hidden md:block text-[10.5px] text-faint leading-tight mt-px whitespace-nowrap">{t(descKey)}</span>
             </span>
           </button>
         );

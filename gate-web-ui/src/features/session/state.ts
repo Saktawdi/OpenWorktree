@@ -1,7 +1,8 @@
-/**
+﻿/**
  * 会话域状态（session）：会话/草稿/生成中标记/待决登记，以及按工单键暂存的
  * 用量、任务清单与上下文占用。聊天条目与回合见 chat.ts。
  */
+import { getLocale, t as i18nT } from "@/i18n";
 import { appStore } from "@/store";
 import { saveComposerDrafts, savePendingQuotes, saveSessionGroups, saveSessionPinned } from "@/store/prefs";
 import type { CatalogProvider, ChatSession, QuoteChip, SessionModelSel } from "@/shared/types";
@@ -108,7 +109,7 @@ export function setPendingQuotes(ticketNo: string, chips: QuoteChip[]) {
 /** 单条胶囊的正文上限截断（addPendingQuote / updatePendingQuoteText 共用）。 */
 function clipQuoteBody(trimmed: string) {
   return trimmed.length > QUOTE_MAX_CHARS
-    ? `${trimmed.slice(0, QUOTE_MAX_CHARS)}\n…（原文过长已截断）`
+    ? i18nT("sess.quoteTruncated", { text: trimmed.slice(0, QUOTE_MAX_CHARS) })
     : trimmed;
 }
 
@@ -521,7 +522,7 @@ export function createSession(ticketNo: string) {
   const session: ChatSession = {
     id,
     ticketNo,
-    title: `会话 ${new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}`,
+    title: i18nT("sess.defaultTitle", { time: new Date().toLocaleTimeString(getLocale(), { hour: "2-digit", minute: "2-digit" }) }),
     status: "active",
     permissionAutoAccept: false,
     // 会话创建时的协作 Agent 固化（demo 路径同 live）：会话 item 徽标与回复标注的数据源。
@@ -582,8 +583,8 @@ export function startSessionDraft(ticketNo: string, groupId?: string) {
             tone: "info" as const,
             ts: Date.now(),
             text: group
-              ? `新会话草稿 · 发送首条消息后创建会话并归入分组「${group.name}」`
-              : "新会话草稿 · 在下方选择协作 Agent，发送首条消息后创建会话",
+              ? i18nT("sess.draftInGroup", { name: group.name })
+              : i18nT("sess.draftHint"),
           },
         ],
       },

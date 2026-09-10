@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+﻿import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import {
   ArrowClockwise,
@@ -13,6 +13,7 @@ import {
   X,
 } from "@phosphor-icons/react";
 import { probeUpstreamModels, updateProviderModels } from "@/features/settings";
+import { useT } from "@/i18n";
 import { showToast, useApp } from "@/store";
 import type { LlmProvider } from "@/shared/types";
 import { Spinner } from "@/shared/components/ui";
@@ -39,6 +40,7 @@ export function ModelEditor({
   provider: LlmProvider;
   onUpdated: () => void;
 }) {
+  const t = useT();
   const mode = useApp((s) => s.mode);
 
   // 本地选中的模型列表
@@ -80,12 +82,12 @@ export function ModelEditor({
       setProbe({
         kind: "done",
         ok: true,
-        text: `拉取到 ${list.length} 个可用模型，勾选要加入配置的模型`,
+        text: t("llm.probeDone", { n: list.length }),
       });
     } catch (e) {
       const err = (e as Error).message;
       setProbe({ kind: "error", ok: false, text: err });
-      setErrorMsg(`拉取失败：${err}`);
+      setErrorMsg(t("llm.probeFailed", { err }));
     }
   };
 
@@ -140,7 +142,7 @@ export function ModelEditor({
     setErrorMsg(null);
     try {
       await updateProviderModels(provider.id, selectedModels);
-      showToast("模型列表已保存");
+      showToast(t("llm.modelsSaved"));
       onUpdated();
     } catch (e) {
       setErrorMsg((e as Error).message);
@@ -166,7 +168,7 @@ export function ModelEditor({
     <div className="mt-3.5 pt-3.5 border-t border-edge space-y-3">
       {/* 头部控制栏 */}
       <div className="flex items-center gap-2 flex-wrap">
-        <span className="field-label !mb-0">模型</span>
+        <span className="field-label !mb-0">{t("llm.models")}</span>
         <span
           className={`chip border text-[10.5px] font-mono ${
             selectedModels.length
@@ -174,12 +176,12 @@ export function ModelEditor({
               : "border-edge-strong bg-raised text-faint"
           }`}
         >
-          {selectedModels.length} 个
+          {t("mcp.toolCount", { n: selectedModels.length })}
         </span>
 
         {isDirty && (
           <span className="chip border border-warn/30 bg-warn/10 text-warn text-[10.5px]">
-            未保存修改
+            {t("llm.unsaved")}
           </span>
         )}
 
@@ -193,10 +195,10 @@ export function ModelEditor({
             if (!batchMode) setBatchText(selectedModels.join(", "));
             setBatchMode(!batchMode);
           }}
-          title={batchMode ? "返回标签视图" : "切换为文本编辑（支持批量粘贴）"}
+          title={batchMode ? t("llm.backToChips") : t("llm.toTextMode")}
         >
           <PencilSimple size={12} />
-          {batchMode ? "标签模式" : "文本模式"}
+          {batchMode ? t("llm.chipMode") : t("llm.textMode")}
         </button>
 
         {/* 拉取上游模型按钮 */}
@@ -205,17 +207,17 @@ export function ModelEditor({
           className="btn btn-sm"
           disabled={probe.kind === "fetching"}
           onClick={() => void handleFetchUpstream()}
-          title="从 Provider 接口探测可用模型列表，供勾选加入"
+          title={t("llm.probeTip")}
         >
           {probe.kind === "fetching" ? (
             <>
               <Spinner />
-              拉取中…
+              {t("llm.probing")}
             </>
           ) : (
             <>
               <ArrowClockwise size={12} />
-              拉取上游模型
+              {t("llm.probeUpstream")}
             </>
           )}
         </button>
@@ -229,7 +231,7 @@ export function ModelEditor({
               onClick={handleReset}
               disabled={saving}
             >
-              放弃
+              {t("llm.discard")}
             </button>
             <button
               type="button"
@@ -237,7 +239,7 @@ export function ModelEditor({
               disabled={saving}
               onClick={() => void handleSave()}
             >
-              {saving ? "保存中…" : "保存修改"}
+              {saving ? t("llm.saving") : t("llm.saveChanges")}
             </button>
           </div>
         )}
@@ -263,8 +265,8 @@ export function ModelEditor({
       {upstreamCandidates.length > 0 && (
         <div className="rounded-lg border border-edge bg-canvas/60 p-3 space-y-2.5">
           <div className="flex items-center gap-2 flex-wrap text-[11.5px] text-faint">
-            <span className="font-semibold text-ink">上游返回 {upstreamCandidates.length} 个模型</span>
-            <span>· 勾选直接加入配置</span>
+            <span className="font-semibold text-ink">{t("llm.upstreamCount", { n: upstreamCandidates.length })}</span>
+            <span>· {t("llm.checkToAdd")}</span>
             <span className="flex-1" />
             <button
               type="button"
@@ -274,7 +276,7 @@ export function ModelEditor({
                 setSelectedModels([...selectedModels, ...upstreamCandidates.filter((m) => !have.has(m))]);
               }}
             >
-              全选
+              {t("llm.selectAll")}
             </button>
             <span>·</span>
             <button
@@ -285,13 +287,13 @@ export function ModelEditor({
                 setSelectedModels(selectedModels.filter((m) => !upstreamSet.has(m)));
               }}
             >
-              清空上游项
+              {t("llm.clearUpstream")}
             </button>
             <span>·</span>
             <button
               type="button"
               className="icon-btn !w-5 !h-5 text-faint hover:text-ink"
-              title="收起候选列表"
+              title={t("llm.collapseCandidates")}
               onClick={() => setUpstreamCandidates([])}
             >
               <X size={12} />
@@ -303,7 +305,7 @@ export function ModelEditor({
             <div className="relative">
               <input
                 className="text-input !h-7 text-[11.5px] pl-7"
-                placeholder="搜索上游模型…"
+                placeholder={t("llm.searchUpstream")}
                 value={upstreamSearch}
                 onChange={(e) => setUpstreamSearch(e.target.value)}
               />
@@ -323,7 +325,7 @@ export function ModelEditor({
           {/* 候选复选框列表 */}
           <div className="max-h-[160px] overflow-y-auto space-y-0.5 pr-1 border border-edge/60 rounded-md p-1.5 bg-sunken/40">
             {filteredCandidates.length === 0 ? (
-              <div className="py-2 text-center text-[11px] text-faint">未找到匹配模型</div>
+              <div className="py-2 text-center text-[11px] text-faint">{t("llm.noMatchModels")}</div>
             ) : (
               filteredCandidates.map((m) => {
                 const checked = selectedModels.includes(m);
@@ -363,19 +365,19 @@ export function ModelEditor({
             <textarea
               className="textarea font-mono text-[12px]"
               rows={4}
-              placeholder="逗号或换行分隔模型名称，例如：gpt-4o, claude-3-5-sonnet"
+              placeholder={t("llm.batchPlaceholder")}
               value={batchText}
               onChange={(e) => setBatchText(e.target.value)}
               autoFocus
             />
             <div className="flex items-center justify-between text-[11px] text-faint">
-              <span>支持逗号或换行分隔，点击「应用到列表」即可解析</span>
+              <span>{t("llm.batchHint")}</span>
               <button
                 type="button"
                 className="btn btn-sm btn-primary"
                 onClick={handleApplyBatchText}
               >
-                应用到列表
+                {t("llm.applyToList")}
               </button>
             </div>
           </motion.div>
@@ -392,7 +394,7 @@ export function ModelEditor({
             <div className="flex items-center gap-2">
               <input
                 className="text-input font-mono text-[12px] !h-8"
-                placeholder="手动输入模型 ID，回车或点击右侧添加"
+                placeholder={t("llm.customPlaceholder")}
                 value={customInput}
                 onChange={(e) => setCustomInput(e.target.value)}
                 onKeyDown={(e) => {
@@ -408,7 +410,7 @@ export function ModelEditor({
                 disabled={!customInput.trim()}
                 onClick={handleAddCustom}
               >
-                <Plus size={12} weight="bold" /> 添加
+                <Plus size={12} weight="bold" /> {t("common.add")}
               </button>
             </div>
 
@@ -417,7 +419,7 @@ export function ModelEditor({
               <div className="flex items-center gap-2 rounded-lg border border-dashed border-edge-strong bg-sunken/40 px-3.5 py-3 text-[12px] text-faint">
                 <Robot size={14} className="shrink-0" />
                 <span>
-                  暂未配置模型 — 点击上方「拉取上游模型」自动获取，或在上方输入框回车手动添加
+                  {t("llm.noModelsHint")}
                 </span>
               </div>
             ) : (
@@ -431,8 +433,8 @@ export function ModelEditor({
                     <button
                       type="button"
                       className="w-4 h-4 rounded-full flex items-center justify-center text-faint hover:text-danger hover:bg-danger/10 transition-colors cursor-pointer"
-                      title={`移除 ${m}`}
-                      aria-label={`移除 ${m}`}
+                      title={t("common.remove")}
+                      aria-label={t("common.remove")}
                       onClick={() => handleRemoveModel(m)}
                     >
                       <X size={10} weight="bold" />
@@ -444,9 +446,9 @@ export function ModelEditor({
                   type="button"
                   className="text-[11px] text-faint hover:text-danger cursor-pointer ml-1"
                   onClick={handleClearAll}
-                  title="清空全部已选模型"
+                  title={t("llm.clearAllTip")}
                 >
-                  清空全部
+                  {t("llm.clearAll")}
                 </button>
               </div>
             )}

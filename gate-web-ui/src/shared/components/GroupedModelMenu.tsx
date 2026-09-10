@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 分组模型菜单（shared/components/GroupedModelMenu）：「Provider 分组 → 模型行」
  * 的弹出列表骨架，本体会话 Composer 的 ModelPicker 与 LLM 小助手的模型选择器
  * 共用同一交互与视觉。调用方负责触发器与弹层壳，这里只渲染分组列表本体。
@@ -25,7 +25,7 @@ export function GroupedModelMenu({
   groups,
   onPick,
   maxHeight = 300,
-  emptyText = "无匹配模型",
+  emptyText = "No matching models",
   emptyGroupText,
 }: {
   groups: ModelMenuGroup[];

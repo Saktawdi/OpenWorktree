@@ -1,4 +1,5 @@
-import { useState } from "react";
+﻿import { useState } from "react";
+import { useT } from "@/i18n";
 import { CaretDown, X } from "@phosphor-icons/react";
 import type { OpenCodeModelEntry } from "@/shared/types";
 import {
@@ -21,6 +22,7 @@ export function ModelEditor({
   onSave: (next: OpenCodeModelEntry) => void;
   onCancel: () => void;
 }) {
+  const t = useT();
   const parsed = parseModelConfig(entry.config);
   const [name, setName] = useState(parsed.name);
   const [context, setContext] = useState(parsed.context);
@@ -56,14 +58,14 @@ export function ModelEditor({
       if (variants.trim()) parsedVariants = JSON.parse(variants);
       if (extra.trim()) parsedExtra = JSON.parse(extra) as Record<string, unknown>;
     } catch (e) {
-      setJsonError(`JSON 解析失败：${(e as Error).message}`);
+      setJsonError(t("ocm.jsonParseFailed", { err: (e as Error).message }));
       return;
     }
     const ctx = context.trim() ? parseLimit(context) : null;
     const outNum = output.trim() ? parseLimit(output) : null;
-    const bad = [context.trim() && ctx == null ? "上下文限制" : "", output.trim() && outNum == null ? "输出限制" : ""].filter(Boolean);
+    const bad = [context.trim() && ctx == null ? t("ocm.ctxInvalid") : "", output.trim() && outNum == null ? t("ocm.outInvalid") : ""].filter(Boolean);
     if (bad.length > 0) {
-      setJsonError(`${bad.join("、")}需为数字或 16K / 1M 这类简写`);
+      setJsonError(t("ocm.numInvalid", { bad: bad.join("、") }));
       return;
     }
     setJsonError(null);
@@ -95,38 +97,38 @@ export function ModelEditor({
   return (
     <div className="rounded-lg border border-accent/30 bg-raised/40 p-4 space-y-3.5">
       <div className="flex items-center gap-2">
-        <span className="text-[12.5px] font-semibold">编辑模型</span>
+        <span className="text-[12.5px] font-semibold">{t("ocm.title")}</span>
         <span className="chip border border-edge-strong bg-canvas text-dim font-mono">{entry.id}</span>
         <span className="flex-1" />
-        <button type="button" className="icon-btn" title="取消" aria-label="取消编辑模型" onClick={onCancel}>
+        <button type="button" className="icon-btn" title={t("common.cancel")} aria-label={t("ocm.cancelTip")} onClick={onCancel}>
           <X size={13} />
         </button>
       </div>
 
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className="field-label">模型名称</label>
+          <label className="field-label">{t("ocm.nameLabel")}</label>
           <input className="text-input" placeholder={entry.id} value={name} onChange={(e) => setName(e.target.value)} />
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="field-label">上下文限制</label>
+            <label className="field-label">{t("ocm.ctxLabel")}</label>
             <LimitCombo
               presets={CONTEXT_LIMIT_PRESETS}
               value={context}
               onChange={setContext}
-              placeholder="200000 或 200K"
-              ariaLabel="上下文限制"
+              placeholder={t("ocm.ctxPlaceholder")}
+              ariaLabel={t("ocm.ctxLabel")}
             />
           </div>
           <div>
-            <label className="field-label">输出限制</label>
+            <label className="field-label">{t("ocm.outLabel")}</label>
             <LimitCombo
               presets={OUTPUT_LIMIT_PRESETS}
               value={output}
               onChange={setOutput}
-              placeholder="16000 或 16K"
-              ariaLabel="输出限制"
+              placeholder={t("ocm.outPlaceholder")}
+              ariaLabel={t("ocm.outLabel")}
             />
           </div>
         </div>
@@ -138,13 +140,13 @@ export function ModelEditor({
         onClick={() => setAdvancedOpen((v) => !v)}
       >
         <CaretDown size={12} className={`transition-transform ${advancedOpen ? "" : "-rotate-90"}`} />
-        高级设置
+        {t("agent.advanced")}
       </button>
 
       {advancedOpen && (
         <div className="space-y-3.5">
           <div>
-            <label className="field-label">输入模态</label>
+            <label className="field-label">{t("ocm.inModalLabel")}</label>
             <div className="flex flex-wrap gap-1.5">
               {MODALITY_PRESETS.map((m) => (
                 <button
@@ -163,7 +165,7 @@ export function ModelEditor({
             </div>
           </div>
           <div>
-            <label className="field-label">输出模态</label>
+            <label className="field-label">{t("ocm.outModalLabel")}</label>
             <div className="flex flex-wrap gap-1.5">
               {MODALITY_PRESETS.map((m) => (
                 <button
@@ -180,32 +182,32 @@ export function ModelEditor({
                 </button>
               ))}
             </div>
-            <div className="mt-1 text-[11px] text-faint">配置模型支持的输入输出类型，如 text、image、pdf、video、audio 等</div>
+            <div className="mt-1 text-[11px] text-faint">{t("ocm.modalityHint")}</div>
           </div>
           <div>
-            <label className="field-label">模型能力</label>
+            <label className="field-label">{t("ocm.capsLabel")}</label>
             <div className="flex flex-wrap gap-4">
-              {cap("推理", reasoning, setReasoning)}
-              {cap("工具调用", toolCall, setToolCall)}
-              {cap("温度", temperature, setTemperature)}
-              {cap("附件", attachment, setAttachment)}
+              {cap(t("ocm.cap.reasoning"), reasoning, setReasoning)}
+              {cap(t("ocm.cap.toolCall"), toolCall, setToolCall)}
+              {cap(t("ocm.cap.temperature"), temperature, setTemperature)}
+              {cap(t("ocm.cap.attachment"), attachment, setAttachment)}
             </div>
-            <div className="mt-1 text-[11px] text-faint">模型是否具备相应能力</div>
+            <div className="mt-1 text-[11px] text-faint">{t("ocm.capsHint")}</div>
           </div>
           <div>
             <div className="flex items-center gap-1.5 mb-1.5">
-              <label className="field-label !mb-0">模型变体（JSON）</label>
+              <label className="field-label !mb-0">{t("ocm.variantsLabel")}</label>
               <span className="flex-1" />
-              <span className="text-[10.5px] text-faint">一键填入</span>
-              {VARIANT_TEMPLATES.map((t) => (
+              <span className="text-[10.5px] text-faint">{t("ocm.fillPreset")}</span>
+              {VARIANT_TEMPLATES.map((tpl) => (
                 <button
-                  key={t.label}
+                  key={tpl.labelKey}
                   type="button"
-                  title={t.title}
+                  title={t(tpl.titleKey)}
                   className="chip border border-edge-strong bg-canvas text-dim cursor-pointer hover:border-accent/40 hover:text-accent transition-colors"
-                  onClick={() => setVariants(t.json)}
+                  onClick={() => setVariants(tpl.json)}
                 >
-                  {t.label}
+                  {t(tpl.labelKey)}
                 </button>
               ))}
             </div>
@@ -215,10 +217,10 @@ export function ModelEditor({
               value={variants}
               onChange={(e) => setVariants(e.target.value)}
             />
-            <div className="mt-1 text-[11px] text-faint">配置模型的不同变体，如推理强度、输出详细程度等</div>
+            <div className="mt-1 text-[11px] text-faint">{t("ocm.variantsHint")}</div>
           </div>
           <div>
-            <label className="field-label">额外参数（JSON）</label>
+            <label className="field-label">{t("ocm.extraArgsLabel")}</label>
             <textarea
               className="text-input font-mono text-[12px] h-20 resize-y"
               placeholder={'{\n  "store": false\n}'}
@@ -231,10 +233,10 @@ export function ModelEditor({
       {jsonError && <div className="text-[11.5px] text-danger">{jsonError}</div>}
       <div className="flex justify-end gap-2 pt-1">
         <button type="button" className="btn h-8" onClick={onCancel}>
-          取消
+          {t("common.cancel")}
         </button>
         <button type="button" className="btn btn-primary h-8" onClick={save}>
-          应用模型配置
+          {t("ocm.applyModel")}
         </button>
       </div>
     </div>

@@ -1,7 +1,8 @@
-/**
+﻿/**
  * 项目域 API（project）：项目 CRUD、仓库视图（分支图/文件树）、
  * 工作区目录浏览与终端目录列表。终端 WebSocket 见 terminal.ts。
  */
+import { t } from "@/i18n";
 import { api } from "@/net";
 import { appStore, showToast } from "@/store";
 import type { GitRepoView, GitTreeEntry, Project, TerminalEntry, WorkspaceListing, WorkspaceSyncResult, Priority } from "@/shared/types";
@@ -71,7 +72,7 @@ export async function createProjectLive(body: {
     }
     return true;
   } catch (e) {
-    showToast(`创建项目失败：${(e as Error).message}`);
+    showToast(t("projapi.createFailed", { err: (e as Error).message }));
     return false;
   }
 }
@@ -82,7 +83,7 @@ export async function updateProjectLive(id: string, body: Record<string, unknown
     await loadProjects();
     return true;
   } catch (e) {
-    showToast(`更新项目失败：${(e as Error).message}`);
+    showToast(t("projapi.updateFailed", { err: (e as Error).message }));
     return false;
   }
 }
@@ -93,7 +94,7 @@ export async function deleteProjectLive(id: string): Promise<boolean> {
     await loadProjects();
     return true;
   } catch (e) {
-    showToast(`删除项目失败：${(e as Error).message}`);
+    showToast(t("projapi.deleteFailed", { err: (e as Error).message }));
     return false;
   }
 }
@@ -108,7 +109,7 @@ export async function setProjectStarredLive(id: string, starred: boolean): Promi
     await loadProjects();
     return true;
   } catch (e) {
-    showToast(`星标更新失败：${(e as Error).message}`);
+    showToast(t("projapi.starFailed", { err: (e as Error).message }));
     return false;
   }
 }
@@ -123,7 +124,7 @@ export async function reorderProjectsLive(orderedIds: string[]): Promise<boolean
     await loadProjects();
     return true;
   } catch (e) {
-    showToast(`排序保存失败：${(e as Error).message}`);
+    showToast(t("projapi.orderFailed", { err: (e as Error).message }));
     return false;
   }
 }
@@ -277,7 +278,7 @@ export async function browseWorkspace(path: string): Promise<WorkspaceListing | 
     });
     return toWorkspaceListing(data);
   } catch (e) {
-    showToast(`目录浏览失败：${(e as Error).message}`);
+    showToast(t("projapi.browseFailed", { err: (e as Error).message }));
     return null;
   }
 }
@@ -290,7 +291,7 @@ export async function createWorkspaceDir(parent: string, name: string): Promise<
       body: JSON.stringify({ parent, name }),
     });
   } catch (e) {
-    showToast(`新建文件夹失败：${(e as Error).message}`);
+    showToast(t("projapi.mkdirFailed", { err: (e as Error).message }));
     return null;
   }
 }
@@ -302,15 +303,15 @@ export async function syncProjectWorkspace(projectId: string): Promise<Workspace
       body: "{}",
     });
     if (res.status === "SYNCED") {
-      showToast("工作区已同步");
+      showToast(t("projapi.synced"));
     } else if (res.status === "ALREADY") {
-      showToast("工作区已是最新");
+      showToast(t("projapi.alreadyLatest"));
     } else if (res.status === "DEFERRED") {
-      showToast(res.note ? `工作区待同步：${res.note}` : "工作区待同步");
+      showToast(res.note ? t("projapi.syncPendingNote", { note: res.note }) : t("projapi.syncPending"));
     }
     return res;
   } catch (e) {
-    showToast(`工作区同步失败：${(e as Error).message}`);
+    showToast(t("projapi.syncFailed", { err: (e as Error).message }));
     return null;
   }
 }

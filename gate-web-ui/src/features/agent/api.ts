@@ -1,7 +1,8 @@
-/**
+﻿/**
  * 智能体域 API（agent）：AgentConfig CRUD 与运行时探测。
  * OpenCode 供应商（opencode.json provider 节点）见 oc.ts；运行中轮询见 busy.ts。
  */
+import { t } from "@/i18n";
 import { api } from "@/net";
 import { appStore, showToast } from "@/store";
 import type { AgentConfig, AgentRuntime } from "@/shared/types";
@@ -65,7 +66,7 @@ export async function upsertAgentConfigLive(c: AgentConfig): Promise<boolean> {
     await loadAgentConfigs();
     return true;
   } catch (e) {
-    showToast(`保存智能体配置失败：${(e as Error).message}`);
+    showToast(t("agentapi.saveFailed", { err: (e as Error).message }));
     return false;
   }
 }
@@ -76,7 +77,7 @@ export async function deleteAgentConfigLive(id: string): Promise<boolean> {
     await loadAgentConfigs();
     return true;
   } catch (e) {
-    showToast(`删除智能体配置失败：${(e as Error).message}`);
+    showToast(t("agentapi.deleteFailed", { err: (e as Error).message }));
     return false;
   }
 }

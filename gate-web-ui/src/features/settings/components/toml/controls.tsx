@@ -1,5 +1,6 @@
-import { useState } from "react";
+﻿import { useState } from "react";
 import { X } from "@phosphor-icons/react";
+import { useT } from "@/i18n";
 
 /** 字符串列表编辑器（tag 式追加/移除，支持条目格式约束）。 */
 export function StringListEditor({
@@ -18,6 +19,7 @@ export function StringListEditor({
   patternHint?: string;
   placeholder?: string;
 }) {
+  const t = useT();
   const [input, setInput] = useState("");
   const invalid = input.trim() !== "" && itemPattern ? !itemPattern.test(input.trim()) : false;
   const add = () => {
@@ -34,7 +36,7 @@ export function StringListEditor({
           <span key={tag} className="inline-flex items-center gap-1 chip border border-edge-strong bg-raised text-dim text-[11.5px] pr-1">
             {tag}
             {!disabled && (
-              <button className="grid place-items-center w-4 h-4 rounded-full hover:bg-edge cursor-pointer" onClick={() => onChange(value.filter((x) => x !== tag))} aria-label={`移除 ${tag}`}>
+              <button className="grid place-items-center w-4 h-4 rounded-full hover:bg-edge cursor-pointer" onClick={() => onChange(value.filter((x) => x !== tag))} aria-label={t("common.remove")}>
                 <X size={10} />
               </button>
             )}
@@ -43,7 +45,7 @@ export function StringListEditor({
         {!disabled && (
           <input
             className="flex-1 min-w-[90px] bg-transparent outline-none text-[12.5px] placeholder:text-faint"
-            placeholder={placeholder ?? "输入后回车添加"}
+            placeholder={placeholder ?? t("labelInput.placeholderShort")}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
@@ -90,8 +92,9 @@ export function KeySelect({
   disabled?: boolean;
   onChange: (v: string) => void;
 }) {
+  const t = useT();
   const merged = value && !options.some((o) => o.value === value)
-    ? [{ value, label: `${value}（当前文件值）` }, ...options]
+    ? [{ value, label: `${value}（${t("toml.currentFileValue")}）` }, ...options]
     : options;
   return (
     <select

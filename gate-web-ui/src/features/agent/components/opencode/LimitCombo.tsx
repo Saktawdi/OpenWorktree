@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+﻿import { useEffect, useMemo, useRef, useState } from "react";
+import { useT } from "@/i18n";
 import { CaretDown } from "@phosphor-icons/react";
 import { parseLimit } from "./presets";
 
@@ -16,6 +17,7 @@ export function LimitCombo({
   placeholder: string;
   ariaLabel: string;
 }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const [up, setUp] = useState(false);
   const [hi, setHi] = useState(-1);
@@ -99,7 +101,7 @@ export function LimitCombo({
         type="button"
         className="absolute right-1 top-1/2 -translate-y-1/2 p-1.5 rounded-md text-faint hover:text-ink cursor-pointer bg-transparent border-0"
         tabIndex={-1}
-        aria-label={open ? "收起档位列表" : "展开档位列表"}
+        aria-label={open ? t("limit.collapse") : t("limit.expand")}
         onMouseDown={(e) => e.preventDefault()}
         onClick={() => setOpen((v) => !v)}
       >
@@ -113,7 +115,7 @@ export function LimitCombo({
           }`}
         >
           {options.length === 0 && (
-            <div className="px-3 py-1.5 text-[11.5px] text-faint">没有匹配的档位，可直接使用输入的值</div>
+            <div className="px-3 py-1.5 text-[11.5px] text-faint">{t("limit.noMatch")}</div>
           )}
           {options.map((p, i) => {
             const n = parseLimit(p);

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+﻿import { useEffect, useRef, useState } from "react";
 import { Check, ListChecks, CircleNotch } from "@phosphor-icons/react";
 import { NO_CHAT, useApp } from "@/store";
 import type { ChatItem, ClaudeTaskItem, TodoItem } from "@/shared/types";
@@ -8,6 +8,7 @@ import { computeContextBreakdown,
   toneColor,
   usageTone, } from "@/shared/contextUsage";
 import { todoProgress } from "@/shared/todoUtils";
+import { useT } from "@/i18n";
 
 /**
  * 会话横条（CenterTabs）右侧的图标按钮组（openchamber 式）：
@@ -161,11 +162,11 @@ function TodoRow({ todo }: { todo: TodoItem }) {
   );
 }
 
-const TODO_GROUPS: Array<{ key: TodoItem["status"]; label: string; dot?: string }> = [
-  { key: "in_progress", label: "进行中" },
-  { key: "pending", label: "待处理" },
-  { key: "completed", label: "已完成" },
-  { key: "cancelled", label: "已取消" },
+const TODO_GROUPS: Array<{ key: TodoItem["status"]; labelKey: "todo.group.inProgress" | "todo.group.pending" | "todo.group.completed" | "todo.group.cancelled" }> = [
+  { key: "in_progress", labelKey: "todo.group.inProgress" },
+  { key: "pending", labelKey: "todo.group.pending" },
+  { key: "completed", labelKey: "todo.group.completed" },
+  { key: "cancelled", labelKey: "todo.group.cancelled" },
 ];
 
 /** claude 任务条目行（V24）：subject 为主文案，activeForm 是执行中动作描述，description 折叠为副文案。 */
@@ -212,13 +213,14 @@ function ClaudeTaskRow({ task }: { task: ClaudeTaskItem }) {
 
 /** claude 任务面板（V24 平行链）：与 TodoPanel 同款式（分组/进度条/计数）。 */
 function ClaudeTaskPanel({ tasks }: { tasks: ClaudeTaskItem[] }) {
+  const t = useT();
   const p = todoProgress(tasks);
   return (
     <div className="w-[300px]">
       <div className="sticky top-0 bg-overlay/95 backdrop-blur-sm px-3.5 pt-3 pb-2.5 border-b border-edge space-y-2.5">
         <div className="flex items-center gap-2">
           <ListChecks size={14} className="text-accent" weight="bold" />
-          <span className="text-[12.5px] font-semibold text-ink">任务清单</span>
+          <span className="text-[12.5px] font-semibold text-ink">{t("todo.title")}</span>
           <span className="flex-1" />
           <span className="font-mono text-[11px] tabular-nums text-dim">
             {p.completed}
@@ -232,21 +234,21 @@ function ClaudeTaskPanel({ tasks }: { tasks: ClaudeTaskItem[] }) {
           />
         </div>
         <div className="flex gap-2.5 flex-wrap text-[10.5px]">
-          <span className="text-faint">共 {p.total}</span>
+          <span className="text-faint">{t("todo.total", { n: p.total })}</span>
           {p.inProgress > 0 && (
             <span className="inline-flex items-center gap-1 text-info">
               <span className="w-1 h-1 rounded-full bg-info animate-breathe" />
-              进行中 {p.inProgress}
+              {t("todo.inProgress", { n: p.inProgress })}
             </span>
           )}
-          {p.pending > 0 && <span className="text-faint">待处理 {p.pending}</span>}
-          {p.completed > 0 && <span className="text-accent">已完成 {p.completed}</span>}
-          {p.cancelled > 0 && <span className="text-faint/70 line-through">已取消 {p.cancelled}</span>}
+          {p.pending > 0 && <span className="text-faint">{t("todo.pending", { n: p.pending })}</span>}
+          {p.completed > 0 && <span className="text-accent">{t("todo.completed", { n: p.completed })}</span>}
+          {p.cancelled > 0 && <span className="text-faint/70 line-through">{t("todo.cancelled", { n: p.cancelled })}</span>}
         </div>
       </div>
       <div className="max-h-[340px] overflow-y-auto p-3.5 space-y-3.5">
-        {TODO_GROUPS.map(({ key, label }) => {
-          const group = tasks.filter((t) => t.status === key);
+        {TODO_GROUPS.map(({ key, labelKey }) => {
+          const group = tasks.filter((tk) => tk.status === key);
           if (group.length === 0) return null;
           return (
             <div key={key} className="space-y-1.5">
@@ -255,12 +257,12 @@ function ClaudeTaskPanel({ tasks }: { tasks: ClaudeTaskItem[] }) {
                 {key === "completed" && <Check size={10} weight="bold" className="text-accent" />}
                 {key === "pending" && <span className="w-1.5 h-1.5 rounded-full border border-edge-strong" />}
                 {key === "cancelled" && <span className="text-faint/70 leading-none">×</span>}
-                {label}
+                {t(labelKey)}
                 <span className="flex-1 border-t border-edge/60" />
               </div>
               <div className="space-y-1.5 pl-1">
-                {group.map((t) => (
-                  <ClaudeTaskRow key={`task-${t.id}`} task={t} />
+                {group.map((tk) => (
+                  <ClaudeTaskRow key={`task-${tk.id}`} task={tk} />
                 ))}
               </div>
             </div>
@@ -272,13 +274,14 @@ function ClaudeTaskPanel({ tasks }: { tasks: ClaudeTaskItem[] }) {
 }
 
 function TodoPanel({ todos }: { todos: TodoItem[] }) {
+  const t = useT();
   const p = todoProgress(todos);
   return (
     <div className="w-[300px]">
       <div className="sticky top-0 bg-overlay/95 backdrop-blur-sm px-3.5 pt-3 pb-2.5 border-b border-edge space-y-2.5">
         <div className="flex items-center gap-2">
           <ListChecks size={14} className="text-accent" weight="bold" />
-          <span className="text-[12.5px] font-semibold text-ink">任务清单</span>
+          <span className="text-[12.5px] font-semibold text-ink">{t("todo.title")}</span>
           <span className="flex-1" />
           <span className="font-mono text-[11px] tabular-nums text-dim">
             {p.completed}
@@ -292,21 +295,21 @@ function TodoPanel({ todos }: { todos: TodoItem[] }) {
           />
         </div>
         <div className="flex gap-2.5 flex-wrap text-[10.5px]">
-          <span className="text-faint">共 {p.total}</span>
+          <span className="text-faint">{t("todo.total", { n: p.total })}</span>
           {p.inProgress > 0 && (
             <span className="inline-flex items-center gap-1 text-info">
               <span className="w-1 h-1 rounded-full bg-info animate-breathe" />
-              进行中 {p.inProgress}
+              {t("todo.inProgress", { n: p.inProgress })}
             </span>
           )}
-          {p.pending > 0 && <span className="text-faint">待处理 {p.pending}</span>}
-          {p.completed > 0 && <span className="text-accent">已完成 {p.completed}</span>}
-          {p.cancelled > 0 && <span className="text-faint/70 line-through">已取消 {p.cancelled}</span>}
+          {p.pending > 0 && <span className="text-faint">{t("todo.pending", { n: p.pending })}</span>}
+          {p.completed > 0 && <span className="text-accent">{t("todo.completed", { n: p.completed })}</span>}
+          {p.cancelled > 0 && <span className="text-faint/70 line-through">{t("todo.cancelled", { n: p.cancelled })}</span>}
         </div>
       </div>
       <div className="max-h-[340px] overflow-y-auto p-3.5 space-y-3.5">
-        {TODO_GROUPS.map(({ key, label }) => {
-          const group = todos.filter((t) => t.status === key);
+        {TODO_GROUPS.map(({ key, labelKey }) => {
+          const group = todos.filter((td) => td.status === key);
           if (group.length === 0) return null;
           return (
             <div key={key} className="space-y-1.5">
@@ -315,12 +318,12 @@ function TodoPanel({ todos }: { todos: TodoItem[] }) {
                 {key === "completed" && <Check size={10} weight="bold" className="text-accent" />}
                 {key === "pending" && <span className="w-1.5 h-1.5 rounded-full border border-edge-strong" />}
                 {key === "cancelled" && <span className="text-faint/70 leading-none">×</span>}
-                {label}
+                {t(labelKey)}
                 <span className="flex-1 border-t border-edge/60" />
               </div>
               <div className="space-y-1.5 pl-1">
-                {group.map((t, i) => (
-                  <TodoRow key={t.id ?? `${key}-${i}`} todo={t} />
+                {group.map((td, i) => (
+                  <TodoRow key={td.id ?? `${key}-${i}`} todo={td} />
                 ))}
               </div>
             </div>
@@ -355,6 +358,7 @@ function ContextPanel({ items, ctx }: {
   items: ChatItem[];
   ctx: { tokens: number; limit: number | null } | undefined;
 }) {
+  const t = useT();
   const usage = computeContextPercent(ctx, items);
   const breakdown = computeContextBreakdown(items);
   const total = breakdown.user + breakdown.assistant + breakdown.tool + breakdown.other;
@@ -363,7 +367,7 @@ function ContextPanel({ items, ctx }: {
   return (
     <div className="w-[300px] p-3.5 space-y-3">
       <div className="flex items-baseline gap-2">
-        <span className="text-[12.5px] font-semibold text-ink">会话上下文</span>
+        <span className="text-[12.5px] font-semibold text-ink">{t("ctx.title")}</span>
         <span className="flex-1" />
         {usage && (
           <span className="font-mono text-[15px] font-bold tabular-nums leading-none" style={{ color: toneColor(tone) }}>
@@ -374,21 +378,21 @@ function ContextPanel({ items, ctx }: {
       </div>
       {usage ? (
         <div className="space-y-2 pt-0.5">
-          <BreakdownRow label="用户" percent={pct(breakdown.user)} color="var(--color-info)" />
-          <BreakdownRow label="助手" percent={pct(breakdown.assistant)} color="var(--color-accent)" />
-          <BreakdownRow label="工具调用" percent={pct(breakdown.tool)} color="var(--color-warn)" />
-          <BreakdownRow label="其他" percent={pct(breakdown.other)} color="var(--color-faint)" />
+          <BreakdownRow label={t("ctx.user")} percent={pct(breakdown.user)} color="var(--color-info)" />
+          <BreakdownRow label={t("ctx.assistant")} percent={pct(breakdown.assistant)} color="var(--color-accent)" />
+          <BreakdownRow label={t("ctx.tool")} percent={pct(breakdown.tool)} color="var(--color-warn)" />
+          <BreakdownRow label={t("ctx.other")} percent={pct(breakdown.other)} color="var(--color-faint)" />
         </div>
       ) : (
-        <div className="text-[12px] text-faint py-2">会话还没有内容，暂无上下文占用</div>
+        <div className="text-[12px] text-faint py-2">{t("ctx.empty")}</div>
       )}
       {usage && (
         <div className="pt-2.5 border-t border-edge flex items-center gap-1.5 font-mono text-[10.5px] text-faint">
           <span>
             {formatTokens(usage.tokens)} / {formatTokens(usage.limit)} tokens
           </span>
-          {usage.estimated && <span className="text-warn">· 估算</span>}
-          {!ctx?.limit && <span>· 上限未知按 200K</span>}
+          {usage.estimated && <span className="text-warn">{t("ctx.estimated")}</span>}
+          {!ctx?.limit && <span>{t("ctx.limitUnknown")}</span>}
         </div>
       )}
     </div>
@@ -396,6 +400,7 @@ function ContextPanel({ items, ctx }: {
 }
 
 export function SessionRail({ ticketNo }: { ticketNo: string }) {
+  const t = useT();
   // 任务清单按会话 id 键控（V21/V24）：读当前活跃会话的投影，草稿态（无会话）天然无清单。
   const activeSessionId = useApp((s) => s.activeSessionId[ticketNo]);
   const todos = useApp((s) => (activeSessionId ? s.todos[activeSessionId] : undefined));
@@ -443,12 +448,12 @@ export function SessionRail({ ticketNo }: { ticketNo: string }) {
                     : "todo",
               )
             }
-            label={`任务清单 ${progress.completed}/${progress.total}`}
+            label={t("todo.railLabel", { done: progress.completed, total: progress.total })}
           >
             <ProgressRing
               percent={progress.percent}
               color="var(--color-accent)"
-              title={`任务清单 ${progress.completed}/${progress.total}`}
+              title={t("todo.railLabel", { done: progress.completed, total: progress.total })}
             >
               <ListChecks size={12} className="text-accent" weight="bold" />
             </ProgressRing>
@@ -469,12 +474,12 @@ export function SessionRail({ ticketNo }: { ticketNo: string }) {
           <RailButton
             open={openPanel === "context"}
             onClick={() => setOpenPanel(openPanel === "context" ? null : "context")}
-            label={`会话上下文 ${ctxPct}%`}
+            label={t("ctx.railLabel", { n: ctxPct })}
           >
             <ProgressRing
               percent={usage.percent}
               color={toneColor(usageTone(usage.percent))}
-              title={`会话上下文 ${ctxPct}%`}
+              title={t("ctx.railLabel", { n: ctxPct })}
             >
               <span
                 className="font-mono font-bold leading-none tabular-nums"

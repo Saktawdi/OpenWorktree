@@ -1,10 +1,11 @@
-import { motion } from "motion/react";
+﻿import { motion } from "motion/react";
 import { ArrowClockwise, ArrowCounterClockwise, Check, LockKey, RocketLaunch } from "@phosphor-icons/react";
 import { actions } from "@/app/actions";
 import { useApp } from "@/store";
 import { openRestartDialog, openStageChangeConfirm } from "@/features/ticket/state";
 import { SessionSection } from "@/features/session/components/SessionList";
 import { Spinner } from "@/shared/components/ui";
+import { useT } from "@/i18n";
 import { TicketInfo } from "./TicketInfo";
 import { GatePipeline } from "./GatePipeline";
 import { QuickModeCard } from "./QuickModeCard";
@@ -17,6 +18,7 @@ import { StageChangesHistoryDialog } from "./StageChangesHistoryDialog";
  * 各段实现见同目录分文件；会话列表属于 session 域组件。
  */
 export function GatePanel({ ticketNo }: { ticketNo: string }) {
+  const t = useT();
   const stage = useApp((s) => s.tickets.find((t) => t.ticketNo === ticketNo)?.stage);
   const isSuperTicket = useApp((s) => s.tickets.find((t) => t.ticketNo === ticketNo)?.isSuper) ?? false;
   const snaps = useApp((s) => s.snapshots[ticketNo]);
@@ -35,14 +37,14 @@ export function GatePanel({ ticketNo }: { ticketNo: string }) {
 
   if (stage === "IN_PROGRESS" || stage === "REJECTED" || stage === "PENDING") {
     action = {
-      label: "预提审 · 锁定快照",
+      label: t("gate.action.presubmit"),
       icon: <LockKey size={15} weight="fill" />,
       onClick: () => actions.presubmit(ticketNo),
       disabled: gateBusy || diffCount === 0,
       hint:
         diffCount === 0
-          ? "沙箱内暂无变更，先让 Agent 完成编码"
-          : "生成不可变快照指纹，作为审查与发布的唯一凭据",
+          ? t("kanban.block.noChanges")
+          : t("gate.action.presubmitHint"),
       primary: true,
     };
   } else if (stage === "PRESUBMITTED") {
@@ -50,30 +52,30 @@ export function GatePanel({ ticketNo }: { ticketNo: string }) {
     action = null;
   } else if (stage === "IN_REVIEW") {
     action = {
-      label: "审查执行中…",
+      label: t("gate.action.reviewing"),
       icon: <Spinner />,
       disabled: true,
-      hint: "判决落盘前不会触碰主分支",
+      hint: t("gate.action.reviewingHint"),
     };
   } else if (stage === "READY_TO_PUBLISH") {
     action = {
-      label: "一键安全发布",
+      label: t("gate.action.publish"),
       icon: <RocketLaunch size={15} weight="fill" />,
       onClick: () => actions.publish(ticketNo),
       disabled: gateBusy,
-      hint: "原子推送至主分支；发布内容与快照指纹强一致",
+      hint: t("gate.action.publishHint"),
       primary: true,
     };
   } else if (stage === "DONE" || stage === "CANCELLED") {
     // T-117: 终态工单可重启 —— 底部主按钮位变为「重启工单」，弹窗填写理由。
     action = {
-      label: "重启工单",
+      label: t("gate.restart.title"),
       icon: <ArrowCounterClockwise size={15} weight="fill" />,
       onClick: () => openRestartDialog(ticketNo),
       hint:
         stage === "DONE"
-          ? "重新开启该工单的编码协作，轮次自动加一"
-          : "已取消的工单可重新开启，轮次自动加一",
+          ? t("gate.restartHint.done")
+          : t("gate.restartHint.cancelled"),
       primary: true,
     };
   } else if (stage === "NEEDS_HUMAN") {
@@ -130,10 +132,10 @@ export function GatePanel({ ticketNo }: { ticketNo: string }) {
               className="btn w-full mb-2"
               disabled={gateBusy}
               onClick={() => actions.syncBase(ticketNo)}
-              title="把工单分支快进到主分支最新 tip；沙箱内未提交的改动会原样保留（T-118 基座同步）"
+              title={t("gate.action.syncBaseTip")}
             >
               <ArrowClockwise size={15} weight="fill" />
-              同步基座 · 追平主分支
+              {t("gate.action.syncBase")}
             </button>
           )}
           <button
@@ -151,10 +153,10 @@ export function GatePanel({ ticketNo }: { ticketNo: string }) {
               className="btn w-full mt-2"
               disabled={gateBusy}
               onClick={() => openStageChangeConfirm(ticketNo, "CANCELLED")}
-              title="取消工单（理由必填，记入状态变更记录，可在工单信息里回看）"
+              title={t("stageChange.cancelEntryTip")}
             >
               <LockKey size={15} weight="fill" />
-              取消工单…
+              {t("stageChange.cancelEntry")}
             </button>
           )}
           {action.hint && <div className="mt-2 text-center text-[11.5px] text-faint">{action.hint}</div>}
@@ -167,17 +169,17 @@ export function GatePanel({ ticketNo }: { ticketNo: string }) {
         <div className="shrink-0 border-t border-edge bg-surface p-3.5">
           <button className="btn btn-lg w-full" disabled>
             <Check size={15} weight="bold" />
-            工单已完成归档
+            {t("gate.action.archived")}
           </button>
         </div>
       )}
       {stage === "CANCELLED" && (
         <div className="shrink-0 border-t border-edge bg-surface p-3.5">
-          <button className="btn btn-lg w-full" disabled title="已取消的工单已锁定，不可再操作">
+          <button className="btn btn-lg w-full" disabled title={t("gate.action.cancelledTip")}>
             <LockKey size={15} weight="fill" />
-            工单已取消 · 已锁定
+            {t("gate.action.cancelledLocked")}
           </button>
-          <div className="mt-2 text-center text-[11.5px] text-faint">会话与门禁操作均已停用</div>
+          <div className="mt-2 text-center text-[11.5px] text-faint">{t("gate.action.cancelledNote")}</div>
         </div>
       )}
       {/* ─── T-117 重启理由弹窗 / V19 状态变更记录弹窗 ─── */}

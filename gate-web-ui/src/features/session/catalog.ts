@@ -1,9 +1,10 @@
-/**
+﻿/**
  * 会话域模型目录（session）：会话 serve 的 live 模型目录加载、选择种子与
  * 会话内实时切换（provider/model/variant 覆盖）。
  */
 import { api } from "@/net";
 import { appStore, showToast } from "@/store";
+import { t } from "@/i18n";
 import type { CatalogProvider } from "@/shared/types";
 import {
   numericLimit,
@@ -93,7 +94,7 @@ export async function switchSessionModelLive(
     }
     return true;
   } catch (e) {
-    showToast(`切换失败：${(e as Error).message}`);
+    showToast(t("sess.switchFailed", { err: (e as Error).message }));
     return false;
   }
 }

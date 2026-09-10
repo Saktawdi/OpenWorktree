@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 会话共享原语（shared/components/ChatPrimitives）：本体会话（ChatStream）与
  * LLM 小助手面板共用的消息行结构——用户气泡壳、助手头像行、回复 footer 与
  * 流式光标。视觉与结构以本体会话为唯一基准，改动在这里改一次，两处同时生效。
@@ -8,6 +8,7 @@ import type { ReactNode } from "react";
 import { CopyButton } from "@/shared/components/ui";
 import { Markdown } from "@/shared/components/Markdown";
 import { hhmmss, variantLabel, formatDuration } from "@/shared/format";
+import { useT, type Translate } from "@/i18n";
 
 /** 流式出字光标（bg-accent 闪烁块；与 .md-body 正文同行使用）。 */
 export function StreamCursor() {
@@ -33,7 +34,7 @@ export function UserBubble({ children, dataId }: { children: ReactNode; dataId?:
  * 流式回合用 live 传开始时间（无 ts 时显示"思考中"的动态秒表由调用方负责）。
  */
 export function AssistantShell({
-  name = "助手",
+  name,
   ts,
   tone = "accent",
   badge,
@@ -48,6 +49,8 @@ export function AssistantShell({
   badge?: ReactNode;
   children: ReactNode;
 }) {
+  const t = useT();
+  const resolvedName = name ?? t("chat.assistantName");
   return (
     <div className="group/msg animate-rise">
       <div className="flex items-center gap-2 mb-1.5">
@@ -58,7 +61,7 @@ export function AssistantShell({
         >
           {badge ?? <Sparkle size={13} weight="fill" />}
         </span>
-        <span className={`text-[12.5px] font-semibold ${tone === "danger" ? "text-danger" : ""}`}>{name}</span>
+        <span className={`text-[12.5px] font-semibold ${tone === "danger" ? "text-danger" : ""}`}>{resolvedName}</span>
         <span className="flex-1" />
         {ts != null && <span className="font-mono text-[10.5px] text-faint">{hhmmss(ts)}</span>}
       </div>
@@ -85,6 +88,7 @@ export function ReplyFooter({
   durationMs?: number;
   copyText?: string;
 }) {
+  const t = useT();
   const modelLabel = (model ?? "").trim() || null;
   const rawVariant = (variant ?? "").trim();
   const variantShown = rawVariant && !/^(default|none)$/i.test(rawVariant) ? rawVariant : null;
@@ -93,21 +97,21 @@ export function ReplyFooter({
   return (
     <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[11px] text-faint">
       {modelLabel && (
-        <span className="flex min-w-0 items-center gap-1" title={`本条回复由 ${modelLabel} 完成`}>
+        <span className="flex min-w-0 items-center gap-1" title={t("chat.footer.modelTip", { model: modelLabel ?? "" })}>
           <Sparkle size={11} weight="fill" className="shrink-0 text-accent/70" />
           <span className="max-w-[240px] truncate font-mono text-[10.5px]">{modelLabel}</span>
         </span>
       )}
       {variantShown && (
-        <span className="flex items-center gap-1" title={`推理强度：${variantLabel(variantShown)}`}>
+        <span className="flex items-center gap-1" title={t("chat.footer.variantTip", { v: variantLabel(variantShown ?? "") })}>
           <Brain size={11} className="shrink-0 text-info/70" />
           <span>{variantLabel(variantShown)}</span>
         </span>
       )}
-      {duration && <span>· 持续 {duration}</span>}
+      {duration && <span>· {t("chat.footer.duration", { d: duration })}</span>}
       {copyText && (
         <span className="flex items-center opacity-0 pointer-events-none transition-opacity duration-150 focus-within:opacity-100 focus-within:pointer-events-auto group-hover/msg:opacity-100 group-hover/msg:pointer-events-auto [&_.icon-btn]:h-6 [&_.icon-btn]:w-6 [&_.icon-btn]:rounded">
-          <CopyButton text={copyText} label="复制回复" />
+          <CopyButton text={copyText} label={t("chat.footer.copyReply")} />
         </span>
       )}
     </div>

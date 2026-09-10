@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 引用片段胶囊（QuoteChip）：划选文字「添加到对话框」/外部粘贴成段文字后的胶囊形态，
  * 也是用户消息气泡里引用标记（⟦引用⟧…⟦/引用⟧）渲染回来的形态。
  * 默认单行预览；悬停浮出固定尺寸卡片——内容多行省略，底部一行「引用自 xxx」
@@ -10,6 +10,7 @@
  */
 import { ArrowElbowDownLeft, Quotes, X } from "@phosphor-icons/react";
 import { quotePreview } from "@/shared/quotes";
+import { useT } from "@/i18n";
 
 export function QuoteChip({
   text,
@@ -31,6 +32,7 @@ export function QuoteChip({
   /** 提示卡改为右对齐：用户气泡靠屏幕右缘，左对齐会探出视口。 */
   tipRight?: boolean;
 }) {
+  const t = useT();
   const editable = Boolean(onEdit);
   return (
     <span className={`quote-chip${tipRight ? " quote-chip-tipr" : ""}`}>
@@ -38,8 +40,8 @@ export function QuoteChip({
         <button
           type="button"
           className="quote-chip-body"
-          title="编辑原文"
-          aria-label="编辑引用原文"
+          title={t("quote.editTip")}
+          aria-label={t("quote.editAria")}
           onClick={onEdit}
         >
           <Quotes size={11} weight="fill" className="quote-chip-icon" />
@@ -55,8 +57,8 @@ export function QuoteChip({
         <button
           type="button"
           className="quote-chip-x"
-          title="转为正文：原文插回输入框，可随意改写"
-          aria-label="转为正文"
+          title={t("quote.toTextTip")}
+          aria-label={t("quote.toText")}
           onClick={onToText}
         >
           <ArrowElbowDownLeft size={10} weight="bold" />
@@ -66,8 +68,8 @@ export function QuoteChip({
         <button
           type="button"
           className="quote-chip-x"
-          title="移除引用"
-          aria-label="移除引用"
+          title={t("quote.remove")}
+          aria-label={t("quote.remove")}
           onClick={onRemove}
         >
           <X size={10} weight="bold" />
@@ -79,7 +81,7 @@ export function QuoteChip({
           {source && (
             <span className="quote-chip-tip-source">
               <Quotes size={10} weight="fill" />
-              引用自 {source}
+              {t("quote.quotedFrom", { source })}
             </span>
           )}
         </span>

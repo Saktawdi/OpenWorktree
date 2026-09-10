@@ -1,7 +1,8 @@
-/**
+﻿/**
  * 会话域 API（session）：会话列表/元数据、消息历史与本地会话操作。
  * SSE 流消费见 stream.ts；模型目录见 catalog.ts；权限/提问见 permissions.ts。
  */
+import { t } from "@/i18n";
 import { api } from "@/net";
 import { appStore, showToast } from "@/store";
 import { applyTodosSnapshot } from "./todos";
@@ -101,7 +102,7 @@ export async function patchSessionLive(
   try {
     await api(`/api/sessions/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
   } catch (e) {
-    showToast(`更新会话失败：${(e as Error).message}`);
+    showToast(t("sessapi.updateFailed", { err: (e as Error).message }));
     return;
   }
   const no = ticketNoOfSession(id);
@@ -115,7 +116,7 @@ export async function deleteSessionLive(id: string, ticketNo: string) {
   try {
     await api(`/api/sessions/${id}`, { method: "DELETE" });
   } catch (e) {
-    showToast(`删除会话失败：${(e as Error).message}`);
+    showToast(t("sessapi.deleteFailed", { err: (e as Error).message }));
     return;
   }
   dropLiveTurn(id);

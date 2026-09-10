@@ -1,10 +1,12 @@
-import { useState } from "react";
+﻿import { useState } from "react";
 import { X } from "@phosphor-icons/react";
 import { actions } from "@/app/actions";
 import { appStore, closeConnect, useApp } from "@/store";
 import { useBackdropClose } from "@/shared/components/ui";
+import { useT } from "@/i18n";
 
 export function ConnectionDialog() {
+  const t = useT();
   const open = useApp((s) => s.connectOpen);
   const mode = useApp((s) => s.mode);
   const backdrop = useBackdropClose(closeConnect);
@@ -17,7 +19,7 @@ export function ConnectionDialog() {
 
   const testAndConnect = async () => {
     if (!token.trim()) {
-      setMsg({ ok: false, text: "请先粘贴访问令牌" });
+      setMsg({ ok: false, text: t("conn.pasteTokenFirst") });
       return;
     }
     setTesting(true);
@@ -25,10 +27,10 @@ export function ConnectionDialog() {
     const ok = await actions.connectLive(token.trim());
     setTesting(false);
     if (ok) {
-      setMsg({ ok: true, text: "连接成功，已加载后端数据" });
+      setMsg({ ok: true, text: t("conn.success") });
       setTimeout(() => closeConnect(), 700);
     } else {
-      setMsg({ ok: false, text: "令牌无效或后端未启动（18080 端口）" });
+      setMsg({ ok: false, text: t("conn.invalidToken") });
     }
   };
 
@@ -39,8 +41,8 @@ export function ConnectionDialog() {
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-5 h-12 border-b border-edge">
-          <span className="text-[13.5px] font-semibold">连接设置</span>
-          <button className="icon-btn" onClick={closeConnect} aria-label="关闭">
+          <span className="text-[13.5px] font-semibold">{t("conn.title")}</span>
+          <button className="icon-btn" onClick={closeConnect} aria-label={t("common.close")}>
             <X size={15} />
           </button>
         </div>
@@ -49,8 +51,8 @@ export function ConnectionDialog() {
           <div className="flex gap-1 bg-sunken rounded-lg p-0.5 border border-edge">
             {(
               [
-                ["demo", "演示模式"],
-                ["live", "连接本地后端"],
+                ["demo", "conn.tab.demo"],
+                ["live", "conn.tab.live"],
               ] as const
             ).map(([k, label]) => (
               <button
@@ -63,7 +65,7 @@ export function ConnectionDialog() {
                   setMsg(null);
                 }}
               >
-                {label}
+                {t(label)}
               </button>
             ))}
           </div>
@@ -71,8 +73,7 @@ export function ConnectionDialog() {
           {tab === "demo" ? (
             <>
               <p className="text-[12.5px] leading-relaxed text-dim">
-                内置完整演示场景：Agent 在沙箱内编码 → 预提审锁定快照 → 门禁审查驳回 → 按意见修复 → 二轮通过 → 一键发布。
-                全程无需启动后端。
+                {t("conn.demoDesc")}
               </p>
               <button
                 className="btn btn-primary w-full"
@@ -81,17 +82,17 @@ export function ConnectionDialog() {
                   closeConnect();
                 }}
               >
-                载入演示场景
+                {t("conn.loadDemo")}
               </button>
             </>
           ) : (
             <>
               <div>
-                <label className="field-label">后端地址</label>
-                <input className="text-input font-mono" value="http://127.0.0.1:18080（经开发代理转发）" readOnly />
+                <label className="field-label">{t("conn.backendUrl")}</label>
+                <input className="text-input font-mono" value="http://127.0.0.1:18080" readOnly />
               </div>
               <div>
-                <label className="field-label">访问令牌</label>
+                <label className="field-label">{t("conn.token")}</label>
                 <input
                   type="password"
                   className="text-input font-mono"
@@ -101,7 +102,7 @@ export function ConnectionDialog() {
                   onKeyDown={(e) => e.key === "Enter" && testAndConnect()}
                 />
                 <p className="mt-1.5 text-[11.5px] text-faint leading-relaxed">
-                  令牌见启动日志中的 GATE_WEB_TOKEN，或 local-run/gate-home/web-token 文件。
+                  {t("conn.tokenHint")}
                 </p>
               </div>
               {msg && (
@@ -109,7 +110,7 @@ export function ConnectionDialog() {
               )}
               <div className="flex gap-2">
                 <button className="btn flex-1" disabled={testing} onClick={testAndConnect}>
-                  {testing ? "测试中…" : "测试并连接"}
+                  {testing ? t("conn.testing") : t("conn.testAndConnect")}
                 </button>
                 <button
                   className="btn"
@@ -118,7 +119,7 @@ export function ConnectionDialog() {
                     closeConnect();
                   }}
                 >
-                  返回演示
+                  {t("conn.backToDemo")}
                 </button>
               </div>
             </>

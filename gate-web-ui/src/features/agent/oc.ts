@@ -1,7 +1,8 @@
-/**
+﻿/**
  * 智能体域 OpenCode 供应商（agent oc）：opencode.json(c) provider 节点的
  * CRUD、上游模型探测与连通测试。
  */
+import { t } from "@/i18n";
 import { api } from "@/net";
 import { appStore, showToast } from "@/store";
 import type { OpenCodeProvider } from "@/shared/types";
@@ -66,7 +67,7 @@ export async function upsertOcProviderLive(
     await loadOcProviders();
     return true;
   } catch (e) {
-    showToast(`保存 OpenCode 供应商失败：${(e as Error).message}`);
+    showToast(t("oc.saveFailed", { err: (e as Error).message }));
     return false;
   }
 }
@@ -77,7 +78,7 @@ export async function deleteOcProviderLive(key: string): Promise<boolean> {
     await loadOcProviders();
     return true;
   } catch (e) {
-    showToast(`删除 OpenCode 供应商失败：${(e as Error).message}`);
+    showToast(t("oc.deleteFailed", { err: (e as Error).message }));
     return false;
   }
 }

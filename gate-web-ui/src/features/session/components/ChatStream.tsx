@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+﻿import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { RefObject } from "react";
 import { AnimatePresence, motion } from "motion/react";
@@ -37,6 +37,7 @@ import { QuoteChip } from "@/shared/components/QuoteChip";
 import { CopyButton } from "@/shared/components/ui";
 import { AssistantShell, ReplyBody, ReplyFooter, UserBubble } from "@/shared/components/ChatPrimitives";
 import { useStickyScroll } from "@/shared/hooks";
+import { useT, type Translate } from "@/i18n";
 
 const TOOL_ICONS: Record<ToolIconKind, typeof TerminalWindow> = {
   file: FileText,
@@ -89,15 +90,16 @@ function ChatImage({
       if (made) URL.revokeObjectURL(made);
     };
   }, [src, ticketNo]);
+  const t = useT();
   if (failed) {
     // 落盘文件丢失/端点不可达：给出确定态，而非永远脉冲的加载骨架
     return (
       <span
         className="inline-flex h-28 w-40 items-center justify-center gap-1.5 rounded-lg border border-edge bg-sunken text-[11px] text-faint"
-        title={`图片加载失败：${src}`}
+        title={t("chat.imageFailedTip", { src })}
       >
         <Warning size={14} weight="fill" />
-        图片已失效
+        {t("chat.imageFailed")}
       </span>
     );
   }
@@ -107,7 +109,7 @@ function ChatImage({
   return (
     <img
       src={url}
-      alt="随消息发送的图片"
+      alt={t("chat.imageAlt")}
       className="max-h-56 max-w-[280px] cursor-zoom-in rounded-lg border border-edge object-contain"
       onClick={() => onZoom(url)}
     />
@@ -116,6 +118,7 @@ function ChatImage({
 
 /** 灯箱：点击/Esc 关闭，展示可得的最高清版本（后端存的是 ≤1024px 缩略图）。 */
 function ImageLightbox({ src, onClose }: { src: string; onClose: () => void }) {
+  const t = useT();
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -130,7 +133,7 @@ function ImageLightbox({ src, onClose }: { src: string; onClose: () => void }) {
     >
       <img
         src={src}
-        alt="图片预览"
+        alt={t("chat.imageAlt")}
         className="max-h-[92vh] max-w-[92vw] rounded-xl border border-edge shadow-2xl"
       />
     </div>,
@@ -185,7 +188,7 @@ function UserMessageBody({
 }
 
 function splitToolArgs(tool: ToolCallView): { toolName: string; argsPart: string } {  // todo 类工具行：api 层已把 argsSummary 写成紧凑摘要（避免整段 todos JSON 刷屏）。
-  const label = tool.name || tool.toolName || "工具调用";
+  const label = tool.name || tool.toolName || "";
   if (tool.icon === "todo") {
     return { toolName: label, argsPart: tool.argsSummary };
   }
@@ -208,6 +211,7 @@ const ThinkingRow = memo(function ThinkingRow({
   part: Extract<TimelinePart, { type: "thinking" }>;
   streamingItem: boolean;
 }) {
+  const t = useT();
   const [expanded, setExpanded] = useState(false);
   const done = streamingItem ? !!part.endedAt : true;
   const seconds =
@@ -224,9 +228,9 @@ const ThinkingRow = memo(function ThinkingRow({
         onClick={() => setExpanded(!expanded)}
       >
         <Brain size={14} className="text-info" weight={done ? "regular" : "fill"} />
-        <span>{done ? "思考" : "思考中"}</span>
+        <span>{done ? t("chat.thinking") : t("chat.thinkingNow")}</span>
         {done ? (
-          seconds != null && <span className="text-faint shrink-0">持续了 {seconds} 秒</span>
+          seconds != null && <span className="text-faint shrink-0">{t("chat.thoughtFor", { n: seconds })}</span>
         ) : (
           <span className="w-1.5 h-1.5 rounded-full bg-info animate-breathe shrink-0" />
         )}
@@ -258,19 +262,20 @@ const ToolPartRow = memo(function ToolPartRow({
 }: {
   part: Extract<TimelinePart, { type: "tool" }>;
 }) {
-  const tool = part.view ?? derivePartToolView(part);
+  const t = useT();
+  const tool = part.view ?? derivePartToolView(part, t);
   return <ToolRow tool={tool} />;
 });
 
-function derivePartToolView(part: Extract<TimelinePart, { type: "tool" }>): ToolCallView {
+function derivePartToolView(part: Extract<TimelinePart, { type: "tool" }>, t: Translate): ToolCallView {
   const todo = isTodoTool(part.name);
   return {
     id: part.id ?? `part-${part.name}-${part.arguments_json.length}`,
-    name: friendlyToolName(part.name),
+    name: friendlyToolName(part.name, t),
     toolName: part.name,
     args: part.arguments_json,
     icon: todo || isClaudeTaskTool(part.name) ? "todo" : resolveToolIcon(part.name),
-    argsSummary: todo ? todoArgsSummary(part.arguments_json) : compactToolArgs(part.name, part.arguments_json),
+    argsSummary: todo ? todoArgsSummary(part.arguments_json, t) : compactToolArgs(part.name, part.arguments_json),
     resultSummary: compactToolResult(part.result_json),
     resultDetail: part.result_json ?? undefined,
     status: part.status ?? "ok",
@@ -292,6 +297,7 @@ const TimelineBody = memo(function TimelineBody({
   item: Extract<ChatItem, { kind: "assistant" }>;
   ticketNo: string;
 }) {
+  const t = useT();
   const parts = item.parts!;
   const [expanded, setExpanded] = useState(item.streaming);
   const [, tick] = useState(0);
@@ -361,17 +367,17 @@ const TimelineBody = memo(function TimelineBody({
         >
           {item.streaming ? (
             <>
-              <span className="text-faint">已工作</span>
-              <span className="tabular-nums text-ink">{formatDuration(durationMs) ?? "0 秒"}</span>
+              <span className="text-faint">{t("chat.worked")}</span>
+              <span className="tabular-nums text-ink">{formatDuration(durationMs) ?? t("chat.zeroDuration")}</span>
               <span className="w-1.5 h-1.5 rounded-full bg-accent animate-breathe" />
             </>
           ) : (
             <>
-              <span className="text-faint">已工作</span>
+              <span className="text-faint">{t("chat.worked")}</span>
               <span className="tabular-nums">{duration ?? "—"}</span>
-              {toolCount > 0 && <span className="text-faint">· {toolCount} 次工具调用</span>}
+              {toolCount > 0 && <span className="text-faint">· {t("chat.toolCalls", { n: toolCount })}</span>}
               <span className="flex-1" />
-              <span className="text-faint">{expanded ? "收起过程" : "展开过程"}</span>
+              <span className="text-faint">{expanded ? t("chat.collapseProcess") : t("chat.expandProcess")}</span>
               {collapsible && (expanded ? <CaretDown size={12} /> : <CaretRight size={12} />)}
             </>
           )}
@@ -395,6 +401,7 @@ const ThinkingBlock = memo(function ThinkingBlock({
 }: {
   thinking: NonNullable<Extract<ChatItem, { kind: "assistant" }>["thinking"]>;
 }) {
+  const t = useT();
   const [expanded, setExpanded] = useState(!thinking.done);
   const wasDone = useRef(thinking.done);
 
@@ -415,7 +422,7 @@ const ThinkingBlock = memo(function ThinkingBlock({
         onClick={() => setExpanded(!expanded)}
       >
         <Brain size={14} className="text-info" weight={thinking.done ? "regular" : "fill"} />
-        <span>{thinking.done ? "深度思考" : "深度思考中"}</span>
+        <span>{thinking.done ? t("chat.deepThinking") : t("chat.deepThinkingNow")}</span>
         {!thinking.done && (
           <>
             <span className="text-faint tabular-nums">{seconds}s</span>
@@ -436,6 +443,7 @@ const ThinkingBlock = memo(function ThinkingBlock({
 });
 
 const ToolRow = memo(function ToolRow({ tool }: { tool: ToolCallView }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const Icon = TOOL_ICONS[tool.icon] ?? TerminalWindow;
   const { toolName, argsPart } = splitToolArgs(tool);
@@ -476,7 +484,7 @@ const ToolRow = memo(function ToolRow({ tool }: { tool: ToolCallView }) {
               <div className="flex items-center gap-2 px-2.5 h-8">
                 <span className="font-mono text-[10px] font-semibold tracking-wide text-info">IN</span>
                 <span className="flex-1" />
-                <CopyButton text={inText} label="复制输入参数" />
+                <CopyButton text={inText} label={t("chat.copyInput")} />
               </div>
               <pre className="max-h-44 overflow-auto px-2.5 pb-2 font-mono leading-relaxed text-dim whitespace-pre-wrap break-all">
                 {inText}
@@ -488,14 +496,14 @@ const ToolRow = memo(function ToolRow({ tool }: { tool: ToolCallView }) {
               <div className="flex items-center gap-2 px-2.5 h-8">
                 <span className="font-mono text-[10px] font-semibold tracking-wide text-accent">OUT</span>
                 <span className="flex-1" />
-                <CopyButton text={outText} label="复制输出结果" />
+                <CopyButton text={outText} label={t("chat.copyOutput")} />
               </div>
               <pre className="max-h-44 overflow-auto px-2.5 pb-2 font-mono leading-relaxed text-dim whitespace-pre-wrap break-all">
                 {outText}
               </pre>
             </div>
           ) : (
-            tool.status === "running" && <div className="px-2.5 pb-2 text-faint">执行中，暂无输出…</div>
+            tool.status === "running" && <div className="px-2.5 pb-2 text-faint">{t("chat.runningNoOutput")}</div>
           )}
         </div>
       )}
@@ -587,6 +595,7 @@ function ChatRail({
   chat: ChatItem[];
   scrollRef: RefObject<HTMLDivElement | null>;
 }) {
+  const t = useT();
   // 类型谓词收窄联合：filter 只给 boolean 时 TS 无法证明 m.text 存在（悬浮预览用）。
   const userMsgs = useMemo(
     () => chat.filter((i): i is Extract<ChatItem, { kind: "user" }> => i.kind === "user"),
@@ -735,7 +744,7 @@ function ChatRail({
                     delay: mountedRef.current ? 0 : Math.min(i * 0.02, 0.24),
                   }}
                   className="group/tick relative min-h-[6px] flex-1 w-7 cursor-pointer"
-                  aria-label={`跳转到第 ${i + 1} 条消息`}
+                  aria-label={t("chat.jumpToMsg", { n: i + 1 })}
                   onMouseEnter={() => onTickEnter(i)}
                   onMouseLeave={onTickLeave}
                   onClick={() => jumpTo(i)}

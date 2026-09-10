@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 插件系统（app/plugins）：composer.chips 区域的插件贡献段。
  *
  * 原生快捷 chip（预提审/解释变更/单测…）是 Composer 域一等数据，**不进插件注册表**、
@@ -6,6 +6,7 @@
  * 追加贡献（原生段之后）：读取注册表、组装 ChatInputState、执行可见性判断与动作分发、
  * 条目过多时折叠/展开。对具体插件零感知，新增/删除/更新插件都不需要改这里。
  */
+import { useT } from "@/i18n";
 import { useEffect, useMemo, useState } from "react";
 import { CaretUp, DotsThree } from "@phosphor-icons/react";
 import { actions } from "@/app/actions";
@@ -27,6 +28,7 @@ interface Props {
 }
 
 export function ChatActionChips({ ticketNo, busy, insertText }: Props) {
+  const t = useT();
   const contributions = usePlugins((s) => s.contributions);
   const pluginActions = useMemo(
     () =>
@@ -93,7 +95,7 @@ export function ChatActionChips({ ticketNo, busy, insertText }: Props) {
     try {
       action.run(api, chatState);
     } catch (e) {
-      showToast(`插件动作执行失败：${(e as Error).message}`);
+      showToast(t("plugins.actionFailed", { err: (e as Error).message }));
     }
   };
 
@@ -121,7 +123,7 @@ export function ChatActionChips({ ticketNo, busy, insertText }: Props) {
         <button
           className="composer-chip"
           disabled={busy}
-          title={`展开其余 ${visibleChips.length - CHIP_COLLAPSE_LIMIT} 条快捷动作`}
+          title={t("plugins.expandMoreChips", { n: visibleChips.length - CHIP_COLLAPSE_LIMIT })}
           onClick={() => setChipsExpanded(true)}
         >
           <DotsThree size={12} weight="bold" className="opacity-60" />
@@ -132,11 +134,11 @@ export function ChatActionChips({ ticketNo, busy, insertText }: Props) {
         <button
           className="composer-chip"
           disabled={busy}
-          title="收起快捷动作"
+          title={t("plugins.collapseChips")}
           onClick={() => setChipsExpanded(false)}
         >
           <CaretUp size={12} weight="bold" className="opacity-60" />
-          收起
+          {t("common.collapse")}
         </button>
       )}
     </div>

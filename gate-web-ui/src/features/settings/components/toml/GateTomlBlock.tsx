@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+﻿import { useCallback, useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { ArrowClockwise, Check, GearSix, WarningCircle } from "@phosphor-icons/react";
 import { fetchGateToml, fetchProviders, updateGateToml } from "@/features/settings";
+import { useT } from "@/i18n";
 import { showToast } from "@/store";
 import type { GateTomlResponse, GateTomlKey, GateTomlOption, LlmProvider } from "@/shared/types";
 import { CopyButton, Spinner } from "@/shared/components/ui";
@@ -16,8 +17,8 @@ const MODEL_SOURCE: Record<string, string> = {
   "agent.default_model": "agent.default_provider",
 };
 
-function formatDefault(v: unknown): string {
-  if (v === null || v === undefined) return "无";
+function formatDefault(v: unknown, noneLabel: string): string {
+  if (v === null || v === undefined) return noneLabel;
   if (Array.isArray(v)) return v.length ? JSON.stringify(v) : "[]";
   if (typeof v === "boolean") return v ? "true" : "false";
   return String(v);
@@ -33,10 +34,10 @@ function keyFullName(section: string, key: string): string {
  * 未设置键的输入框 placeholder：优先后端下发的 placeholder（运行期行为如实描述，
  * 如提交身份「默认：本机 git 作者」）；否则回退静态默认值。
  */
-function inputPlaceholder(k: GateTomlKey): string {
+function inputPlaceholder(k: GateTomlKey, unsetLabel: string, defaultPrefix: string): string {
   if (k.placeholder) return k.placeholder;
-  if (k.default === null || k.default === undefined) return "未设置";
-  return `默认 ${formatDefault(k.default)}`;
+  if (k.default === null || k.default === undefined) return unsetLabel;
+  return `${defaultPrefix} ${formatDefault(k.default, "")}`.trim();
 }
 
 /** 数值约束的展示文案；两侧都未约束时返回 null。 */
@@ -49,6 +50,7 @@ function rangeLabel(min?: number, max?: number): string | null {
 
 /** 系统设置（gate.toml）区块：分区键值编辑、跨键校验与未保存变更条。 */
 export function GateTomlBlock() {
+  const t = useT();
   const [data, setData] = useState<GateTomlResponse | null>(null);
   const [providers, setProviders] = useState<LlmProvider[]>([]);
   const [loading, setLoading] = useState(true);
@@ -175,7 +177,7 @@ export function GateTomlBlock() {
       const lo = curNumbers["session.port_range_min"];
       const hi = curNumbers["session.port_range_max"];
       if (lo !== null && hi !== null && lo > hi) {
-        return `端口下界 ${lo} 大于上界 ${hi}，后端将拒绝启动`;
+        return t("toml.portRangeWarning", { lo: lo, hi: hi });
       }
     }
     return null;
@@ -186,7 +188,7 @@ export function GateTomlBlock() {
     setSaving(true);
     try {
       await updateGateToml(updates);
-      showToast("已写入 gate.toml，重启后端进程后生效");
+      showToast(t("toml.savedToast"));
       await load();
     } catch (e) {
       showToast((e as Error).message);
@@ -194,13 +196,13 @@ export function GateTomlBlock() {
   };
 
   if (loading) {
-    return <div className="card p-8 flex items-center gap-2 text-[12.5px] text-faint"><Spinner /> 正在加载 gate.toml …</div>;
+    return <div className="card p-8 flex items-center gap-2 text-[12.5px] text-faint"><Spinner /> {t("toml.loading")}</div>;
   }
   if (error) {
     return (
       <div className="card p-6">
-        <div className="text-[13px] text-danger flex items-center gap-1.5"><WarningCircle size={14} weight="fill" /> 加载失败：{error}</div>
-        <button className="btn mt-3" onClick={() => void load()}>重试</button>
+        <div className="text-[13px] text-danger flex items-center gap-1.5"><WarningCircle size={14} weight="fill" /> {t("mcp.loadFailed")}：{error}</div>
+        <button className="btn mt-3" onClick={() => void load()}>{t("common.retry")}</button>
       </div>
     );
   }
@@ -211,13 +213,13 @@ export function GateTomlBlock() {
       <div className="card px-4 py-3 flex flex-wrap items-center gap-2.5">
         <span className="w-6 h-6 rounded-md bg-sunken border border-edge grid place-items-center text-faint shrink-0"><GearSix size={12} /></span>
         <code className="font-mono text-[11.5px] text-dim bg-sunken border border-edge rounded-md px-2 py-1 break-all max-w-[380px]">{data.toml_path}</code>
-        <CopyButton text={data.toml_path} label="复制路径" />
+        <CopyButton text={data.toml_path} label={t("toml.copyPath")} />
         <span className="flex-1" />
         {data.restart_required && (
-          <span className="chip border border-warn/30 bg-warn/10 text-warn"><ArrowClockwise size={11} /> 重启后端后生效</span>
+          <span className="chip border border-warn/30 bg-warn/10 text-warn"><ArrowClockwise size={11} /> {t("toml.restartRequired")}</span>
         )}
         {!hasDirty && (
-          <span className="chip border border-accent/25 bg-accent/10 text-accent"><Check size={11} weight="bold" /> 与文件一致</span>
+          <span className="chip border border-accent/25 bg-accent/10 text-accent"><Check size={11} weight="bold" /> {t("toml.inSync")}</span>
         )}
       </div>
 
@@ -228,9 +230,9 @@ export function GateTomlBlock() {
         return (
         <div key={sec.section || "__root__"} className="card overflow-hidden">
           <div className="px-4 h-9 flex items-center gap-2 border-b border-edge bg-raised/40">
-            <span className="text-[12.5px] font-semibold">{sec.title || "高级设置"}</span>
+            <span className="text-[12.5px] font-semibold">{sec.title || t("toml.advanced")}</span>
             {sec.section && <span className="font-mono text-[11px] text-faint">[{sec.section}]</span>}
-            <span className="chip border border-edge-strong bg-sunken text-faint ml-auto">{keys.length} 项</span>
+            <span className="chip border border-edge-strong bg-sunken text-faint ml-auto">{t("mcp.toolCount", { n: keys.length })}</span>
           </div>
           <div className="divide-y divide-edge">
             {keys.map((k) => {
@@ -261,13 +263,13 @@ export function GateTomlBlock() {
                       <span className="chip border border-edge-strong bg-raised text-faint text-[10.5px]">{k.type}</span>
                       {isUnset && (
                         <span className="text-[11px] text-faint">
-                          未设置{k.default != null ? `（默认 ${formatDefault(k.default)}）` : ""}
+                          {t("toml.unset")}{k.default != null ? t("toml.defaultParens", { v: formatDefault(k.default, t("common.none")) }) : ""}
                         </span>
                       )}
                     </div>
                     {k.hint && <div className="mt-1 text-[11px] text-faint leading-relaxed max-w-[560px]">{k.hint}</div>}
                     {!disabled && isUnset && cur === null && (
-                      <div className="mt-1 text-[11px] text-faint">当前未写入文件，保存后将写入该键；点“恢复默认”可保持未设置</div>
+                      <div className="mt-1 text-[11px] text-faint">{t("toml.unwrittenNote")}</div>
                     )}
                   </div>
                   <div className="w-[320px] shrink-0 space-y-1.5">
@@ -279,9 +281,9 @@ export function GateTomlBlock() {
                           emptyLabel={
                             isUnset
                               ? k.default != null
-                                ? `未设置（默认 ${formatDefault(k.default)}）`
-                                : "未设置"
-                              : "未设置（清除该键）"
+                                ? t("toml.unsetDefault", { v: formatDefault(k.default, t("common.none")) })
+                                : t("toml.unset")
+                              : t("toml.unsetClear")
                           }
                           disabled={disabled}
                           onChange={(v) => (v === "" ? clearKey(full) : setKeyValue(full, v))}
@@ -289,8 +291,8 @@ export function GateTomlBlock() {
                         {!disabled && (isProviderKey || isModelKey) && (
                           <div className="text-[11px] text-faint">
                             {isProviderKey
-                              ? "选项来自「LLM 设置」中配置的 Provider；切换后请同步检查对应 model"
-                              : <>模型列表来自所选 Provider{modelSource ? <>（<span className="font-mono">{modelSource}</span>）</> : null}；未选 Provider 时可手动输入</>}
+                              ? t("toml.providerOptionsNote")
+                              : t("toml.modelOptionsNote", { src: modelSource })}
                           </div>
                         )}
                       </>
@@ -304,22 +306,22 @@ export function GateTomlBlock() {
                           disabled={disabled}
                           className="text-input font-mono text-[12px] disabled:opacity-50"
                           value={cur === null || cur === undefined ? "" : String(cur as number)}
-                          placeholder={isUnset ? inputPlaceholder(k) : undefined}
+                          placeholder={isUnset ? inputPlaceholder(k, t("toml.unset"), t("common.default")) : undefined}
                           onChange={(e) => {
                             const v = e.target.value;
                             if (v === "") { setCleared((c) => ({ ...c, [full]: true })); setEdits((m) => { const n = { ...m }; delete n[full]; return n; }); }
                             else { setCleared((c) => { const n = { ...c }; delete n[full]; return n; }); const num = Number(v); setEdits((m) => ({ ...m, [full]: Number.isNaN(num) ? v : num })); }
                           }}
                         />
-                        {!disabled && range && !outOfRange && <div className="text-[11px] text-faint">允许范围：{range}</div>}
-                        {!disabled && outOfRange && <div className="text-[11px] text-danger">超出允许范围：{range}</div>}
+                        {!disabled && range && !outOfRange && <div className="text-[11px] text-faint">{t("toml.allowedRange")}：{range}</div>}
+                        {!disabled && outOfRange && <div className="text-[11px] text-danger">{t("toml.outOfRange")}：{range}</div>}
                       </>
                     )}
                     {!useSelect && k.type === "bool" && (
                       <div className="flex items-center gap-2 h-9">
                         <BoolSwitch value={Boolean(cur)} onChange={(v) => { setCleared((c) => { const n = { ...c }; delete n[full]; return n; }); setEdits((m) => ({ ...m, [full]: v })); }} disabled={disabled} />
-                        <span className="text-[12px] text-dim">{Boolean(cur) ? "开启" : "关闭"}</span>
-                        {isUnset && k.default != null && <span className="text-[11px] text-faint ml-1">默认 {formatDefault(k.default)}</span>}
+                        <span className="text-[12px] text-dim">{Boolean(cur) ? t("common.enabled") : t("common.disabled")}</span>
+                        {isUnset && k.default != null && <span className="text-[11px] text-faint ml-1">{t("toml.defaultPrefix", { v: formatDefault(k.default, t("common.none")) })}</span>}
                       </div>
                     )}
                     {!useSelect && k.type === "string" && (
@@ -327,7 +329,7 @@ export function GateTomlBlock() {
                         disabled={disabled}
                         className="text-input font-mono text-[12px] disabled:opacity-50"
                         value={cur === null || cur === undefined ? "" : String(cur)}
-                        placeholder={isUnset ? inputPlaceholder(k) : undefined}
+                        placeholder={isUnset ? inputPlaceholder(k, t("toml.unset"), t("common.default")) : undefined}
                         onChange={(e) => {
                           const v = e.target.value;
                           if (v === "" && isUnset) { setCleared((c) => ({ ...c, [full]: true })); setEdits((m) => { const n = { ...m }; delete n[full]; return n; }); }
@@ -341,11 +343,11 @@ export function GateTomlBlock() {
                           value={Array.isArray(cur) ? cur as string[] : []}
                           disabled={disabled}
                           itemPattern={isRefList ? /^refs\/heads\/\S+$/ : undefined}
-                          patternHint={isRefList ? "必须是完整的 refs/heads/… 引用名" : undefined}
-                          placeholder={isUnset && !disabled && k.default != null ? `默认：${formatDefault(k.default)}` : undefined}
+                          patternHint={isRefList ? t("toml.refPatternHint") : undefined}
+                          placeholder={isUnset && !disabled && k.default != null ? t("toml.defaultColon", { v: formatDefault(k.default, t("common.none")) }) : undefined}
                           onChange={(v) => { setCleared((c) => { const n = { ...c }; delete n[full]; return n; }); setEdits((m) => ({ ...m, [full]: v })); }}
                         />
-                        {listEmpty && <div className="text-[11px] text-danger">该列表不能为空，至少保留一项</div>}
+                        {listEmpty && <div className="text-[11px] text-danger">{t("toml.listEmptyWarning")}</div>}
                       </>
                     )}
                     {k.editable && !disabled && (
@@ -353,9 +355,9 @@ export function GateTomlBlock() {
                         <button
                           className="text-[11px] text-faint hover:text-dim cursor-pointer bg-transparent border-0 p-0"
                           onClick={() => { setCleared((c) => ({ ...c, [full]: true })); setEdits((m) => { const n = { ...m }; delete n[full]; return n; }); }}
-                          title="删除该键，恢复为默认值"
+                          title={t("toml.restoreDefaultTip")}
                         >
-                          恢复默认（删除该键）
+                          {t("toml.restoreDefault")}
                         </button>
                       </div>
                     )}
@@ -381,12 +383,12 @@ export function GateTomlBlock() {
             <div className="card-elevated px-4 h-12 flex items-center gap-3 shadow-lg shadow-black/40">
               <span className="w-6 h-6 rounded-md bg-warn/15 border border-warn/30 grid place-items-center text-warn shrink-0"><WarningCircle size={13} weight="fill" /></span>
               <span className="text-[12.5px] text-dim">
-                有 <span className="text-ink font-semibold">{Object.keys(updates).length}</span> 项未保存的修改
+                {t("toml.dirtyCount", { n: Object.keys(updates).length })}
               </span>
               <span className="flex-1" />
-              <button className="btn btn-sm" disabled={saving} onClick={() => { setEdits(Object.create(null)); setCleared(Object.create(null)); }}>撤销修改</button>
+              <button className="btn btn-sm" disabled={saving} onClick={() => { setEdits(Object.create(null)); setCleared(Object.create(null)); }}>{t("toml.discardChanges")}</button>
               <button className="btn btn-primary btn-sm" disabled={saving} onClick={() => void handleSave()}>
-                {saving ? <><Spinner /> 保存中…</> : `保存写入 gate.toml`}
+                {saving ? <><Spinner /> {t("llm.saving")}</> : t("toml.saveWrite")}
               </button>
             </div>
           </motion.div>

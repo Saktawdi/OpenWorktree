@@ -1,9 +1,10 @@
-/**
+﻿/**
  * 会话域权限与提问（session）：opencode 的 permission_asked / question_asked
  * 的恢复拉取与应答提交。实时事件由 stream.ts 消费，这里负责 REST 侧。
  */
 import { api } from "@/net";
 import { showToast } from "@/store";
+import { t } from "@/i18n";
 import { mapPermissionAsk, mapQuestionAsk, type PermissionResponse, type RawPermissionAsk, type RawQuestionAsk } from "./model";
 import { notePendingPermission, notePendingQuestion } from "./state";
 import { pushPermissionRequest, pushQuestionRequest } from "./chat";
@@ -21,7 +22,7 @@ export async function answerSessionPermission(
     });
     return true;
   } catch (e) {
-    showToast(`权限应答失败：${(e as Error).message}`);
+    showToast(t("perm.failToast2", { err: (e as Error).message }));
     return false;
   }
 }
@@ -63,7 +64,7 @@ export async function answerSessionQuestion(
     });
     return true;
   } catch (e) {
-    showToast(`回答提交失败：${(e as Error).message}`);
+    showToast(t("question.submitFailed2", { err: (e as Error).message }));
     return false;
   }
 }
@@ -77,7 +78,7 @@ export async function rejectSessionQuestion(sessionId: string, requestId: string
     });
     return true;
   } catch (e) {
-    showToast(`跳过失败：${(e as Error).message}`);
+    showToast(t("question.skipFailed2", { err: (e as Error).message }));
     return false;
   }
 }

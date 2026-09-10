@@ -1,4 +1,4 @@
-/**
+﻿/**
  * LLM 小助手域（assistant，T-109）：原生内置悬浮 mini 对话的状态与动作。
  *
  * 分层约定：
@@ -7,6 +7,7 @@
  *  - 易失态（草稿/流式增量）只进 appStore，软数据（布局/历史/偏好/模型选择）
  *    统一经 store/prefs 落 localStorage。
  */
+import { t } from "@/i18n";
 import { appStore, showToast, type AppState } from "@/store";
 import { isAbortError, llmChatStream } from "@/net";
 import { fetchProviders } from "@/features/settings";
@@ -28,7 +29,7 @@ const s = () => appStore.getState();
 const REQUEST_WINDOW = 40;
 
 /** 用户停止后追加在已生成内容末尾的定格标记。 */
-const STOPPED_SUFFIX = "\n\n…（已停止）";
+const STOPPED_SUFFIX = () => t("asst.stoppedSuffix");
 
 /** 当前进行中的流式请求（模块级：面板卸载/隐藏不打断对话，停止只经 stopAssistantMessage）。 */
 let chatController: AbortController | null = null;
@@ -125,7 +126,7 @@ export function askAssistant(text: string) {
 export function clearAssistantHistory() {
   set({ assistantMessages: [] });
   saveAssistantHistory([]);
-  showToast("小助手对话已清空");
+  showToast(t("asst.clearedToast"));
 }
 
 /* ─── 本地偏好 ─── */
@@ -207,7 +208,7 @@ export async function sendAssistantMessage(): Promise<void> {
   const text = st.assistantDraft.trim();
   if (!text) return;
   if (st.mode !== "live") {
-    showToast("LLM 小助手需要连接后端（演示模式不可用）");
+    showToast(t("asst.needLiveToast"));
     return;
   }
   const userEntry: AssistantChatEntry = { id: uid("as-u"), role: "user", content: text, ts: Date.now() };
@@ -239,16 +240,16 @@ export async function sendAssistantMessage(): Promise<void> {
       },
       controller.signal,
     );
-    commitAssistantReply(acc || "（空回复）", { model: modelLabel, ms: Date.now() - turnStartedAt });
+    commitAssistantReply(acc || t("asst.emptyReply"), { model: modelLabel, ms: Date.now() - turnStartedAt });
   } catch (e) {
     if (controller.signal.aborted || isAbortError(e)) {
       // 用户主动停止不是失败：正常气泡定格已生成部分（无内容时给一行占位说明）。
-      commitAssistantReply(acc ? `${acc}${STOPPED_SUFFIX}` : "（已停止）", {
+      commitAssistantReply(acc ? `${acc}${STOPPED_SUFFIX()}` : t("asst.stoppedReply"), {
         model: modelLabel,
         ms: Date.now() - turnStartedAt,
       });
     } else {
-      commitAssistantReply(`请求失败：${(e as Error).message}`, { error: true });
+      commitAssistantReply(t("asst.requestFailedMsg", { err: (e as Error).message }), { error: true });
     }
   } finally {
     if (chatController === controller) chatController = null;

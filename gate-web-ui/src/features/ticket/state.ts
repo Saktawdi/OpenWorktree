@@ -1,6 +1,7 @@
-/**
+﻿/**
  * 工单域状态（ticket）：工单数据变更、弹窗开关、列表/看板筛选与 demo 本地 CRUD。
  */
+import { t } from "@/i18n";
 import { appStore } from "@/store";
 import { showToast } from "@/store/ui";
 import { saveKanbanStages, saveVisibleStages } from "@/store/prefs";
@@ -91,7 +92,7 @@ export function createTicket(title: string, priority: Ticket["priority"]) {
   );
   const no = `T-${maxNum + 1}`;
   void projectTickets;
-  const t: Ticket = {
+  const ticket: Ticket = {
     ticketNo: no,
     title,
     stage: "PENDING",
@@ -105,19 +106,19 @@ export function createTicket(title: string, priority: Ticket["priority"]) {
     updatedAt: new Date().toISOString(),
   };
   set((st2) => ({
-    tickets: [t, ...st2.tickets],
+    tickets: [ticket, ...st2.tickets],
     chats: { ...st2.chats, [no]: [
       {
         kind: "system" as const,
         id: uid("sys"),
         tone: "info" as const,
         ts: Date.now(),
-        text: "工单沙箱已就绪 · 独立克隆已创建，Agent 的全部改动不会触碰主分支",
+        text: t("ticket.sandboxReady"),
       },
     ] },
   }));
   selectTicket(no);
-  showToast(`工单 ${no} 已创建`);
+  showToast(t("ticket.createdToast", { no }));
   return no;
 }
 

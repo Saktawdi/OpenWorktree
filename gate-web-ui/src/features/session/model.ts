@@ -1,7 +1,8 @@
-/**
+﻿/**
  * 会话域（session）— 后端 wire 格式 ↔ 前端视图模型的映射器。
  * 全部为纯函数，不含状态副作用；供 api/catalog/permissions/stream 复用。
  */
+import { getLocale, t as i18nT } from "@/i18n";
 import type {
   CatalogProvider,
   ChatItem,
@@ -14,8 +15,8 @@ import { friendlyToolName, isTodoTool, isClaudeTaskTool, parseTodos, todoArgsSum
 import { stripImageCitations } from "@/shared/attachments";
 
 function sessionTimeLabel(at?: number): string {
-  const t = at == null ? new Date() : new Date(at);
-  return `会话 ${t.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}`;
+  const tt = at == null ? new Date() : new Date(at);
+  return i18nT("sess.defaultTitle", { time: tt.toLocaleTimeString(getLocale(), { hour: "2-digit", minute: "2-digit" }) });
 }
 
 export interface RawSession {

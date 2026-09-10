@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from "react";
+﻿import { useCallback, useEffect, useState } from "react";
 import { ArrowClockwise, ArrowUpRight, GithubLogo, Link, WarningCircle } from "@phosphor-icons/react";
 import { checkAppUpdate, fetchAppInfo } from "@/features/settings";
+import { useT } from "@/i18n";
 import { useApp } from "@/store";
 import type { AppInfo, UpdateCheck } from "@/shared/types";
 import { CopyButton, Spinner } from "@/shared/components/ui";
@@ -9,6 +10,7 @@ import { UpdateStatusArea } from "./UpdateStatusArea";
 
 /** 「关于」区块：版本信息、检查更新与 GitHub 仓库。 */
 export function AppInfoBlock() {
+  const t = useT();
   const theme = useApp((s) => s.theme);
   const [info, setInfo] = useState<AppInfo | null>(null);
   const [infoError, setInfoError] = useState<string | null>(null);
@@ -43,13 +45,13 @@ export function AppInfoBlock() {
   if (infoError) {
     return (
       <div className="card p-6">
-        <div className="text-[13px] text-danger flex items-center gap-1.5"><WarningCircle size={14} weight="fill" /> 加载失败：{infoError}</div>
-        <button className="btn mt-3" onClick={() => void loadInfo()}>重试</button>
+        <div className="text-[13px] text-danger flex items-center gap-1.5"><WarningCircle size={14} weight="fill" /> {t("mcp.loadFailed")}：{infoError}</div>
+        <button className="btn mt-3" onClick={() => void loadInfo()}>{t("common.retry")}</button>
       </div>
     );
   }
   if (!info) {
-    return <div className="card p-8 flex items-center gap-2 text-[12.5px] text-faint"><Spinner /> 正在加载应用信息 …</div>;
+    return <div className="card p-8 flex items-center gap-2 text-[12.5px] text-faint"><Spinner /> {t("appinfo.loading")}</div>;
   }
 
   const currentVersion = check?.current_version || info.version;
@@ -71,13 +73,13 @@ export function AppInfoBlock() {
             <div className="flex items-center gap-2.5 flex-wrap">
               <span className="text-[16px] font-bold tracking-tight">{info.name}</span>
               <span className="chip border border-edge-strong bg-raised text-dim font-mono text-[11.5px]">v{info.version}</span>
-              <CopyButton text={info.version} label="复制版本号" />
+              <CopyButton text={info.version} label={t("appinfo.copyVersion")} />
             </div>
-            <div className="mt-1 text-[12px] text-faint">工单驱动开发工作台 · 本地优先</div>
+            <div className="mt-1 text-[12px] text-faint">{t("appinfo.tagline")}</div>
           </div>
           <span className="flex-1" />
-          <button className="btn btn-sm shrink-0" disabled={checking} onClick={() => void runCheck(true)} title="从 GitHub 读取最新发行版本并比对">
-            {checking ? <><Spinner /> 检查中…</> : <><ArrowClockwise size={13} /> 检查更新</>}
+          <button className="btn btn-sm shrink-0" disabled={checking} onClick={() => void runCheck(true)} title={t("appinfo.checkTip")}>
+            {checking ? <><Spinner /> {t("appinfo.checking")}</> : <><ArrowClockwise size={13} /> {t("appinfo.checkUpdate")}</>}
           </button>
         </div>
         <div className="mt-4 pt-4 border-t border-edge">
@@ -96,20 +98,20 @@ export function AppInfoBlock() {
         <button
           className="w-10 h-10 rounded-lg border border-edge bg-sunken grid place-items-center text-dim hover:text-accent hover:border-accent/40 transition-colors cursor-pointer shrink-0"
           onClick={() => openExternal(info.repo_url)}
-          title="打开 GitHub 仓库"
-          aria-label="打开 GitHub 仓库"
+          title={t("appinfo.openRepo")}
+          aria-label={t("appinfo.openRepo")}
         >
           <GithubLogo size={19} weight="fill" />
         </button>
         <div className="min-w-0 flex-1">
-          <div className="text-[12.5px] font-semibold">GitHub 仓库</div>
+          <div className="text-[12.5px] font-semibold">{t("appinfo.repoTitle")}</div>
           <div className="mt-0.5 flex items-center gap-1.5 font-mono text-[11.5px] text-faint break-all">
             <Link size={12} className="shrink-0" />{info.repo_url}
-            <CopyButton text={info.repo_url} label="复制仓库地址" />
+            <CopyButton text={info.repo_url} label={t("appinfo.copyRepo")} />
           </div>
         </div>
         <button className="btn btn-sm shrink-0" onClick={() => openExternal(info.repo_url)}>
-          打开仓库 <ArrowUpRight size={12} weight="bold" />
+          {t("appinfo.openRepo")} <ArrowUpRight size={12} weight="bold" />
         </button>
       </div>
     </div>

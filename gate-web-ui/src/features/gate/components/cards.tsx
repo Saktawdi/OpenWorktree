@@ -1,4 +1,4 @@
-import {
+﻿import {
   ArrowRight,
   ArrowUUpLeft,
   Check,
@@ -13,35 +13,37 @@ import { actions } from "@/app/actions";
 import { formatBytes, hhmmss, shortHash } from "@/shared/format";
 import type { Snapshot } from "@/shared/types";
 import { CopyButton, HashReveal } from "@/shared/components/ui";
+import { useT } from "@/i18n";
 
 /** 快照指纹卡（预提审后展示）。 */
 export function TreeHashCard({ snap }: { snap: Snapshot }) {
+  const t = useT();
   return (
     <div className="rounded-xl border border-accent/25 bg-accent/[0.04] p-3.5 animate-slide-in">
       <div className="flex items-center gap-2 mb-2">
         <ShieldCheck size={15} className="text-accent" weight="fill" />
-        <span className="text-[12px] font-semibold text-accent">快照指纹 · 第 {snap.round} 轮</span>
+        <span className="text-[12px] font-semibold text-accent">{t("gate.cards.snapshotTitle", { n: snap.round })}</span>
         <span className="flex-1" />
-        <CopyButton text={snap.treeHash} label="复制指纹" />
+        <CopyButton text={snap.treeHash} label={t("gate.cards.copyFingerprint")} />
       </div>
       <HashReveal hash={snap.treeHash} className="block font-mono text-[13.5px] tracking-wide text-ink break-all leading-relaxed" />
       <div className="mt-2.5 grid grid-cols-3 gap-2 text-[11px]">
         <div>
-          <div className="text-faint">基线提交</div>
+          <div className="text-faint">{t("gate.cards.baseCommit")}</div>
           <div className="font-mono text-dim mt-0.5">{shortHash(snap.baseCommit, 6, 4)}</div>
         </div>
         <div>
-          <div className="text-faint">变更文件</div>
-          <div className="font-mono text-dim mt-0.5">{snap.changedCount ?? snap.changedPaths.length} 个</div>
+          <div className="text-faint">{t("gate.cards.changedFiles")}</div>
+          <div className="font-mono text-dim mt-0.5">{t("mcp.toolCount", { n: snap.changedCount ?? snap.changedPaths.length })}</div>
         </div>
         <div>
-          <div className="text-faint">快照体量</div>
+          <div className="text-faint">{t("gate.cards.snapshotSize")}</div>
           <div className="font-mono text-dim mt-0.5">{formatBytes(snap.diffBytes)}</div>
         </div>
       </div>
       <div className="mt-2.5 pt-2.5 border-t border-accent/15 flex items-center gap-1.5 text-[11.5px] text-accent/90">
         <SealCheck size={13} weight="fill" />
-        完整性校验通过 · 所见即所审，所审即所发
+        {t("gate.cards.integrity")}
       </div>
     </div>
   );
@@ -49,8 +51,9 @@ export function TreeHashCard({ snap }: { snap: Snapshot }) {
 
 /** 门禁任务进度卡（presubmit/review/publish 轮询期间）。 */
 export function TaskCard({ task }: { task: { kind: string; percent: number; label: string } }) {
+  const t = useT();
   const title =
-    task.kind === "presubmit" ? "正在锁定快照" : task.kind === "review" ? "门禁审查执行中" : "正在发布";
+    task.kind === "presubmit" ? t("kanban.toast.lockingSnapshot") : task.kind === "review" ? t("gate.cards.reviewing") : t("gate.cards.publishing");
   return (
     <div className="card p-3.5 animate-rise">
       <div className="flex items-center gap-2 mb-2.5">
@@ -80,18 +83,19 @@ export function VerdictBanner({
   verdict: { verdict: string; reason: string; engineId: string; authorizationId?: string; degraded?: boolean };
   findingsCount: number;
 }) {
+  const t = useT();
   if (verdict.verdict === "PASS") {
     return (
       <div className="rounded-xl border border-accent/30 bg-accent/[0.06] p-3.5 animate-slide-in">
         <div className="flex items-center gap-2">
           <SealCheck size={16} className="text-accent" weight="fill" />
-          <span className="text-[13px] font-semibold text-accent">门禁放行</span>
+          <span className="text-[13px] font-semibold text-accent">{t("gate.cards.pass")}</span>
         </div>
         <div className="mt-1 text-[12.5px] text-dim">{verdict.reason}</div>
         <div className="mt-2 flex items-center gap-2 font-mono text-[11px] text-faint">
           {verdict.authorizationId && (
             <>
-              <span>授权 {verdict.authorizationId}</span>
+              <span>{t("gate.cards.authorization")} {verdict.authorizationId}</span>
               <span>·</span>
             </>
           )}
@@ -105,7 +109,7 @@ export function VerdictBanner({
       <div className="rounded-xl border border-warn/30 bg-warn/[0.06] p-3.5 animate-slide-in">
         <div className="flex items-center gap-2">
           <Warning size={16} className="text-warn" weight="fill" />
-          <span className="text-[13px] font-semibold text-warn">需人工核准</span>
+          <span className="text-[13px] font-semibold text-warn">{t("gate.cards.needsHuman")}</span>
         </div>
         <div className="mt-1 text-[12.5px] text-dim">{verdict.reason}</div>
       </div>
@@ -118,11 +122,11 @@ export function VerdictBanner({
       <div className="rounded-xl border border-warn/30 bg-warn/[0.06] p-3.5 animate-slide-in">
         <div className="flex items-center gap-2">
           <Warning size={16} className="text-warn" weight="fill" />
-          <span className="text-[13px] font-semibold text-warn">审查引擎未完成判决</span>
-          <span className="chip border border-warn/30 text-warn bg-warn/10">可重试 · 不消耗轮次</span>
+          <span className="text-[13px] font-semibold text-warn">{t("gate.cards.degraded")}</span>
+          <span className="chip border border-warn/30 text-warn bg-warn/10">{t("gate.cards.retriable")}</span>
         </div>
         <div className="mt-1 text-[12.5px] text-dim">
-          引擎侧故障（超时/上游不可用等），非代码问题；在「审查发现」查看详情并重试。
+          {t("gate.cards.degradedNote")}
         </div>
       </div>
     );
@@ -131,8 +135,8 @@ export function VerdictBanner({
     <div className="rounded-xl border border-danger/30 bg-danger/[0.05] p-3.5 animate-slide-in">
       <div className="flex items-center gap-2">
         <X size={16} className="text-danger" weight="fill" />
-        <span className="text-[13px] font-semibold text-danger">门禁驳回</span>
-        <span className="chip border border-danger/30 text-danger bg-danger/10">{findingsCount} 项发现</span>
+        <span className="text-[13px] font-semibold text-danger">{t("gate.cards.rejected")}</span>
+        <span className="chip border border-danger/30 text-danger bg-danger/10">{t("gate.cards.findingsCount", { n: findingsCount })}</span>
       </div>
       <div className="mt-1 text-[12.5px] text-dim">{verdict.reason}</div>
       <button
@@ -140,7 +144,7 @@ export function VerdictBanner({
         onClick={() => actions.returnWithFindings(ticketNo)}
       >
         <ArrowUUpLeft size={13} />
-        带意见返回会话
+        {t("gate.cards.returnWithFindings")}
       </button>
     </div>
   );
@@ -160,6 +164,7 @@ export function OutcomeCard({
     workspaceSyncNote?: string | null;
   };
 }) {
+  const t = useT();
   const branch = outcome.targetRef.replace("refs/heads/", "");
   const noteSha = outcome.workspaceSyncNote?.includes("->")
     ? outcome.workspaceSyncNote.split("->").pop()?.trim()
@@ -171,14 +176,14 @@ export function OutcomeCard({
       <div className="flex items-center justify-center w-10 h-10 mx-auto rounded-full bg-accent-dim border border-accent/40">
         <Check size={20} className="text-accent" weight="bold" />
       </div>
-      <div className="mt-2.5 text-center text-[14px] font-semibold">已发布至权威库主分支</div>
+      <div className="mt-2.5 text-center text-[14px] font-semibold">{t("gate.cards.published")}</div>
       <div className="mt-0.5 text-center font-mono text-[11px] text-faint">
         {branch} · {hhmmss(outcome.publishedAt)}
       </div>
       <div className="mt-3 rounded-lg bg-sunken border border-edge px-3 py-2 flex items-center justify-center gap-2">
-        <span className="text-[11px] text-faint">提交</span>
+        <span className="text-[11px] text-faint">{t("gate.cards.commit")}</span>
         <HashReveal hash={outcome.commitSha.slice(0, 16)} className="font-mono text-[12.5px] text-accent" />
-        <CopyButton text={outcome.commitSha} label="复制提交号" />
+        <CopyButton text={outcome.commitSha} label={t("gate.cards.copyCommit")} />
       </div>
       <div className="mt-2.5 flex items-center justify-center gap-2 font-mono text-[11px] text-faint">
         <GitBranch size={12} />
@@ -198,15 +203,15 @@ export function OutcomeCard({
         }`}
       >
         {outcome.workspaceSyncStatus === "SYNCED"
-          ? `工作区已同步：${branch} → ${syncSha}`
+          ? t("gate.cards.sync.synced", { branch, sha: syncSha })
           : outcome.workspaceSyncStatus === "ALREADY"
-            ? "工作区已是最新"
+            ? t("gate.cards.sync.already")
             : outcome.workspaceSyncStatus === "DEFERRED"
-              ? `工作区待同步：${outcome.workspaceSyncNote ?? ""}`
-              : "工作区未同步（未配置项目工作区）"}
+              ? t("gate.cards.sync.deferred", { note: outcome.workspaceSyncNote ?? "" })
+              : t("gate.cards.sync.unsynced")}
       </div>
       <div className="mt-2.5 pt-2.5 border-t border-edge text-center text-[11.5px] text-faint">
-        审计日志已追加 · 快照指纹核验一致
+        {t("gate.cards.auditNote")}
       </div>
     </div>
   );

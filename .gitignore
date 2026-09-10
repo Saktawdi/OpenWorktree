@@ -97,3 +97,6 @@ META-INF/
 # 临时目录
 /io/
 /smoke-run/
+
+# 本机冒烟测试产物（esbuild 临时 bundle/temp 源文件，不入库）
+gate-web-ui/.smoke*

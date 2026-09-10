@@ -1,7 +1,8 @@
-/**
+﻿/**
  * 门禁域 API（gate）：审查引擎配置、快照列表与审查结果回填。
  * 门禁四阶段流程（presubmit/sync-base/review/publish）见 flows.ts。
  */
+import { t } from "@/i18n";
 import { api } from "@/net";
 import { appStore } from "@/store";
 import type {
@@ -103,9 +104,9 @@ function parseFindings(raw: string): Finding[] {
             severity: "BLOCKER",
             path: "",
             ruleId: `engine/${kind}`,
-            message: String(obj.detail ?? "审查引擎未能完成本轮判决"),
+            message: String(obj.detail ?? t("findings.engineFailed")),
             suggestion:
-              "引擎未产出有效审查（超时/崩溃/上游或凭据问题）。可重试 AI 审查、检查引擎上游可用性，或改用人工审查。",
+              t("gateapi.degradedNote"),
           },
         ];
       }
@@ -141,9 +142,9 @@ function mapFinding(f: unknown): Finding | null {
 }
 
 function verdictReason(verdict: string): string {
-  if (verdict === "PASS") return "全部策略通过，发布授权已签发";
-  if (verdict === "REQUIRES_HUMAN") return "需人工核准后放行";
-  return "存在阻断项或引擎未能完成本轮判决，详见下方发现";
+  if (verdict === "PASS") return t("decision.passDefault");
+  if (verdict === "REQUIRES_HUMAN") return t("gateapi.requiresHuman");
+  return t("gateapi.rejectReason");
 }
 
 async function applyReviewResult(no: string) {

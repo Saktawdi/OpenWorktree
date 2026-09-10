@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { boot } from "@/app/boot";
 import { applyThemeFromStorage, useApp } from "@/store";
+import { applyLocaleFromStorage, useT } from "@/i18n";
 import { TopBar } from "@/app/components/TopBar";
 import { Workbench } from "@/app/components/Workbench";
 import { KanbanBoard } from "@/features/ticket/components/KanbanBoard";
@@ -19,11 +20,13 @@ import { Toast } from "@/shared/components/Toast";
 import { PluginSlot } from "@/app/plugins/components/PluginSlot";
 
 export default function App() {
+  const t = useT();
   const booted = useApp((s) => s.booted);
   const view = useApp((s) => s.view);
 
   useEffect(() => {
     applyThemeFromStorage();
+    applyLocaleFromStorage();
     void boot();
   }, []);
 
@@ -32,7 +35,7 @@ export default function App() {
       <div className="h-full grid place-items-center">
         <div className="flex items-center gap-3 text-faint">
           <span className="w-2 h-2 rounded-full bg-accent animate-breathe" />
-          <span className="text-[13px]">正在启动本地工作台…</span>
+          <span className="text-[13px]">{t("app.booting")}</span>
         </div>
       </div>
     );

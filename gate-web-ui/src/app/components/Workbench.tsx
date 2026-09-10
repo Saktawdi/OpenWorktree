@@ -1,4 +1,4 @@
-import { CaretDoubleLeft, CaretDoubleRight, GitBranch, NotePencil, Sparkle, TerminalWindow } from "@phosphor-icons/react";
+﻿import { CaretDoubleLeft, CaretDoubleRight, GitBranch, NotePencil, Sparkle, TerminalWindow } from "@phosphor-icons/react";
 import { AnimatePresence, motion } from "motion/react";
 import { NO_CHAT, showToast, useApp, appStore, setCenterTab } from "@/store";
 import { openTicketCreator, openTicketEditor } from "@/features/ticket";
@@ -14,7 +14,9 @@ import { SessionRail } from "@/features/session/components/SessionRail";
 import { TicketEditDialog } from "@/features/ticket/components/TicketEditDialog";
 import { TicketList } from "@/features/ticket/components/TicketList";
 import { StageBadge } from "@/shared/components/ui";
+import { useT } from "@/i18n";
 function ContextStrip({ ticketNo }: { ticketNo: string }) {
+  const t = useT();
   const ticket = useApp((s) => s.tickets.find((t) => t.ticketNo === ticketNo));
   const project = useApp((s) => s.projects.find((p) => p.id === ticket?.projectId));
   // agent 跟随「当前查看的会话」（会话 1:1 agent，创建时固化）；
@@ -25,8 +27,8 @@ function ContextStrip({ ticketNo }: { ticketNo: string }) {
   );
   const agent = useApp((s) => s.agents.find((a) => a.id === (sessionAgentId ?? s.agentId)));
   const agentHint = sessionId
-    ? "本会话协作 Agent（会话创建时锁定，切会话即切换）"
-    : "新会话默认协作 Agent（可在输入框左下更换）";
+    ? t("wb.agentHint.session")
+    : t("wb.agentHint.draft");
   const panelCollapsed = useApp((s) => s.gatePanelCollapsed);
   if (!ticket) return null;
   // 分支徽标展示项目主分支（建单基线）；未挂项目的工单退回显示自身锁定的目标分支
@@ -51,9 +53,9 @@ function ContextStrip({ ticketNo }: { ticketNo: string }) {
       {ticket.isSuper && (
         <span
           className="chip shrink-0 border border-violet/30 bg-violet/10 text-violet"
-          title="快速模式（超级工单）：直连项目原工作区，提交直达主分支，永不关闭"
+          title={t("wb.superTip")}
         >
-          快速模式
+          {t("ticket.list.quickMode")}
         </span>
       )}
       {/* 标题是唯一的可收缩项（truncate 吸收挤压）；其余原子元素一律 shrink-0，
@@ -73,7 +75,7 @@ function ContextStrip({ ticketNo }: { ticketNo: string }) {
       )}
       <span
         className="hidden lg:inline-flex shrink-0 items-center gap-1.5 text-[12px] text-dim"
-        title={project ? "项目主分支" : "工单目标分支"}
+        title={project ? t("wb.projectBranch") : t("wb.ticketBranch")}
       >
         <GitBranch size={13} className="text-faint" />
         <span className="font-mono">{branch}</span>
@@ -89,8 +91,8 @@ function ContextStrip({ ticketNo }: { ticketNo: string }) {
       )}
       <button
         className="icon-btn shrink-0"
-        title="编辑工单"
-        aria-label="编辑工单"
+        title={t("wb.editTicket")}
+        aria-label={t("wb.editTicket")}
         onClick={() => openTicketEditor(ticketNo)}
       >
         <NotePencil size={14} />
@@ -98,8 +100,8 @@ function ContextStrip({ ticketNo }: { ticketNo: string }) {
       {/* 右侧工单面板整栏开关（最右入口）：收起后中部区域占满整行 */}
       <button
         className="icon-btn shrink-0"
-        title={panelCollapsed ? "展开工单面板" : "收起工单面板"}
-        aria-label={panelCollapsed ? "展开工单面板" : "收起工单面板"}
+        title={panelCollapsed ? t("wb.expandPanel") : t("wb.collapsePanel")}
+        aria-label={panelCollapsed ? t("wb.expandPanel") : t("wb.collapsePanel")}
         onClick={() => setGatePanelCollapsed(!panelCollapsed)}
       >
         {panelCollapsed ? <CaretDoubleLeft size={14} /> : <CaretDoubleRight size={14} />}
@@ -109,6 +111,7 @@ function ContextStrip({ ticketNo }: { ticketNo: string }) {
 }
 
 function CenterTabs({ ticketNo }: { ticketNo: string }) {
+  const t = useT();
   const tab = useApp((s) => s.centerTab);
   const diffCount = useApp((s) => s.diffs[ticketNo]?.length ?? 0);
   const findingsCount = useApp((s) => s.findings[ticketNo]?.length ?? 0);
@@ -117,12 +120,12 @@ function CenterTabs({ ticketNo }: { ticketNo: string }) {
   // 跳过目录选择：直接以当前工单克隆目录为 base 拉起终端标签
   const openTicketTerminal = () => {
     if (mode !== "live") {
-      showToast("终端需要连接本地后端（live 模式）后使用");
+      showToast(t("wb.terminalNeedLive"));
       return;
     }
     const ticket = appStore.getState().tickets.find((t) => t.ticketNo === ticketNo);
     if (!ticket?.clonePath) {
-      showToast("当前工单没有可用的克隆目录");
+      showToast(t("wb.noClonePath"));
       return;
     }
     const project = appStore.getState().projects.find((p) => p.id === ticket.projectId);
@@ -161,16 +164,16 @@ function CenterTabs({ ticketNo }: { ticketNo: string }) {
 
   return (
     <div className="h-10 shrink-0 flex items-stretch gap-1 px-4 border-b border-edge">
-      {item("chat", "会话")}
-      {item("diff", "变更对比", diffCount)}
-      {item("findings", "审查发现", findingsCount)}
-      {item("evidence", "证据链")}
+      {item("chat", t("wb.tab.chat"))}
+      {item("diff", t("wb.tab.diff"), diffCount)}
+      {item("findings", t("wb.tab.findings"), findingsCount)}
+      {item("evidence", t("wb.tab.evidence"))}
       <span className="flex-1" />
       <SessionRail ticketNo={ticketNo} />
       <button
         className="self-center icon-btn"
-        title="在此工单克隆目录中打开终端"
-        aria-label="工单终端"
+        title={t("wb.openTerminal")}
+        aria-label={t("wb.ticketTerminal")}
         onClick={openTicketTerminal}
       >
         <TerminalWindow size={14} />
@@ -180,6 +183,7 @@ function CenterTabs({ ticketNo }: { ticketNo: string }) {
 }
 
 export function Workbench() {
+  const t = useT();
   const selectedNo = useApp((s) => s.selectedNo);
   const chat = useApp((s) => (s.selectedNo ? s.chats[s.selectedNo] : undefined) ?? NO_CHAT);
   const tab = useApp((s) => s.centerTab);
@@ -194,11 +198,11 @@ export function Workbench() {
         <TicketList />
         <div className="flex-1 grid place-items-center">
           <div className="text-center text-faint">
-            <div className="text-[14px]">当前项目还没有工单</div>
-            <div className="mt-1 text-[12.5px]">创建第一个工单，开启沙箱协作</div>
+            <div className="text-[14px]">{t("wb.noTickets")}</div>
+            <div className="mt-1 text-[12.5px]">{t("wb.noTicketsHint")}</div>
             <button className="btn btn-primary mt-4" onClick={() => openTicketCreator()}>
               <NotePencil size={14} />
-              新建工单
+              {t("kanban.addTicket")}
             </button>
           </div>
         </div>

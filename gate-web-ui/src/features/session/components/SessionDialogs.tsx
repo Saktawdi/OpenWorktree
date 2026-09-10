@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 会话域对话框群（T-105）：会话重命名 / 删除确认 / 移入分组，与分组的新建 /
  * 编辑 / 删除确认。全部由 SessionList 的右键菜单或分组头按钮触发，样式对齐
  * 既有弹窗（RestartDialog 等）：遮罩 + card 弹层，motion 弹入弹出（动效库与
@@ -12,6 +12,7 @@ import { showToast, useApp } from "@/store";
 import { useBackdropClose } from "@/shared/components/ui";
 import { GROUP_COLOR_PALETTE, GROUP_NAME_MAX } from "@/features/session/state";
 import type { SessionGroup } from "@/shared/types";
+import { useT } from "@/i18n";
 
 /** 会话列表对话框的打开状态：记录目标会话/分组与用途。 */
 export type SessionDialogState =
@@ -38,6 +39,7 @@ function DialogShell({
   children: ReactNode;
   footer: ReactNode;
 }) {
+  const t = useT();
   const backdrop = useBackdropClose(onClose);
   return (
     <motion.div
@@ -60,7 +62,7 @@ function DialogShell({
           {icon}
           <span className="text-[13.5px] font-semibold">{title}</span>
           <span className="flex-1" />
-          <button className="icon-btn" onClick={onClose} aria-label="关闭">
+          <button className="icon-btn" onClick={onClose} aria-label={t("common.close")}>
             <X size={14} />
           </button>
         </div>
@@ -82,6 +84,7 @@ function RenameSessionDialog({
   sessionId: string;
   onClose: () => void;
 }) {
+  const t = useT();
   const session = useApp((s) => (s.sessions[ticketNo] ?? []).find((x) => x.id === sessionId));
   const [title, setTitle] = useState(() => session?.title ?? "");
   const [submitting, setSubmitting] = useState(false);
@@ -96,13 +99,13 @@ function RenameSessionDialog({
 
   return (
     <DialogShell
-      title="重命名会话"
+      title={t("sess.rename.title")}
       icon={<NotePencil size={15} className="text-accent" weight="fill" />}
       onClose={onClose}
       footer={
         <>
           <button className="btn" onClick={onClose}>
-            取消
+            {t("common.cancel")}
           </button>
           <button
             className="btn btn-primary"
@@ -116,7 +119,7 @@ function RenameSessionDialog({
               });
             }}
           >
-            确认重命名
+            {t("sess.rename.confirm")}
           </button>
         </>
       }
@@ -124,12 +127,12 @@ function RenameSessionDialog({
       <div className="font-mono text-[11px] text-faint truncate">{session.id}</div>
       <div>
         <label className="field-label">
-          会话名称<span className="text-danger">*</span>
+          {t("sess.rename.nameLabel")}<span className="text-danger">*</span>
         </label>
         <input
           ref={inputRef}
           className="text-input"
-          placeholder="输入新的会话名称"
+          placeholder={t("sess.rename.placeholder")}
           value={title}
           maxLength={TITLE_MAX}
           onChange={(e) => setTitle(e.target.value)}
@@ -159,17 +162,18 @@ function DeleteSessionDialog({
   sessionId: string;
   onClose: () => void;
 }) {
+  const t = useT();
   const session = useApp((s) => (s.sessions[ticketNo] ?? []).find((x) => x.id === sessionId));
   if (!session) return null;
   return (
     <DialogShell
-      title="删除会话"
+      title={t("sess.delete.title")}
       icon={<Trash size={15} className="text-danger" weight="fill" />}
       onClose={onClose}
       footer={
         <>
           <button className="btn" onClick={onClose}>
-            取消
+            {t("common.cancel")}
           </button>
           <button
             className="btn btn-danger-ghost"
@@ -179,16 +183,15 @@ function DeleteSessionDialog({
             }}
           >
             <Trash size={13} />
-            确认删除
+            {t("llm.confirmDelete")}
           </button>
         </>
       }
     >
       <div className="rounded-lg border border-edge bg-sunken/60 px-3.5 py-2.5 text-[12px] text-dim leading-relaxed">
-        将删除会话 <span className="text-ink font-medium">{session.title}</span>
-        <span className="font-mono text-faint ml-1.5">{session.id}</span>，其全部聊天记录一并移除。
+        {t("sess.delete.line", { title: session.title, id: session.id })}
       </div>
-      <div className="text-[11.5px] text-danger/90">此操作不可恢复，请确认不再需要该会话。</div>
+      <div className="text-[11.5px] text-danger/90">{t("sess.delete.warning")}</div>
     </DialogShell>
   );
 }
@@ -206,6 +209,7 @@ function MoveSessionGroupDialog({
   onOpenDialog: (d: SessionDialogState) => void;
   onClose: () => void;
 }) {
+  const t = useT();
   const groups = useApp((s) => s.sessionGroups[ticketNo] ?? NO_GROUPS);
   const members = useApp((s) => s.sessionGroupMembers);
   const sessions = useApp((s) => s.sessions[ticketNo] ?? []);
@@ -226,7 +230,7 @@ function MoveSessionGroupDialog({
 
   return (
     <DialogShell
-      title="移入分组"
+      title={t("sess.moveToGroup")}
       icon={<FolderPlus size={15} className="text-accent" weight="fill" />}
       onClose={onClose}
       footer={
@@ -234,22 +238,22 @@ function MoveSessionGroupDialog({
           {currentId && (
             <button className="btn" onClick={() => move(null)}>
               <FolderMinus size={13} />
-              移出分组
+              {t("sess.moveOut")}
             </button>
           )}
           <button className="btn" onClick={() => onOpenDialog({ kind: "group-create", moveSessionId: sessionId })}>
             <FolderPlus size={13} />
-            新建分组…
+            {t("sess.group.create")}…
           </button>
           <button className="btn" onClick={onClose}>
-            取消
+            {t("common.cancel")}
           </button>
         </>
       }
     >
       <div className="space-y-1 max-h-64 overflow-y-auto -mx-1 px-1">
         {groups.length === 0 && (
-          <div className="px-2 py-3 text-[12px] text-faint">还没有分组 · 可先「新建分组」</div>
+          <div className="px-2 py-3 text-[12px] text-faint">{t("sess.noGroupsYet")}</div>
         )}
         {groups.map((g) => (
           <button
@@ -263,7 +267,7 @@ function MoveSessionGroupDialog({
             <span className="truncate flex-1">{g.name}</span>
             {currentId === g.id ? (
               <span className="chip text-accent border border-accent/30 bg-accent/10 !px-1.5 !leading-[16px] !text-[10px]">
-                当前
+                {t("sess.current")}
               </span>
             ) : (
               <span className="font-mono text-[10px] text-faint">{countOf(g.id)}</span>
@@ -276,10 +280,10 @@ function MoveSessionGroupDialog({
             onClick={() => move(null)}
           >
             <span className="w-2 h-2 rounded-full shrink-0 bg-faint/50" />
-            <span className="flex-1">未分组</span>
+            <span className="flex-1">{t("sess.ungrouped")}</span>
             {currentId === null ? (
               <span className="chip text-faint border border-edge bg-raised !px-1.5 !leading-[16px] !text-[10px]">
-                当前
+                {t("sess.current")}
               </span>
             ) : (
               <span className="font-mono text-[10px] text-faint">{countOf(null)}</span>
@@ -304,6 +308,7 @@ function GroupDialog({
   moveSessionId?: string;
   onClose: () => void;
 }) {
+  const t = useT();
   const existing = useApp((s) => (s.sessionGroups[ticketNo] ?? NO_GROUPS).find((g) => g.id === groupId));
   const [name, setName] = useState(() => existing?.name ?? "");
   const [color, setColor] = useState(() => existing?.color ?? GROUP_COLOR_PALETTE[0]);
@@ -335,7 +340,7 @@ function GroupDialog({
 
   return (
     <DialogShell
-      title={editing ? "编辑分组" : "新建分组"}
+      title={editing ? t("sess.group.edit") : t("sess.group.create")}
       icon={
         editing ? (
           <NotePencil size={15} className="text-accent" weight="fill" />
@@ -347,22 +352,22 @@ function GroupDialog({
       footer={
         <>
           <button className="btn" onClick={onClose}>
-            取消
+            {t("common.cancel")}
           </button>
           <button className="btn btn-primary" disabled={!valid || busy} onClick={submit}>
-            {editing ? "保存修改" : moveSessionId ? "创建并移入" : "创建分组"}
+            {editing ? t("llm.saveChanges") : moveSessionId ? t("sess.group.createMove") : t("sess.group.createAction")}
           </button>
         </>
       }
     >
       <div>
         <label className="field-label">
-          分组名称<span className="text-danger">*</span>
+          {t("sess.group.nameLabel")}<span className="text-danger">*</span>
         </label>
         <input
           ref={inputRef}
           className="text-input"
-          placeholder="例如：重构调研 / 巡检排查"
+          placeholder={t("sess.group.namePlaceholder")}
           value={name}
           maxLength={GROUP_NAME_MAX}
           onChange={(e) => setName(e.target.value)}
@@ -375,7 +380,7 @@ function GroupDialog({
         </div>
       </div>
       <div>
-        <label className="field-label">分组颜色</label>
+        <label className="field-label">{t("sess.group.colorLabel")}</label>
         <div className="flex flex-wrap gap-2">
           {GROUP_COLOR_PALETTE.map((c) => (
             <button
@@ -387,7 +392,7 @@ function GroupDialog({
                 boxShadow: color === c ? `0 0 0 2px var(--color-panel), 0 0 0 3.5px ${c}` : undefined,
               }}
               onClick={() => setColor(c)}
-              aria-label={`选择颜色 ${c}`}
+              aria-label={t("sess.group.pickColor", { color: c })}
             >
               {color === c && <Check size={12} weight="bold" className="text-black/70" />}
             </button>
@@ -409,6 +414,7 @@ function DeleteGroupDialog({
   groupId: string;
   onClose: () => void;
 }) {
+  const t = useT();
   const group = useApp((s) => (s.sessionGroups[ticketNo] ?? NO_GROUPS).find((g) => g.id === groupId));
   const members = useApp((s) => s.sessionGroupMembers);
   const sessions = useApp((s) => s.sessions[ticketNo] ?? []);
@@ -416,36 +422,36 @@ function DeleteGroupDialog({
   const count = sessions.filter((x) => members[x.id] === groupId).length;
   return (
     <DialogShell
-      title="删除分组"
+      title={t("sess.group.delete")}
       icon={<Trash size={15} className="text-danger" weight="fill" />}
       onClose={onClose}
       footer={
         <>
           <button className="btn" onClick={onClose}>
-            取消
+            {t("common.cancel")}
           </button>
           <button
             className="btn btn-danger-ghost"
             onClick={() => {
               actions.deleteSessionGroup(ticketNo, groupId);
-              showToast(count > 0 ? `分组已删除 · ${count} 个会话已移回未分组` : "分组已删除");
+              showToast(count > 0 ? t("sess.group.deletedWithSessions", { n: count }) : t("sess.group.deleted"));
               onClose();
             }}
           >
             <Trash size={13} />
-            确认删除
+            {t("llm.confirmDelete")}
           </button>
         </>
       }
     >
       <div className="rounded-lg border border-edge bg-sunken/60 px-3.5 py-2.5 text-[12px] text-dim leading-relaxed">
-        将删除分组 <span className="text-ink font-medium">{group.name}</span>。
+        {t("sess.group.deleteLine", { name: group.name })}
         {count > 0 ? (
           <>
-            组内 <span className="text-ink">{count}</span> 个会话不会删除，将回到「未分组」。
+            {t("sess.group.deleteKeepSessions", { n: count })}
           </>
         ) : (
-          <>该分组当前没有会话。</>
+          <>{t("sess.group.deleteEmpty")}</>
         )}
       </div>
     </DialogShell>

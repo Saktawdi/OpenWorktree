@@ -1,7 +1,8 @@
-/**
+﻿/**
  * 任务轮询（net）：后端异步任务（审查/发布）的状态查询。
  * 轮询上限跟随引擎配置，连续失败容忍网络抖动，终态按 FAILED/CANCELLED 处理。
  */
+import { t } from "@/i18n";
 import { api } from "./http";
 import { appStore } from "@/store";
 import { sleep } from "@/shared/format";
@@ -34,9 +35,9 @@ export async function pollTask(
   let consecutiveErrors = 0;
   for (let i = 0; i < maxIterations; i++) {
     await sleep(500);
-    let t: { status: string; result_json?: string | null; error_json?: string | null };
+    let task: { status: string; result_json?: string | null; error_json?: string | null };
     try {
-      t = await api<{ status: string; result_json?: string | null; error_json?: string | null }>(
+      task = await api<{ status: string; result_json?: string | null; error_json?: string | null }>(
         `/api/tasks/${taskId}`,
       );
     } catch {
@@ -47,28 +48,28 @@ export async function pollTask(
           error: {
             error_code: 0,
             error: "POLL",
-            message: "任务状态查询连续失败（网络或后端抖动），任务可能仍在后台执行——稍后重新打开工单查看结果",
+            message: t("net.taskPollFailed"),
           },
         };
       }
       continue;
     }
     consecutiveErrors = 0;
-    if (t.status === "SUCCEEDED") return { ok: true };
-    if (t.status === "RUNNING" || t.status === "QUEUED" || t.status === "RETRY_WAIT") {
+    if (task.status === "SUCCEEDED") return { ok: true };
+    if (task.status === "RUNNING" || task.status === "QUEUED" || task.status === "RETRY_WAIT") {
       // 后端只在 10%/30%/90% 几个锚点写进度（引擎期心跳为 30% + 耗时），原样透传。
       try {
-        const p = t.result_json ? (JSON.parse(t.result_json) as { percent?: number; label?: string }) : null;
+        const p = task.result_json ? (JSON.parse(task.result_json) as { percent?: number; label?: string }) : null;
         if (p && typeof p.percent === "number") onProgress?.(p.percent, p.label ?? "");
       } catch {
         /* 进度体解析失败忽略 */
       }
       continue;
     }
-    if (t.status === "FAILED" || t.status === "CANCELLED") {
+    if (task.status === "FAILED" || task.status === "CANCELLED") {
       let error: TaskError | undefined;
       try {
-        if (t.error_json) error = JSON.parse(t.error_json) as TaskError;
+        if (task.error_json) error = JSON.parse(task.error_json) as TaskError;
       } catch {
         /* error_json 非结构化时按未知错误处理 */
       }
@@ -80,7 +81,7 @@ export async function pollTask(
     error: {
       error_code: 0,
       error: "TIMEOUT",
-      message: `任务超过 ${engineTimeoutSec}s 仍未完成（引擎超时上限），请稍后重新打开工单查看结果`,
+      message: t("net.taskTimeout", { n: engineTimeoutSec }),
     },
   };
 }

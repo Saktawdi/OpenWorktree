@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+﻿import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { CaretDown, FolderOpen, GitBranch, Plus, TerminalWindow } from "@phosphor-icons/react";
 import "@xterm/xterm/css/xterm.css";
@@ -7,6 +7,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { loadProjectTerminals, openTerminalSocket, activateTerminalSession, closeAllTerminalSessions, closeTerminalSession, minimizeTerminal, openTerminalSession, restoreTerminal } from "@/features/project";
 import { showToast, useApp } from "@/store";
 import { loadTerminalCloseAllConfirmed, saveTerminalCloseAllConfirmed } from "@/store/prefs";
+import { useT } from "@/i18n";
 import type { Project, TerminalEntry, TerminalSessionMeta } from "@/shared/types";
 import { useBackdropClose } from "@/shared/components/ui";
 
@@ -21,6 +22,7 @@ import { useBackdropClose } from "@/shared/components/ui";
 
 /** 选择要打开的目录；project 缺省时（工作台"+"入口）可先选项目。 */
 export function TerminalPickerDialog({ project, onClose }: { project?: Project | null; onClose: () => void }) {
+  const t = useT();
   const projects = useApp((s) => s.projects);
   const activeId = useApp((s) => s.activeProjectId);
   const [projectId, setProjectId] = useState(
@@ -48,10 +50,10 @@ export function TerminalPickerDialog({ project, onClose }: { project?: Project |
       >
         <div className="flex items-center gap-2 px-4 h-11 border-b border-edge shrink-0">
           <TerminalWindow size={14} className="text-accent" />
-          <span className="text-[13px] font-semibold">终端</span>
-          <span className="text-[12px] text-dim truncate">{selected ? selected.name : "选择目录"}</span>
+          <span className="text-[13px] font-semibold">{t("project.terminal")}</span>
+          <span className="text-[12px] text-dim truncate">{selected ? selected.name : t("term.pickDir")}</span>
           <span className="flex-1" />
-          <button className="icon-btn" onClick={onClose} aria-label="关闭">
+          <button className="icon-btn" onClick={onClose} aria-label={t("common.close")}>
             <svg width="13" height="13" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
               <path d="M2 2l8 8M10 2l-8 8" />
             </svg>
@@ -59,7 +61,7 @@ export function TerminalPickerDialog({ project, onClose }: { project?: Project |
         </div>
 
         <div className="px-4 pt-3 text-[11.5px] text-faint">
-          点击目录即启动终端标签页（克隆目录即工单沙箱，可放心操作）
+          {t("term.pickerHint")}
         </div>
 
         <div className="px-4 py-3 overflow-y-auto max-h-[400px] space-y-1.5">
@@ -68,7 +70,7 @@ export function TerminalPickerDialog({ project, onClose }: { project?: Project |
               className="text-input h-9 w-full mb-1"
               value={projectId}
               onChange={(e) => setProjectId(e.target.value)}
-              aria-label="选择项目"
+              aria-label={t("term.pickProject")}
             >
               {projects.map((p) => (
                 <option key={p.id} value={p.id}>
@@ -82,7 +84,7 @@ export function TerminalPickerDialog({ project, onClose }: { project?: Project |
 
         <div className="flex justify-end gap-2 px-4 py-3.5 border-t border-edge">
           <button className="btn" onClick={onClose}>
-            取消
+            {t("common.cancel")}
           </button>
         </div>
       </div>
@@ -91,6 +93,7 @@ export function TerminalPickerDialog({ project, onClose }: { project?: Project |
 }
 
 function DirList({ project, onPick }: { project: Project | null; onPick: (e: TerminalEntry) => void }) {
+  const t = useT();
   const [entries, setEntries] = useState<TerminalEntry[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loadingId, setLoadingId] = useState(0);
@@ -114,23 +117,23 @@ function DirList({ project, onPick }: { project: Project | null; onPick: (e: Ter
   }, [project?.id]);
 
   if (!project) {
-    return <div className="p-6 text-center text-[12.5px] text-faint">暂无项目</div>;
+    return <div className="p-6 text-center text-[12.5px] text-faint">{t("term.noProjects")}</div>;
   }
   if (error) {
     return (
       <div className="p-6 text-center">
         <div className="text-[12.5px] text-warn leading-relaxed">{error}</div>
         <button className="btn mt-3" onClick={() => setLoadingId((n) => n + 1)}>
-          重试
+          {t("common.retry")}
         </button>
       </div>
     );
   }
   if (entries === null) {
-    return <div className="p-6 text-center text-[12.5px] text-faint">目录扫描中…</div>;
+    return <div className="p-6 text-center text-[12.5px] text-faint">{t("term.scanning")}</div>;
   }
   if (entries.length === 0) {
-    return <div className="p-6 text-center text-[12.5px] text-faint">项目暂无可用目录</div>;
+    return <div className="p-6 text-center text-[12.5px] text-faint">{t("term.noDirs")}</div>;
   }
   void loadingId;
   return (
@@ -161,7 +164,7 @@ function DirList({ project, onPick }: { project: Project | null; onPick: (e: Ter
           {e.ticketTitle && (
             <span className="text-[11px] text-faint truncate max-w-[160px] hidden sm:inline">{e.ticketTitle}</span>
           )}
-          {!e.exists && <span className="chip border border-warn/30 bg-warn/10 text-warn shrink-0">目录不存在</span>}
+          {!e.exists && <span className="chip border border-warn/30 bg-warn/10 text-warn shrink-0">{t("term.dirMissing")}</span>}
         </button>
       ))}
     </>
@@ -179,6 +182,7 @@ const RESET = "\x1b[0m";
  * 非激活 tab 的 xterm 宿主也用 display 隐藏——WebSocket 与 shell 进程全程存活。
  */
 export function TerminalWorkbench() {
+  const t = useT();
   const sessions = useApp((s) => s.terminalSessions);
   const activeId = useApp((s) => s.activeTerminalId);
   const view = useApp((s) => s.terminalView);
@@ -213,30 +217,30 @@ export function TerminalWorkbench() {
           <div className="flex items-center gap-1 px-2.5 h-11 border-b border-edge shrink-0">
             <div className="flex items-center gap-1 min-w-0 flex-1 overflow-x-auto">
               <AnimatePresence initial={false}>
-                {sessions.map((t) => (
+                {sessions.map((tm) => (
                   <motion.div
-                    key={t.id}
+                    key={tm.id}
                     initial={{ opacity: 0, scale: 0.85 }}
                     animate={{ opacity: 1, scale: 1 }}
                     exit={{ opacity: 0, scale: 0.85 }}
                     transition={{ type: "spring", stiffness: 520, damping: 32 }}
-                    onClick={() => activateTerminalSession(t.id)}
-                    title={t.dir}
+                    onClick={() => activateTerminalSession(tm.id)}
+                    title={tm.dir}
                     className={`flex items-center gap-1.5 h-7 pl-2.5 pr-1 rounded-md border text-[11.5px] font-mono cursor-pointer shrink-0 ${
-                      t.id === active?.id
+                      tm.id === active?.id
                         ? "bg-raised text-ink border-edge"
                         : "text-dim border-transparent hover:bg-raised/60"
                     }`}
                   >
-                    <TerminalWindow size={11} className={t.id === active?.id ? "text-accent" : "text-faint"} />
-                    <span className="truncate max-w-[130px]">{t.label}</span>
+                    <TerminalWindow size={11} className={tm.id === active?.id ? "text-accent" : "text-faint"} />
+                    <span className="truncate max-w-[130px]">{tm.label}</span>
                     <button
                       className="w-4 h-4 grid place-items-center rounded text-faint hover:text-danger hover:bg-danger/10 border-0 bg-transparent p-0 cursor-pointer"
                       onClick={(e) => {
                         e.stopPropagation();
-                        closeTerminalSession(t.id);
+                        closeTerminalSession(tm.id);
                       }}
-                      aria-label={`关闭 ${t.label} 终端`}
+                      aria-label={t("term.closeTabAria", { label: tm.label })}
                     >
                       <svg width="8" height="8" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
                         <path d="M2 2l8 8M10 2l-8 8" />
@@ -247,12 +251,12 @@ export function TerminalWorkbench() {
               </AnimatePresence>
               <button
                 className="w-7 h-7 grid place-items-center rounded-md text-dim hover:text-ink hover:bg-raised border border-transparent bg-transparent cursor-pointer shrink-0"
-                title="新建终端标签"
-                aria-label="新建终端标签"
+                title={t("term.newTab")}
+                aria-label={t("term.newTab")}
                 onClick={() =>
                   mode === "live"
                     ? setPickerOpen(true)
-                    : showToast("终端需要连接本地后端（live 模式）后使用")
+                    : showToast(t("wb.terminalNeedLive"))
                 }
               >
                 <Plus size={14} />
@@ -261,13 +265,13 @@ export function TerminalWorkbench() {
             <span className="hidden lg:inline font-mono text-[10.5px] text-faint truncate max-w-[240px]" title={active?.dir}>
               {active?.dir}
             </span>
-            <button className="icon-btn shrink-0" title="最小化到后台（进程保持运行）" aria-label="最小化终端" onClick={minimizeTerminal}>
+            <button className="icon-btn shrink-0" title={t("term.minimizeTip")} aria-label={t("term.minimize")} onClick={minimizeTerminal}>
               <CaretDown size={13} />
             </button>
             <button
               className="icon-btn shrink-0"
-              title="关闭全部终端并结束进程"
-              aria-label="关闭全部终端"
+              title={t("term.closeAllTip")}
+              aria-label={t("term.closeAll")}
               onClick={requestCloseAll}
             >
               <svg width="13" height="13" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
@@ -296,6 +300,7 @@ export function TerminalWorkbench() {
  * 单标签时杀掉的就是当前可见那个，无需提醒，直接走原有路径。
  */
 function CloseAllConfirmDialog({ count, onClose }: { count: number; onClose: () => void }) {
+  const t = useT();
   const [neverAsk, setNeverAsk] = useState(false);
   const backdrop = useBackdropClose(onClose);
   return (
@@ -305,9 +310,9 @@ function CloseAllConfirmDialog({ count, onClose }: { count: number; onClose: () 
         onClick={(e) => e.stopPropagation()}
       >
         <div className="px-5 pt-5 pb-1">
-          <div className="text-[13.5px] font-semibold">关闭全部 {count} 个终端？</div>
+          <div className="text-[13.5px] font-semibold">{t("term.closeAllConfirm", { n: count })}</div>
           <div className="mt-1.5 text-[12.5px] text-dim leading-relaxed">
-            所有标签页中的进程（含正在运行的命令）都会被结束，此操作不可撤销。
+            {t("term.closeAllNote")}
           </div>
         </div>
         <label className="flex items-center gap-2 px-5 py-2.5 text-[12px] text-dim cursor-pointer select-none">
@@ -317,11 +322,11 @@ function CloseAllConfirmDialog({ count, onClose }: { count: number; onClose: () 
             onChange={(e) => setNeverAsk(e.target.checked)}
             className="accent-[var(--accent,#35d99e)] cursor-pointer"
           />
-          不再提醒（下次直接关闭全部终端）
+          {t("term.neverAsk")}
         </label>
         <div className="flex justify-end gap-2 px-5 py-3.5 border-t border-edge">
           <button className="btn" onClick={onClose}>
-            取消
+            {t("common.cancel")}
           </button>
           <button
             className="btn btn-danger-ghost"
@@ -331,7 +336,7 @@ function CloseAllConfirmDialog({ count, onClose }: { count: number; onClose: () 
               onClose();
             }}
           >
-            全部关闭
+            {t("term.closeAllBtn")}
           </button>
         </div>
       </div>
@@ -340,6 +345,7 @@ function CloseAllConfirmDialog({ count, onClose }: { count: number; onClose: () 
 }
 /** 单个终端会话：一条 WebSocket + 一个 xterm 实例，随会话存在而常驻。 */
 function TerminalSessionHost({ meta, visible }: { meta: TerminalSessionMeta; visible: boolean }) {
+  const t = useT();
   const hostRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
@@ -445,26 +451,26 @@ function TerminalSessionHost({ meta, visible }: { meta: TerminalSessionMeta; vis
           window.clearTimeout(startTimer);
           startTimer = null;
         }
-        term.writeln(`${DIM}-- 终端已连接：${meta.dir}（Ctrl+C 中断当前命令）--${RESET}`);
+        term.writeln(`${DIM}-- ${t("term.connected", { dir: meta.dir })} --${RESET}`);
       },
       onData: (text) => term.write(text),
       onExit: (code) => {
-        term.writeln(`${DIM}-- 进程已退出（code ${code}）· 重新打开目录可重启终端 --${RESET}`);
+        term.writeln(`${DIM}-- ${t("term.exited", { code: String(code) })} --${RESET}`);
       },
       onError: (message) => {
-        term.writeln(`${RED}-- 错误：${message} --${RESET}`);
+        term.writeln(`${RED}-- ${t("term.error", { err: message })} --${RESET}`);
       },
     });
     // started 帧长时间未到：升级握手成功但服务端应用层帧管线不通（历史回归为 native 镜像
     // 缺 WS 反射元数据，帧全哑）。与其永远空白，8s 后写入诊断提示指引用户重启后端。
     startTimer = window.setTimeout(() => {
       term.writeln(
-        `${RED}-- 终端迟迟未响应（连接已建立但服务端无回帧）。请尝试重启应用；若反复出现请反馈 --${RESET}`,
+        `${RED}-- ${t("term.noFrames")} --${RESET}`,
       );
     }, 8000);
     ws.onclose = () => {
       if (!disposed) {
-        term.writeln(`${DIM}-- 连接已断开 --${RESET}`);
+        term.writeln(`${DIM}-- ${t("term.disconnected")} --${RESET}`);
       }
     };
 
@@ -518,6 +524,7 @@ function TerminalSessionHost({ meta, visible }: { meta: TerminalSessionMeta; vis
 
 /** 最小化时的顶栏胶囊 chip：放在连接状态 chip 左边，点击恢复工作台。 */
 export function TerminalMinimizedChip() {
+  const t = useT();
   const sessions = useApp((s) => s.terminalSessions);
   const view = useApp((s) => s.terminalView);
   const minimized = sessions.length > 0 && view === "minimized";
@@ -533,11 +540,11 @@ export function TerminalMinimizedChip() {
           transition={{ type: "spring", stiffness: 480, damping: 26 }}
           onClick={restoreTerminal}
           title={sessions.map((t) => `${t.projectName} · ${t.label}\n${t.dir}`).join("\n——\n")}
-          aria-label="恢复终端"
+          aria-label={t("term.restore")}
           className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-full border border-accent/40 bg-accent/10 text-accent cursor-pointer hover:bg-accent/20 transition-colors"
         >
           <TerminalWindow size={12} weight="fill" />
-          <span className="text-[11.5px] font-medium">终端</span>
+          <span className="text-[11.5px] font-medium">{t("project.terminal")}</span>
           {sessions.length > 1 && (
             <span className="font-mono text-[10px] leading-none px-1.5 py-0.5 rounded-full bg-accent/20">
               {sessions.length}
