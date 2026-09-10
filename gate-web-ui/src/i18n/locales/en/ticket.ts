@@ -14,6 +14,9 @@ export const enTicket = {
   "ticket.list.hasChanges": "changed",
   "ticket.list.quickMode": "Quick mode",
   "ticket.list.quickModeTip": "Quick mode: connects to the project workspace directly; commits go to the main branch and it never closes",
+  /* ─── Lazy-loading skeletons while creating (list item / board card) ─── */
+  "ticket.creating": "Creating… ({s}s)",
+  "ticket.creatingAria": "Creating ticket: {title}",
 
   /* ─── 列表运行徽标 ─── */
   "ticket.badge.reviewRunning": "Reviewing",

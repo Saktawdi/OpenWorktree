@@ -1,7 +1,27 @@
 /**
  * 共享 React hooks（shared）：跨 feature 复用的行为原语。
  */
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+
+/**
+ * 秒级计时（骨架占位卡显示「已等待 Ns」）：以 since 为起点，每秒推进一次。
+ * enabled=false 时停在 0（列表首次加载的纯骨架没有起点，不显示计时）。
+ * 组件卸载即停表，不持有全局定时器。
+ */
+export function useElapsedSeconds(since: number, enabled = true): number {
+  const [seconds, setSeconds] = useState(0);
+  useEffect(() => {
+    if (!enabled) {
+      setSeconds(0);
+      return;
+    }
+    const tick = () => setSeconds(Math.max(0, Math.floor((Date.now() - since) / 1000)));
+    tick();
+    const timer = window.setInterval(tick, 1000);
+    return () => window.clearInterval(timer);
+  }, [since, enabled]);
+  return seconds;
+}
 
 /**
  * 方向感知贴底滚动（本体会话流与小助手面板共用，语义与 ChatStream 原实现一致）：

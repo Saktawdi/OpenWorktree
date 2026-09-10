@@ -1,4 +1,5 @@
 ﻿import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { AnimatePresence, motion } from "motion/react";
 import {
   CaretDown,
   CaretRight,
@@ -31,9 +32,10 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { actions } from "@/app/actions";
 import { relativeTime } from "@/shared/format";
+import { useElapsedSeconds } from "@/shared/hooks";
 import { setView, showToast, switchProject, useApp } from "@/store";
-import type { Project } from "@/shared/types";
-import { LabelInput, useBackdropClose } from "@/shared/components/ui";
+import type { PendingProject, Project } from "@/shared/types";
+import { LabelInput, Spinner, useBackdropClose } from "@/shared/components/ui";
 import { RepoViewDialog } from "@/features/project/components/RepoView";
 import { TerminalPickerDialog } from "@/features/project/components/ProjectTerminal";
 import { WorkspaceBrowserDialog } from "@/features/project/components/WorkspaceBrowserDialog";
@@ -83,7 +85,6 @@ function ProjectDialog({
 }) {
   const t = useT();
   const mode = useApp((s) => s.mode);
-  const backdrop = useBackdropClose(onClose);
   const [name, setName] = useState(initial?.name ?? "");
   const [workspacePath, setWorkspacePath] = useState(initial?.workspacePath ?? "");
   // 上次按路径自动填充的项目名：名称留空或仍是这个值（用户未手改）时，换目录后继续跟随
@@ -97,6 +98,9 @@ function ProjectDialog({
   const [tags, setTags] = useState<string[]>(initial?.tags ?? []);
   const [saving, setSaving] = useState(false);
   const [browserOpen, setBrowserOpen] = useState(false);
+  // 编辑保存中禁用「点遮罩关闭」：慢 IO 期误点外面不会把正在提交的编辑丢掉
+  // （新建走乐观关闭——提交即收起弹窗，不存在这个窗口）
+  const backdrop = useBackdropClose(saving ? undefined : onClose);
   // 后端运行平台（linux/windows/mac）：路径提示按它适配——容器部署时后端是 Linux，
   // /home/… 风格路径可直接填，注册时自动创建；Windows 才引导盘符风格。
   const [backendPlatform, setBackendPlatform] = useState<string | null>(null);
@@ -144,9 +148,9 @@ function ProjectDialog({
   };
 
   const save = async () => {
-    if (!name.trim() || (!initial && !workspacePath.trim())) return;
-    setSaving(true);
+    if (!name.trim() || (!initial && !workspacePath.trim()) || saving) return;
     if (initial) {
+      setSaving(true);
       await actions.editProject(initial.id, {
         name: name.trim(),
         targetBranch: targetBranch.trim(),
@@ -154,19 +158,23 @@ function ProjectDialog({
         size: size as Project["size"] | null,
         tags,
       });
-    } else {
-      await actions.createProject({
-        name: name.trim(),
-        workspacePath: workspacePath.trim(),
-        targetBranch: targetBranch.trim(),
-        initGit,
-        priority,
-        size,
-        tags,
-      });
+      setSaving(false);
+      onClose();
+      return;
     }
-    setSaving(false);
+    // 新建（接入）：提交即收起弹窗——接入的慢 IO（建目录/初始化仓库/克隆）不在表单里干等，
+    // 网格里立刻落一张带项目名与计时的骨架卡（见 ProjectCardPlaceholder），成功由真实卡片
+    // 顶替、失败 toast 并撤卡。这样不存在「点了接入迟迟没反应，随手点外面把表单点没了」的窗口。
     onClose();
+    void actions.createProject({
+      name: name.trim(),
+      workspacePath: workspacePath.trim(),
+      targetBranch: targetBranch.trim(),
+      initGit,
+      priority,
+      size,
+      tags,
+    });
   };
 
   const openBrowser = () => {
@@ -398,9 +406,76 @@ function dragJustEnded(): boolean {
   return Date.now() - dragEndedAt < 250;
 }
 
+/**
+ * 项目卡片骨架（懒加载占位）：
+ * - pending 形态：接入请求在飞——显示项目名、路径与「已等待 Ns」，描边呼吸；
+ * - 无 pending：列表首次拉取的纯骨架（4 张，无计时）。
+ * 出入均由 motion 接管：真实卡片顶替时占位淡出收缩，不突兀消失。
+ */
+function ProjectCardSkeleton({ pending }: { pending?: PendingProject }) {
+  const t = useT();
+  const seconds = useElapsedSeconds(pending?.startedAt ?? 0, !!pending);
+  return (
+    <motion.div
+      layout
+      initial={{ opacity: 0, y: 10, scale: 0.985 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={{ opacity: 0, scale: 0.97, transition: { duration: 0.18, ease: [0.4, 0, 1, 1] } }}
+      transition={{ type: "spring", stiffness: 380, damping: 32 }}
+      className="card border-dashed p-4 placeholder-card"
+      aria-busy="true"
+      aria-label={pending ? t("project.connectingAria", { name: pending.name }) : t("project.loading")}
+    >
+      <div className="flex items-center gap-2 min-w-0">
+        <span className="skeleton w-4 h-6 shrink-0" />
+        <FolderOpen size={15} className="text-faint shrink-0" />
+        {pending ? (
+          <span className="text-[13.5px] font-semibold truncate">{pending.name}</span>
+        ) : (
+          <span className="skeleton h-4 w-32" />
+        )}
+        <span className="flex-1" />
+        {pending && <Spinner className="text-accent shrink-0" />}
+      </div>
+
+      <div className="mt-2 min-w-0">
+        {pending ? (
+          <div className="font-mono text-[11px] text-faint truncate" title={pending.workspacePath}>
+            {pending.workspacePath}
+          </div>
+        ) : (
+          <span className="skeleton block h-3 w-4/5" />
+        )}
+      </div>
+
+      {/* chips 占位行：与真实卡片同高，接入完成时布局不跳 */}
+      <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+        <span className="skeleton h-[22px] w-16 rounded-full" />
+        <span className="skeleton h-[22px] w-12 rounded-full" />
+        <span className="skeleton h-[22px] w-10 rounded-full" />
+      </div>
+
+      <div className="mt-3 pt-3 border-t border-edge flex items-center gap-2 text-[11.5px] text-faint">
+        <span className="inline-flex items-center gap-1.5 text-accent/90">
+          {pending ? (
+            <>
+              <span className="w-1.5 h-1.5 rounded-full bg-accent animate-breathe" />
+              {t("project.connecting", { s: seconds })}
+            </>
+          ) : (
+            t("project.loading")
+          )}
+        </span>
+      </div>
+    </motion.div>
+  );
+}
+
 export function ProjectsPage() {
   const t = useT();
   const projects = useApp((s) => s.projects);
+  const pendingProjects = useApp((s) => s.pendingProjects);
+  const projectsLoading = useApp((s) => s.projectsLoading);
   const activeId = useApp((s) => s.activeProjectId);
   const tickets = useApp((s) => s.tickets);
   const mode = useApp((s) => s.mode);
@@ -450,6 +525,9 @@ export function ProjectsPage() {
     setSizeFilter("__all__");
     setPriorityFilter("__all__");
   };
+  // 空态与骨架的互斥：真实列表为空且没有在飞的接入占位时，才呈现骨架/空态
+  const listEmpty = projects.length === 0 && pendingProjects.length === 0;
+  const showSkeletons = projectsLoading && listEmpty;
 
   const detail = detailId ? projects.find((p) => p.id === detailId) : null;
 
@@ -562,6 +640,14 @@ export function ProjectsPage() {
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
           <SortableContext items={filtered.map((p) => p.id)} strategy={rectSortingStrategy}>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {/* 懒加载占位：在飞的接入卡常驻首位（退出由 AnimatePresence 接管淡出） */}
+              <AnimatePresence initial={false}>
+                {pendingProjects.map((p) => (
+                  <ProjectCardSkeleton key={p.tempId} pending={p} />
+                ))}
+              </AnimatePresence>
+              {showSkeletons &&
+                Array.from({ length: 4 }, (_, i) => <ProjectCardSkeleton key={`project-skeleton-${i}`} />)}
               {filtered.map((p) => {
                 const isActive = p.id === activeId;
                 const pTickets = tickets.filter((t) => t.projectId === p.id);
@@ -691,7 +777,7 @@ export function ProjectsPage() {
                   </SortableProjectCard>
                 );
               })}
-              {projects.length === 0 && (
+              {listEmpty && !showSkeletons && (
                 <div className="col-span-full card border-dashed p-10 text-center">
                   <div className="text-[13.5px] text-dim">{t("project.empty")}</div>
                   <div className="mt-1 text-[12px] text-faint">{t("project.emptyHint")}</div>

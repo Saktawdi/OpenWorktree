@@ -5,7 +5,7 @@ import { t } from "@/i18n";
 import { appStore } from "@/store";
 import { showToast } from "@/store/ui";
 import { saveKanbanStages, saveVisibleStages } from "@/store/prefs";
-import type { DiffContentEntry, DiffFile, Stage, StageChangeRecord, Ticket } from "@/shared/types";
+import type { DiffContentEntry, DiffFile, PendingTicket, Stage, StageChangeRecord, Ticket } from "@/shared/types";
 import { diffSig } from "@/shared/diff";
 import { ALL_STAGES, KANBAN_DEFAULT_STAGES, KANBAN_LANE_COUNT, KANBAN_STAGE_ORDER, uid } from "@/shared/format";
 import { clearSessionEnded } from "@/features/session/state";
@@ -157,6 +157,24 @@ export function updateTicket(no: string, p: Partial<Ticket>) {
       t.ticketNo === no ? { ...t, ...p, updatedAt: new Date().toISOString() } : t,
     ),
   }));
+}
+
+/* ─── 创建中的工单占位（乐观 UI） ───
+   创建请求在飞时，工单列表/看板（待处理甬道）先落一条骨架条目：
+   标题立即可见、带已等待秒数；真实工单回来后由真实条目顶替，失败移除。
+   占位不参与排序、拖拽与状态流转。 */
+
+let pendingTicketSeq = 0;
+
+/** 登记一条创建占位，返回端侧临时 id（收尾时用它移除）。 */
+export function addPendingTicket(p: Omit<PendingTicket, "tempId">): string {
+  const tempId = `pt-${++pendingTicketSeq}-${Date.now().toString(36)}`;
+  set((st) => ({ pendingTickets: [...st.pendingTickets, { ...p, tempId }] }));
+  return tempId;
+}
+
+export function removePendingTicket(tempId: string) {
+  set((st) => ({ pendingTickets: st.pendingTickets.filter((x) => x.tempId !== tempId) }));
 }
 
 /** 更新状态筛选（持久化到 localStorage，跨会话保留）。 */

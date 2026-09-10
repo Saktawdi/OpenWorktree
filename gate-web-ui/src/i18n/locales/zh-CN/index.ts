@@ -11,6 +11,7 @@ import { zhProject } from "./project";
 import { zhAgent } from "./agent";
 import { zhAssistant } from "./assistant";
 import { zhPlugins } from "./plugins";
+import { zhOnboarding } from "./onboarding";
 
 export const zhCN = {
   ...zhCommon,
@@ -22,6 +23,7 @@ export const zhCN = {
   ...zhAgent,
   ...zhAssistant,
   ...zhPlugins,
+  ...zhOnboarding,
 } as const;
 
 export type MsgKey = keyof typeof zhCN;

@@ -955,3 +955,47 @@ body {
     opacity: 1;
   }
 }
+
+/* ═══════════════════════════════════════════════════════════
+   10. SKELETON PLACEHOLDERS（懒加载骨架）
+   项目卡片 / 工单条目在 IO 进行期（列表拉取、接入项目、创建工单）以骨架占位：
+   底色微亮 + 高光横扫；占位卡容器另有描边呼吸提示「进行中」。
+   只动 transform/opacity 与 border-color，reduced-motion 由全局守门统一停帧
+   （停帧后仍是静态灰块 + 静态描边，语义不丢）。
+   ═══════════════════════════════════════════════════════════ */
+
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-ink) 7%, transparent);
+}
+.skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--color-ink) 9%, transparent),
+    transparent
+  );
+  animation: skeletonSweep 1.5s var(--ease-default) infinite;
+}
+@keyframes skeletonSweep {
+  to { transform: translateX(100%); }
+}
+
+/* 占位卡容器：描边呼吸（进行中）——与普通卡片的静态边区分 */
+.placeholder-card {
+  animation: placeholderPulse 2.2s ease-in-out infinite;
+}
+@keyframes placeholderPulse {
+  0%, 100% {
+    border-color: var(--color-edge);
+  }
+  50% {
+    border-color: color-mix(in srgb, var(--color-accent) 40%, var(--color-edge));
+  }
+}

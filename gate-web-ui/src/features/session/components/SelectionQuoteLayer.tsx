@@ -1,9 +1,12 @@
 ﻿/**
  * 全局划选引用层（SelectionQuoteLayer）：监听整页的左键划选，选区非空时在选区
- * 附近浮出动作菜单——内置两个宿主一等能力：「询问小助手」（T-109 原生 LLM 助手，
- * 偏好里可关）与「添加到对话框」（写入当前工单的 pendingQuotes，Composer 渲染成
- * 引用胶囊随下一条消息发送）；插件的「添加到 xxx」等动作经 selection.menu 插槽
- * 追加（对具体插件零感知，与 ChatActionChips 同构）。
+ * 附近浮出动作菜单——内置两个宿主一等能力：「添加到对话框」（写入当前工单的
+ * pendingQuotes，Composer 渲染成引用胶囊随下一条消息发送）与「询问小助手」
+ * （T-109 原生 LLM 助手，偏好里可关）；插件的「添加到 xxx」等动作经 selection.menu
+ * 插槽追加（对具体插件零感知，与 ChatActionChips 同构）。
+ *
+ * 排序：宿主原生的「添加到对话框」恒居首位（主路径，插件 API 的 addToComposer
+ * 同源），「询问小助手」次之，插件动作按注册顺序追加——原生能力不被插件挤位。
  *
  * 生命周期：mouseup（左键）定锚 → 选区塌陷/滚动/Esc/点击菜单外收起。
  * 输入框与富文本编辑区内的划选不触发（那是编辑自己的内容，不是引用素材）。
@@ -222,6 +225,14 @@ export function SelectionQuoteLayer() {
       onMouseDown={(e) => e.preventDefault()}
     >
       <div className="flex flex-col rounded-xl border border-edge bg-panel p-1 shadow-xl shadow-black/40">
+        <button
+          className="menu-action"
+          title={t("quote.addToComposerTip")}
+          onClick={() => addToComposer(anchor.text)}
+        >
+          <Quotes size={12} weight="fill" className="text-info" />
+          {t("quote.addToChat")}
+        </button>
         {askEnabled && (
           <button
             className="menu-action"
@@ -235,14 +246,6 @@ export function SelectionQuoteLayer() {
             {t("quote.askAssistant")}
           </button>
         )}
-        <button
-          className="menu-action"
-          title={t("quote.addToComposerTip")}
-          onClick={() => addToComposer(anchor.text)}
-        >
-          <Quotes size={12} weight="fill" className="text-info" />
-          {t("quote.addToChat")}
-        </button>
         {visiblePluginActions.map(({ pluginId, action }) => {
           const QIcon = pluginIcon(action.icon);
           return (

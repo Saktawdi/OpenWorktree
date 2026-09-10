@@ -46,8 +46,14 @@ function mapProject(p: RawProject): Project {
 }
 
 export async function loadProjects() {
-  const data = await api<{ projects: RawProject[] }>("/api/projects");
-  appStore.setState({ projects: data.projects.map(mapProject) });
+  // 加载标记只服务「空列表首屏骨架」：已有项目时刷新不改变呈现，不会闪烁
+  appStore.setState({ projectsLoading: true });
+  try {
+    const data = await api<{ projects: RawProject[] }>("/api/projects");
+    appStore.setState({ projects: data.projects.map(mapProject) });
+  } finally {
+    appStore.setState({ projectsLoading: false });
+  }
 }
 
 export async function createProjectLive(body: {

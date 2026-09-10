@@ -56,6 +56,10 @@ export const enProject = {
   "project.empty": "No projects connected yet",
   "project.emptyHint": "Connect a local workspace to create tickets and start sandbox collaboration",
   "project.noMatch": "No projects match the filters",
+  /* ─── Lazy-loading skeletons (first load / connect in flight) ─── */
+  "project.loading": "Loading projects…",
+  "project.connecting": "Connecting… ({s}s)",
+  "project.connectingAria": "Connecting project {name}",
 
   /* ─── 工作区浏览弹窗 ─── */
   "wsb.title": "Pick a workspace directory",

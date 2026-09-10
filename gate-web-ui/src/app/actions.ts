@@ -15,8 +15,10 @@ import {
 } from "@/features/ticket/api";
 import { selectTicketLive } from "@/features/ticket/flows";
 import {
+  addPendingTicket,
   appendStageChange,
   createTicket,
+  removePendingTicket,
   updateTicket,
   selectTicket,
   setStage,
@@ -66,6 +68,8 @@ import {
   createWorkspaceDir,
 } from "@/features/project";
 import {
+  addPendingProject,
+  removePendingProject,
   removeProject,
   upsertProject,
 } from "@/features/project/state";
@@ -151,24 +155,39 @@ export const actions = {
     },
   ): string | null {
     if (appStore.getState().mode === "live") {
+      const st0 = appStore.getState();
+      const projectId =
+        st0.activeProjectId && st0.projects.some((p) => p.id === st0.activeProjectId)
+          ? st0.activeProjectId
+          : undefined;
+      // 乐观 UI：骨架条目先落进工单列表/看板（建仓库、建分支的 IO 期不空窗），
+      // 真实工单回来后由真实条目顶替；失败同样撤卡（错误 toast 由 api 层给出）
+      const tempId = addPendingTicket({
+        title,
+        priority,
+        projectId: projectId ?? "",
+        startedAt: Date.now(),
+      });
       void (async () => {
-        const st0 = appStore.getState();
-        const projectId =
-          st0.activeProjectId && st0.projects.some((p) => p.id === st0.activeProjectId)
-            ? st0.activeProjectId
-            : undefined;
-        const no = await createTicketLive({
-          title,
-          priority,
-          stage: "PENDING",
-          project_id: projectId,
-          description: extra?.description,
-          labels: extra?.labels,
-          target_branch: extra?.targetBranch,
-        });
-        if (!no) return;
-        await loadTickets().catch(() => {});
-        await selectTicketLive(no);
+        try {
+          const no = await createTicketLive({
+            title,
+            priority,
+            stage: "PENDING",
+            project_id: projectId,
+            description: extra?.description,
+            labels: extra?.labels,
+            target_branch: extra?.targetBranch,
+          });
+          if (!no) return;
+          await loadTickets().catch(() => {});
+          // 真实条目已入列表即撤占位（先撤再选中：选中还要拉会话/历史，别让骨架多活一拍）
+          removePendingTicket(tempId);
+          await selectTicketLive(no);
+        } finally {
+          // 兜底撤卡（失败路径与异常路径；重复调用无副作用）
+          removePendingTicket(tempId);
+        }
       })();
       return null;
     }
@@ -230,6 +249,13 @@ export const actions = {
     tags: string[];
   }) {
     if (appStore.getState().mode === "live") {
+      // 乐观 UI：占位骨架卡先落进项目网格（慢 IO 期不空窗、看不到「点了没反应」），
+      // 真实列表回来后由真实卡片顶替，失败同样移除占位（错误 toast 由 api 层给出）
+      const tempId = addPendingProject({
+        name: body.name,
+        workspacePath: body.workspacePath,
+        startedAt: Date.now(),
+      });
       return createProjectLive({
         name: body.name,
         workspace_path: body.workspacePath,
@@ -238,7 +264,7 @@ export const actions = {
         priority: body.priority,
         size: body.size,
         tags: body.tags,
-      });
+      }).finally(() => removePendingProject(tempId));
     }
     const id = body.name
       .toLowerCase()

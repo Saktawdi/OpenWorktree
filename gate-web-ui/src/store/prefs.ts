@@ -30,6 +30,7 @@ const ASSISTANT_SETTINGS_KEY = "gate-assistant-settings";
 const ASSISTANT_HISTORY_KEY = "gate-assistant-history";
 const ASSISTANT_MODEL_KEY = "gate-assistant-model";
 const ASSISTANT_LAYOUT_KEY = "gate-assistant-layout";
+const ONBOARDING_KEY = "gate-onboarding-done";
 /**
  * 界面语言（T-115 i18n）：键名 "gate-locale" 由 i18n 域自持（见 src/i18n/index.ts）。
  * 此处仅登记说明，避免 i18n ↔ prefs 的循环依赖（prefs → shared/format → i18n）。
@@ -153,6 +154,25 @@ export function loadGateSections(): GateSections {
 export function saveGateSections(sections: GateSections) {
   try {
     localStorage.setItem(GATE_SECTIONS_KEY, JSON.stringify(sections));
+  } catch {
+    /* ignore */
+  }
+}
+
+/* ─── 新手引导（首次启动弹窗；完成后不再自动弹出，设置 → 偏好可重新查看） ─── */
+
+export function loadOnboardingDone(): boolean {
+  try {
+    return typeof window !== "undefined" && localStorage.getItem(ONBOARDING_KEY) === "1";
+  } catch {
+    // 存储不可用（隐私模式等）时不自动弹引导：宁可少一次打扰，也不每次启动都拦人
+    return true;
+  }
+}
+
+export function saveOnboardingDone(done: boolean) {
+  try {
+    localStorage.setItem(ONBOARDING_KEY, done ? "1" : "0");
   } catch {
     /* ignore */
   }

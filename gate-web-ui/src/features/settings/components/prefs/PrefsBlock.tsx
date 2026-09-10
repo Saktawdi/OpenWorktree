@@ -1,6 +1,7 @@
-import { Faders, Globe, ListChecks, Lightning, Info } from "@phosphor-icons/react";
+import { Faders, Globe, ListChecks, Lightning, Info, GraduationCap, ArrowRight } from "@phosphor-icons/react";
 import { useApp } from "@/store";
 import { setFollowUpBehavior } from "@/features/session";
+import { openOnboarding } from "@/features/onboarding";
 import type { FollowUpBehavior } from "@/shared/types";
 import { LOCALES, setLocale, useLocale, useT, type LocaleId } from "@/i18n";
 
@@ -130,6 +131,22 @@ export function PrefsBlock() {
             );
           })}
         </div>
+      </div>
+
+      {/* 新手引导：首次启动自动弹出过一次后，这里可随时重看（不重置完成标记） */}
+      <div className="card p-5">
+        <div className="flex items-center gap-2.5">
+          <span className="w-6 h-6 rounded-md grid place-items-center border shrink-0 bg-raised border-edge text-dim">
+            <GraduationCap size={13} />
+          </span>
+          <span className="text-[13px] font-semibold">{t("prefs.onboarding.title")}</span>
+          <span className="flex-1" />
+          <button className="btn btn-sm" onClick={() => openOnboarding(0)}>
+            {t("prefs.onboarding.replay")}
+            <ArrowRight size={11} />
+          </button>
+        </div>
+        <div className="mt-2 text-[11.5px] text-faint leading-relaxed">{t("prefs.onboarding.desc")}</div>
       </div>
     </div>
   );

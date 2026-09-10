@@ -21,18 +21,19 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { Check, Funnel, MagnifyingGlass, X } from "@phosphor-icons/react";
-import { motion } from "motion/react";
+import { AnimatePresence, motion } from "motion/react";
 import { actions } from "@/app/actions";
 import { KANBAN_DEFAULT_STAGES,
   KANBAN_LANE_COUNT,
   KANBAN_STAGE_ORDER,
   relativeTime,
   stageLabel, } from "@/shared/format";
+import { useElapsedSeconds } from "@/shared/hooks";
 import { appStore, setView, showToast, useApp } from "@/store";
 import { openStageChangeConfirm, openTicketCreator, setKanbanStages, setTicketOrder } from "@/features/ticket";
 import { useT } from "@/i18n";
-import type { Stage, Ticket } from "@/shared/types";
-import { PriorityChip, StageDot } from "@/shared/components/ui";
+import type { PendingTicket, Stage, Ticket } from "@/shared/types";
+import { PriorityChip, Spinner, StageDot } from "@/shared/components/ui";
 
 const LANES: Stage[] = [
   "PENDING",
@@ -165,27 +166,64 @@ function dragJustEnded(): boolean {
   return Date.now() - dragEndedAt < 250;
 }
 
+/**
+ * 创建中的工单卡片骨架（懒加载占位）：新建工单即 PENDING，占位落在「待处理」甬道。
+ * 工单号与正文行是骨架条、标题即刻可见，底部显示「正在创建（已 Ns）」；
+ * 真实卡片回来后淡出顶替（不可拖拽、不参与排序）。
+ */
+function PendingCard({ pending }: { pending: PendingTicket }) {
+  const t = useT();
+  const seconds = useElapsedSeconds(pending.startedAt);
+  return (
+    <motion.div
+      layout
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, scale: 0.98, transition: { duration: 0.18, ease: [0.4, 0, 1, 1] } }}
+      transition={{ type: "spring", stiffness: 380, damping: 32 }}
+      className="placeholder-card rounded-xl border border-dashed border-edge bg-panel p-3"
+      aria-busy="true"
+      aria-label={t("ticket.creatingAria", { title: pending.title })}
+    >
+      <div className="flex items-center gap-2">
+        <span className="skeleton h-3 w-12" />
+        <span className="flex-1" />
+        <PriorityChip priority={pending.priority} />
+      </div>
+      <div className="mt-1 text-[13px] leading-snug text-dim line-clamp-2">{pending.title}</div>
+      <div className="mt-2 pt-2 border-t border-edge/50 flex items-center gap-1.5 text-[11px] text-accent/90">
+        <Spinner className="!w-3 !h-3" />
+        {t("ticket.creating", { s: seconds })}
+      </div>
+    </motion.div>
+  );
+}
+
 function Lane({
   stage,
   tickets,
   rejectedTickets,
   shakenId,
+  pending = [],
 }: {
   stage: Stage;
   tickets: Ticket[];
   rejectedTickets: Ticket[];
   shakenId: string | null;
+  /** 创建中的占位卡（仅「待处理」甬道传入）。 */
+  pending?: PendingTicket[];
 }) {
   const t = useT();
   const { setNodeRef, isOver } = useDroppable({ id: `lane:${stage}` });
   const all = [...rejectedTickets, ...tickets];
+  const total = all.length + pending.length;
 
   return (
     <section className="flex-1 min-w-[224px] flex flex-col rounded-2xl border border-edge/70 bg-sunken/70 overflow-hidden">
       <header className="flex items-center gap-2 px-3 pt-3 pb-2 shrink-0">
         <StageDot stage={stage} />
         <span className="text-[12.5px] font-medium">{stageLabel(stage, t)}</span>
-        <span className="font-mono text-[11px] text-faint">{all.length}</span>
+        <span className="font-mono text-[11px] text-faint">{total}</span>
         <span className="flex-1" />
       </header>
       <div
@@ -194,6 +232,11 @@ function Lane({
           isOver ? "bg-accent/[0.05] ring-1 ring-inset ring-accent/25" : ""
         }`}
       >
+        <AnimatePresence initial={false}>
+          {pending.map((p) => (
+            <PendingCard key={p.tempId} pending={p} />
+          ))}
+        </AnimatePresence>
         <SortableContext items={all.map((t) => t.ticketNo)} strategy={verticalListSortingStrategy}>
           {rejectedTickets.map((t) => (
             <SortableCard key={t.ticketNo} ticket={t} rejected shaken={shakenId === t.ticketNo} />
@@ -202,7 +245,7 @@ function Lane({
             <SortableCard key={t.ticketNo} ticket={t} shaken={shakenId === t.ticketNo} />
           ))}
         </SortableContext>
-        {all.length === 0 && (
+        {total === 0 && (
           <div
             className={`rounded-xl border border-dashed h-20 grid place-items-center text-[12px] transition-colors ${
               isOver ? "border-accent/40 text-accent" : "border-edge text-faint"
@@ -445,6 +488,7 @@ export function KanbanBoard() {
   const [filterOpen, setFilterOpen] = useState(false);
   const [priorityFilter, setPriorityFilter] = useState<PriorityFilter>("ALL");
   const kanbanStages = useApp((s) => s.kanbanStages);
+  const pendingTickets = useApp((s) => s.pendingTickets);
 
   // 快速模式超级工单（V19）是常驻基础设施：不占看板甬道、不可流转
   const tickets = useMemo(
@@ -473,6 +517,18 @@ export function KanbanBoard() {
     () => filteredTickets.filter((t) => kanbanStages.includes(t.stage)),
     [filteredTickets, kanbanStages],
   );
+
+  // 创建中的占位卡（PENDING）：跟随「待处理」甬道的可见性与当前筛选口径
+  const pendingVisible = useMemo(() => {
+    if (!kanbanStages.includes("PENDING")) return [];
+    const q = query.trim().toLowerCase();
+    return pendingTickets.filter(
+      (p) =>
+        (p.projectId === activeProjectId || p.projectId === "") &&
+        (priorityFilter === "ALL" || p.priority === priorityFilter) &&
+        (!q || p.title.toLowerCase().includes(q)),
+    );
+  }, [pendingTickets, kanbanStages, query, priorityFilter, activeProjectId]);
 
   const laneStages = useMemo(
     () => KANBAN_STAGE_ORDER.filter((st) => kanbanStages.includes(st)),
@@ -719,6 +775,7 @@ export function KanbanBoard() {
                   key === "IN_PROGRESS" && rejectEmbedded ? byLane.get("REJECTED") ?? [] : []
                 }
                 shakenId={shakenId}
+                pending={key === "PENDING" ? pendingVisible : []}
               />
             ))}
           </div>

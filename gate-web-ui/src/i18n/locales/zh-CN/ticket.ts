@@ -14,6 +14,9 @@ export const zhTicket = {
   "ticket.list.hasChanges": "有变更",
   "ticket.list.quickMode": "快速模式",
   "ticket.list.quickModeTip": "快速模式：直连项目原工作区，提交直达主分支，永不关闭",
+  /* ─── 创建中的懒加载占位（列表条目 / 看板卡片） ─── */
+  "ticket.creating": "正在创建…（已 {s}s）",
+  "ticket.creatingAria": "正在创建工单：{title}",
 
   /* ─── 列表运行徽标 ─── */
   "ticket.badge.reviewRunning": "审查中",

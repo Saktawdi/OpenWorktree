@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from "react";
-import { motion } from "motion/react";
+import { AnimatePresence, motion } from "motion/react";
 import {
   Check,
   CheckCircle,
@@ -16,11 +16,12 @@ import { ALL_STAGES,
   relativeTime,
   stageLabel,
   STAGE_SORT_RANK, } from "@/shared/format";
+import { useElapsedSeconds } from "@/shared/hooks";
 import { closeTicketCreator, openTicketCreator, setVisibleStages } from "@/features/ticket";
 import { useApp, NO_DIFF } from "@/store";
 import { useT } from "@/i18n";
-import type { Priority, Stage } from "@/shared/types";
-import { LabelInput, PriorityChip, StageDot, useBackdropClose } from "@/shared/components/ui";
+import type { PendingTicket, Priority, Stage } from "@/shared/types";
+import { LabelInput, PriorityChip, Spinner, StageDot, useBackdropClose } from "@/shared/components/ui";
 
 const PRIORITIES: Priority[] = ["P0", "P1", "P2", "P3"];
 
@@ -332,6 +333,39 @@ function ReviewBadge({ verdict }: { verdict: "PASS" | "REJECT" | "REQUIRES_HUMAN
   );
 }
 
+/**
+ * 创建中的工单条目骨架（懒加载占位）：工单号位置是骨架条，标题即刻可见，
+ * 元信息行显示「正在创建（已 Ns）」；真实条目回来后由 motion 淡出顶替。
+ * 结构行高与真实条目对齐（px-3 py-2.5 + 三行），切换瞬间列表不跳。
+ */
+function PendingTicketItem({ pending }: { pending: PendingTicket }) {
+  const t = useT();
+  const seconds = useElapsedSeconds(pending.startedAt);
+  return (
+    <motion.div
+      layout
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, scale: 0.98, transition: { duration: 0.18, ease: [0.4, 0, 1, 1] } }}
+      transition={{ type: "spring", stiffness: 380, damping: 32 }}
+      className="placeholder-card relative w-full rounded-lg border border-dashed border-edge px-3 py-2.5"
+      aria-busy="true"
+      aria-label={t("ticket.creatingAria", { title: pending.title })}
+    >
+      <div className="flex items-center gap-2">
+        <span className="skeleton h-3 w-12" />
+        <span className="flex-1" />
+        <PriorityChip priority={pending.priority} />
+      </div>
+      <div className="mt-0.5 text-[13px] leading-snug text-dim line-clamp-2">{pending.title}</div>
+      <div className="mt-1.5 flex items-center gap-1.5 text-[11px] text-accent/90">
+        <Spinner className="!w-3 !h-3" />
+        {t("ticket.creating", { s: seconds })}
+      </div>
+    </motion.div>
+  );
+}
+
 export function TicketList() {
   const tr = useT();
   const ticketsAll = useApp((s) => s.tickets);
@@ -348,6 +382,7 @@ export function TicketList() {
   const pendingQuestions = useApp((s) => s.pendingQuestions);
   const orderMap = useApp((s) => s.order);
   const visibleStages = useApp((s) => s.visibleStages);
+  const pendingTickets = useApp((s) => s.pendingTickets);
   const [query, setQuery] = useState("");
 
   // T-120 增强：每工单的待决询问/权限数量（徽标数据源）
@@ -397,6 +432,18 @@ export function TicketList() {
     );
   }, [tickets, query]);
 
+  // 创建中的占位条目：只在其归属项目 + 当前搜索词的上下文里展示（切项目不串台），
+  // 且「待处理」被筛掉时不出现（与真实条目的可见性口径一致）
+  const pendingVisible = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return pendingTickets.filter(
+      (p) =>
+        (p.projectId === activeProjectId || p.projectId === "") &&
+        visibleStages.includes("PENDING") &&
+        (!q || p.title.toLowerCase().includes(q)),
+    );
+  }, [pendingTickets, activeProjectId, visibleStages, query]);
+
   return (
     <aside className="w-[268px] shrink-0 border-r border-edge flex flex-col bg-canvas">
       <div className="flex items-center justify-between px-3 pt-3 pb-2">
@@ -422,6 +469,12 @@ export function TicketList() {
       </div>
 
       <div className="flex-1 overflow-y-auto px-2 pb-3 space-y-0.5">
+        {/* 创建中的占位条目（懒加载骨架）：排在列表首位，真实条目回来即淡出 */}
+        <AnimatePresence initial={false}>
+          {pendingVisible.map((p) => (
+            <PendingTicketItem key={p.tempId} pending={p} />
+          ))}
+        </AnimatePresence>
         {filtered.map((t) => {
           const active = t.ticketNo === selectedNo;
           const hasDiff = (diffs[t.ticketNo] ?? NO_DIFF).length > 0;
@@ -506,7 +559,7 @@ export function TicketList() {
             </motion.button>
           );
         })}
-        {filtered.length === 0 && (
+        {filtered.length === 0 && pendingVisible.length === 0 && (
           <div className="mt-10 text-center text-[12.5px] text-faint">{tr("ticket.list.noMatch")}</div>
         )}
       </div>

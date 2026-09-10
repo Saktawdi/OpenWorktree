@@ -410,6 +410,29 @@ export interface PendingAttachment {
   dataUrl: string;
 }
 
+/**
+ * 项目接入中的乐观占位（POST /api/projects 在飞）：项目网格先落一张骨架卡，
+ * 接入完成（真实列表刷新）或失败时移除——慢 IO（建目录/初始化仓库/克隆）期不出现空窗。
+ */
+export interface PendingProject {
+  /** 端侧临时 id（真实项目 id 由后端下发）。 */
+  tempId: string;
+  name: string;
+  workspacePath: string;
+  /** 接入开始时刻：占位卡据此显示已等待秒数。 */
+  startedAt: number;
+}
+
+/** 工单创建中的乐观占位（POST /api/tickets 在飞）：工单列表/看板先落骨架条目。 */
+export interface PendingTicket {
+  tempId: string;
+  title: string;
+  priority: Priority;
+  /** 归属项目（空串 = 未分配）：只在其归属项目上下文中展示。 */
+  projectId: string;
+  startedAt: number;
+}
+
 /** 引用片段胶囊（划选页面文字 → 添加到对话框）：text 保留原始选中文本，发送时内联进消息。 */
 export interface QuoteChip {
   id: string;

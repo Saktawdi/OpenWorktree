@@ -12,6 +12,7 @@ import { enProject } from "./project";
 import { enAgent } from "./agent";
 import { enAssistant } from "./assistant";
 import { enPlugins } from "./plugins";
+import { enOnboarding } from "./onboarding";
 
 export const en: Record<MsgKey, string> = {
   ...enCommon,
@@ -23,4 +24,5 @@ export const en: Record<MsgKey, string> = {
   ...enAgent,
   ...enAssistant,
   ...enPlugins,
+  ...enOnboarding,
 };

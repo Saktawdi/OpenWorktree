@@ -56,6 +56,10 @@ export const zhProject = {
   "project.empty": "尚未接入任何项目",
   "project.emptyHint": "接入本地工作区后，即可创建工单并开始沙箱协作",
   "project.noMatch": "没有符合筛选条件的项目",
+  /* ─── 懒加载骨架占位（列表首屏 / 接入在飞） ─── */
+  "project.loading": "正在读取项目列表…",
+  "project.connecting": "正在接入…（已 {s}s）",
+  "project.connectingAria": "正在接入项目 {name}",
 
   /* ─── 工作区浏览弹窗 ─── */
   "wsb.title": "选择工作区目录",

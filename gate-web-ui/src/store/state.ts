@@ -23,6 +23,8 @@ import type {
   GitTreeEntry,
   LlmProvider,
   OpenCodeProvider,
+  PendingProject,
+  PendingTicket,
   Project,
   PublishOutcome,
   PermissionRequestView,
@@ -64,6 +66,7 @@ import {
   loadGatePanelCollapsed,
   loadGateSections,
   loadKanbanStages,
+  loadOnboardingDone,
   loadPendingQuotes,
   loadQueuedMessages,
   loadSessionGroups,
@@ -110,8 +113,14 @@ export interface AppState {
   /** 终端工作台展示状态：closed=无窗口，open=弹窗，minimized=缩入顶栏圆钮。 */
   terminalView: "closed" | "open" | "minimized";
   projects: Project[];
+  /** 项目接入中的乐观占位（骨架卡片数据源；完成/失败即移除）。 */
+  pendingProjects: PendingProject[];
+  /** 项目列表加载中：仅在列表为空时呈现骨架（已有内容不因刷新闪烁）。 */
+  projectsLoading: boolean;
   activeProjectId: string;
   tickets: Ticket[];
+  /** 工单创建中的乐观占位（列表条目/看板卡片骨架数据源；完成/失败即移除）。 */
+  pendingTickets: PendingTicket[];
   selectedNo: string | null;
   chats: Record<string, ChatItem[]>;
   /** 变更对比文件列表（key = 工单号）：只含 path/状态/增删行数元数据，hunks 为空。 */
@@ -244,6 +253,13 @@ export interface AppState {
   assistantProviders: LlmProvider[] | null;
   assistantProvidersLoading: boolean;
   assistantProvidersError: string | null;
+  /* ─── 新手引导（首次启动弹窗） ─── */
+  /** 引导弹窗是否打开。 */
+  onboardingOpen: boolean;
+  /** 当前步骤序号（0-based）。 */
+  onboardingStep: number;
+  /** 引导被「前往 xxx」动作中途收起：为 true 时显示右下角「继续引导」浮标。 */
+  onboardingPaused: boolean;
 }
 
 const persistedGroups = loadSessionGroups();
@@ -264,8 +280,11 @@ export const appStore = create<AppState>(() => ({
   activeTerminalId: null,
   terminalView: "closed",
   projects: [],
+  pendingProjects: [],
+  projectsLoading: false,
   activeProjectId: "",
   tickets: [],
+  pendingTickets: [],
   selectedNo: null,
   chats: {},
   diffs: {},
@@ -346,6 +365,10 @@ export const appStore = create<AppState>(() => ({
   assistantProviders: null,
   assistantProvidersLoading: false,
   assistantProvidersError: null,
+  // 首次启动自动弹出（gate-onboarding-done 未置位）；完成/跳过后不再自动弹
+  onboardingOpen: !loadOnboardingDone(),
+  onboardingStep: 0,
+  onboardingPaused: false,
 }));
 
 export function useApp<T>(selector: (st: AppState) => T): T {
@@ -391,6 +414,9 @@ appStore.subscribe(() => {
         assistantProviders: null,
         assistantProvidersLoading: false,
         assistantProvidersError: null,
+        // 在飞 IO 的乐观占位不落盘：刷新后请求已断，还原骨架卡只会留下永久空壳
+        pendingProjects: [],
+        pendingTickets: [],
       });
       sessionStorage.setItem(SNAPSHOT_KEY, data);
     } catch {

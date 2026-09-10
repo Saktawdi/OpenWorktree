@@ -222,7 +222,27 @@ RUN npm install -g @anthropic-ai/claude-code && npm cache clean --force
 
 从源码自构建（开发时）：仓库根目录 `docker compose up -d --build`，build-arg `INSTALL_CLAUDE=true` 让 Claude Code 随镜像出来。
 
-### 方式二：Windows 桌面版（推荐，需CLI环境）
+### 方式二：单文件原生版（Linux / Windows，无需 Java / Node）
+
+GraalVM native-image 编译的单文件二进制——**后端与前端一体**：前端 SPA 在构建期直接嵌入二进制，运行起来就是一个完整服务，不需要再启动任何前端。无需安装 Java、Maven、Node，双击 / 一条命令即起。
+
+- 前置只需本机 `git`（跑 Agent 会话再按需装对应 CLI，如 opencode / Claude Code）；
+- 二进制随 GitHub Releases 发布（打 `v*` tag 时自动附带 `ow-linux-x86_64` / `ow-windows-x86_64`）；日常 master 产物在 Actions 的 `ow-native-Linux` / `ow-native-Windows` artifact（保留 14 天）；
+- 启动（在想要存放数据的目录下运行）：
+
+```bash
+# Linux
+./ow-linux-x86_64
+
+# Windows（PowerShell，文件无 .exe 后缀也可直接执行）
+.\ow-windows-x86_64
+```
+
+- 首次启动自动生成 `local-run/gate.toml`（默认 loopback `127.0.0.1:18080`）与 `gate-home/`（数据库、令牌、镜像仓、工单克隆），布局与源码方式完全一致，整目录拷走即可迁移；要换端口等可加 `--config 你的gate.toml`；
+- 看到日志 `GATE_WEB_TOKEN=...` 与 `listening on http://127.0.0.1:18080/` 即成功，浏览器打开 <http://127.0.0.1:18080>，令牌在日志行或 `local-run/gate-home/web-token` 文件；
+- 该二进制也正是下方 Windows 桌面版内嵌的 sidecar——行为与桌面版后端完全一致。
+
+### 方式三：Windows 桌面版（推荐，需CLI环境）
 
 双击即用——启动自动登录。
 前置只需本机 `git`（跑 Agent 会话再按需装对应 CLI，如 opencode / Claude Code）。
@@ -230,7 +250,7 @@ RUN npm install -g @anthropic-ai/claude-code && npm cache clean --force
 - 安装包随 GitHub Releases 发布（另可按照`desktop/README.md` 自行构建）；
 - 数据默认落安装目录 `data\`（工单克隆随安装盘走），卸载可保留（移至 `%APPDATA%\OpenWorktree`）或删除；后端契约与 Docker / 源码方式完全一致。
 
-### 方式三：本地开发（源码）
+### 方式四：本地开发（源码）
 
 #### 环境要求
 
