@@ -184,7 +184,7 @@ function AgentPicker({ ticketNo }: { ticketNo: string }) {
   );
 }
 
-/* ─── 会话内实时切换模型 / 推理强度（参考 OpenChamber ModelControls） ─── */
+/* ─── 会话内实时切换模型 / 推理强度 ─── */
 
 /**
  * claude 会话的推理强度档位：claude --effort 接受 low/medium/high/xhigh/max，但网关的
@@ -194,7 +194,7 @@ function AgentPicker({ ticketNo }: { ticketNo: string }) {
 const CLAUDE_EFFORTS = ["low", "medium", "high", "max"];
 
 /**
- * claude 原生模型预设（claude --model 接受的别名，参考 open-design 的分组）：
+ * claude 原生模型预设（claude --model 接受的别名）：
  * "默认"=清空覆盖、不传 --model，由 claude 自身配置决定；其余以别名直传。
  * 与目录无关——网关自定义模型仍走下方自定义输入。
  */
@@ -631,7 +631,7 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
     }
   };
 
-  /* 粘贴/拖入的文件统一路由（参考 OpenChamber ChatInput.handlePaste）：
+  /* 粘贴/拖入的文件统一路由：
    * · 图片 → 模型支持时暂存为附件，输入框上方出现 chip 胶囊占位（引用胶囊同款），
    *   不再往正文插 [图片 #n] 引用文本——引用行在发送时统一追加在消息尾部，
    *   杜绝引用与正文同行导致的渲染吞字；不支持则提示后丢弃；
@@ -812,7 +812,7 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
     });
   };
 
-  /* ─── T-107：Agent 输出时的排队 / 插队（参考 OpenChamber followUpBehavior） ─── */
+  /* ─── T-107：Agent 输出时的排队 / 插队 ─── */
 
   // 行为偏好（设置中心·偏好设置可切换，本处只读）：queue（默认）——回车排队，空闲后自动发送；steer——回车直接插队当前回合。
   const followUpBehavior = useApp((s) => s.followUpBehavior);
@@ -1055,7 +1055,7 @@ export function Composer({ ticketNo }: { ticketNo: string }) {
           </div>
         )}
 
-        {/* 统一输入卡：textarea 与控制栏同卡，聚焦时整卡亮起（参考 OpenChamber） */}
+        {/* 统一输入卡：textarea 与控制栏同卡，聚焦时整卡亮起 */}
         <div
           className={`composer-shell${busy ? " composer-shell-busy" : ""}${
             terminal ? " composer-shell-done" : ""

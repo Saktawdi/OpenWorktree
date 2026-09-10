@@ -71,7 +71,7 @@ export function AssistantShell({
 }
 
 /**
- * 回复 footer（openchamber 式）：模型 / 推理强度 / 耗时等元信息常驻左对齐，
+ * 回复 footer：模型 / 推理强度 / 耗时等元信息常驻左对齐，
  * 复制按钮仅 hover 整条回复时出现——绝不推到行尾，避免被误读成用户消息的操作。
  */
 export function ReplyFooter({

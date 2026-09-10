@@ -34,7 +34,6 @@ doc/local/
 # OS
 Thumbs.db
 .DS_Store
-multica-ref/
 gui-test-screenshots/
 test.json
 

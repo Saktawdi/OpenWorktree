@@ -12,7 +12,7 @@ import {
 } from "./presets";
 import { LimitCombo } from "./LimitCombo";
 
-/** ai-toolbox 式模型编辑器：限制 / 模态 / 能力 / 变体 / 额外参数，内联展开在模型行下方。 */
+/** 模型编辑器：限制 / 模态 / 能力 / 变体 / 额外参数，内联展开在模型行下方。 */
 export function ModelEditor({
   entry,
   onSave,

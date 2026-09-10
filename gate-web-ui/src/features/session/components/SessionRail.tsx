@@ -11,7 +11,7 @@ import { todoProgress } from "@/shared/todoUtils";
 import { useT } from "@/i18n";
 
 /**
- * 会话横条（CenterTabs）右侧的图标按钮组（openchamber 式）：
+ * 会话横条（CenterTabs）右侧的图标按钮组：
  * · 任务清单环 —— opencode todowrite 进度 / claude TaskCreate·TaskUpdate journal
  *   （按 session.cli 三元挂载，两链互不相扰），点击弹出对应面板；
  * · 上下文环 —— 会话窗口占用（绿→黄→红 60/85 分档），点击弹出角色占比面板。

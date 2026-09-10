@@ -3,7 +3,7 @@ package gate.domain.session;
 import java.util.List;
 
 /**
- * A reusable agent configuration (≈ multica Agent, but no Squad/Skill/Runtime) — 执行文档-后端-web §5.2.
+ * A reusable agent configuration (no Squad/Skill/Runtime) — 执行文档-后端-web §5.2.
  *
  * @param id             e.g. "claude-sonnet-default"
  * @param name           display name

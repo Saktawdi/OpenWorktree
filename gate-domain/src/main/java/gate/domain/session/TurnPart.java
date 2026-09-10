@@ -1,7 +1,7 @@
 package gate.domain.session;
 
 /**
- * One chronological segment of an assistant turn (ZCode-style timeline).
+ * One chronological segment of an assistant turn (timeline part).
  *
  * <p>A turn is rarely "text, then all tools" — it interleaves: the model thinks, writes a
  * paragraph, runs tools, writes more. {@code content}/{@code toolCalls} alone cannot express

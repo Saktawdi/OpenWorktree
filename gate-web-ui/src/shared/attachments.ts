@@ -1,7 +1,7 @@
 ﻿import type { PendingAttachment } from "@/shared/types";
 import { t } from "@/i18n";
 
-/* ─── 会话输入附件（参考 OpenChamber composer 的粘贴语义） ───
+/* ─── 会话输入附件（粘贴语义） ───
  * 图片：读为 data URL 随消息发送（模型需支持图片输入）；
  * 非图片文件：浏览器拿不到真实路径时尽力从剪贴板文本载荷里解析绝对路径。 */
 

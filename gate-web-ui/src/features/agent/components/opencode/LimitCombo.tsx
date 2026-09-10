@@ -3,7 +3,7 @@ import { useT } from "@/i18n";
 import { CaretDown } from "@phosphor-icons/react";
 import { parseLimit } from "./presets";
 
-/** ai-toolbox 式限制编辑框：聚焦展开档位下拉、点选即填，也可手输 16K / 200000 等任意值。 */
+/** 限制编辑框：聚焦展开档位下拉、点选即填，也可手输 16K / 200000 等任意值。 */
 export function LimitCombo({
   presets,
   value,

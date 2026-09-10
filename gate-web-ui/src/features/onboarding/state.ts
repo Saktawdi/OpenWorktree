@@ -1,5 +1,5 @@
 /**
- * 新手引导状态（onboarding）：首次启动的六步配置向导步骤机。
+ * 新手引导状态（onboarding）：首次启动的七步配置向导步骤机。
  *
  * 弹出判据与进度都在 store（onboardingOpen / onboardingStep / onboardingPaused），
  * 「是否已看过」落盘 localStorage（gate-onboarding-done）——完成后不再自动弹，
@@ -11,8 +11,8 @@
 import { appStore } from "@/store";
 import { saveOnboardingDone } from "@/store/prefs";
 
-/** 步骤顺序（与需求一致：语言偏好 → 接入项目 → 智能体 → LLM → 看板 → 工作台）。 */
-export const ONBOARDING_STEPS = ["lang", "project", "agent", "llm", "kanban", "workbench"] as const;
+/** 步骤顺序（语言偏好 → 连接后端 → 接入项目 → 智能体 → LLM → 看板 → 工作台）。 */
+export const ONBOARDING_STEPS = ["lang", "connect", "project", "agent", "llm", "kanban", "workbench"] as const;
 export type OnboardingStepId = (typeof ONBOARDING_STEPS)[number];
 export const ONBOARDING_TOTAL = ONBOARDING_STEPS.length;
 

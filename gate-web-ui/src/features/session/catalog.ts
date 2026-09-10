@@ -16,7 +16,7 @@ import { ticketNoOfSession } from "./api";
 /**
  * Loads the live model catalog for the session's opencode serve and seeds the
  * picker selection: persisted session override first, then the AgentConfig
- * default (provider/model), mirroring OpenChamber's restore order.
+ * default (provider/model).
  */
 export async function loadSessionCatalog(no: string, sessionId: string) {
   const st = appStore.getState();

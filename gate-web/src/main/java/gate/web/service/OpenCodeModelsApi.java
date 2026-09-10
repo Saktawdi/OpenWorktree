@@ -14,7 +14,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Upstream probes for OpenCode provider entries (the ai-toolbox parity features): pull the model
+ * Upstream probes for OpenCode provider entries: pull the model
  * list from {@code GET {baseURL}/models} and run a connectivity test through
  * {@code POST {baseURL}/chat/completions}. Both take the explicit base_url/api_key from the edit
  * dialog so a provider can be verified before it is ever written to opencode.json.

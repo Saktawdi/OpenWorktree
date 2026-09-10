@@ -442,7 +442,7 @@ body {
     box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-info) 45%, transparent);
   }
 
-  /* ── Composer（会话输入卡，参考 OpenChamber：输入区与控制栏同卡） ── */
+  /* ── Composer（会话输入卡：输入区与控制栏同卡） ── */
   .composer-shell {
     @apply relative rounded-2xl border border-edge bg-sunken transition-all duration-200;
   }
@@ -499,7 +499,7 @@ body {
     @apply grid place-items-center w-8 h-8 rounded-full border border-danger/40 text-danger
       cursor-pointer shrink-0 transition-all duration-150 hover:bg-danger/10 active:scale-95;
   }
-  /* ── 粘贴的图片附件缩略卡（参考 OpenChamber AttachedFilesList） ── */
+  /* ── 粘贴的图片附件缩略卡 ── */
   .composer-attach {
     @apply flex items-center gap-2 h-12 pl-1.5 pr-2.5 rounded-xl border border-edge bg-canvas
       transition-colors duration-150;
@@ -511,7 +511,7 @@ body {
     @apply size-9 rounded-lg object-cover border border-edge shrink-0;
   }
 
-  /* ── 排队消息面板（T-107：Agent 输出时的排队/插队；参考 OpenChamber QueuedMessageChips） ── */
+  /* ── 排队消息面板（T-107：Agent 输出时的排队/插队） ── */
   .queue-panel {
     @apply rounded-2xl border border-edge bg-sunken/80 overflow-hidden;
   }

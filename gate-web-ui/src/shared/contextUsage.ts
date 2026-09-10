@@ -1,6 +1,6 @@
 import type { ChatItem, ContextUsageState } from "@/shared/types";
 
-/** openchamber 同款兜底：模型未暴露上下文上限时的默认窗口。 */
+/** 兜底：模型未暴露上下文上限时的默认窗口。 */
 export const DEFAULT_CONTEXT_LIMIT = 200_000;
 
 /** 上下文环颜色分档阈值（60/85）：充足绿、过渡黄、快满红。 */

@@ -161,7 +161,7 @@ class TicketMetaApiTest {
         // 终态不出门：已取消 → 强制完成（即截图里 CANCELLED → DONE 的场景）必须被拒，
         // 且报错指向「重启」而不是误导性的 review-gated 文案。
         HttpResponse<String> forceDone = patch("/api/tickets/META-TERM",
-                "{\"stage\":\"DONE\",\"reason\":\"已在 zcode 完成\"}");
+                "{\"stage\":\"DONE\",\"reason\":\"已在工作台完成\"}");
         assertEquals(400, forceDone.statusCode(), forceDone.body());
         assertTrue(forceDone.body().contains("terminal ticket cannot change stage"), forceDone.body());
 

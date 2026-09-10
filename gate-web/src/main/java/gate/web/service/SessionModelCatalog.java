@@ -15,7 +15,7 @@ import java.util.Map;
 
 /**
  * Live model catalog for one session, proxied from its opencode serve instance
- * ({@code GET /config/providers}) — the same source OpenChamber's composer model picker uses.
+ * ({@code GET /config/providers}).
  *
  * <p>The response is reduced to the fields the picker renders:
  * {@code {"providers":[{"id","name","models":[{"id","name","variants":[key,...],
@@ -118,7 +118,7 @@ public final class SessionModelCatalog {
                         model.put("variants", variantKeys(mm.get("variants")));
                         // 图片输入能力（粘贴图片是否可发）：优先 serve 归一化的
                         // capabilities.input 布尔表，回退 attachment 布尔位与
-                        // models.dev 原始 modalities —— 与 OpenChamber 的判断顺序一致。
+                        // models.dev 原始 modalities —— 按此顺序兜底判断。
                         model.put("image_input", imageInput(mm));
                         Map<String, Object> limit = limitTokens(mm.get("limit"));
                         if (limit != null) {

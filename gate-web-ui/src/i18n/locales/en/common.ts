@@ -103,6 +103,8 @@ export const enCommon = {
   "conn.pasteTokenFirst": "Paste the access token first",
   "conn.success": "Connected — backend data loaded",
   "conn.invalidToken": "Invalid token or backend not running (port 18080)",
+  "conn.forbidden": "Backend refused access: the current host is not in the allowed_origins whitelist — server deployments must set OW_ALLOWED_ORIGINS=your domain or IP in the compose environment and restart (see README, Option 2)",
+  "conn.unreachable": "Network error: cannot reach the backend — please confirm it is running",
   "conn.testing": "Testing…",
   "conn.testAndConnect": "Test & connect",
   "conn.backToDemo": "Back to demo",

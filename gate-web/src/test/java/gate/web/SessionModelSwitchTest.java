@@ -28,7 +28,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Tag;
 
 /**
- * 会话内实时切换模型/推理强度 (OpenChamber-style per-session picker):
+ * 会话内实时切换模型/推理强度 (per-session picker):
  * POST /api/sessions/{id}/model persists the override, GET /api/sessions/{id}/models proxies
  * the session's opencode serve {@code /config/providers}, and the send body carries the switch.
  */

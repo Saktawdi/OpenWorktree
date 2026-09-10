@@ -17,7 +17,7 @@ import java.util.Map;
  * OpenCode provider-file controller. Owns /api/opencode/providers/*.
  *
  * <p>CRUD over the {@code provider} node of the local OpenCode CLI config file (the same surface
- * the ai-toolbox project manages) — distinct from {@link ProviderController}, which owns the
+ * the OpenCode CLI ecosystem manages) — distinct from {@link ProviderController}, which owns the
  * gate-internal review-engine provider table. Writes mutate only {@code provider}; the rest of the
  * file round-trips untouched, with a {@code .bak} side copy before each save.
  */
@@ -38,7 +38,7 @@ public final class OpenCodeProviderController implements WebController {
         app.post("/api/opencode/providers/{key}", this::create);
         app.put("/api/opencode/providers/{key}", this::update);
         app.delete("/api/opencode/providers/{key}", this::delete);
-        // Upstream probes (ai-toolbox parity): pull the model list / test one chat completion.
+        // Upstream probes: pull the model list / test one chat completion.
         // They take explicit base_url + api_key from the edit dialog so a provider can be
         // verified before it is ever written to opencode.json. Registered outside the
         // /providers/{key} namespace: a single-segment path here would collide with the POST

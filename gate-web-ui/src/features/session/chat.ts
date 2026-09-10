@@ -90,7 +90,7 @@ export function patchAssistant(
 
 /* ─── 权限卡片（opencode permission_asked） ─── */
 
-/** 已应答权限 id 的墓碑：应答即移除卡片（openchamber 语义），墓碑阻止重放的 asked 事件复活卡片。 */
+/** 已应答权限 id 的墓碑：应答即移除卡片，墓碑阻止重放的 asked 事件复活卡片。 */
 const resolvedPermissions = new Set<string>();
 
 /** 入队一个权限请求卡片；按 permissionId 去重（id 恒为 perm-<permission_id>）。 */
@@ -111,7 +111,7 @@ export function pushPermissionRequest(no: string, request: PermissionRequestView
 
 /**
  * 权限已有结论（用户点击或服务端自动允许/permission_replied）：移除卡片并记墓碑。
- * 与 openchamber 一致——已应答的询问不再驻留聊天流。
+ * 已应答的询问不再驻留聊天流。
  */
 export function resolvePermission(
   no: string,
@@ -195,7 +195,7 @@ export function revertQuestion(no: string, requestId: string) {
 /* ─── 回复标注（底部 footer 的 model / 推理等级） ─── */
 
 /**
- * 当前会话「本条回复归属」的近似标注来源（openchamber 式底部标注）：
+ * 当前会话「本条回复归属」的近似标注来源（回复底部标注）：
  * - model:   当时请求的模型（口径与发送端一致：会话实时覆盖 → 会话持久覆盖 →
  *            Agent 默认 ref 的 model 段）；解析不出再回退 Agent 名称
  * - variant: session overrideVariant 或 sessionModelSel.variant（推理等级）

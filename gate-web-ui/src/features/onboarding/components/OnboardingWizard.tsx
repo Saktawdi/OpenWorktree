@@ -1,8 +1,9 @@
 /**
- * 新手引导弹窗（OnboardingWizard）：首次启动弹出的六步配置向导。
+ * 新手引导弹窗（OnboardingWizard）：首次启动弹出的七步配置向导。
  *
- * 步骤：语言偏好选择 → 接入项目 → 智能体设置 → LLM 设置（AI 审查调用的上游）
- * → 看板 → 工作台；支持「跳过引导」一键跳过（Esc 同义），完成后不再自动弹出。
+ * 步骤：语言偏好选择 → 连接后端（从日志取令牌）→ 接入项目 → 智能体设置
+ * → LLM 设置（AI 审查调用的上游）→ 看板 → 工作台；支持「跳过引导」一键跳过
+ * （Esc 同义），完成后不再自动弹出。
  *
  * 交互约定：
  * - 步骤条可直接点跳，底部「上一步 / 下一步」顺序推进，进度条与「第 N/6 步」同步；
@@ -28,6 +29,7 @@ import {
   X,
 } from "@phosphor-icons/react";
 import { useApp, setView } from "@/store";
+import { actions } from "@/app/actions";
 import { LOCALES, setLocale, useLocale, useT, type MsgKey } from "@/i18n";
 import {
   finishOnboarding,
@@ -47,6 +49,12 @@ interface WizardStep {
 
 const STEPS: WizardStep[] = [
   { id: "lang", Icon: Globe, titleKey: "onboarding.step.lang.title", descKey: "onboarding.step.lang.desc" },
+  {
+    id: "connect",
+    Icon: PlugsConnected,
+    titleKey: "onboarding.step.connect.title",
+    descKey: "onboarding.step.connect.desc",
+  },
   {
     id: "project",
     Icon: FolderPlus,
@@ -90,6 +98,10 @@ export function OnboardingWizard() {
   const step = useApp((s) => s.onboardingStep);
   const projects = useApp((s) => s.projects.length);
   const locale = useLocale();
+  const live = useApp((s) => s.mode === "live" && s.conn === "ok");
+  const [tokenInput, setTokenInput] = useState("");
+  const [testing, setTesting] = useState(false);
+  const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
 
   // 内容切换方向（步骤前进/后退的滑动方向）；渲染期先读旧值，effect 里再写回
   const prevStep = useRef(step);
@@ -112,6 +124,9 @@ export function OnboardingWizard() {
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
+      // 令牌输入框等可编辑元素聚焦时不响应方向键/Esc（避免打字时误翻步）
+      const tgt = e.target as HTMLElement | null;
+      if (tgt && (tgt.tagName === "INPUT" || tgt.tagName === "TEXTAREA" || tgt.isContentEditable)) return;
       if (e.key === "Escape") finishOnboarding();
       else if (e.key === "ArrowRight") setOnboardingStep(step + 1);
       else if (e.key === "ArrowLeft") setOnboardingStep(step - 1);
@@ -154,6 +169,25 @@ export function OnboardingWizard() {
         break;
       default:
         break;
+    }
+  };
+
+  /** 令牌连接：复用 ConnectionDialog 同款 connectLive，成功即切 live 模式。 */
+  const doConnect = async () => {
+    if (!tokenInput.trim() || testing) return;
+    setTesting(true);
+    setResult(null);
+    const res = await actions.connectLive(tokenInput.trim());
+    setTesting(false);
+    if (res === "ok") {
+      setTokenInput("");
+      setResult({ ok: true, text: t("onboarding.step.connect.success") });
+    } else if (res === "forbidden") {
+      setResult({ ok: false, text: t("conn.forbidden") });
+    } else if (res === "unreachable") {
+      setResult({ ok: false, text: t("conn.unreachable") });
+    } else {
+      setResult({ ok: false, text: t("onboarding.step.connect.error") });
     }
   };
 
@@ -251,6 +285,61 @@ export function OnboardingWizard() {
                 <span className="text-[14px] font-semibold">{t(current.titleKey)}</span>
               </div>
               <p className="mt-2 text-[12.5px] leading-relaxed text-dim">{t(current.descKey)}</p>
+
+              {/* 连接后端：状态 chip + 令牌输入 + 连接按钮（复用 conn.* 文案） */}
+              {current.id === "connect" && (
+                <div className="mt-3 space-y-2.5">
+                  <span
+                    className={`chip border ${
+                      live
+                        ? "border-accent/30 bg-accent/10 text-accent"
+                        : "border-edge-strong bg-raised text-faint"
+                    }`}
+                  >
+                    {live ? (
+                      <>
+                        <Check size={10} weight="bold" />
+                        {t("onboarding.step.connect.connected")}
+                      </>
+                    ) : (
+                      t("onboarding.step.connect.notConnected")
+                    )}
+                  </span>
+                  {!live && (
+                    <>
+                      <div>
+                        <label className="field-label">{t("conn.token")}</label>
+                        <input
+                          type="password"
+                          className="text-input font-mono"
+                          placeholder="GATE_WEB_TOKEN"
+                          value={tokenInput}
+                          onChange={(e) => {
+                            setTokenInput(e.target.value);
+                            setResult(null);
+                          }}
+                          onKeyDown={(e) => e.key === "Enter" && doConnect()}
+                        />
+                        <p className="mt-1.5 text-[11.5px] text-faint leading-relaxed">
+                          {t("onboarding.step.connect.tokenHint")}
+                        </p>
+                      </div>
+                      {result && (
+                        <div className={`text-[12.5px] ${result.ok ? "text-accent" : "text-danger"}`}>
+                          {result.text}
+                        </div>
+                      )}
+                      <button
+                        className="btn btn-sm btn-primary"
+                        disabled={testing || !tokenInput.trim()}
+                        onClick={doConnect}
+                      >
+                        {testing ? t("onboarding.step.connect.connecting") : t("onboarding.step.connect.connect")}
+                      </button>
+                    </>
+                  )}
+                </div>
+              )}
 
               {/* 语言：内联切换（即时生效，无需下一步） */}
               {current.id === "lang" && (

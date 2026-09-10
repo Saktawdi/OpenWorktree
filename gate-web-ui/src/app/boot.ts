@@ -35,7 +35,7 @@ export async function boot() {
       }
     }
     const token = shellToken ?? savedToken;
-    if (token && (await actions.connectLive(token))) {
+    if (token && (await actions.connectLive(token)) === "ok") {
       return;
     }
     try {

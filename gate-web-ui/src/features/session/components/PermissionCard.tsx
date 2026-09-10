@@ -131,7 +131,7 @@ export function PermissionCard({
   const respond = async (response: "once" | "always" | "reject") => {
     if (busy) return;
     setBusy(response);
-    // 乐观移除卡片（openchamber 语义），失败时再恢复待决。
+    // 乐观移除卡片，失败时再恢复待决。
     resolvePermission(ticketNo, request.permissionId, response, false);
     const ok = await answerSessionPermission(sessionId, request.permissionId, response);
     if (!ok) {

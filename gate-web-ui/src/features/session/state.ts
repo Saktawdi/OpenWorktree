@@ -15,7 +15,7 @@ import { dropSessionTasks } from "./tasks";
 const set = appStore.setState;
 const s = () => appStore.getState();
 
-/* ─── 会话内实时切换模型 / 推理强度（OpenChamber 式 per-session 选择） ─── */
+/* ─── 会话内实时切换模型 / 推理强度（per-session 选择） ─── */
 
 export function setSessionModels(sessionId: string, providers: CatalogProvider[]) {
   set((st) => ({ sessionModels: { ...st.sessionModels, [sessionId]: providers } }));

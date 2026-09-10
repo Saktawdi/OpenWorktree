@@ -33,7 +33,7 @@ export const KNOWN_MODEL_KEYS = new Set([
 
 export const MODALITY_PRESETS = ["text", "image", "pdf", "video", "audio"];
 
-/** 限制档位（模仿 ai-toolbox）：上下文给大档位，输出给小档位，也可手输任意值。 */
+/** 限制档位：上下文给大档位，输出给小档位，也可手输任意值。 */
 export const CONTEXT_LIMIT_PRESETS = ["16K", "32K", "64K", "128K", "200K", "256K", "1M", "2M"];
 export const OUTPUT_LIMIT_PRESETS = ["2K", "4K", "8K", "16K", "32K", "64K"];
 

@@ -90,6 +90,9 @@ public final class WebServer implements AutoCloseable {
         app.before("/api/*", ctx -> {
             String path = ctx.path();
             if (path.equals("/api/health") || path.equals("/api/auth/verify")) {
+                // 免令牌但保留 Host 白名单：探活/登录发生在拿到令牌之前，白名单防线
+                // 不能因此缺位——否则 allowed_origins 配错时前端会「连接成功却无数据」
+                authFilter.authorizeHostOnly(ctx);
                 return;
             }
             boolean sse = path.endsWith("/events");

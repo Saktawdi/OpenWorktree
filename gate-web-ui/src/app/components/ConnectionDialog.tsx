@@ -24,11 +24,15 @@ export function ConnectionDialog() {
     }
     setTesting(true);
     setMsg(null);
-    const ok = await actions.connectLive(token.trim());
+    const res = await actions.connectLive(token.trim());
     setTesting(false);
-    if (ok) {
+    if (res === "ok") {
       setMsg({ ok: true, text: t("conn.success") });
       setTimeout(() => closeConnect(), 700);
+    } else if (res === "forbidden") {
+      setMsg({ ok: false, text: t("conn.forbidden") });
+    } else if (res === "unreachable") {
+      setMsg({ ok: false, text: t("conn.unreachable") });
     } else {
       setMsg({ ok: false, text: t("conn.invalidToken") });
     }

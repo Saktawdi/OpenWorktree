@@ -90,7 +90,7 @@ import {
   upsertAgentConfig,
   upsertOcProvider,
 } from "@/features/agent/state";
-import { verifyToken } from "@/net";
+import { verifyToken, type TokenVerify } from "@/net";
 import { t } from "@/i18n";
 import type { AgentConfig, OpenCodeProvider, PendingAttachment, Project, Ticket } from "@/shared/types";
 
@@ -422,9 +422,9 @@ export const actions = {
     // demo 模式也投影证据链（带水印标记），保证第四个 tab 在演示下可用
     void import("@/features/gate/api").then((m) => m.loadEvidence(no));
   },
-  async connectLive(token: string) {
-    const ok = await verifyToken(token);
-    if (!ok) return false;
+  async connectLive(token: string): Promise<TokenVerify> {
+    const v = await verifyToken(token);
+    if (v !== "ok") return v;
     wipePersisted();
     appStore.setState({ mode: "live", token, conn: "ok" });
     startAgentBusyPolling();
@@ -449,7 +449,7 @@ export const actions = {
     } catch {
       /* 列表加载失败不阻断连接 */
     }
-    return true;
+    return "ok";
   },
   useDemo() {
     stopAgentBusyPolling();

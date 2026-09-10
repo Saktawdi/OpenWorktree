@@ -3,7 +3,7 @@ package gate.domain.session;
 import java.time.Instant;
 
 /**
- * A single session execution (≈ multica Task) — 执行文档-后端-web §5.2.
+ * A single session execution — 执行文档-后端-web §5.2.
  *
  * @param id                   UUID
  * @param ticketNo             owning ticket

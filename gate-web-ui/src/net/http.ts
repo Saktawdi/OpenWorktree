@@ -53,15 +53,20 @@ export async function detectBackend(): Promise<"ok" | "unauth" | "error"> {
   }
 }
 
-export async function verifyToken(token: string): Promise<boolean> {
+/** 令牌校验结果：ok / forbidden（Host 白名单拒绝，服务器部署需配 OW_ALLOWED_ORIGINS）/ invalid（令牌无效）/ unreachable（网络不通）。 */
+export type TokenVerify = "ok" | "forbidden" | "invalid" | "unreachable";
+
+export async function verifyToken(token: string): Promise<TokenVerify> {
   try {
     const res = await fetch("/api/auth/verify", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ token }),
     });
-    return res.ok;
+    if (res.ok) return "ok";
+    if (res.status === 403) return "forbidden"; // AuthFilter 的 Host/Origin 白名单拦截
+    return "invalid";
   } catch {
-    return false;
+    return "unreachable";
   }
 }

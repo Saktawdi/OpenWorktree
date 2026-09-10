@@ -200,8 +200,8 @@ function splitToolArgs(tool: ToolCallView): { toolName: string; argsPart: string
   return { toolName: label, argsPart: tool.argsSummary };
 }
 
-/** 时间线思考段（ZCode 式单行）：完成后折叠为"思考 · 持续 N 秒"，流式段显示呼吸点。 */
-/** 时间线思考段（ZCode 式单行）：折叠态带思考正文尾部预览并实时刷新（流式时最新
+/** 时间线思考段（单行）：完成后折叠为"思考 · 持续 N 秒"，流式段显示呼吸点。 */
+/** 时间线思考段（单行）：折叠态带思考正文尾部预览并实时刷新（流式时最新
  * 内容在尾部，每个增量都滑动窗口——用户看得到"模型正在输出"而不是怀疑卡死），
  * 点击展开全文。 */
 const ThinkingRow = memo(function ThinkingRow({
@@ -283,7 +283,7 @@ function derivePartToolView(part: Extract<TimelinePart, { type: "tool" }>, t: Tr
 }
 
 /**
- * ZCode 式回合时间线：思考/文本/工具按到达序交错；长回合完成后折叠为
+ * 回合时间线：思考/文本/工具按到达序交错；长回合完成后折叠为
  * "已工作 X 分 Y 秒"汇总条（点击展开全过程），最终汇报文本常驻其下。
  */
 function tailText(parts: TimelinePart[], lastActionIdx: number): TimelinePart[] {
@@ -512,7 +512,7 @@ const ToolRow = memo(function ToolRow({ tool }: { tool: ToolCallView }) {
 });
 
 function AssistantFooter({ item }: { item: Extract<ChatItem, { kind: "assistant" }> }) {
-  // openchamber 式 footer（共享 ReplyFooter）：元信息（完成本回复的请求模型 + 推理
+  // 回复 footer（共享 ReplyFooter）：元信息（完成本回复的请求模型 + 推理
   // 等级）常驻左对齐，备注解析不出时回退 Agent 名称；复制按钮紧随其后、仅 hover
   // 整条回复时出现——绝不推到行尾，避免被误读成用户消息的操作。
   if (item.streaming) return null;
@@ -534,7 +534,7 @@ const AssistantMessage = memo(function AssistantMessage({
   item: Extract<ChatItem, { kind: "assistant" }>;
   ticketNo: string;
 }) {
-  // V20：有时间线走 ZCode 式分段渲染；旧行/极端缺省回退平铺（思考块+工具堆+正文）。
+  // V20：有时间线走分段渲染；旧行/极端缺省回退平铺（思考块+工具堆+正文）。
   const timeline = !!item.parts && item.parts.length > 0;
   return (
     <AssistantShell ts={item.ts} name="Agent">
@@ -583,7 +583,7 @@ const RAIL_HOVER_DELAY_MS = 180; // 悬浮该时长后才弹预览，避免扫�
 const RAIL_HIDE_GRACE_MS = 150; // 移出刻度后的宽限期：在刻度间移动时预览不闪烁
 
 /**
- * 会话流右缘的消息刻度导航（openchamber 式）：
+ * 会话流右缘的消息刻度导航：
  * 每条用户消息一根横杠，贴着消息列（max-w-760）右缘垂直居中；
  * 当前视口所在的消息横杠加宽提亮；悬浮片刻弹出消息预览，点击平滑跳转到该消息。
  * 会话不够长（消息少或内容不溢出）时整条隐藏。

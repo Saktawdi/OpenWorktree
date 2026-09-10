@@ -67,7 +67,7 @@ import java.util.stream.Stream;
  * OpenCode serve adapter (执行文档-后端-web §5.3.1, ADR-12): talks to a local
  * {@code opencode serve} HTTP API on an allocated port.
  *
- * <p>Streaming architecture (mirrors how OpenChamber integrates OpenCode): prompts are fired with
+ * <p>Streaming architecture: prompts are fired with
  * {@code POST /session/{id}/prompt_async} which returns immediately, and the adapter keeps one
  * persistent upstream SSE reader per session attached to OpenCode's {@code GET /event} bus. Bus
  * events are mapped onto the port's {@link SessionStreamChunk} vocabulary, so browsers get true
@@ -82,7 +82,7 @@ import java.util.stream.Stream;
  * <p>The final assistant message is persisted from the {@code message.updated} completion snapshot
  * (with token usage written back to the ticket), replacing the former synchronous-response parsing.
  * The upstream reader reconnects with {@code Last-Event-ID} after drops and force-reconnects a
- * stalled stream, following the same recovery shape as OpenChamber's upstream-reader module.
+ * stalled stream, following the same recovery shape as the upstream reader.
  */
 public final class OpenCodeServeAdapter implements AgentSessionPort {
 
@@ -1276,7 +1276,7 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
      * Builds the {@code prompt_async} body. The live per-session override (provider/model/variant,
      * 会话内实时切换) wins over the AgentConfig defaults; a blank override falls back to
      * {@code config.model()} parsed as {@code provider/model}. {@code variant} is OpenCode's
-     * reasoning-effort selection (same field the OpenChamber composer sends).
+     * reasoning-effort selection (same field the composer sends).
      */
     static String messageBody(AgentConfig config, String message,
                               String overrideProvider, String overrideModel, String overrideVariant) {
@@ -1285,7 +1285,7 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
 
     /**
      * Full shape: image attachments ride along as {@code file} parts after the text part — the
-     * same contract the OpenChamber composer uses ({@code {type:"file", mime, filename?, url}} with
+     * same contract the composer uses ({@code {type:"file", mime, filename?, url}} with
      * a {@code data:} URL payload).
      */
     static String messageBody(AgentConfig config, String message,
@@ -1399,7 +1399,7 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
         // 每个思考/文本 part 的累计转发正文（key: partId）：真 delta（message.part.delta）
         // 与节流快照（message.part.updated）都以此为对齐基准——delta 先做最长后缀重叠
         // 剔除（快照覆盖过的文本会在后续 delta 里重复出现），快照只转发累计之外的
-        // 新尾部。openchamber event-reducer 同款语义的后端版。
+        // 新尾部。增量事件 reducer 同款语义的后端版。
         final Map<String, StringBuilder> partText = new ConcurrentHashMap<>();
         // partId → type（text/reasoning/tool）：message.part.delta 的 field 是被追加的
         // 属性名（reasoning part 的正文字段也叫 text），思考/正文分流必须按 part.type
@@ -1414,7 +1414,7 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
         // transitions stream in and drained into the persisted ASSISTANT row on completion,
         // so reloading a session re-renders 工具调用 instead of degrading to plain text.
         final Map<String, LinkedHashMap<String, ToolCallState>> toolsByMessage = new ConcurrentHashMap<>();
-        // ZCode 式时间线草稿：messageId -> (槽键 -> 槽)。槽键前缀定序（t: 文本 / r: 思考 /
+        // 时间线草稿：messageId -> (槽键 -> 槽)。槽键前缀定序（t: 文本 / r: 思考 /
         // 工具 callID），LinkedHashMap 保到达序；text 是快照 replace、thinking 增量 append、
         // tool 原位更新终态。步完成（mergeStepIntoTurn）按序 drain 成 TurnPart 进 turnParts。
         final Map<String, LinkedHashMap<String, PartSlot>> partsByMessage = new ConcurrentHashMap<>();
@@ -1423,12 +1423,12 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
         // parts echo the prompt verbatim and must never surface as assistant content chunks.
         final java.util.Set<String> assistantMessages = ConcurrentHashMap.newKeySet();
         final java.util.Set<String> userMessages = ConcurrentHashMap.newKeySet();
-        // Turn grouping (openchamber-style): an agentic turn spans MANY assistant messages
+        // Turn grouping: an agentic turn spans MANY assistant messages
         // (one per step). Everything accumulates here and persists as ONE reply when the
         // turn goes idle — instead of one noisy bubble per intermediate CoT step.
         final StringBuilder turnText = new StringBuilder();
         final List<TurnTool> turnTools = java.util.Collections.synchronizedList(new ArrayList<>());
-        // ZCode 式时间线分段：reasoning/text/tool 按真实到达序累积，落库后历史可整段
+        // 时间线分段：reasoning/text/tool 按真实到达序累积，落库后历史可整段
         // 重放（思考折叠块 + 文本段 + 工具行交错），不再是"思考一坨、工具一堆、文本垫底"。
         // 读写者与 turnText 相同（reader 合并 / superseded 重置 / flush 落库），一律持 turnLock。
         final List<TurnPart> turnParts = new ArrayList<>();
@@ -1752,12 +1752,12 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
         }
 
         /**
-         * 真·流式增量（openchamber 同款事件，~60 次/秒）。此前我们只消费节流快照
+         * 真·流式增量（上游原生事件，~60 次/秒）。此前我们只消费节流快照
          * part.updated，流式体感"一顿一顿"——快照是 opencode 内部按秒级合并后的广播，
          * token 级内容全在这里。
          *
          * <p>关键语义：{@code field} 是被追加的 part 属性名——reasoning part 的正文字段
-         * 恰好也叫 "text"，绝不能按 field 分类！openchamber event-reducer 先按
+         * 恰好也叫 "text"，绝不能按 field 分类！事件 reducer 先按
          * messageID/partID 定位 part（part.type 即思考/正文），再写 field 指定的属性。
          * 此前按 field=="reasoning" 分流，reasoning 的 text delta 全被误当正文转发——
          * 思考独白整段漏进正文流、思考行只剩快照尾巴（时灵时不灵取决于快照与 delta
@@ -1821,8 +1821,8 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
 
         /**
          * 把 {@code incoming} 对齐进 {@code acc}，返回真正新增的尾部：incoming 以 acc 结尾
-         * 或与 acc 有最长后缀重叠时只追加未重叠部分，否则整段追加。这是 openchamber
-         * event-reducer 的 appendNonOverlappingDelta 语义——快照/双流并存时两路内容不重复。
+         * 或与 acc 有最长后缀重叠时只追加未重叠部分，否则整段追加。这是增量事件
+         * reducer 的 appendNonOverlappingDelta 语义——快照/双流并存时两路内容不重复。
          */
         private static String appendAligned(StringBuilder acc, String incoming) {
             if (incoming.isEmpty()) {
@@ -2013,7 +2013,7 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
 
         /**
          * Persist the buffered turn (all steps' text + tool calls + summed usage) as ONE
-         * assistant reply — the openchamber-style grouping of the idle path, reused here
+         * assistant reply — the turn grouping of the idle path, reused here
          * so an unfinished turn survives a session switch/reload. Content already streamed
          * live; no chunks are emitted (recover-only persistence). No-op when the turn
          * buffer holds nothing. Recovery callers pass {@code degraded=true}.
@@ -2101,7 +2101,7 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                     ? (Map<String, Object>) s : Map.of();
             if ("idle".equals(str(status.get("type")))) {
                 // Turn ended: persist the whole turn (all steps' text + tool calls + summed
-                // usage) as ONE assistant reply — openchamber-style grouping.
+                // usage) as ONE assistant reply — turn grouping.
                 flushTurn("idle", false);
                 // If nothing was produced and an error was buffered, persist it so the
                 // failure is visible after reload instead of living only in the SSE stream.
@@ -2372,7 +2372,7 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
         for (Upstream up : upstreams.values()) {
             if (up.stale()) {
                 // Closing the body unblocks readLine(); the reader loop reconnects with
-                // Last-Event-ID, exactly like OpenChamber's stall recovery.
+                // Last-Event-ID.
                 log.warn("opencode", "upstream.stall-force-reconnect", "sessionId", up.sessionId,
                         "silentMs", System.currentTimeMillis() - up.lastEventAt);
                 up.closeBody();
@@ -2883,7 +2883,7 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
             // (their providers/models survive), and the domain token rides in the MCP child's
             // environment, never argv.
             provisionGateMcp(pb, clonePath, env);
-            // A gate backend launched from inside an OpenChamber/OpenCode-managed shell inherits
+            // A gate backend launched from inside an OpenCode-managed shell inherits
             // that shell's server wiring; OPENCODE_SERVER_PASSWORD in particular makes every child
             // serve demand Bearer auth our adapter never sends (all requests 401). The spawned
             // serve must be a clean-slate instance. (OPENCODE_CONFIG_CONTENT is inline-config

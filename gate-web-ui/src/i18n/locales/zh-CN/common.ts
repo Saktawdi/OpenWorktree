@@ -103,6 +103,8 @@ export const zhCommon = {
   "conn.pasteTokenFirst": "请先粘贴访问令牌",
   "conn.success": "连接成功，已加载后端数据",
   "conn.invalidToken": "令牌无效或后端未启动（18080 端口）",
+  "conn.forbidden": "后端拒绝访问：当前访问地址不在 Host 白名单——服务器部署需在 compose 环境变量设置 OW_ALLOWED_ORIGINS=你的域名或 IP 后重启（见 README 方式二）",
+  "conn.unreachable": "网络错误：无法连接后端，请确认后端已启动",
   "conn.testing": "测试中…",
   "conn.testAndConnect": "测试并连接",
   "conn.backToDemo": "返回演示",

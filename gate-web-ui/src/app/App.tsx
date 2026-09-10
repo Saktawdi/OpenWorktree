@@ -57,7 +57,7 @@ export default function App() {
       <StageChangeConfirmDialog />
       <TerminalWorkbench />
       <SelectionQuoteLayer />
-      {/* 首次启动新手引导（六步配置向导 + 中途收起的「继续引导」浮标） */}
+      {/* 首次启动新手引导（七步配置向导 + 中途收起的「继续引导」浮标） */}
       <OnboardingWizard />
       <OnboardingResume />
       {/* LLM 小助手悬浮面板（T-109 原生内置：跨视图常驻、可拖拽/缩放） */}

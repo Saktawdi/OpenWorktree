@@ -30,13 +30,21 @@ public final class AuthFilter {
      * @param ctx Javalin Context
      * @param allowQueryToken true for SSE endpoints
      */
+    /**
+     * Host/Origin whitelist only — no token check. Used by pre-auth endpoints
+     * ({@code /api/health}, {@code /api/auth/verify}): the DNS-rebinding guard must not
+     * vanish just because a token is not available yet, or a misconfigured
+     * {@code allowed_origins} would surface as a fake "backend reachable".
+     */
+    public void authorizeHostOnly(Context ctx) {
+        if (!hostAllowed(ctx)) {
+            rejectHost(ctx);
+        }
+    }
+
     public void authorize(Context ctx, boolean allowQueryToken) {
         if (!hostAllowed(ctx)) {
-            ctx.status(HttpStatus.FORBIDDEN);
-            ctx.contentType("application/json; charset=utf-8");
-            ctx.result(Json.error(GateErrorCode.USAGE.code(), "FORBIDDEN",
-                    "Host/Origin not in allowed_origins (DNS-rebinding guard, §3.3)", null));
-            throw new HttpResponseException(HttpStatus.FORBIDDEN.getCode(), "Forbidden");
+            rejectHost(ctx);
         }
 
         String token = extractToken(ctx, allowQueryToken);
@@ -55,6 +63,14 @@ public final class AuthFilter {
                     "invalid or non-HUMAN token (Web console requires a HUMAN-domain token, ADR-10)", null));
             throw new HttpResponseException(HttpStatus.UNAUTHORIZED.getCode(), "Unauthorized");
         }
+    }
+
+    private static void rejectHost(Context ctx) {
+        ctx.status(HttpStatus.FORBIDDEN);
+        ctx.contentType("application/json; charset=utf-8");
+        ctx.result(Json.error(GateErrorCode.USAGE.code(), "FORBIDDEN",
+                "Host/Origin not in allowed_origins (DNS-rebinding guard, §3.3)", null));
+        throw new HttpResponseException(HttpStatus.FORBIDDEN.getCode(), "Forbidden");
     }
 
     private boolean hostAllowed(Context ctx) {

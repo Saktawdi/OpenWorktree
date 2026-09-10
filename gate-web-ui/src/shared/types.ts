@@ -188,7 +188,7 @@ export interface ToolCallView {
 }
 
 /**
- * 回合时间线分段（ZCode 式 chronology）：assistant 回合按真实到达序交错
+ * 回合时间线分段（chronology）：assistant 回合按真实到达序交错
  * 思考/文本/工具，`tools`/`thinking`/`text` 平铺字段保留为兼容视图。
  * parts 缺省（旧行/live 早期）时渲染层回退平铺字段。
  */
@@ -322,7 +322,7 @@ export type ChatItem =
       parts?: TimelinePart[];
       /** 回合结束时刻（ms）；缺省用 ts，"已工作 x" 的时长数据源。 */
       endedAt?: number;
-      /** 完成本回复的请求模型名（openchamber 式底部标注；取值口径见 sessionReplyMeta）。 */
+      /** 完成本回复的请求模型名（底部标注；取值口径见 sessionReplyMeta）。 */
       model?: string | null;
       /** 推理等级（reasoning-effort，如 high/medium/low）；可能为空。 */
       variant?: string | null;

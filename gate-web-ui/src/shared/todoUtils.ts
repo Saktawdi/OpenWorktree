@@ -134,7 +134,7 @@ function truncate(text: string, max = COMPACT_MAX): string {
 }
 
 /**
- * 工具行参数列的紧凑摘要（ZCode 式单行）：bash 只留命令原文，read/edit 留路径，
+ * 工具行参数列的紧凑摘要（单行）：bash 只留命令原文，read/edit 留路径，
  * grep/glob 留 pattern——完整 JSON 仍保留在展开的 IN 区。解析失败回退单行截断。
  */
 export function compactToolArgs(toolName: string | undefined, argsJson: string | undefined): string {
@@ -196,7 +196,7 @@ export function compactToolArgs(toolName: string | undefined, argsJson: string |
 }
 
 /**
- * 工具行右侧结果提示：仅当输出首行足够短（ZCode 式 "No files found"/"Found 27 matches"），
+ * 工具行右侧结果提示：仅当输出首行足够短（"No files found"/"Found 27 matches"），
  * 多行长输出不预告（展开看 OUT）。
  */
 export function compactToolResult(resultJson: string | undefined | null): string | undefined {

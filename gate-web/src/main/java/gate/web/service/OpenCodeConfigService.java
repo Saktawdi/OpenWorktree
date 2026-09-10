@@ -17,8 +17,8 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Read/write access to the local OpenCode CLI configuration file (the same surface ai-toolbox
- * manages): {@code ~/.config/opencode/opencode.jsonc} / {@code opencode.json}, overridable via the
+ * Read/write access to the local OpenCode CLI configuration file
+ * ({@code ~/.config/opencode/opencode.jsonc} / {@code opencode.json}, overridable via the
  * {@code OPENCODE_CONFIG} environment variable or the {@code opencode.config.path} system property
  * (the property wins, so the console tests can point at a temp file without touching the user's
  * real config).
