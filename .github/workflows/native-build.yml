@@ -1,7 +1,8 @@
 # OpenWorktree 原生二进制构建（方案2：GraalVM native-image 单文件分发）。
 #
 # 触发：push 到 master 且涉及后端/工作流文件（前端-only 改动不重编 native）。
-# 产物：双平台单文件二进制，作为 build artifact 保留 14 天；打 tag 时同时附到 Release。
+# 产物：Linux x86_64 / Linux arm64 / Windows x86_64 三份单文件二进制，作为 build artifact
+#       保留 14 天；打 tag 时同时附到 Release。
 #
 # agent-config 目录是 tracing agent 采集的 reachability 元数据（reflect/jni/resource/proxy），
 # 提交在仓库里；新增依赖引入运行时反射错误时的修复流程：
@@ -40,7 +41,18 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, windows-2022]
+        # artifact 名保留既有约定（desktop job 依赖 ow-native-Windows 下载侧车）；
+        # ubuntu-22.04-arm 与 x86_64 同为 22.04，glibc 底线（2.34 符号）两架构一致。
+        include:
+          - os: ubuntu-22.04
+            artifact: ow-native-Linux
+            bin: ow-linux-x86_64
+          - os: ubuntu-22.04-arm
+            artifact: ow-native-Linux-arm64
+            bin: ow-linux-arm64
+          - os: windows-2022
+            artifact: ow-native-Windows
+            bin: ow-windows-x86_64
     steps:
       - uses: actions/checkout@v4
 
@@ -103,10 +115,10 @@ jobs:
             -H:IncludeResources='simplelogger\.properties' \
             -H:IncludeResources='static/.*' \
             -cp "$CP" \
-            -o ow-linux-x86_64 \
+            -o ${{ matrix.bin }} \
             gate.web.GateWebApp
           # 只去调试信息，保留符号表（产物从 55MB 降到 ~45MB）
-          objcopy --strip-debug ow-linux-x86_64
+          objcopy --strip-debug ${{ matrix.bin }}
 
       - name: Native image compile (Windows)
         if: runner.os == 'Windows'
@@ -123,7 +135,7 @@ jobs:
             -H:IncludeResources='simplelogger\.properties' \
             -H:IncludeResources='static/.*' \
             -cp "$CP" \
-            -o ow-windows-x86_64 \
+            -o ${{ matrix.bin }} \
             gate.web.GateWebApp
 
       # 冒烟：启动到监听 + 登录令牌落盘 + status API + SPA（index 与首个 JS bundle）。
@@ -132,6 +144,8 @@ jobs:
       # 但应用层帧全哑（终端"永远空白"那次回归，HTTP 冒烟完全测不到）。
       - name: Smoke (boot + token + status API + SPA + WS)
         shell: python
+        env:
+          NATIVE_BIN: ${{ matrix.bin }}
         run: |
           import base64, json, os, socket, struct, subprocess, sys, time, traceback, urllib.request
 
@@ -151,10 +165,11 @@ jobs:
 
           sys.excepthook = _dump_and_raise
 
+          bin_name = os.environ["NATIVE_BIN"]
           if os.name == "nt":
-              bin_name, exe = "ow-windows-x86_64.exe", os.path.join("..", "ow-windows-x86_64.exe")
+              exe = os.path.join("..", bin_name + ".exe")
           else:
-              bin_name, exe = "ow-linux-x86_64", os.path.join("..", "ow-linux-x86_64")
+              exe = os.path.join("..", bin_name)
           os.makedirs("smoke-run", exist_ok=True)
           os.chdir("smoke-run")
           # 服务端日志提级到 debug（运行时 -D，native 可执行文件支持）：
@@ -251,31 +266,20 @@ jobs:
       - name: Rename Windows binary
         if: runner.os == 'Windows'
         shell: bash
-        run: mv ow-windows-x86_64.exe ow-windows-x86_64
+        run: mv ${{ matrix.bin }}.exe ${{ matrix.bin }}
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ow-native-${{ runner.os }}
-          path: ow-linux-x86_64
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.bin }}
           retention-days: 14
           if-no-files-found: error
-        if: runner.os == 'Linux'
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ow-native-${{ runner.os }}
-          path: ow-windows-x86_64
-          retention-days: 14
-          if-no-files-found: error
-        if: runner.os == 'Windows'
 
       # 打 tag（v*）时把二进制附到 GitHub Release —— 私有仓库的 Release 同样仅协作者可见。
       - name: Attach to release
         if: startsWith(github.ref, 'refs/tags/v')
         shell: bash
-        run: |
-          if [ "$RUNNER_OS" = "Windows" ]; then F=ow-windows-x86_64; else F=ow-linux-x86_64; fi
-          gh release upload "${GITHUB_REF_NAME}" "$F" --clobber
+        run: gh release upload "${GITHUB_REF_NAME}" "${{ matrix.bin }}" --clobber
         env:
           GH_TOKEN: ${{ github.token }}
 
