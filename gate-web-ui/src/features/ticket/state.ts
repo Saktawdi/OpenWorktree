@@ -5,7 +5,8 @@ import { t } from "@/i18n";
 import { appStore } from "@/store";
 import { showToast } from "@/store/ui";
 import { saveKanbanStages, saveVisibleStages } from "@/store/prefs";
-import type { DiffFile, Stage, StageChangeRecord, Ticket } from "@/shared/types";
+import type { DiffContentEntry, DiffFile, Stage, StageChangeRecord, Ticket } from "@/shared/types";
+import { diffSig } from "@/shared/diff";
 import { ALL_STAGES, KANBAN_DEFAULT_STAGES, KANBAN_LANE_COUNT, KANBAN_STAGE_ORDER, uid } from "@/shared/format";
 import { clearSessionEnded } from "@/features/session/state";
 import { clearReviewEnded } from "@/features/gate/state";
@@ -32,10 +33,38 @@ export function setStage(no: string, stage: Stage) {
   }
 }
 
+/**
+ * 写入变更对比文件列表：只保留元数据（hunks 置空，内容按需加载）。
+ * 带 hunks 的完整文件（demo 种子）同时落入内容缓存；仍在列表中的 path 保留旧内容
+ * （过期与否由 DiffView 按 sig 判断），已从列表消失的 path 丢弃。
+ */
 export function setDiffs(no: string, files: DiffFile[], eolWarning?: string) {
+  set((st) => {
+    const prev = st.diffContents[no] ?? {};
+    const contents: Record<string, DiffContentEntry> = {};
+    const metas = files.map((f) => {
+      if (f.hunks.length > 0) {
+        contents[f.path] = { file: f, sig: diffSig(f) };
+      } else if (prev[f.path]) {
+        contents[f.path] = prev[f.path];
+      }
+      return { ...f, hunks: [] };
+    });
+    return {
+      diffs: { ...st.diffs, [no]: metas },
+      diffContents: { ...st.diffContents, [no]: contents },
+      diffWarnings: { ...st.diffWarnings, [no]: eolWarning ?? "" },
+    };
+  });
+}
+
+/** 写入按需加载的单文件 diff 内容；sig = 加载时刻列表侧的增删行数指纹。 */
+export function setDiffContent(no: string, file: DiffFile, sig: string) {
   set((st) => ({
-    diffs: { ...st.diffs, [no]: files },
-    diffWarnings: { ...st.diffWarnings, [no]: eolWarning ?? "" },
+    diffContents: {
+      ...st.diffContents,
+      [no]: { ...(st.diffContents[no] ?? {}), [file.path]: { file, sig } },
+    },
   }));
 }
 

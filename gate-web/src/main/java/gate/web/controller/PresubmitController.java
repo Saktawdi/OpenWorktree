@@ -34,6 +34,14 @@ import java.util.Map;
 public final class PresubmitController implements WebController {
 
     private static final int EOL_NOISE_THRESHOLD_CHARS = 100_000;
+    /** 行尾噪声检测的行数门槛（原全量 diff 10 万字符 ≈ 2000 行级别变更），避免为告警拉全量 diff。 */
+    private static final int EOL_NOISE_MIN_CHANGED_LINES = 2_000;
+    /** 未跟踪文件行数计数的体积上限：超过则按 0 行计（内容仍可经 /diff/file 按需查看）。 */
+    private static final long UNTRACKED_COUNT_LIMIT_BYTES = 4L * 1024 * 1024;
+    private static final String EOL_WARNING_TEXT = "已忽略大量仅换行符（CRLF/LF）差异：该 clone 的检出未在 core.autocrlf=false 下进行，"
+            + "建议重建工作区；以下仅显示真实的内容变更。";
+    private static final java.util.regex.Pattern INSERTIONS = java.util.regex.Pattern.compile("(\\d+) insertions?");
+    private static final java.util.regex.Pattern DELETIONS = java.util.regex.Pattern.compile("(\\d+) deletions?");
 
     private final GateService gateService;
     private final TicketRepository tickets;
@@ -72,6 +80,8 @@ public final class PresubmitController implements WebController {
     public void register(Javalin app) {
         app.post("/api/tickets/{ticketNo}/presubmit", this::presubmit);
         app.get("/api/tickets/{ticketNo}/diff", this::workingDiff);
+        app.get("/api/tickets/{ticketNo}/diff/list", this::workingDiffList);
+        app.get("/api/tickets/{ticketNo}/diff/file", this::workingDiffFile);
         app.get("/api/tickets/{ticketNo}/review-result", this::reviewResult);
         app.get("/api/tickets/{ticketNo}/presubmits", this::presubmitList);
         app.get("/api/tickets/{ticketNo}/presubmit/{round}/diff", this::presubmitDiff);
@@ -104,18 +114,9 @@ public final class PresubmitController implements WebController {
 
     public void workingDiff(Context ctx) {
         String ticketNo = ctx.pathParam("ticketNo");
-        Ticket t = tickets.find(ticketNo).orElseThrow(() -> new GateException(
-                GateErrorCode.USAGE, "no such ticket: " + ticketNo));
-        Path clone = Path.of(t.clonePath());
-        if (!Files.isDirectory(clone)) {
-            throw new GateException(GateErrorCode.USAGE,
-                    "clone directory does not exist for " + ticketNo + ": " + clone);
-        }
-        String baseCommit = null;
-        var latestPresubmit = presubmits.findLatest(ticketNo);
-        if (latestPresubmit.isPresent()) {
-            baseCommit = latestPresubmit.get().baseCommit().hex();
-        }
+        Ticket t = requireTicket(ticketNo);
+        Path clone = requireClone(t);
+        String baseCommit = baseCommitOf(ticketNo);
         // V19 快速模式: no presubmit round ever exists, and the diff is the user's real workspace —
         // diff against HEAD so staged work is not silently dropped from the view.
         boolean diffHead = baseCommit != null || t.isSuper();
@@ -160,6 +161,263 @@ public final class PresubmitController implements WebController {
         }
         ctx.status(HttpStatus.OK);
         ctx.json(body);
+    }
+
+    /**
+     * 变更列表端点（变更对比 tab 的默认数据源）：只返回 path / 状态 / 增删行数，不携带 diff 内容——
+     * 内容按需经 {@link #workingDiffFile} 单文件拉取。会话期间前端会以亚秒节奏反复刷新本端点，
+     * 因此必须保持 O(变更文件数) 而非 O(diff 字节) 的输出规模。
+     */
+    public void workingDiffList(Context ctx) {
+        String ticketNo = ctx.pathParam("ticketNo");
+        Ticket t = requireTicket(ticketNo);
+        Path clone = requireClone(t);
+        String baseCommit = baseCommitOf(ticketNo);
+        boolean diffHead = baseCommit != null || t.isSuper();
+
+        // --no-renames：与全量 diff 的解析口径一致（重命名呈现为「删除 + 新增」两个条目）。
+        Map<String, String> status = new LinkedHashMap<>();
+        var ns = git.run(clone, Map.of(), trackedDiffArgs(diffHead, "--name-status", "-z").toArray(new String[0]));
+        if (ns.ok()) {
+            parseNameStatus(ns.stdout(), status);
+        }
+        Map<String, long[]> counts = new LinkedHashMap<>();
+        var num = git.run(clone, Map.of(), trackedDiffArgs(diffHead, "--numstat", "-z").toArray(new String[0]));
+        if (num.ok()) {
+            parseNumstat(num.stdout(), counts);
+        }
+
+        // 行尾噪声检测降到 shortstat 粒度（输出恒为两行内），不再为告警物化全量 diff。
+        String eolWarning = null;
+        boolean ignoreCrAtEol = false;
+        long[] raw = shortstat(clone, diffHead, false);
+        if (raw[0] + raw[1] > EOL_NOISE_MIN_CHANGED_LINES) {
+            long[] normalized = shortstat(clone, diffHead, true);
+            if (normalized[0] * 10 < raw[0]) {
+                eolWarning = EOL_WARNING_TEXT;
+                ignoreCrAtEol = true;
+            }
+        }
+
+        List<Map<String, Object>> files = new ArrayList<>();
+        for (Map.Entry<String, long[]> e : counts.entrySet()) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("path", e.getKey());
+            m.put("status", status.getOrDefault(e.getKey(), "modified"));
+            m.put("additions", e.getValue()[0]);
+            m.put("deletions", e.getValue()[1]);
+            files.add(m);
+        }
+        var untracked = git.run(clone, Map.of(), "ls-files", "--others", "--exclude-standard", "-z");
+        if (untracked.ok()) {
+            for (String rel : untracked.stdout().split("\0", -1)) {
+                if (rel.isBlank()) {
+                    continue;
+                }
+                Map<String, Object> m = new LinkedHashMap<>();
+                m.put("path", rel);
+                m.put("status", "added");
+                m.put("additions", countLines(clone.resolve(rel)));
+                m.put("deletions", 0);
+                files.add(m);
+            }
+        }
+
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("ticket_no", ticketNo);
+        body.put("source", "working");
+        body.put("base_commit", baseCommit);
+        body.put("files", files);
+        if (eolWarning != null) {
+            body.put("eol_warning", eolWarning);
+            body.put("ignore_cr_at_eol", ignoreCrAtEol);
+        }
+        ctx.status(HttpStatus.OK);
+        ctx.json(body);
+    }
+
+    /** 单文件 diff 端点：变更对比点击文件条时按需拉取该文件的 unified diff（?path=…，&eol=1 启用行尾归一化）。 */
+    public void workingDiffFile(Context ctx) {
+        String ticketNo = ctx.pathParam("ticketNo");
+        String path = sanitizeDiffPath(ctx.queryParam("path"));
+        Ticket t = requireTicket(ticketNo);
+        Path clone = requireClone(t);
+        String baseCommit = baseCommitOf(ticketNo);
+        boolean diffHead = baseCommit != null || t.isSuper();
+        boolean ignoreEol = "1".equals(ctx.queryParam("eol"));
+
+        String diff;
+        String eolWarning = null;
+        // 未跟踪文件不在 git diff 输出里，单独物化 new-file diff（与全量端点 appendNewFileDiff 同口径）。
+        var untracked = git.run(clone, Map.of(), "ls-files", "--others", "--exclude-standard", "-z", "--", path);
+        if (untracked.ok() && !untracked.stdout().isBlank()) {
+            StringBuilder sb = new StringBuilder();
+            appendNewFileDiff(sb, clone, path);
+            diff = sb.toString();
+        } else {
+            List<String> args = trackedDiffArgs(diffHead);
+            if (ignoreEol) {
+                args.add("--ignore-cr-at-eol");
+            }
+            args.add("--");
+            args.add(path);
+            var run = git.run(clone, Map.of(), args.toArray(new String[0]));
+            diff = run.ok() ? run.stdout() : "";
+            if (!ignoreEol && diff.length() > EOL_NOISE_THRESHOLD_CHARS) {
+                // 单文件粒度的行尾噪声兜底，与全量端点同规则（归一化后缩到 1/10 才替换）。
+                List<String> normArgs = trackedDiffArgs(diffHead, "--ignore-cr-at-eol", "--");
+                normArgs.add(path);
+                var normalized = git.run(clone, Map.of(), normArgs.toArray(new String[0]));
+                if (normalized.ok() && normalized.stdout().length() * 10 < diff.length()) {
+                    diff = normalized.stdout();
+                    eolWarning = EOL_WARNING_TEXT;
+                }
+            }
+        }
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("ticket_no", ticketNo);
+        body.put("path", path);
+        body.put("diff", diff);
+        if (eolWarning != null) {
+            body.put("eol_warning", eolWarning);
+        }
+        ctx.status(HttpStatus.OK);
+        ctx.json(body);
+    }
+
+    private Ticket requireTicket(String ticketNo) {
+        return tickets.find(ticketNo).orElseThrow(() -> new GateException(
+                GateErrorCode.USAGE, "no such ticket: " + ticketNo));
+    }
+
+    private Path requireClone(Ticket t) {
+        Path clone = Path.of(t.clonePath());
+        if (!Files.isDirectory(clone)) {
+            throw new GateException(GateErrorCode.USAGE,
+                    "clone directory does not exist for " + t.ticketNo() + ": " + clone);
+        }
+        return clone;
+    }
+
+    private String baseCommitOf(String ticketNo) {
+        return presubmits.findLatest(ticketNo).map(p -> p.baseCommit().hex()).orElse(null);
+    }
+
+    /** git diff 参数骨架（含 --no-renames，保证与列表口径一致）；extra 追加在末尾。 */
+    private List<String> trackedDiffArgs(boolean diffHead, String... extra) {
+        List<String> args = new ArrayList<>(List.of("diff"));
+        if (diffHead) {
+            args.add("HEAD");
+        }
+        args.add("--no-renames");
+        args.addAll(List.of(extra));
+        return args;
+    }
+
+    /** shortstat → [insertions, deletions]；无变更或解析失败返回 {0,0}。 */
+    private long[] shortstat(Path clone, boolean diffHead, boolean ignoreCrAtEol) {
+        List<String> args = new ArrayList<>(List.of("diff"));
+        if (diffHead) {
+            args.add("HEAD");
+        }
+        if (ignoreCrAtEol) {
+            args.add("--ignore-cr-at-eol");
+        }
+        args.add("--shortstat");
+        var run = git.run(clone, Map.of(), args.toArray(new String[0]));
+        if (!run.ok()) {
+            return new long[]{0, 0};
+        }
+        long ins = 0;
+        long del = 0;
+        var m = INSERTIONS.matcher(run.stdout());
+        if (m.find()) {
+            ins = Long.parseLong(m.group(1));
+        }
+        var m2 = DELETIONS.matcher(run.stdout());
+        if (m2.find()) {
+            del = Long.parseLong(m2.group(1));
+        }
+        return new long[]{ins, del};
+    }
+
+    /** name-status -z 输出（status\0path\0 交替）→ path → 状态（A→added，D→deleted，其余→modified）。 */
+    private static void parseNameStatus(String out, Map<String, String> status) {
+        String[] tok = out.split("\0", -1);
+        for (int i = 0; i + 1 < tok.length; i += 2) {
+            String p = tok[i + 1];
+            if (p.isBlank()) {
+                continue;
+            }
+            status.put(p, switch (tok[i].trim()) {
+                case "A" -> "added";
+                case "D" -> "deleted";
+                default -> "modified";
+            });
+        }
+    }
+
+    /** numstat -z 输出（add\tdel\tpath\0 记录）→ path → [additions, deletions]；二进制（-）计 0。 */
+    private static void parseNumstat(String out, Map<String, long[]> counts) {
+        for (String rec : out.split("\0", -1)) {
+            if (rec.isBlank()) {
+                continue;
+            }
+            String[] parts = rec.split("\t", 3);
+            if (parts.length < 3) {
+                continue;
+            }
+            counts.put(parts[2], new long[]{parseLongOr(parts[0]), parseLongOr(parts[1])});
+        }
+    }
+
+    private static long parseLongOr(String s) {
+        if ("-".equals(s)) {
+            return 0;
+        }
+        try {
+            return Long.parseLong(s.trim());
+        } catch (NumberFormatException e) {
+            return 0;
+        }
+    }
+
+    /**
+     * 未跟踪文件行数（即新增行数）：二进制文件与超过 {@link #UNTRACKED_COUNT_LIMIT_BYTES} 的文件
+     * 不逐行计数（返回 0），列表刷新不必反复读大文件；内容仍可在 /diff/file 按需物化。
+     */
+    private static long countLines(Path file) {
+        try {
+            if (Files.size(file) > UNTRACKED_COUNT_LIMIT_BYTES) {
+                return 0;
+            }
+            byte[] bytes = Files.readAllBytes(file);
+            for (int i = 0; i < Math.min(bytes.length, 8192); i++) {
+                if (bytes[i] == 0) {
+                    return 0;
+                }
+            }
+            long n = 0;
+            for (byte b : bytes) {
+                if (b == '\n') {
+                    n++;
+                }
+            }
+            return n > 0 && bytes[bytes.length - 1] != '\n' ? n + 1 : n;
+        } catch (IOException e) {
+            return 0;
+        }
+    }
+
+    private static String sanitizeDiffPath(String raw) {
+        String path = raw == null ? "" : raw.trim();
+        while (path.startsWith("/")) {
+            path = path.substring(1);
+        }
+        if (path.isBlank() || path.contains("..")) {
+            throw new GateException(GateErrorCode.USAGE, "invalid path for single-file diff: " + raw);
+        }
+        return path;
     }
 
     public void reviewResult(Context ctx) {

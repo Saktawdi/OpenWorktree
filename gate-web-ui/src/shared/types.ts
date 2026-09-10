@@ -438,6 +438,12 @@ export interface DiffFile {
   hunks: DiffHunk[];
 }
 
+/** 按需加载的单文件 diff 内容：sig = 加载时列表侧的增删行数指纹，列表刷新后指纹不符即过期需重拉。 */
+export interface DiffContentEntry {
+  file: DiffFile;
+  sig: string;
+}
+
 export interface Finding {
   severity: Severity;
   path: string;

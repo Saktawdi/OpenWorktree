@@ -174,6 +174,9 @@ export const zhCommon = {
   "diff.noChanges": "沙箱内暂无变更",
   "diff.filesChanged": "{n} 个文件变更",
   "diff.vsBase": "相对基线 {ref}",
+  "diff.loading": "加载 diff …",
+  "diff.loadFailedRetry": "加载 diff 失败 · 点击重试",
+  "diff.expandFirstN": "展开前 {n} 个",
 
   /* ─── 运行监控 ─── */
   "runmonitor.title": "运行监控",

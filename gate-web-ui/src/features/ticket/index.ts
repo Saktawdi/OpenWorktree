@@ -7,6 +7,7 @@ export {
   createTicketLive,
   updateTicketLive,
   loadTicketDiff,
+  loadDiffFile,
   loadStageChanges,
   restartTicketLive,
   completeTicketLive,

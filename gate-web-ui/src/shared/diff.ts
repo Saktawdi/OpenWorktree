@@ -91,6 +91,12 @@ export function diffTotals(files: DiffFile[]): { additions: number; deletions: n
   return { additions, deletions, files: files.length };
 }
 
+/** 列表侧增删行数指纹：单文件内容缓存用它判断「列表刷新后内容是否过期」。 */
+export function diffSig(f: { additions: number; deletions: number }): string {
+  return `${f.additions}/${f.deletions}`;
+}
+
+/** 估算完整 diff 文件集的字节体量（demo 快照等场景用，不要求精确）。 */
 export function approxDiffBytes(files: DiffFile[]): number {
   let n = 0;
   for (const f of files) {

@@ -1,20 +1,23 @@
-﻿import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { CaretDown, CaretUp, FileCode, Warning } from "@phosphor-icons/react";
 import { NO_DIFF, useApp } from "@/store";
 import type { DiffFile, DiffHunk } from "@/shared/types";
-import { diffTotals } from "@/shared/diff";
+import { diffSig, diffTotals } from "@/shared/diff";
 import { useT } from "@/i18n";
 
 /* 超大 diff（如未加入 git 忽略的 node_modules 整目录入库）下渲染层根治：
    文件列表采用窗口化虚拟渲染——只挂载视口 ± 缓冲范围内的文件块，滚出即卸载，
-   任意规模（数万文件/数十万行）DOM 规模都保持恒定；文件内部行仍按批展开。 */
+   任意规模（数万文件/数十万行）DOM 规模都保持恒定；文件内部行仍按批展开。
+   数据层同样按需：列表只含元数据（path/状态/±行数），点开文件条才拉取单文件 diff；
+   「展开全部」因此有上限——每个条目都是一次真实的内容请求。 */
 const FILE_LINES_PER_BATCH = 2000; // 单个文件展开时单批追加的行数（FileBlock 内部状态）
+const EXPAND_ALL_CAP = 10; // 展开全部的上限：超出只展开前 N 个（每条都是一次内容请求）
 const ROW_GAP = 12; // 文件块之间的垂直间距（替代原 space-y-3）
 const COLLAPSED_ROW_H = 42; // 折叠态固定高度：h-10 头部 40px + 卡片上下边框 2px
 const OVERSCAN_PX = 2400; // 视口上下各多挂载的缓冲高度（滚速越快缓冲越大）
 const EST_HEADER_H = 25; // 估算展开高：hunk 头行
-const EST_MORE_BAR_H = 33; // 估算展开高："展开剩余 N 行"栏
+const EST_MORE_BAR_H = 33; // 估算展开高："展开剩余 N 行"栏（与"加载 diff…"条同高）
 
 /** 按行数上限裁剪 hunks：超过部分丢弃；返回保留的 hunks 与实际行数。 */
 function sliceHunks(hunks: DiffHunk[], cap: number): { hunks: DiffHunk[]; shown: number } {
@@ -48,6 +51,9 @@ const FileBlock = memo(
     open,
     onToggle,
     minLines,
+    loading,
+    error,
+    onRetry,
   }: {
     file: DiffFile;
     highlightLine?: number;
@@ -55,6 +61,10 @@ const FileBlock = memo(
     onToggle: (path: string) => void;
     /** 审查跳转要求文件至少展开到该行数（配合文件内行分片也能定位到目标行）。 */
     minLines?: number;
+    /** 内容按需加载状态：open 且无 hunks 时渲染加载/重试条。 */
+    loading?: boolean;
+    error?: boolean;
+    onRetry: (path: string) => void;
   }) {
     const t = useT();
     const [cap, setCap] = useState(FILE_LINES_PER_BATCH);
@@ -93,58 +103,76 @@ const FileBlock = memo(
         {open && (
           <div className="overflow-x-auto">
             <div className="min-w-max">
-              {hunks.map((h, hi) => (
-                <div key={hi}>
-                  <div className="px-3 py-1 font-mono text-[11px] text-faint bg-sunken border-y border-edge">
-                    {h.header}
-                  </div>
-                  {h.lines.map((l, li) => {
-                    const isHighlight =
-                      highlightLine !== undefined &&
-                      l.type === "add" &&
-                      l.newNo === highlightLine;
-                    return (
-                      <div
-                        key={li}
-                        data-line={l.newNo ? `${file.path}:${l.newNo}` : undefined}
-                        className={`flex font-mono text-[12px] leading-[19px] whitespace-pre ${
-                          l.type === "add"
-                            ? "bg-accent/[0.07] shadow-[inset_2px_0_0_var(--color-accent)]"
-                            : l.type === "del"
-                              ? "bg-danger/[0.07] shadow-[inset_2px_0_0_var(--color-danger)]"
-                              : ""
-                        } ${isHighlight ? "animate-flash-line" : ""}`}
-                      >
-                        <span className="w-11 shrink-0 pr-2 text-right select-none text-faint/70 border-r border-edge">
-                          {l.oldNo ?? ""}
-                        </span>
-                        <span className="w-11 shrink-0 pr-2 text-right select-none text-faint/70 border-r border-edge">
-                          {l.newNo ?? ""}
-                        </span>
-                        <span
-                          className={`pl-3 pr-4 flex-1 ${
-                            l.type === "add" ? "text-accent-hi/90" : l.type === "del" ? "text-danger/80" : "text-dim"
-                          }`}
-                        >
-                          {l.content || " "}
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
-              ))}
-              {more > 0 && (
-                <div className="border-t border-edge bg-sunken">
+              {file.hunks.length === 0 ? (
+                error ? (
                   <button
-                    className="w-full flex items-center gap-2 px-3.5 py-2 font-mono text-[11.5px] text-dim hover:text-ink hover:bg-raised transition-colors cursor-pointer"
-                    onClick={() => setCap((c) => c + FILE_LINES_PER_BATCH)}
+                    className="w-full flex items-center gap-2 px-3.5 py-2 font-mono text-[11.5px] text-danger hover:bg-raised transition-colors cursor-pointer"
+                    onClick={() => onRetry(file.path)}
                   >
-                    <CaretDown size={12} className="text-faint shrink-0" />
-                    {t("diff.expandMoreLines", { n: more })}
-                    <span className="flex-1" />
-                    <span className="text-faint tabular-nums">{t("diff.shownLines", { shown, total })}</span>
+                    <Warning size={12} className="shrink-0" weight="fill" />
+                    {t("diff.loadFailedRetry")}
                   </button>
-                </div>
+                ) : (
+                  <div className="px-3.5 py-2 font-mono text-[11.5px] text-faint">
+                    {t("diff.loading")}
+                  </div>
+                )
+              ) : (
+                <>
+                  {hunks.map((h, hi) => (
+                    <div key={hi}>
+                      <div className="px-3 py-1 font-mono text-[11px] text-faint bg-sunken border-y border-edge">
+                        {h.header}
+                      </div>
+                      {h.lines.map((l, li) => {
+                        const isHighlight =
+                          highlightLine !== undefined &&
+                          l.type === "add" &&
+                          l.newNo === highlightLine;
+                        return (
+                          <div
+                            key={li}
+                            data-line={l.newNo ? `${file.path}:${l.newNo}` : undefined}
+                            className={`flex font-mono text-[12px] leading-[19px] whitespace-pre ${
+                              l.type === "add"
+                                ? "bg-accent/[0.07] shadow-[inset_2px_0_0_var(--color-accent)]"
+                                : l.type === "del"
+                                  ? "bg-danger/[0.07] shadow-[inset_2px_0_0_var(--color-danger)]"
+                                  : ""
+                            } ${isHighlight ? "animate-flash-line" : ""}`}
+                          >
+                            <span className="w-11 shrink-0 pr-2 text-right select-none text-faint/70 border-r border-edge">
+                              {l.oldNo ?? ""}
+                            </span>
+                            <span className="w-11 shrink-0 pr-2 text-right select-none text-faint/70 border-r border-edge">
+                              {l.newNo ?? ""}
+                            </span>
+                            <span
+                              className={`pl-3 pr-4 flex-1 ${
+                                l.type === "add" ? "text-accent-hi/90" : l.type === "del" ? "text-danger/80" : "text-dim"
+                              }`}
+                            >
+                              {l.content || " "}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ))}
+                  {more > 0 && (
+                    <div className="border-t border-edge bg-sunken">
+                      <button
+                        className="w-full flex items-center gap-2 px-3.5 py-2 font-mono text-[11.5px] text-dim hover:text-ink hover:bg-raised transition-colors cursor-pointer"
+                        onClick={() => setCap((c) => c + FILE_LINES_PER_BATCH)}
+                      >
+                        <CaretDown size={12} className="text-faint shrink-0" />
+                        {t("diff.expandMoreLines", { n: more })}
+                        <span className="flex-1" />
+                        <span className="text-faint tabular-nums">{t("diff.shownLines", { shown, total })}</span>
+                      </button>
+                    </div>
+                  )}
+                </>
               )}
             </div>
           </div>
@@ -152,16 +180,20 @@ const FileBlock = memo(
       </div>
     );
   },
-  // 折叠态文件行只由头部字段决定：diff 刷新替换整棵树时，避免视口内大量折叠块重渲染
+  // 折叠态文件行只由头部字段决定；展开态由文件对象身份决定——内容按需加载/过期重拉替换
+  // 对象时必须重渲染，而列表刷新（元数据重建、±行数不变）替换引用时不重渲染。
   (p, n) =>
     p.open === n.open &&
     p.highlightLine === n.highlightLine &&
     p.minLines === n.minLines &&
+    p.loading === n.loading &&
+    p.error === n.error &&
     p.file.path === n.file.path &&
-    (p.open ||
-      (p.file.status === n.file.status &&
+    (p.open
+      ? p.file === n.file
+      : p.file.status === n.file.status &&
         p.file.additions === n.file.additions &&
-        p.file.deletions === n.file.deletions)),
+        p.file.deletions === n.file.deletions),
 );
 
 /**
@@ -213,6 +245,7 @@ function estimateRowHeight(
   if (!open) return COLLAPSED_ROW_H;
   const m = measured[f.path];
   if (m !== undefined) return m;
+  if (f.hunks.length === 0) return COLLAPSED_ROW_H + EST_MORE_BAR_H + 3; // 内容未加载：加载/重试条
   let rows = 0;
   let hunks = 0;
   for (const h of f.hunks) {
@@ -239,9 +272,17 @@ function buildSlots(
   return slots;
 }
 
-export function DiffView({ ticketNo }: { ticketNo: string }) {
+export function DiffView({
+  ticketNo,
+  loadFile,
+}: {
+  ticketNo: string;
+  /** 单文件内容按需加载（live 模式由 Workbench 注入 loadDiffFile；自带 hunks 的种子/缓存不会触发）。 */
+  loadFile?: (path: string) => Promise<DiffFile | null>;
+}) {
   const tr = useT();
-  const files = useApp((s) => s.diffs[ticketNo] ?? NO_DIFF);
+  const metas = useApp((s) => s.diffs[ticketNo] ?? NO_DIFF);
+  const contents = useApp((s) => s.diffContents[ticketNo]);
   const eolWarning = useApp((s) => s.diffWarnings[ticketNo] ?? "");
   // 与 Workbench 分支徽标同源：项目主分支（建单基线）优先，未挂项目的工单退回自身锁定的目标分支
   const targetRef = useApp((s) => {
@@ -249,6 +290,15 @@ export function DiffView({ ticketNo }: { ticketNo: string }) {
     return s.projects.find((p) => p.id === t?.projectId)?.targetRef ?? t?.targetRef;
   });
   const highlight = useApp((s) => s.highlight);
+  // 元数据 + 内容缓存合成渲染视图：指纹与列表一致才采用内容；未加载/过期退回元数据（无 hunks → 加载态）。
+  const files = useMemo(
+    () =>
+      metas.map((f) => {
+        const c = contents?.[f.path];
+        return c && c.sig === diffSig(f) ? c.file : f;
+      }),
+    [metas, contents],
+  );
   const totals = useMemo(() => diffTotals(files), [files]);
   const [openPaths, setOpenPaths] = useState<Set<string>>(new Set());
   // 审查跳转目标文件的行数下限（配合文件内行分片定位）。
@@ -257,10 +307,20 @@ export function DiffView({ ticketNo }: { ticketNo: string }) {
   const [measured, setMeasured] = useState<Record<string, number>>({});
   // 当前挂载窗口 [start, end)。
   const [range, setRange] = useState<{ start: number; end: number }>({ start: 0, end: 0 });
+  // 单文件内容加载状态（path → loading/error）；内容本体在 store 的 diffContents。
+  const [loadState, setLoadState] = useState<Record<string, "loading" | "error">>({});
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
   const filesRef = useRef(files);
   filesRef.current = files;
+  const contentsRef = useRef(contents);
+  contentsRef.current = contents;
+  const loadStateRef = useRef(loadState);
+  loadStateRef.current = loadState;
+  const openRef = useRef(openPaths);
+  openRef.current = openPaths;
+  const loadFileRef = useRef(loadFile);
+  loadFileRef.current = loadFile;
 
   // 槽位表依赖 files / 展开集 / 实测值；scroll 处理器从 ref 读取最新表。
   const slots = useMemo(
@@ -278,22 +338,47 @@ export function DiffView({ ticketNo }: { ticketNo: string }) {
     });
   }, []);
 
+  /** 确保单文件内容可用：未加载 / 指纹过期时发起请求；自带 hunks 的条目直接可用。 */
+  const ensureLoaded = useCallback((path: string) => {
+    if (!loadFileRef.current) return;
+    const f = filesRef.current.find((x) => x.path === path);
+    if (!f || f.hunks.length > 0) return;
+    const c = contentsRef.current?.[path];
+    if (c && c.sig === diffSig(f)) return; // 已加载且未过期
+    if (loadStateRef.current[path] === "loading") return;
+    setLoadState((s) => ({ ...s, [path]: "loading" }));
+    void loadFileRef.current(path).then((out) => {
+      setLoadState((s) => {
+        const next = { ...s };
+        if (out) delete next[path];
+        else next[path] = "error";
+        return next;
+      });
+    });
+  }, []);
+
   useEffect(() => {
     setOpenPaths(new Set());
     setRevealLines(null);
     setRange({ start: 0, end: 0 });
+    setLoadState({});
     const sc = scrollerRef.current;
     if (sc) sc.scrollTop = 0;
   }, [ticketNo]);
 
-  const togglePath = useCallback((path: string) => {
-    setOpenPaths((prev) => {
-      const next = new Set(prev);
-      if (next.has(path)) next.delete(path);
-      else next.add(path);
-      return next;
-    });
-  }, []);
+  const togglePath = useCallback(
+    (path: string) => {
+      const wasOpen = openRef.current.has(path);
+      setOpenPaths((prev) => {
+        const next = new Set(prev);
+        if (next.has(path)) next.delete(path);
+        else next.add(path);
+        return next;
+      });
+      if (!wasOpen) ensureLoaded(path);
+    },
+    [ensureLoaded],
+  );
 
   // 计算当前滚动位置对应的挂载窗口（读 DOM 与槽位表，不依赖上次渲染结果）。
   const layoutRange = useCallback((forceIdx?: number): { start: number; end: number } => {
@@ -367,8 +452,16 @@ export function DiffView({ ticketNo }: { ticketNo: string }) {
     applyRange();
   }, [files, openPaths, measured, applyRange]);
 
-  // 审查定位跳转（每个高亮只处理一次，diff 刷新不重复强制展开已手动收起的文件）：
-  // 自动展开目标文件并确保展开深度覆盖目标行；数据未就绪时等 files 变化再处理。
+  // 已展开文件的内容保鲜：列表刷新替换元数据后，指纹过期的条目自动重拉
+  // （ensureLoaded 内部去重，加载中/已新鲜的条目不动）。
+  useEffect(() => {
+    for (const f of files) {
+      if (openPaths.has(f.path)) ensureLoaded(f.path);
+    }
+  }, [files, openPaths, ensureLoaded]);
+
+  // 审查定位跳转·展开（每个高亮只处理一次，diff 刷新不重复强制展开已手动收起的文件）：
+  // 展开目标文件并触发内容加载；文件不在变更列表时等元数据到位再处理。
   const handledHighlight = useRef<string | null>(null);
   useEffect(() => {
     if (!highlight) {
@@ -378,8 +471,7 @@ export function DiffView({ ticketNo }: { ticketNo: string }) {
     }
     const key = `${highlight.path}:${highlight.line}`;
     if (handledHighlight.current === key) return;
-    const idx = files.findIndex((f) => f.path === highlight.path);
-    if (idx < 0) return;
+    if (!metas.some((f) => f.path === highlight.path)) return;
     handledHighlight.current = key;
     setOpenPaths((prev) => {
       if (prev.has(highlight.path)) return prev;
@@ -387,7 +479,17 @@ export function DiffView({ ticketNo }: { ticketNo: string }) {
       next.add(highlight.path);
       return next;
     });
-    const need = revealLineAt(files[idx], highlight.line);
+    ensureLoaded(highlight.path);
+  }, [highlight, metas, ensureLoaded]);
+
+  // 审查定位跳转·定位行：内容就绪后计算目标行的展开深度下限（配合分批展开也能定位）。
+  useEffect(() => {
+    if (!highlight) return;
+    const idx = filesRef.current.findIndex((f) => f.path === highlight.path);
+    if (idx < 0) return;
+    const f = filesRef.current[idx];
+    if (f.hunks.length === 0) return; // 内容未加载（加载中/失败），加载完成后随 files 重跑
+    const need = revealLineAt(f, highlight.line);
     if (need > 0) {
       setRevealLines((r) =>
         r?.path === highlight.path && r.min >= need ? r : { path: highlight.path, min: need },
@@ -449,6 +551,13 @@ export function DiffView({ ticketNo }: { ticketNo: string }) {
     );
   }
 
+  // 展开全部 = 前 N 个文件条各发起一次内容请求，超出上限只展开前 N 个。
+  const expandAll = () => {
+    const paths = filesRef.current.slice(0, EXPAND_ALL_CAP).map((f) => f.path);
+    setOpenPaths(new Set(paths));
+    paths.forEach((p) => ensureLoaded(p));
+  };
+
   const rows: ReactNode[] = [];
   const lo = Math.max(0, range.start);
   const hi = Math.min(range.end, files.length);
@@ -469,6 +578,9 @@ export function DiffView({ ticketNo }: { ticketNo: string }) {
           onToggle={togglePath}
           highlightLine={highlight?.path === f.path ? highlight.line : undefined}
           minLines={revealLines?.path === f.path ? revealLines.min : undefined}
+          loading={loadState[f.path] === "loading"}
+          error={loadState[f.path] === "error"}
+          onRetry={ensureLoaded}
         />
       </VirtualRow>,
     );
@@ -492,9 +604,9 @@ export function DiffView({ ticketNo }: { ticketNo: string }) {
           <span className="text-[11.5px] text-faint">·</span>
           <button
             className="text-[11.5px] text-dim hover:text-ink cursor-pointer transition-colors"
-            onClick={() => setOpenPaths(new Set(files.map((f) => f.path)))}
+            onClick={expandAll}
           >
-            {tr("common.expandAll")}
+            {files.length > EXPAND_ALL_CAP ? tr("diff.expandFirstN", { n: EXPAND_ALL_CAP }) : tr("common.expandAll")}
           </button>
           <span className="text-[11.5px] text-faint">·</span>
           <button

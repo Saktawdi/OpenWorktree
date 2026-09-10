@@ -1,7 +1,7 @@
 ﻿import { CaretDoubleLeft, CaretDoubleRight, GitBranch, NotePencil, Sparkle, TerminalWindow } from "@phosphor-icons/react";
 import { AnimatePresence, motion } from "motion/react";
 import { NO_CHAT, showToast, useApp, appStore, setCenterTab } from "@/store";
-import { openTicketCreator, openTicketEditor } from "@/features/ticket";
+import { openTicketCreator, openTicketEditor, loadDiffFile } from "@/features/ticket";
 import { setGatePanelCollapsed } from "@/features/gate";
 import { openTerminalSession } from "@/features/project";
 import { ChatStream } from "@/features/session/components/ChatStream";
@@ -222,7 +222,12 @@ export function Workbench() {
             <Composer ticketNo={selectedNo} />
           </div>
         )}
-        {tab === "diff" && <DiffView ticketNo={selectedNo} />}
+        {tab === "diff" && (
+          <DiffView
+            ticketNo={selectedNo}
+            loadFile={(p) => loadDiffFile(selectedNo, p)}
+          />
+        )}
         {tab === "findings" && <FindingsView ticketNo={selectedNo} />}
         {tab === "evidence" && <EvidenceView ticketNo={selectedNo} />}
       </main>

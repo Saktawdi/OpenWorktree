@@ -16,6 +16,7 @@ import type {
   ClaudeTaskItem,
   ContextUsageState,
   DiffFile,
+  DiffContentEntry,
   EngineInfo,
   Finding,
   GitRepoView,
@@ -113,7 +114,10 @@ export interface AppState {
   tickets: Ticket[];
   selectedNo: string | null;
   chats: Record<string, ChatItem[]>;
+  /** 变更对比文件列表（key = 工单号）：只含 path/状态/增删行数元数据，hunks 为空。 */
   diffs: Record<string, DiffFile[]>;
+  /** 单文件 diff 内容缓存（key = 工单号 → path）：点开文件条时按需加载，sig 过期由 DiffView 重拉。 */
+  diffContents: Record<string, Record<string, DiffContentEntry>>;
   /** 变更对比的行尾噪声警告（key = 工单号），来自 /diff 端点的 eol_warning。 */
   diffWarnings: Record<string, string>;
   snapshots: Record<string, Snapshot[]>;
@@ -265,6 +269,7 @@ export const appStore = create<AppState>(() => ({
   selectedNo: null,
   chats: {},
   diffs: {},
+  diffContents: {},
   diffWarnings: {},
   snapshots: {},
   findings: {},

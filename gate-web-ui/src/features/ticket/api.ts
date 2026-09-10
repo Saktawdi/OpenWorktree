@@ -5,9 +5,9 @@
 import { t as i18nT } from "@/i18n";
 import { api } from "@/net";
 import { appStore, showToast } from "@/store";
-import { parseUnifiedDiff, approxDiffBytes } from "@/shared/diff";
+import { parseUnifiedDiff, diffSig } from "@/shared/diff";
 import type { DiffFile, Stage, StageChangeRecord, Ticket, Priority } from "@/shared/types";
-import { setDiffs } from "./state";
+import { setDiffs, setDiffContent } from "./state";
 
 interface RawTicket {
   ticket_no: string;
@@ -78,17 +78,52 @@ export async function createTicketLive(body: Record<string, unknown>): Promise<s
 }
 
 /**
- * 拉取工单工作区 diff（/diff 端点 = clone 内 git diff HEAD + untracked）。
- * 除进工单时调用外，会话 done / 编辑类工具完成时也会调用——否则变更对比只在
- * 重新触发 selectTicketLive（切走再切回工单）后才更新。
+ * 拉取工单工作区变更列表（/diff/list 端点 = clone 内 git diff + untracked 的元数据，
+ * 只含 path/状态/±行数，不含 diff 内容）。除进工单时调用外，会话 done / 编辑类工具
+ * 完成时也会调用——否则变更对比只在重新触发 selectTicketLive（切走再切回工单）后才更新。
+ * 文件内容按需：DiffView 点开文件条时经 loadDiffFile 单独拉取。
  */
 export async function loadTicketDiff(no: string) {
   try {
-    const diffRes = await api<{ diff: string; eol_warning?: string }>(`/api/tickets/${no}/diff`);
-    const files: DiffFile[] = diffRes.diff.trim() ? parseUnifiedDiff(diffRes.diff) : [];
-    setDiffs(no, files, diffRes.eol_warning);
+    const res = await api<{
+      files: Array<{ path: string; status: DiffFile["status"]; additions: number; deletions: number }>;
+      eol_warning?: string;
+    }>(`/api/tickets/${no}/diff/list`);
+    const files: DiffFile[] = (res.files ?? []).map((f) => ({
+      path: f.path,
+      status: f.status,
+      additions: f.additions,
+      deletions: f.deletions,
+      hunks: [],
+    }));
+    setDiffs(no, files, res.eol_warning);
   } catch {
     setDiffs(no, []);
+  }
+}
+
+/**
+ * 按需拉取单个文件的 diff 内容（/diff/file 端点），写入内容缓存。
+ * 列表刷新后指纹过期 / 首次展开时由 DiffView 调用；仓库存在行尾噪声告警时带 eol=1，
+ * 让后端对该文件同样做 --ignore-cr-at-eol 归一化。失败返回 null（DiffView 显示重试）。
+ */
+export async function loadDiffFile(no: string, path: string): Promise<DiffFile | null> {
+  const st = appStore.getState();
+  const meta = st.diffs[no]?.find((f) => f.path === path);
+  if (!meta) {
+    return null;
+  }
+  const eol = st.diffWarnings[no] ? "&eol=1" : "";
+  try {
+    const res = await api<{ diff: string }>(
+      `/api/tickets/${no}/diff/file?path=${encodeURIComponent(path)}${eol}`,
+    );
+    const parsed = parseUnifiedDiff(res.diff ?? "");
+    const file = parsed[0] ?? { ...meta, hunks: [] };
+    setDiffContent(no, file, diffSig(meta));
+    return file;
+  } catch {
+    return null;
   }
 }
 
@@ -163,7 +198,12 @@ export async function cancelTicketLive(no: string, reason: string): Promise<bool
   return ok;
 }
 
+/** 变更体量粗估（元数据级：路径 + 增删行数 × 均值），无需保有 diff 全文。 */
 export function liveDiffBytes(no: string): number {
   const st = appStore.getState();
-  return approxDiffBytes(st.diffs[no] ?? []);
+  let n = 0;
+  for (const f of st.diffs[no] ?? []) {
+    n += f.path.length + 40 + (f.additions + f.deletions) * 40;
+  }
+  return n;
 }

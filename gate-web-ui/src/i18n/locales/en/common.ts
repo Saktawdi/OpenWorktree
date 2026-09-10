@@ -174,6 +174,9 @@ export const enCommon = {
   "diff.noChanges": "No changes in the sandbox yet",
   "diff.filesChanged": "{n} files changed",
   "diff.vsBase": "vs base {ref}",
+  "diff.loading": "Loading diff…",
+  "diff.loadFailedRetry": "Failed to load diff · click to retry",
+  "diff.expandFirstN": "Expand first {n}",
 
   /* ─── 运行监控 ─── */
   "runmonitor.title": "Run monitor",
