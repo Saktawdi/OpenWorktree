@@ -737,8 +737,12 @@ public final class ClaudeHeadlessAdapter implements AgentSessionPort {
         // JDK 对 .cmd 一律 `cmd.exe /c` 包装，而 cmd 的命令行在第一个换行处结束，
         // 于是用户消息只有第一行到达（引用 / [图片引用] 路径行 / 多行指令全部静默丢失）。
         // claude 2.1.240 实测：-p 不带 positional 时从 stdin 读 prompt，多行完好。
-        // 注意别改走 --input-format=stream-json：该模式下 claude 既不认 positional 也不消费
-        // stdin，会 exit 0 无输出且不建会话（本注释早先那条踩坑记录即指此，别回退）。
+        // 更正（T-118 探查，2026-09-10）：早先"别用 --input-format=stream-json，该模式 exit 0
+        // 无输出且不建会话"的记录不成立——那次探针的 stdin 被 runner 立刻关闭（旧实现直接
+        // close），stream-json 输入拿到的是 EOF + 零条消息，退出 0 正是应有行为，不是该模式
+        // 的问题。runner 现在能写 stdin：实测写一行 user message JSON 再关 stdin，可正常建会话
+        // 出结果，--resume 续轮与 image 内容块（模型确实看到图）均可用。要送图片本体就走这条
+        // stdin 通道——图片字节不过 argv，cmd.exe 的换行截断碰不到它。
         argv.add("--output-format");
         argv.add("stream-json");
         // claude CLI hard requirement: --print + stream-json output refuses to start without
