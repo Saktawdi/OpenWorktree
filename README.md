@@ -202,7 +202,7 @@ GraalVM native-image 编译的单文件二进制——**后端与前端一体**�
 
 - 前置只需本机 `git`（跑 Agent 会话再按需装对应 CLI，如 opencode / Claude Code）；
 - **Linux 版 glibc 要求**：二进制在较新的发行版上编译，依赖 `GLIBC_2.32` / `GLIBC_2.34` 符号——需要 **Ubuntu 21.10+ / Debian 12+ / RHEL 9+** 等较新系统（CentOS 7 等老系统会报 `GLIBC_2.34 not found`）；老系统请改用 Docker 方式（方式二）或自行在目标平台构建；
-- **CPU / 架构**：原生版覆盖 Linux x86_64 / **Linux arm64**（`ow-linux-arm64`）/ Windows x86_64；对 CPU 指令集无特殊要求（x86-64 基线，不依赖 AVX），2 核即可——会话耗时主要在等待模型 API 而非本地计算；其余架构请走 Docker 方式（镜像多架构 amd64/arm64）或从源码构建；
+- **Windows ARM 设备**：暂无 ARM64 原生构建（上游 GraalVM 未提供 Windows arm64 工具链）；ARM 版 Windows 直接使用 x64 版即可——系统模拟层原生支持运行；
 - 二进制随 [GitHub Releases](https://github.com/Saktawdi/OpenWorktree/releases) 发布（打 `v*` tag 时自动附带 `ow-linux-x86_64` / `ow-linux-arm64` / `ow-windows-x86_64`）；日常 master 产物在 Actions 的 `ow-native-Linux` / `ow-native-Linux-arm64` / `ow-native-Windows` artifact（保留 14 天）；
 - 启动（在想要存放数据的目录下运行）：
 
@@ -364,14 +364,6 @@ npm run dev
 ```
 
 浏览器打开 <http://127.0.0.1:5173>（Vite 已把 API 代理到 18080 的后端）。
-
-#### 第 3 步：登录并开工
-
-- **登录令牌**：后端日志的 `GATE_WEB_TOKEN=` 行，或 `local-run/gate-home/web-token` 文件（Docker / 桌面版首启自动登录，通常不需要手动填）。
-- **界面语言**：「设置中心 → 偏好 → 语言」在简体中文 / English 之间切换，点击即时生效、选择落盘（默认中文，其它语言缺键回退中文）。
-- **配置 Provider**：「设置中心 → LLM Providers」填 API Key（加密落库），再到「审查引擎」选 Provider 与模型。
-- **注册项目**：「项目」页注册你的代码目录——注册时自动初始化该项目专属的门禁镜像仓，随后建工单即可开工。
-- **Agent 侧零配置**：会话启动时 MCP 工具（建票、送审、读审查结果）自动注入 Agent，见 [MCP 工具](#mcp-工具)。
 
 如果还想让**不挂项目**的工单也可用，执行一次 `gate init` 初始化门禁级默认镜像仓（幂等，可重复执行）：
 

@@ -202,7 +202,7 @@ A single-file binary produced by GraalVM native-image — **backend and frontend
 
 - The only prerequisite is `git` on the machine (install the matching CLI, such as opencode or Claude Code, when you run agent sessions);
 - **Linux glibc requirement**: the binary is built on a recent distribution and needs the `GLIBC_2.32` / `GLIBC_2.34` symbols — **Ubuntu 21.10+ / Debian 12+ / RHEL 9+** or equivalent (older systems such as CentOS 7 fail with `GLIBC_2.34 not found`); on older systems use the Docker option (Option 2) or build it yourself on the target platform;
-- **CPU / architecture**: native builds cover Linux x86_64 / **Linux arm64** (`ow-linux-arm64`) / Windows x86_64. No special instruction-set requirements (x86-64 baseline, no AVX needed) and 2 cores are enough — sessions spend their time waiting on the model API, not on local compute. For other architectures use the Docker option (multi-arch amd64/arm64) or build from source;
+- **Windows on ARM**: there is no native ARM64 build (upstream GraalVM ships no Windows arm64 toolchain); on ARM devices just use the x64 binary — Windows runs x64 apps through its built-in emulation layer;
 - Binaries are published on [GitHub Releases](https://github.com/Saktawdi/OpenWorktree/releases) (a `v*` tag attaches `ow-linux-x86_64` / `ow-linux-arm64` / `ow-windows-x86_64` automatically); day-to-day master builds are available as the `ow-native-Linux` / `ow-native-Linux-arm64` / `ow-native-Windows` Actions artifacts (kept for 14 days);
 - Start it (run it in the directory where you want the data to live):
 
@@ -364,14 +364,6 @@ npm run dev
 ```
 
 Open <http://127.0.0.1:5173> in a browser (Vite already proxies the API to the backend on 18080).
-
-#### Step 3: Sign in and start working
-
-- **Login token**: the `GATE_WEB_TOKEN=` line in the backend log, or the `local-run/gate-home/web-token` file (the Docker and desktop options sign in automatically on first start, so you usually do not need to paste it).
-- **Interface language**: Settings → Preferences → Language switches between Simplified Chinese and English. It applies instantly and the choice is persisted (Chinese is the default; missing keys in other languages fall back to Chinese).
-- **Configure a provider**: Settings → LLM Providers, enter the API key (encrypted at rest), then pick the provider and model under Review engine.
-- **Register a project**: on the Projects page, register your code directory — the project's dedicated gate mirror repository is initialized automatically, and you can create tickets right away.
-- **Zero agent-side configuration**: MCP tools (create ticket, submit for review, read review results) are injected into the agent when a session starts, see [MCP tools](#mcp-tools).
 
 If you also want tickets **not attached to a project** to work, run `gate init` once to initialize the gate-level default mirror repository (idempotent, safe to repeat):
 

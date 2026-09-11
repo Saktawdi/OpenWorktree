@@ -28,7 +28,7 @@
 - **工作区存储卡片布局重排**：长工单标题会把「清理」按钮挤到第二行（同一列表里行高参差、按钮跑位），两个占用数字分不清口径，路径 `break-all` 折行后整卡更乱。现固定为三行结构：第一行「工单号 + 标题（截断吸收宽度差）+ 最后改动 + 清理」恒定不换行；第二行口径 chips 前置（`总占用` / 绿色 `可清理`，各带悬浮说明）；路径单行截断（悬浮看全路径），窄屏时整行折到下一行而不是挤压按钮。卡头动作区随会话状态多一枚「N 个会话运行中」黄标，宽度不足时自动折行
 - **README 快速开始再调整**：Windows 桌面版与单文件原生版合并为「方式一」（同一后端两种形态，桌面版内嵌的正是原生二进制），Docker 降为「方式二 · 备选」并注明内存占用高、云端部署更不推荐，源码方式调整为「方式三」；中英两版同步
 - **首次启动引导新增「连接后端」步骤（七步）**：此前引导直接进入接入项目等步骤；现在引导顺序为语言 → 连接后端 → 接入项目 → 智能体 → LLM → 看板 → 工作台：连接步引导用户从启动日志 `GATE_WEB_TOKEN=` 行（或数据目录令牌文件）复制令牌、当场粘贴验证连接，失败按「令牌无效 / Host 白名单拒绝 / 网络不通」分别提示（白名单拒绝时直接指引设置 `OW_ALLOWED_ORIGINS`）；Windows 桌面版自动登录，该步直接显示「已连接」跳过。顺带修复：令牌输入框聚焦时方向键 / Esc 不再误触翻步或跳过引导
-- **CI 新增 Linux arm64 原生构建**：native-build 矩阵扩为三产物——`ow-linux-x86_64` / `ow-linux-arm64` / `ow-windows-x86_64`（artifact 同步为 `ow-native-Linux` / `ow-native-Linux-arm64` / `ow-native-Windows`，打 tag 时随 Release 附上）；构建机统一 Ubuntu 22.04（两架构 glibc 底线一致），ARM 服务器不再需要退回 Docker；README 中英两版同步（ARM 支持、启动示例与 glibc / CPU 说明）
+- **CI 新增 Linux arm64 原生构建**：native-build 矩阵扩为三产物——`ow-linux-x86_64` / `ow-linux-arm64` / `ow-windows-x86_64`（artifact 同步为 `ow-native-Linux` / `ow-native-Linux-arm64` / `ow-native-Windows`，打 tag 时随 Release 附上）；构建机统一 Ubuntu 22.04（两架构 glibc 底线一致），ARM 服务器不再需要退回 Docker；README 中英两版同步（ARM 支持、启动示例与 glibc / 平台说明）
 
 
 ## 0.3.10-alpha
