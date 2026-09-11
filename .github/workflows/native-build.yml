@@ -14,6 +14,9 @@ name: native-build
 on:
   push:
     branches: [master, main]
+    # 发版：打 v* tag 同样触发（tag push 不经过 paths 过滤）——从 tag 提交全量重建，
+    # 由既有「Attach to release」步骤把产物附到对应 Release（--clobber 覆盖手动上传的同名件）。
+    tags: ['v*']
     paths:
       - 'pom.xml'
       - 'gate-domain/**'
