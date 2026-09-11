@@ -930,7 +930,10 @@ pub fn run() {
                         return;
                     }
                 };
-                let cmd = sidecar.current_dir(&data_dir);
+                // 守护开关（GateWebApp#startShellDeathWatch）：stdin 写端由壳持有——壳退出
+                //（含安装器 taskkill /F 强杀，走不到 ExitRequested 的收割兜底）后内核关闭
+                // 管道，后端读到 stdin EOF 即自退，不留成占 18080 / 锁 ow.exe 的孤儿。
+                let cmd = sidecar.env("OW_PARENT_WATCHDOG", "1").current_dir(&data_dir);
                 let (mut rx, child) = match cmd.spawn() {
                     Ok(pair) => pair,
                     Err(e) => {

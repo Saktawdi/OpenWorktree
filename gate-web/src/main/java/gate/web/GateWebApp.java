@@ -3,6 +3,7 @@ package gate.web;
 import gate.domain.config.GateConfig;
 import gate.domain.error.GateException;
 import gate.web.security.WebToken;
+import java.io.IOException;
 import java.nio.file.Path;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -55,6 +56,8 @@ public final class GateWebApp {
         }
         // no --config: fall back to local-run/gate.toml, generated on first run (BootstrapConfig)
 
+        startShellDeathWatch();
+
         try {
             Path config = BootstrapConfig.resolve(
                     configPath == null ? null : Path.of(configPath));
@@ -79,6 +82,37 @@ public final class GateWebApp {
             LOG.error("INTERNAL", e);
             System.exit(GateErrorExit.INTERNAL);
         }
+    }
+
+    /**
+     * Desktop-shell sidecar watchdog, gated on {@code OW_PARENT_WATCHDOG=1} (set only by the
+     * desktop shell when spawning this web server). stdin is a pipe whose write end the shell
+     * holds, so when the shell dies by ANY means — including the installer's {@code taskkill /F},
+     * which never lets the shell run its own child-reaping exit path — the kernel closes the pipe
+     * and the blocking read returns EOF. Without this the backend survives as an orphan holding
+     * port 18080 and its own executable file, and overwriting {@code ow.exe} during an in-place
+     * install fails with "Error opening file for writing". {@link System#exit} runs the shutdown
+     * hook that closes the HTTP server. Must stay AFTER the "mcp" dispatch above: provisioned
+     * {@code ow mcp} children inherit this env var but serve their own stdio protocol on stdin.
+     */
+    private static void startShellDeathWatch() {
+        if (!"1".equals(System.getenv("OW_PARENT_WATCHDOG"))) {
+            return;
+        }
+        Thread watch = new Thread(() -> {
+            try {
+                byte[] sink = new byte[64];
+                while (System.in.read(sink) != -1) {
+                    // The shell never writes data; drain and keep blocking.
+                }
+            } catch (IOException e) {
+                // A broken pipe equally means the shell side is gone.
+            }
+            LOG.info("shell gone (stdin closed) — exiting so no orphaned backend holds port/file");
+            System.exit(0);
+        }, "ow-shell-death-watch");
+        watch.setDaemon(true);
+        watch.start();
     }
 
     /** Exit codes mirrored from the §8.3 table for the two cases main handles directly. */

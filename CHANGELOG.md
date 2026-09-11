@@ -4,6 +4,12 @@
 >
 > 版本号规则（x.y.z）：每次改动自行判断更新类型——大更新 y+1，bug 修复/优化等小更新 z+1；同一未发行小节内多条改动逐次累加（距上次升版提交的每个改动各进一格）。
 
+## 0.3.12-beta
+
+### 修复
+
+- **软件运行中覆盖安装报「Error opening file for writing: ow.exe」**：安装器内建的「应用运行中」检测只认主程序 OpenWorktree.exe——用户确认关闭后壳被强杀（走不到壳自家 ExitRequested 里收割后端的兜底），sidecar 后端 ow.exe 留成孤儿：继续占 18080、锁定自身文件，安装器接着写 ow.exe 即弹出写入失败（重试也没用，只能中止后手工清进程）。三层修复：后端新增壳死自退守护（`GateWebApp#startShellDeathWatch`，仅桌面壳经 `OW_PARENT_WATCHDOG=1` 开启——stdin 是壳持有的管道写端，壳无论怎么死内核都会关管道，阻塞读立即 EOF，守护线程即 `System.exit` 交 shutdown hook 优雅关服；显式放在 `mcp` 分发之后，`ow mcp` 子命令虽继承该环境变量但靠 stdin 吃 MCP 协议、不受影响；CLI/Docker 等其余启动方式不设该变量、行为不变）；安装器钩子新增 `PREINSTALL`（文件落盘前统一强杀 OpenWorktree.exe 与 ow.exe 并轮询等待进程真正退场，两轮兜底；`PREUNINSTALL` 的收割同样从「杀完盲等 500ms」升级为轮询等待，SQLite/克隆文件被占的窗口更小）；壳的 sidecar 启动补传守护开关。真有杀不掉的进程仍放行，由 NSIS 原生重试对话框兜底（同旧行为）
+
 ## 0.3.11-beta
 
 ### 变更
