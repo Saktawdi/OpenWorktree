@@ -1,6 +1,7 @@
 ﻿import { ArrowUpRight } from "@phosphor-icons/react";
 import type { UpdateNotes } from "@/shared/types";
 import { Spinner } from "@/shared/components/ui";
+import { openExternal } from "@/shared/externalLinks";
 import { Markdown } from "@/shared/components/Markdown";
 import { useT } from "@/i18n";
 
@@ -28,6 +29,11 @@ export function UpdateNotesBlock({ notes, loading, version, repoUrl }: {
           href={`${repoUrl}/blob/HEAD/CHANGELOG.md`}
           target="_blank"
           rel="noopener noreferrer"
+          onClick={(e) => {
+            // 桌面壳里 target=_blank 新窗口被 WebView 拦截，统一走 openExternal（浏览器里行为不变）
+            e.preventDefault();
+            openExternal(`${repoUrl}/blob/HEAD/CHANGELOG.md`);
+          }}
         >
           {t("appinfo.fullChangelog")} <ArrowUpRight size={10} className="inline" />
         </a>

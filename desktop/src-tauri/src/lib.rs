@@ -27,6 +27,28 @@ const DEFAULT_PORT: u16 = 18080;
 /// 后端子进程句柄：spawn 后存入，退出时收割。Mutex<Option<_>> 便于 take() 一次性消费。
 struct BackendChild(Mutex<Option<tauri_plugin_shell::process::CommandChild>>);
 
+/// 后端启动期状态（启动页刷新恢复用）。backend-ready / backend-error 事件只在状态
+/// 变化的那一刻发一次，而 WebView 原生菜单「刷新」会整页重载壳页（tauri://）——
+/// 重载后的页面等不到旧事件，靠 get_backend_status 命令查询这份记忆兜底恢复。
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(tag = "phase", rename_all = "snake_case")]
+enum BackendStatus {
+    Starting,
+    Ready { port: u16, token: String },
+    Error { message: String },
+}
+
+struct BackendStatusState(Mutex<BackendStatus>);
+
+/// 写入启动状态（setup 时先 manage 为 Starting，此后各启动路径只写不读）。
+fn set_backend_status(handle: &tauri::AppHandle, status: BackendStatus) {
+    *handle
+        .state::<BackendStatusState>()
+        .0
+        .lock()
+        .expect("backend status lock poisoned") = status;
+}
+
 /// 托盘轮询所需的运行期参数（port + token 在后端就绪后才能确定）。
 /// None = 后端尚未就绪，轮询线程空转等待。
 struct TrayBackend(Mutex<Option<(u16, String)>>);
@@ -796,6 +818,17 @@ fn tray_quit(app: tauri::AppHandle) {
     app.exit(0);
 }
 
+/// 启动页（含被整页刷新后的壳页）查询后端启动状态：ready 直接承载 SPA，error 显示
+/// 原因，starting 继续等 backend-ready / backend-error 事件（见 BackendStatus 注释）。
+#[tauri::command]
+fn get_backend_status(app: tauri::AppHandle) -> BackendStatus {
+    app.state::<BackendStatusState>()
+        .0
+        .lock()
+        .expect("backend status lock poisoned")
+        .clone()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -817,7 +850,8 @@ pub fn run() {
             tray_close_panel,
             tray_open_project,
             tray_open_main,
-            tray_quit
+            tray_quit,
+            get_backend_status
         ])
         .setup(|app| {
             let handle = app.handle().clone();
@@ -826,6 +860,9 @@ pub fn run() {
             handle.manage(TrayBackend(Mutex::new(None)));
             handle.manage(TraySelectedProject(Mutex::new(None)));
             handle.manage(TrayTheme(Mutex::new("dark".to_string())));
+            // 启动状态记忆：先 manage 为 Starting，下方 boot 协程按实际路径改写；
+            // 壳页（含刷新后的页面）随时可经 get_backend_status 查询。
+            handle.manage(BackendStatusState(Mutex::new(BackendStatus::Starting)));
             handle.manage(TraySnapshot(Mutex::new(serde_json::json!({
                 "status": "starting", "busy": null, "selected": null, "theme": "dark", "projects": [],
             }))));
@@ -912,13 +949,12 @@ pub fn run() {
                 let port = read_configured_port(&data_dir).unwrap_or(DEFAULT_PORT);
                 if port_in_use(port) {
                     append_log(&boot_log, &format!("port {port} already in use before spawn"));
-                    let _ = handle.emit(
-                        "backend-error",
-                        format!(
-                            "端口 {port} 已被占用（可能是未完全退出的 OpenWorktree 后端）。请关闭它或稍后重试；也可改 {dir}\\local-run\\gate.toml 的 web.port 换端口。",
-                            dir = data_dir.display()
-                        ),
+                    let message = format!(
+                        "端口 {port} 已被占用（可能是未完全退出的 OpenWorktree 后端）。请关闭它或稍后重试；也可改 {dir}\\local-run\\gate.toml 的 web.port 换端口。",
+                        dir = data_dir.display()
                     );
+                    set_backend_status(&handle, BackendStatus::Error { message: message.clone() });
+                    let _ = handle.emit("backend-error", message);
                     return;
                 }
 
@@ -926,6 +962,10 @@ pub fn run() {
                     Ok(s) => s,
                     Err(e) => {
                         append_log(&boot_log, &format!("resolve sidecar failed: {e}"));
+                        set_backend_status(
+                            &handle,
+                            BackendStatus::Error { message: "无法定位内置后端 ow（sidecar 缺失）".into() },
+                        );
                         let _ = handle.emit("backend-error", "无法定位内置后端 ow（sidecar 缺失）");
                         return;
                     }
@@ -938,6 +978,10 @@ pub fn run() {
                     Ok(pair) => pair,
                     Err(e) => {
                         append_log(&boot_log, &format!("spawn sidecar failed: {e}"));
+                        set_backend_status(
+                            &handle,
+                            BackendStatus::Error { message: "内置后端启动失败".into() },
+                        );
                         let _ = handle.emit("backend-error", "内置后端启动失败");
                         return;
                     }
@@ -972,6 +1016,11 @@ pub fn run() {
                             if let (Some(t), false) = (token.clone(), navigated) {
                                 navigated = true;
                                 append_log(&boot_log, &format!("backend ready on port {port}"));
+                                // 启动状态记忆：刷新后的壳页靠它直接恢复，不等事件。
+                                set_backend_status(
+                                    &handle,
+                                    BackendStatus::Ready { port, token: t.clone() },
+                                );
                                 // 托盘轮询数据源就绪：REST 鉴权用 HUMAN token（查询串 token 仅 SSE 放行）。
                                 *handle
                                     .state::<TrayBackend>()
@@ -996,14 +1045,15 @@ pub fn run() {
                                 .0
                                 .lock()
                                 .expect("tray backend lock poisoned") = None;
+                            // 状态记忆恒写 Error：已就绪后（navigated=true）页面不弹事件，
+                            // 但此时整页刷新的用户也要看到死因，而不是永远「正在启动…」。
+                            let message = format!(
+                                "后端进程退出（code={:?}）。端口 18080 被占用时请改数据目录下 local-run/gate.toml（见 backend-boot.log 的 data dir 行）",
+                                status.code
+                            );
+                            set_backend_status(&handle, BackendStatus::Error { message: message.clone() });
                             if !navigated {
-                                let _ = handle.emit(
-                                    "backend-error",
-                                    format!(
-                                        "后端进程退出（code={:?}）。端口 18080 被占用时请改数据目录下 local-run/gate.toml（见 backend-boot.log 的 data dir 行）",
-                                        status.code
-                                    ),
-                                );
+                                let _ = handle.emit("backend-error", message);
                             }
                             return;
                         }

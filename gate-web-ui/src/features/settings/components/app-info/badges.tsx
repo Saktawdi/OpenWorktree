@@ -1,10 +1,6 @@
 ﻿/** 「关于」区的徽标与外链小工具（app-info）。 */
 import { getLocale, useT } from "@/i18n";
 
-export function openExternal(url: string) {
-  window.open(url, "_blank", "noopener,noreferrer");
-}
-
 /** 发行日期展示（published_at 是 ISO 串；解析失败原样回显）。 */
 export function releaseDate(iso?: string | null): string {
   if (!iso) return "";

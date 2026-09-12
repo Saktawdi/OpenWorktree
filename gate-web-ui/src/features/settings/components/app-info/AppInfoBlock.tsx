@@ -5,7 +5,7 @@ import { useT } from "@/i18n";
 import { useApp } from "@/store";
 import type { AppInfo, UpdateCheck } from "@/shared/types";
 import { CopyButton, Spinner } from "@/shared/components/ui";
-import { openExternal } from "./badges";
+import { openExternal } from "@/shared/externalLinks";
 import { UpdateStatusArea } from "./UpdateStatusArea";
 
 /** 「关于」区块：版本信息、检查更新与 GitHub 仓库。 */

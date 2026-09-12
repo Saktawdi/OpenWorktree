@@ -69,9 +69,14 @@
         splashClose.onclick = () => void tauriWindow().close();
       }
 
-      // backend-ready：壳 Rust 侧从后端 stdout/stderr 抓到令牌后发出（src-tauri/lib.rs）
-      window.__TAURI__.event.listen("backend-ready", (e) => {
-        iframe.src = `http://127.0.0.1:${e.payload.port}/?ow-token=${e.payload.token}`;
+      // backend-ready：壳 Rust 侧从后端 stdout/stderr 抓到令牌后发出（src-tauri/lib.rs）。
+      // 事件只在后端就绪那一刻发一次；页面被整页刷新（WebView 原生菜单「刷新」）后
+      // 收不到，靠下方 get_backend_status 查询兜底。
+      let spaLoaded = false;
+      const loadSpa = (payload) => {
+        if (spaLoaded) return;
+        spaLoaded = true;
+        iframe.src = `http://127.0.0.1:${payload.port}/?ow-token=${payload.token}`;
         iframe.addEventListener("load", () => {
           // #ow-spa 初始 display:none，承载 SPA 后必须显式放开，否则只剩壳的背景色；
           // 同时撤掉启动期的拖拽条与悬浮关闭钮，把顶栏（含 SPA 自己的窗口按钮）完整还给 SPA
@@ -80,15 +85,25 @@
           iframe.style.display = "block";
           splash.style.display = "none";
         }, { once: true });
-      });
-
-      window.__TAURI__.event.listen("backend-error", (e) => {
+      };
+      const showBackendError = (message) => {
         document.querySelector(".spinner").style.display = "none";
         document.querySelector(".status").textContent = "启动失败";
         const err = document.getElementById("err");
-        err.textContent = typeof e.payload === "string" ? e.payload : String(e.payload);
+        err.textContent = typeof message === "string" ? message : String(message);
         err.style.display = "block";
-      });
+      };
+
+      window.__TAURI__.event.listen("backend-ready", (e) => loadSpa(e.payload));
+
+      window.__TAURI__.event.listen("backend-error", (e) => showBackendError(e.payload));
+
+      // 整页刷新恢复：先查一次启动状态——后端已就绪直接承载 SPA，已失败显示原因；
+      // 仍在启动（本页先于事件加载完成）则继续等 backend-ready / backend-error。
+      window.__TAURI__.core.invoke("get_backend_status").then((s) => {
+        if (s?.phase === "ready") loadSpa(s);
+        else if (s?.phase === "error") showBackendError(s.message);
+      }).catch(() => {});
 
       // —— 托盘桥：三段链路 ——
       // ① Rust 轮询后端 → 菜单显示运行数/项目列表（Rust 侧独立完成，不经过本页）；
@@ -119,6 +134,16 @@
           // startDragging 需在鼠标按住期间发起；iframe mousedown → postMessage 的延迟
           // 在一帧内，可正常拖动。若个别环境失效，退路是回到系统标题栏。
           case "start-drag": void w.startDragging(); break;
+          // SPA（远端 origin）请求打开外链：WebView 里 window.open / target=_blank
+          // 新窗口默认被拦，这里以 opener 插件交系统默认浏览器。URL 来自 iframe，
+          // 只放行 http/https，其余 scheme（file: 等）一律忽略。
+          case "open-external": {
+            const url = typeof d.url === "string" ? d.url : "";
+            if (/^https?:\/\//i.test(url) && window.__TAURI__.opener) {
+              void window.__TAURI__.opener.openUrl(url).catch(() => {});
+            }
+            break;
+          }
           case "query-maximized":
             if (e.source) {
               const m = await w.isMaximized();

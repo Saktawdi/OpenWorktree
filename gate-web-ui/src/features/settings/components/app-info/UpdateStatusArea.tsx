@@ -5,7 +5,8 @@ import { fetchUpdateNotes } from "@/features/settings";
 import { useT } from "@/i18n";
 import type { UpdateCheck, UpdateNotes } from "@/shared/types";
 import { Spinner } from "@/shared/components/ui";
-import { BetaAheadBadge, PioneerBadge, openExternal, releaseDate } from "./badges";
+import { openExternal } from "@/shared/externalLinks";
+import { BetaAheadBadge, PioneerBadge, releaseDate } from "./badges";
 import { UpdateNotesBlock } from "./UpdateNotesBlock";
 
 /** 检查更新三态结果：有更新（跳下载页 + 展示更新日志）/ 已最新 / 先行 beta / 先行者 / 无法比对或失败。 */

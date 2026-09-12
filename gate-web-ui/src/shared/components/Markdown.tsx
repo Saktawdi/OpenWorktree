@@ -1,6 +1,7 @@
 import React from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { openExternal } from "@/shared/externalLinks";
 
 // T-119：这两样必须模块级常量，不能写在 Markdown 里。react-markdown 把
 // components[tag] 直接当作元素的 type（hast-util-to-jsx-runtime 的 findComponentFromName
@@ -11,7 +12,20 @@ const REMARK_PLUGINS = [remarkGfm];
 
 const COMPONENTS: Components = {
   a: ({ href, children }) => (
-    <a href={href} target="_blank" rel="noopener noreferrer" className="text-accent underline underline-offset-2 hover:brightness-110">
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="text-accent underline underline-offset-2 hover:brightness-110"
+      onClick={(e) => {
+        // http/https 外链统一走 openExternal（桌面壳里 target=_blank 被 WebView 拦截）；
+        // 其余 href（相对路径等）保持默认导航。左键才接管，中键/右键菜单不受影响。
+        if (href && /^https?:\/\//i.test(href)) {
+          e.preventDefault();
+          openExternal(href);
+        }
+      }}
+    >
       {children}
     </a>
   ),
