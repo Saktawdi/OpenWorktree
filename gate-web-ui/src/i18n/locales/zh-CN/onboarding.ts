@@ -17,9 +17,9 @@ export const zhOnboarding = {
   /* ─── 第 2 步：连接后端 ─── */
   "onboarding.step.connect.title": "连接后端",
   "onboarding.step.connect.desc":
-    "OpenWorktree 是一个本地服务，浏览器访问需要登录令牌：令牌在启动日志的 GATE_WEB_TOKEN= 行（Docker 部署：docker compose logs openworktree | grep GATE_WEB_TOKEN；本地开发：local-run/gate-home/web-token 文件）。Windows 桌面版自动登录，本步直接跳过即可。若提示「后端拒绝访问」，是服务器部署的 Host 白名单问题：在 compose 环境变量加 OW_ALLOWED_ORIGINS=你的域名或 IP 后重启（详见 README 方式二）。",
+    "OpenWorktree 以本地服务运行：浏览器访问需粘贴登录令牌；Windows 桌面版已自动登录，本步可直接跳过。",
   "onboarding.step.connect.tokenHint":
-    "从启动日志的 GATE_WEB_TOKEN= 行复制整串，或打开数据目录下的 gate-home/web-token 文件",
+    "从启动日志 GATE_WEB_TOKEN= 行复制（Docker：docker compose logs openworktree | grep GATE_WEB_TOKEN），或打开数据目录 gate-home/web-token 文件",
   "onboarding.step.connect.connect": "连接",
   "onboarding.step.connect.connecting": "连接中…",
   "onboarding.step.connect.connected": "已连接后端",

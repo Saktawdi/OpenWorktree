@@ -17,9 +17,9 @@ export const enOnboarding = {
   /* ─── Step 2: connect to the backend ─── */
   "onboarding.step.connect.title": "Connect to the backend",
   "onboarding.step.connect.desc":
-    "OpenWorktree is a local service and browser access needs the login token: it is on the GATE_WEB_TOKEN= line of the startup log (Docker: docker compose logs openworktree | grep GATE_WEB_TOKEN; from source: the local-run/gate-home/web-token file). The Windows desktop app signs in automatically — skip this step. If you see \"backend refused access\", it is the Host whitelist of a server deployment: add OW_ALLOWED_ORIGINS=your domain or IP to the compose environment and restart (see README, Option 2).",
+    "OpenWorktree runs as a local service: browser access needs the login token pasted in. The Windows desktop app signs in automatically — just skip this step.",
   "onboarding.step.connect.tokenHint":
-    "Copy the whole value on the GATE_WEB_TOKEN= line of the startup log, or open gate-home/web-token under the data directory",
+    "Copy the value on the GATE_WEB_TOKEN= line of the startup log (Docker: docker compose logs openworktree | grep GATE_WEB_TOKEN), or open gate-home/web-token under the data directory",
   "onboarding.step.connect.connect": "Connect",
   "onboarding.step.connect.connecting": "Connecting…",
   "onboarding.step.connect.connected": "Backend connected",

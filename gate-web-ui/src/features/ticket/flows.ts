@@ -4,6 +4,7 @@
  */
 import { appStore } from "@/store";
 import { loadTicketDiff } from "./api";
+import { rememberLastOpened } from "./state";
 import { clearSessionEnded } from "@/features/session/state";
 import { clearReviewEnded } from "@/features/gate/state";
 import { loadTicketSessions, loadSessionMessages } from "@/features/session/api";
@@ -15,6 +16,7 @@ export async function selectTicketLive(no: string, sid?: string) {
   // 打开工单即视为看见"会话已结束"与"审查结果已出"提醒
   clearSessionEnded(no);
   clearReviewEnded(no);
+  rememberLastOpened(no);
   appStore.setState({
     selectedNo: no,
     centerTab: "chat",

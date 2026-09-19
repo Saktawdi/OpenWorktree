@@ -518,12 +518,14 @@ export function KanbanBoard() {
     [filteredTickets, kanbanStages],
   );
 
-  // 创建中的占位卡（PENDING）：跟随「待处理」甬道的可见性与当前筛选口径
+  // 创建中的占位卡（PENDING）：跟随「待处理」甬道的可见性与当前筛选口径；
+  // 快速模式超级工单的占位同真实口径不上看板（常驻基础设施，不占甬道）
   const pendingVisible = useMemo(() => {
     if (!kanbanStages.includes("PENDING")) return [];
     const q = query.trim().toLowerCase();
     return pendingTickets.filter(
       (p) =>
+        !p.isSuper &&
         (p.projectId === activeProjectId || p.projectId === "") &&
         (priorityFilter === "ALL" || p.priority === priorityFilter) &&
         (!q || p.title.toLowerCase().includes(q)),

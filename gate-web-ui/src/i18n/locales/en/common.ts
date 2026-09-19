@@ -279,6 +279,7 @@ export const enCommon = {
   "actions.backPendingMsg": "Ticket moved back to pending",
   "actions.restartedMsg": "Ticket restarted · reason this round: {reason}",
   "actions.demoNoSync": "Demo mode has no main branch to sync",
+  "actions.superTicketTitle": "Quick mode (super ticket)",
 
   /* ─── net 层提示 ─── */
   "net.taskPollFailed": "Task status polling failed repeatedly (network or backend hiccup); the task may still be running — reopen the ticket later to check the result",

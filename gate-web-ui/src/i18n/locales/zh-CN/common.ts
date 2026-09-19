@@ -280,6 +280,7 @@ export const zhCommon = {
   "actions.backPendingMsg": "工单已退回待处理",
   "actions.restartedMsg": "工单已重启 · 本轮理由：{reason}",
   "actions.demoNoSync": "演示模式无主分支可同步",
+  "actions.superTicketTitle": "快速模式（超级工单）",
 
   /* ─── net 层提示 ─── */
   "net.taskPollFailed": "任务状态查询连续失败（网络或后端抖动），任务可能仍在后台执行——稍后重新打开工单查看结果",

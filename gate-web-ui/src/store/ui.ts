@@ -4,7 +4,7 @@
  */
 import type { Stage, Ticket } from "@/shared/types";
 import { appStore, useApp, type AppState, type CenterTab, type Theme } from "./state";
-import { loadTheme, saveTheme } from "./prefs";
+import { loadLastTicketByProject, loadTheme, saveTheme } from "./prefs";
 
 const s = () => appStore.getState();
 
@@ -69,10 +69,24 @@ export function jumpToFinding(path: string, line: number) {
   patch({ centerTab: "diff", highlight: { path, line, nonce: Date.now() } });
 }
 
-export function switchProject(id: string) {
-  patch({ activeProjectId: id });
-  const first = s().tickets.find((t) => t.projectId === id && !isTerminalStage(t.stage));
-  patch({ selectedNo: first?.ticketNo ?? null });
+/**
+ * 切换当前项目：优先恢复该项目「最后打开的工单」（端侧缓存），
+ * 缓存缺失/失效（工单不在列表或不属于该项目）时退回该项目的超级工单，
+ * 再退回首个非终态工单。只改选中态；完整打开（拉会话/diff + 跳工作台）
+ * 由 app 层 actions.openProject 编排。
+ * @returns 选中的工单号；null = 该项目当前没有可打开的工单。
+ */
+export function switchProject(id: string): string | null {
+  const st = s();
+  const cached = loadLastTicketByProject()[id];
+  const remembered = cached
+    ? st.tickets.find((t) => t.ticketNo === cached && t.projectId === id)
+    : undefined;
+  const superNo = st.projects.find((p) => p.id === id)?.superTicketNo || null;
+  const first = st.tickets.find((t) => t.projectId === id && !isTerminalStage(t.stage));
+  const target = remembered?.ticketNo ?? superNo ?? first?.ticketNo ?? null;
+  patch({ activeProjectId: id, selectedNo: target });
+  return target;
 }
 
 function isTerminalStage(stage: Stage): boolean {

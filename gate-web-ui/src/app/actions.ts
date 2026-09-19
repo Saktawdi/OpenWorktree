@@ -3,7 +3,7 @@
  * 分发到对应 feature 包或演示引擎。跨域编排（连接/启动）见 boot.ts。
  */
 import * as demo from "@/demo/engine";
-import { appStore, showToast, wipePersisted } from "@/store";
+import { appStore, showToast, switchProject, wipePersisted } from "@/store";
 import { seedDemo } from "@/demo/seed";
 import {
   createTicketLive,
@@ -256,6 +256,17 @@ export const actions = {
         workspacePath: body.workspacePath,
         startedAt: Date.now(),
       });
+      // 快速模式超级工单：后端随项目一并自动创建（SuperTicketHandler.ensure，永不关闭）。
+      // 同步落一条骨架条目进工单侧栏——项目 id 由后端生成、此刻未知，走「未分配」口径
+      // （任何项目上下文可见）；接入完成后立即补拉工单列表，真实条目一到即顶替骨架，
+      // 不必等 15s 慢节拍轮询。占位与项目骨架同收尾：成功顶替、失败一并撤卡。
+      const superTempId = addPendingTicket({
+        title: t("actions.superTicketTitle"),
+        priority: "P2",
+        projectId: "",
+        startedAt: Date.now(),
+        isSuper: true,
+      });
       return createProjectLive({
         name: body.name,
         workspace_path: body.workspacePath,
@@ -264,7 +275,13 @@ export const actions = {
         priority: body.priority,
         size: body.size,
         tags: body.tags,
-      }).finally(() => removePendingProject(tempId));
+      })
+        .then(async (ok) => {
+          removePendingProject(tempId);
+          if (ok) await loadTickets().catch(() => {});
+          return ok;
+        })
+        .finally(() => removePendingTicket(superTempId));
     }
     const id = body.name
       .toLowerCase()
@@ -421,6 +438,16 @@ export const actions = {
     selectTicket(no);
     // demo 模式也投影证据链（带水印标记），保证第四个 tab 在演示下可用
     void import("@/features/gate/api").then((m) => m.loadEvidence(no));
+  },
+  /**
+   * 切换项目并打开工单（顶栏项目选择器 / 托盘「打开项目」同语义）：
+   * 打开该项目「最后打开的工单」，无缓存/失效时退超级工单，再退首个非终态。
+   * 点击当前项目不重复打开（避免无谓重拉）。
+   */
+  openProject(projectId: string) {
+    if (projectId === appStore.getState().activeProjectId) return;
+    const target = switchProject(projectId);
+    if (target) return actions.openTicket(target);
   },
   async connectLive(token: string): Promise<TokenVerify> {
     const v = await verifyToken(token);

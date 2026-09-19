@@ -26,6 +26,7 @@ const SESSION_GROUPS_KEY = "gate-session-groups";
 const SESSION_PINNED_KEY = "gate-session-pinned";
 const FOLLOW_UP_BEHAVIOR_KEY = "gate-follow-up-behavior";
 const QUEUED_MESSAGES_KEY = "gate-queued-messages";
+const LAST_TICKET_KEY = "gate-last-ticket-by-project";
 const ASSISTANT_SETTINGS_KEY = "gate-assistant-settings";
 const ASSISTANT_HISTORY_KEY = "gate-assistant-history";
 const ASSISTANT_MODEL_KEY = "gate-assistant-model";
@@ -364,6 +365,32 @@ export function saveQueuedMessages(data: Record<string, import("@/shared/types")
     localStorage.setItem(QUEUED_MESSAGES_KEY, JSON.stringify(clean));
   } catch {
     /* ignore */
+  }
+}
+
+/* ─── 项目 → 最后打开的工单（切换项目时恢复；key = 项目 id） ─── */
+
+/** 读取「项目 id → 最后打开的工单号」表；非法/损坏条目直接丢弃。 */
+export function loadLastTicketByProject(): Record<string, string> {
+  try {
+    const raw = typeof window !== "undefined" ? localStorage.getItem(LAST_TICKET_KEY) : null;
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const out: Record<string, string> = {};
+    for (const [pid, no] of Object.entries(parsed)) {
+      if (typeof pid === "string" && pid !== "" && typeof no === "string" && no !== "") out[pid] = no;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+export function saveLastTicketByProject(map: Record<string, string>) {
+  try {
+    localStorage.setItem(LAST_TICKET_KEY, JSON.stringify(map));
+  } catch {
+    /* 存储不可用时降级为仅本窗口内保留 */
   }
 }
 

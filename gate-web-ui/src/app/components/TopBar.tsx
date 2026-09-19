@@ -18,7 +18,8 @@ import {
   Moon,
   X,
 } from "@phosphor-icons/react";
-import { appStore, openConnect, openPluginPage, setView, switchProject, toggleTheme, useApp } from "@/store";
+import { appStore, openConnect, openPluginPage, setView, toggleTheme, useApp } from "@/store";
+import { actions } from "@/app/actions";
 import { useT } from "@/i18n";
 import { usePlugins } from "@/app/plugins/state";
 import { HEADER_ORDER_DEFAULT, PAGE_ORDER_DEFAULT, SLOT_HEADER_ACTIONS, SLOT_NAV_PAGES } from "@/app/plugins/slots";
@@ -194,7 +195,7 @@ function ProjectSwitcher() {
                   p.id === activeId ? "bg-raised text-ink" : "text-dim hover:bg-raised hover:text-ink"
                 }`}
                 onClick={() => {
-                  switchProject(p.id);
+                  actions.openProject(p.id);
                   setOpen(false);
                 }}
               >
@@ -299,9 +300,9 @@ function WindowControls() {
       if (d.action === "maximized") {
         setMaximized(!!d.value);
       } else if (d.action === "open-project" && d.projectId) {
-        // 托盘点项目：与顶栏项目选择器同语义（switchProject 选首个非终态工单），
+        // 托盘点项目：与顶栏项目选择器同语义（switchProject 恢复该项目上次打开的工单），
         // 外加切回工作台视图——托盘入口的用户意图就是"去那个项目的工单界面"。
-        switchProject(d.projectId);
+        actions.openProject(d.projectId);
         setView("workbench");
       }
     };

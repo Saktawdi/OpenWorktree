@@ -355,6 +355,14 @@ function PendingTicketItem({ pending }: { pending: PendingTicket }) {
       <div className="flex items-center gap-2">
         <span className="skeleton h-3 w-12" />
         <span className="flex-1" />
+        {pending.isSuper && (
+          <span
+            className="chip border border-violet/30 bg-violet/10 text-violet"
+            title={t("ticket.list.quickModeTip")}
+          >
+            {t("ticket.list.quickMode")}
+          </span>
+        )}
         <PriorityChip priority={pending.priority} />
       </div>
       <div className="mt-0.5 text-[13px] leading-snug text-dim line-clamp-2">{pending.title}</div>

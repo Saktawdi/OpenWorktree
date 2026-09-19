@@ -431,6 +431,8 @@ export interface PendingTicket {
   /** 归属项目（空串 = 未分配）：只在其归属项目上下文中展示。 */
   projectId: string;
   startedAt: number;
+  /** 快速模式超级工单（接入项目时后端随项目一并自动创建）：侧栏占位亮快速模式徽标；看板同真实口径不展示。 */
+  isSuper?: boolean;
 }
 
 /** 引用片段胶囊（划选页面文字 → 添加到对话框）：text 保留原始选中文本，发送时内联进消息。 */

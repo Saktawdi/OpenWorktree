@@ -4,7 +4,7 @@
 import { t } from "@/i18n";
 import { appStore } from "@/store";
 import { showToast } from "@/store/ui";
-import { saveKanbanStages, saveVisibleStages } from "@/store/prefs";
+import { saveKanbanStages, saveVisibleStages, loadLastTicketByProject, saveLastTicketByProject } from "@/store/prefs";
 import type { DiffContentEntry, DiffFile, PendingTicket, Stage, StageChangeRecord, Ticket } from "@/shared/types";
 import { diffSig } from "@/shared/diff";
 import { ALL_STAGES, KANBAN_DEFAULT_STAGES, KANBAN_LANE_COUNT, KANBAN_STAGE_ORDER, uid } from "@/shared/format";
@@ -68,10 +68,21 @@ export function setDiffContent(no: string, file: DiffFile, sig: string) {
   }));
 }
 
+/**
+ * 记忆「该项目最后打开的工单」（落盘 localStorage）：切换项目时据此恢复选中，
+ * 缓存缺失/失效由 switchProject 回退到超级工单/首个非终态。
+ */
+export function rememberLastOpened(no: string) {
+  const projectId = s().tickets.find((t) => t.ticketNo === no)?.projectId;
+  if (!projectId) return;
+  saveLastTicketByProject({ ...loadLastTicketByProject(), [projectId]: no });
+}
+
 export function selectTicket(no: string) {
   // 打开工单即视为看见"会话已结束"与"审查结果已出"提醒
   clearSessionEnded(no);
   clearReviewEnded(no);
+  rememberLastOpened(no);
   patch({ selectedNo: no, centerTab: "chat", highlight: null });
 }
 
