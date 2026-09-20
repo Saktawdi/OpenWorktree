@@ -542,7 +542,13 @@ function WorkspacesCard({
             return (
               <div
                 key={ws.id}
-                className={"rounded-lg border bg-sunken px-3 py-2.5 " + (busy ? "border-warn/30" : "border-edge")}
+                className={
+                  // min-w-0：卡片是 grid 项，缺省最小尺寸取内容 min-content；第一行「恒定不换行」
+                  // 的 min-content 会随插入的徽标（.chip 是 flex-shrink:0 的原子元素）增长，
+                  // 一超出轨道宽度整张卡就被撑宽溢出容器。置 0 后网格列可正常收缩，
+                  // 宽度差仍由标题 truncate 吸收（第一行不换行的既定语义不变）。
+                  "min-w-0 rounded-lg border bg-sunken px-3 py-2.5 " + (busy ? "border-warn/30" : "border-edge")
+                }
               >
                 {/* 第一行：工单标识 + 标题（截断吸收宽度差）+ 右侧「最后改动 / 清理」恒定不换行 */}
                 <div className="flex items-center gap-2 min-w-0">

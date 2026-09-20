@@ -42,7 +42,7 @@
     <!-- 软件版本唯一事实来源（CI-friendly 版本，Maven ≥3.5）：升版只改这一行，
          所有子模块经 parent 引用 ${revision} 自动跟随；flatten 插件负责在
          install/deploy 时把 ${revision} 解析成真实版本号，保证 .m2 里的 pom 合法。 -->
-    <revision>0.3.13</revision>
+    <revision>0.3.14</revision>
     <maven.compiler.release>17</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
