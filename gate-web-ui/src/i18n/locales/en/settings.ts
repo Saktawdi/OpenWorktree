@@ -214,7 +214,7 @@ export const enSettings = {
 
   /* ─── LLM 助手设置 ─── */
   "assistant.settings.selectionAsk": "Selection ask",
-  "assistant.settings.selectionAskDesc": "When enabled, selecting text anywhere shows an “Ask the assistant” action in the quick menu — one click sends the selection to the floating chat panel.",
+  "assistant.settings.selectionAskDesc": "When enabled, selecting text anywhere adds an “Ask the assistant” button (sparkle icon, hover for its name) to the selection menu — one click sends the selection to the floating chat panel.",
   "assistant.settings.promptLabel": "Pre-question prompt",
   "assistant.settings.promptHint": "Prepended to the selected text when asking; leave empty for the default.",
   "assistant.settings.temperature": "Temperature",

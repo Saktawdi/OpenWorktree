@@ -621,11 +621,20 @@ body {
       focus:outline-none focus:border-info/40 resize-none;
   }
 
-  /* ── 划选动作菜单（SelectionQuoteLayer：内置「添加到对话框」+ 插件 selection.menu） ── */
+  /* ── 通用菜单行（AssistantModelPicker 等） ── */
   .menu-action {
     @apply flex items-center gap-1.5 h-8 px-2.5 rounded-lg text-[12px] font-medium text-dim
       whitespace-nowrap cursor-pointer transition-colors duration-150
       hover:text-ink hover:bg-raised;
+  }
+
+  /* ── 划选月牙盘的一枚（SelectionQuoteLayer：内置「添加到对话框」+ 插件 selection.menu） ──
+     位置与直径由组件按弧线算好后走 inline style；这里只管圆形外观与悬停态。
+     文案没有常驻位，短名走 aria-label、完整提示走 title。 */
+  .disc-action {
+    @apply absolute grid place-items-center select-none rounded-full border border-edge
+      bg-overlay/95 text-dim shadow-xl shadow-black/40 backdrop-blur-sm cursor-pointer
+      transition-colors duration-150 hover:border-edge-strong hover:bg-raised hover:text-ink;
   }
 
   /* ── Markdown Body ── */

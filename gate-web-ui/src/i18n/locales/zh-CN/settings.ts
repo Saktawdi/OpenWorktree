@@ -214,7 +214,7 @@ export const zhSettings = {
 
   /* ─── LLM 助手设置 ─── */
   "assistant.settings.selectionAsk": "划选提问",
-  "assistant.settings.selectionAskDesc": "开启后，在页面任意位置划选文字，快捷菜单将出现「询问小助手」——一键把选中内容送进悬浮对话面板。",
+  "assistant.settings.selectionAskDesc": "开启后，在页面任意位置划选文字，划选菜单（图标盘）将出现「询问小助手」（星芒图标，悬浮可见名称）——一键把选中内容送进悬浮对话面板。",
   "assistant.settings.promptLabel": "提问前置提示词",
   "assistant.settings.promptHint": "划选提问时拼接在选中文字之前的引导语，留空使用默认。",
   "assistant.settings.temperature": "采样温度",

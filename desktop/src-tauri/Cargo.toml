@@ -1,6 +1,6 @@
 [package]
 name = "desktop"
-version = "0.3.14"
+version = "0.3.15"
 description = "OpenWorktree 桌面壳：托管 OpenWorktree 后端单文件并提供原生窗口"
 authors = ["Saktawdi"]
 edition = "2021"
