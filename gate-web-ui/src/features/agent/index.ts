@@ -13,8 +13,9 @@ export {
   deleteOcProviderLive,
   fetchOcModelsLive,
   testOcModelLive,
+  matchOcModelsLive,
 } from "./oc";
-export type { OcModelTestResult } from "./oc";
+export type { OcModelTestResult, OcModelMatchResult, OcModelMatchCandidate } from "./oc";
 export { fetchBusyAgents, startAgentBusyPolling, stopAgentBusyPolling } from "./busy";
 export { setAgentId, upsertAgentConfig, removeAgentConfig, upsertOcProvider, removeOcProvider } from "./state";
 export { AgentsPage } from "./components/AgentsPage";

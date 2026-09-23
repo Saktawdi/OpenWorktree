@@ -94,6 +94,62 @@ export function parseLimit(raw: string): number | null {
   return /^\d+$/.test(s) ? Number(s) : null;
 }
 
+/** 模型行上渲染的小标签。 */
+export interface ModelTag {
+  kind: "context" | "vision";
+  /** 展示文本：context 是量级缩写（1M，与语言无关）；vision 由组件按语言取词，此处为空。 */
+  label: string;
+}
+
+/**
+ * 从模型配置里推导展示用小标签（对应 zcode 模型列表里 1M / 视觉 那种标）。
+ *
+ * 只标「值得一眼看到」的能力，不做全量罗列：上下文到百万级才给标的位数（1M），够不到就不标——
+ * 每个模型都挂一串标反而让列表没法扫。图片输入即「视觉」。
+ */
+export function modelTags(cfg: Record<string, unknown>): ModelTag[] {
+  const tags: ModelTag[] = [];
+  const limit = (cfg.limit ?? {}) as Record<string, unknown>;
+  const ctx = typeof limit.context === "number" ? limit.context : Number(limit.context);
+  if (Number.isFinite(ctx) && ctx >= 1_000_000) {
+    // 1048576 / 1050000 这类非整百万的上下文，标成 1M 才是它想表达的量级。
+    tags.push({ kind: "context", label: `${Math.floor(ctx / 1_000_000)}M` });
+  }
+  const mods = (cfg.modalities ?? {}) as Record<string, unknown>;
+  const inputs = Array.isArray(mods.input) ? (mods.input as unknown[]).map(String) : [];
+  if (inputs.includes("image")) {
+    tags.push({ kind: "vision", label: "" });
+  }
+  return tags;
+}
+
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+/**
+ * 用线上匹配结果补空缺：已有键（无论多深）一律保持不动，只补上没有的。
+ *
+ * 这样「智能匹配」对已手改过的模型是幂等的——重复匹配不会把用户调过的 limit 或模态冲掉，
+ * 对新勾选的空配置模型则等于整份填入。
+ */
+export function fillGaps(
+  target: Record<string, unknown>,
+  defaults: Record<string, unknown>,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...target };
+  for (const [k, v] of Object.entries(defaults)) {
+    const cur = out[k];
+    if (cur === undefined) {
+      out[k] = v;
+    } else if (isPlainObject(cur) && isPlainObject(v)) {
+      out[k] = fillGaps(cur, v);
+    }
+    // 其余情况（标量/数组已有值）以用户现有的为准。
+  }
+  return out;
+}
+
 /** 兼容旧持久化形状（string[]）：统一归一为 {id, config} 条目。 */
 export function normalizeModelEntries(models: (OpenCodeModelEntry | string)[] | undefined): OpenCodeModelEntry[] {
   return (models ?? []).map((m) => (typeof m === "string" ? { id: m, config: {} } : m));

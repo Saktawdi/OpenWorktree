@@ -2,6 +2,7 @@ package gate.web.controller;
 
 import gate.domain.error.GateErrorCode;
 import gate.domain.error.GateException;
+import gate.web.service.ModelCatalogService;
 import gate.web.service.OpenCodeConfigService;
 import gate.web.service.OpenCodeModelsApi;
 import gate.web.util.Json;
@@ -25,10 +26,13 @@ public final class OpenCodeProviderController implements WebController {
 
     private final OpenCodeConfigService configService;
     private final OpenCodeModelsApi modelsApi;
+    private final ModelCatalogService catalogService;
 
-    public OpenCodeProviderController(OpenCodeConfigService configService, OpenCodeModelsApi modelsApi) {
+    public OpenCodeProviderController(OpenCodeConfigService configService, OpenCodeModelsApi modelsApi,
+                                     ModelCatalogService catalogService) {
         this.configService = configService;
         this.modelsApi = modelsApi;
+        this.catalogService = catalogService;
     }
 
     @Override
@@ -38,13 +42,14 @@ public final class OpenCodeProviderController implements WebController {
         app.post("/api/opencode/providers/{key}", this::create);
         app.put("/api/opencode/providers/{key}", this::update);
         app.delete("/api/opencode/providers/{key}", this::delete);
-        // Upstream probes: pull the model list / test one chat completion.
-        // They take explicit base_url + api_key from the edit dialog so a provider can be
-        // verified before it is ever written to opencode.json. Registered outside the
+        // Upstream probes: pull the model list / test one chat completion / match against the
+        // online catalog. They take explicit base_url + api_key from the edit dialog so a provider
+        // can be verified before it is ever written to opencode.json. Registered outside the
         // /providers/{key} namespace: a single-segment path here would collide with the POST
         // create route (Javalin matches "test" as a provider key).
         app.post("/api/opencode/models/fetch", this::fetchModels);
         app.post("/api/opencode/models/test", this::test);
+        app.post("/api/opencode/models/match", this::matchModels);
     }
 
     public void configPath(Context ctx) {
@@ -123,6 +128,24 @@ public final class OpenCodeProviderController implements WebController {
                 str(req, "base_url"), str(req, "api_key"), model.trim(), str(req, "prompt"));
         ctx.status(HttpStatus.OK);
         ctx.json(result);
+    }
+
+    /**
+     * 智能匹配：把选中的模型 id 对到线上目录（models.dev）的配置项上。
+     * 未匹配的 id 原样出现在 {@code unmatched} 里，由前端保留用户手填的配置。
+     */
+    public void matchModels(Context ctx) {
+        Map<String, Object> req = Json.parseObject(ctx.body());
+        List<String> models = new ArrayList<>();
+        if (req.get("models") instanceof List<?> list) {
+            for (Object o : list) {
+                if (o != null) {
+                    models.add(o.toString());
+                }
+            }
+        }
+        ctx.status(HttpStatus.OK);
+        ctx.json(catalogService.match(str(req, "base_url"), models));
     }
 
     private static String str(Map<String, Object> map, String key) {

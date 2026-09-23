@@ -23,6 +23,7 @@ import gate.web.plugin.PluginCatalog;
 import gate.web.plugin.PluginDataStore;
 import gate.web.controller.EvidenceController;
 import gate.web.service.AuditReader;
+import gate.web.service.ModelCatalogService;
 import gate.web.service.RepoViewReader;
 import gate.web.service.SessionModelCatalog;
 import gate.web.service.OpenCodeConfigService;
@@ -63,7 +64,8 @@ public final class ApiRoutes implements WebController {
                 new TaskController(c.taskRegistry(), c.taskRunner()),
                 new ProviderController(c.providerRepository(), c.modelFetcher(), c.kmsService(), c.clock()),
                 new LlmController(c.providerRepository(), c.kmsService()),
-                new OpenCodeProviderController(new OpenCodeConfigService(), new OpenCodeModelsApi()),
+                new OpenCodeProviderController(new OpenCodeConfigService(), new OpenCodeModelsApi(),
+                        new ModelCatalogService()),
                 new MetricsController(c.metricsService(), c.gateService()),
                 new SessionController(c.agentConfigRepository(), c.sessionRepository(), c.agentSessionPort(),
                         c.ticketRepository(), c.clock(), new SessionModelCatalog(), c.credentials(),

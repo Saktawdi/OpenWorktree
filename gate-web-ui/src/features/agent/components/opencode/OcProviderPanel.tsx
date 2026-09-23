@@ -1,15 +1,28 @@
-﻿import { useState } from "react";
-import { PencilSimple, Plug, Trash, X } from "@phosphor-icons/react";
+﻿import { useEffect, useRef, useState } from "react";
+import { PencilSimple, Plug, Sparkle, Trash, X } from "@phosphor-icons/react";
 import { actions } from "@/app/actions";
 import { useApp } from "@/store";
-import { fetchOcModelsLive, testOcModelLive } from "@/features/agent";
+import { fetchOcModelsLive, matchOcModelsLive, testOcModelLive } from "@/features/agent";
 import type { OpenCodeModelEntry, OpenCodeProvider } from "@/shared/types";
-import { NPM_PRESETS, normalizeModelEntries, type ProbeState } from "./presets";
+import { NPM_PRESETS, fillGaps, modelTags, normalizeModelEntries, type ProbeState } from "./presets";
 import { ModelEditor } from "./ModelEditor";
 import { useT } from "@/i18n";
 
+/** 智能匹配的展示位（与上游探测的 ProbeState 分开：两者可能同时在跑）。 */
+interface MatchState {
+  kind: "idle" | "matching" | "done" | "error";
+  ok?: boolean;
+  text?: string;
+}
+
+/** 自动匹配的合并窗口：连续勾选（含「全选」）压成一次请求。 */
+const AUTO_MATCH_DEBOUNCE_MS = 350;
+
 /**
  * 供应商编辑面板：由 OpenCodeProvidersModal 以右侧拼接面板承载（motion 动效在父级）。
+ *
+ * <p>新增或勾选模型时会自动去线上目录（models.dev）匹配最新配置项并回填；已手改过的字段不被覆盖
+ * （见 {@link fillGaps}）。匹配到的配置同时驱动模型行上的小标签（1M / 视觉）。
  */
 export function OcProviderPanel({
   initial,
@@ -30,24 +43,107 @@ export function OcProviderPanel({
   const [customModel, setCustomModel] = useState("");
   const [editingModel, setEditingModel] = useState<string | null>(null);
   const [probe, setProbe] = useState<ProbeState>({ kind: "idle" });
+  const [match, setMatch] = useState<MatchState>({ kind: "idle" });
+  /** 匹配命中来源（本地 id → 目录里的 id/供应商），只作展示。 */
+  const [matchedFrom, setMatchedFrom] = useState<Record<string, { provider: string; matchedId: string }>>({});
   const [saving, setSaving] = useState(false);
+
+  /** 待匹配的 id 与合并窗口定时器（跨渲染保留，不能用 state）。 */
+  const pendingRef = useRef<string[]>([]);
+  const timerRef = useRef<number | null>(null);
+  /** 组件卸载后到达的响应不再 setState。 */
+  const aliveRef = useRef(true);
+  useEffect(() => {
+    aliveRef.current = true;
+    return () => {
+      aliveRef.current = false;
+      if (timerRef.current != null) window.clearTimeout(timerRef.current);
+    };
+  }, []);
 
   const keyValid = /^[A-Za-z0-9._\-/]+$/.test(key.trim());
   const canSave = keyValid && name.trim().length > 0 && !saving;
   const canProbe = mode === "live" && !!baseURL.trim() && probe.kind !== "fetching" && probe.kind !== "testing";
+  // 匹配不要求 baseURL：填了能把范围收窄到该端点对应那家，留空则全库匹配。
+  const canMatch = mode === "live" && models.length > 0 && match.kind !== "matching";
   const selectedIds = models.map((m) => m.id);
 
-  const toggleModel = (id: string) =>
-    setModels((prev) =>
-      prev.some((m) => m.id === id)
-        ? prev.filter((m) => m.id !== id)
-        : [...prev, { id, config: {} }],
-    );
+  /**
+   * 执行一次匹配并回填。只补空缺（fillGaps），所以对已配好的模型是幂等的。
+   * silent：自动匹配（勾选触发）不弹「全部未命中」这类噪音提示。
+   */
+  const runMatch = async (ids: string[], silent = false) => {
+    const targets = [...new Set(ids.filter((id) => id.trim() !== ""))];
+    if (targets.length === 0 || mode !== "live") return;
+    setMatch({ kind: "matching" });
+    try {
+      const r = await matchOcModelsLive(baseURL.trim(), targets);
+      if (!aliveRef.current) return;
+      if (!r.catalog_ok) {
+        setMatch({ kind: "error", ok: false, text: t("oc.matchFailed", { err: r.catalog_error ?? "" }) });
+        return;
+      }
+      // 合并走函数式更新（避免闭包里的旧 models 覆盖用户刚做的编辑）。
+      setModels((prev) =>
+        prev.map((m) => {
+          const hit = r.matched[m.id];
+          return hit ? { id: m.id, config: fillGaps(m.config, hit.config) } : m;
+        }),
+      );
+      const source: Record<string, { provider: string; matchedId: string }> = {};
+      for (const [id, hit] of Object.entries(r.matched)) {
+        source[id] = { provider: hit.provider, matchedId: hit.matched_id };
+      }
+      setMatchedFrom((prev) => ({ ...prev, ...source }));
+      const hitCount = Object.keys(source).length;
+      const miss = targets.length - hitCount;
+      if (hitCount === 0) {
+        setMatch(
+          silent
+            ? { kind: "idle" }
+            : { kind: "error", ok: false, text: t("oc.matchNone") },
+        );
+      } else {
+        setMatch({
+          kind: "done",
+          ok: true,
+          text: miss > 0 ? t("oc.matchDoneSome", { n: hitCount, miss }) : t("oc.matchDone", { n: hitCount }),
+        });
+      }
+    } catch (e) {
+      if (aliveRef.current) {
+        setMatch({ kind: "error", ok: false, text: t("oc.matchFailed", { err: (e as Error).message }) });
+      }
+    }
+  };
+
+  /** 把新加入的 id 排进合并窗口；窗口到点后合并成一次请求。 */
+  const scheduleAutoMatch = (ids: string[]) => {
+    if (mode !== "live") return;
+    pendingRef.current = [...new Set([...pendingRef.current, ...ids])];
+    if (timerRef.current != null) window.clearTimeout(timerRef.current);
+    timerRef.current = window.setTimeout(() => {
+      timerRef.current = null;
+      const batch = pendingRef.current;
+      pendingRef.current = [];
+      void runMatch(batch, true);
+    }, AUTO_MATCH_DEBOUNCE_MS);
+  };
+
+  const toggleModel = (id: string) => {
+    const removing = models.some((m) => m.id === id);
+    setModels((prev) => (removing ? prev.filter((m) => m.id !== id) : [...prev, { id, config: {} }]));
+    if (!removing) scheduleAutoMatch([id]);
+  };
 
   const addCustomModel = () => {
     const id = customModel.trim();
     if (!id) return;
-    setModels((prev) => (prev.some((m) => m.id === id) ? prev : [...prev, { id, config: {} }]));
+    const exists = models.some((m) => m.id === id);
+    if (!exists) {
+      setModels((prev) => [...prev, { id, config: {} }]);
+      scheduleAutoMatch([id]);
+    }
     setCustomModel("");
   };
 
@@ -201,6 +297,16 @@ export function OcProviderPanel({
               >
                 {probe.kind === "testing" ? t("oc.testing") : t("oc.test")}
               </button>
+              <button
+                type="button"
+                className="chip border border-accent/30 bg-accent/10 text-accent cursor-pointer disabled:opacity-40 disabled:pointer-events-none"
+                disabled={!canMatch}
+                onClick={() => void runMatch(models.map((m) => m.id))}
+                title={mode === "live" ? t("oc.matchTip") : t("oc.matchTipDemo")}
+              >
+                <Sparkle size={11} weight="fill" />
+                {match.kind === "matching" ? t("oc.matching") : t("oc.match")}
+              </button>
             </div>
 
             {mode !== "live" && (
@@ -218,6 +324,12 @@ export function OcProviderPanel({
                 {probe.text}
               </div>
             )}
+            {match.kind !== "idle" && match.kind !== "matching" && (
+              <div className={`mb-2 text-[11.5px] ${match.ok ? "text-info" : "text-warn"}`}>
+                {match.ok ? "✦ " : ""}
+                {match.text}
+              </div>
+            )}
 
             {fetched.length > 0 && (
               <div className="mb-2 rounded-lg border border-edge bg-canvas/50 max-h-[180px] overflow-y-auto p-2">
@@ -227,12 +339,13 @@ export function OcProviderPanel({
                   <button
                     type="button"
                     className="cursor-pointer bg-transparent border-0 p-0 text-dim hover:text-accent"
-                    onClick={() =>
-                      setModels((prev) => {
-                        const have = new Set(prev.map((m) => m.id));
-                        return [...prev, ...fetched.filter((id) => !have.has(id)).map((id) => ({ id, config: {} }))];
-                      })
-                    }
+                    onClick={() => {
+                      const have = new Set(models.map((m) => m.id));
+                      const added = fetched.filter((id) => !have.has(id));
+                      if (added.length === 0) return;
+                      setModels((prev) => [...prev, ...added.map((id) => ({ id, config: {} }))]);
+                      scheduleAutoMatch(added);
+                    }}
                   >
                     {t("llm.selectAll")}
                   </button>
@@ -282,10 +395,32 @@ export function OcProviderPanel({
 
             {models.length > 0 && (
               <div className="mt-2 space-y-2">
+                <div className="text-[11px] text-faint">{t("oc.matchHint")}</div>
                 {models.map((m) => (
                   <div key={m.id}>
                     <div className="flex items-center gap-2 rounded-lg border border-edge bg-raised/40 px-3 py-2">
-                      <span className="font-mono text-[12px] text-dim truncate">{m.id}</span>
+                      <span
+                        className="font-mono text-[12px] text-dim truncate"
+                        title={
+                          matchedFrom[m.id]
+                            ? t("oc.matchSourceTip", {
+                                matched: matchedFrom[m.id].matchedId,
+                                provider: matchedFrom[m.id].provider,
+                              })
+                            : undefined
+                        }
+                      >
+                        {m.id}
+                      </span>
+                      {modelTags(m.config).map((tag) => (
+                        <span
+                          key={tag.kind}
+                          title={t(`oc.tag.${tag.kind}`, { label: tag.label })}
+                          className="chip border border-edge-strong bg-raised font-mono text-[10px] text-dim"
+                        >
+                          {tag.kind === "vision" ? t("oc.tagLabel.vision") : tag.label}
+                        </span>
+                      ))}
                       {typeof m.config.name === "string" && m.config.name && (
                         <span className="text-[11.5px] text-faint truncate">{m.config.name}</span>
                       )}
