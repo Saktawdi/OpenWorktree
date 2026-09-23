@@ -17,11 +17,13 @@ import gate.web.controller.StorageController;
 import gate.web.controller.TerminalController;
 import gate.web.controller.TaskController;
 import gate.web.controller.TicketController;
+import gate.web.controller.TicketRepoController;
 import gate.web.controller.WebController;
 import gate.web.plugin.PluginCatalog;
 import gate.web.plugin.PluginDataStore;
 import gate.web.controller.EvidenceController;
 import gate.web.service.AuditReader;
+import gate.web.service.RepoViewReader;
 import gate.web.service.SessionModelCatalog;
 import gate.web.service.OpenCodeConfigService;
 import gate.web.service.OpenCodeModelsApi;
@@ -37,12 +39,16 @@ public final class ApiRoutes implements WebController {
     private final List<WebController> controllers;
 
     public ApiRoutes(WebComponents c) {
+        // 仓库视图（分支图/提交历史/提交详情）的只读 git 读取：项目工作区与工单克隆共用一份实现
+        RepoViewReader repoViewReader = new RepoViewReader(c.git());
         this.controllers = List.of(
                 new AuthController(c.credentials()),
                 new StatusController(c.gateService(), c.config(), c.runtimeInfo()),
                 new ProjectController(c.projectRepository(), c.ticketRepository(), c.topologyInitializer(),
                         c.config(), c.workspaceSyncer(), c.cloneBaseSyncer(), c.git(), c.clock()),
-                new RepoViewController(c.projectRepository(), c.git()),
+                // 仓库视图（分支图/提交历史/提交详情）只读 git 读取：项目工作区与工单克隆共用一份实现
+                new RepoViewController(c.projectRepository(), repoViewReader),
+                new TicketRepoController(c.ticketRepository(), repoViewReader),
                 new TerminalController(c.projectRepository(), c.ticketRepository(), c.credentials()),
                 new TicketController(c.ticketRepository(), c.projectRepository(), c.agentConfigRepository(),
                         c.topologyInitializer(), c.config(), c.clock(), c.presubmitRepository(),

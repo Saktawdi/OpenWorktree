@@ -137,6 +137,52 @@ class ProjectRepoViewApiTest {
         assertTrue(escape.statusCode() >= 400, "path traversal must be rejected: " + escape.body());
     }
 
+    @Test
+    void commit_detail_returns_full_message_meta_and_refs() throws Exception {
+        Path ws = buildWorkspace("detail-ws");
+        String id = registerProject("Detail", ws);
+
+        // 列表只带单行 subject；详情才给完整 message。
+        String sha = commitMultiLine(ws, "feat(graph): multi-line subject",
+                "why: the subject cannot say all this\n\n- bullet one\n- bullet two\n");
+        String full = get("/api/projects/" + id + "/commit/" + sha).body();
+        assertEquals(200, get("/api/projects/" + id + "/commit/" + sha).statusCode(), full);
+        assertTrue(full.contains("\"message\":\"feat(graph): multi-line subject\\n\\nwhy: the subject"
+                + " cannot say all this\\n\\n- bullet one\\n- bullet two\""), full);
+        assertTrue(full.contains("\"sha\":\"" + sha + "\""), full);
+        assertTrue(full.contains("\"author\":\"li\""), full);
+        assertTrue(full.contains("\"author_email\":\"li@localhost\""), full);
+        assertTrue(full.contains("\"author_date\":\""), full);
+        assertTrue(full.contains("\"committer_date\":\""), full);
+        // --contains 是「祖先可达」而非「tip 等于」：新提交只在 main 上，tag 指向更早的 root。
+        assertTrue(full.contains("\"refs\":[\"refs/heads/main\"]"), full);
+
+        // 根提交：无父，且被两个分支与 v1.0.0（正指向它）同时包含（--contains 看祖先可达）。
+        String rootSha = harness.components().git()
+                .line(gate.domain.git.RepoRef.of(ws), "rev-list", "--max-parents=0", "HEAD").trim();
+        String rootDetail = get("/api/projects/" + id + "/commit/" + rootSha).body();
+        assertEquals(200, get("/api/projects/" + id + "/commit/" + rootSha).statusCode(), rootDetail);
+        assertTrue(rootDetail.contains("\"parents\":[]"), rootDetail);
+        assertTrue(rootDetail.contains(
+                "\"refs\":[\"refs/heads/feature/one\",\"refs/heads/main\",\"tag: v1.0.0\"]"), rootDetail);
+    }
+
+    @Test
+    void commit_detail_rejects_non_hex_and_unknown_sha() throws Exception {
+        Path ws = buildWorkspace("bad-sha-ws");
+        String id = registerProject("BadSha", ws);
+
+        // 非十六进制对象名（含会被 git 当成选项的入参）一律拒绝：这个值直接进 git argv。
+        for (String bad : new String[] {"not-hex", "HEAD", "--upload-pack=x", "%2D%2Dupload-pack%3Dx"}) {
+            HttpResponse<String> res = get("/api/projects/" + id + "/commit/" + bad);
+            assertEquals(400, res.statusCode(), bad + " -> " + res.body());
+        }
+        // 格式合法但不存在的对象：git 读不到，400 而不是 500。
+        HttpResponse<String> unknown = get("/api/projects/" + id + "/commit/"
+                + "ffffffffffffffffffffffffffffffffffffffff");
+        assertEquals(400, unknown.statusCode(), unknown.body());
+    }
+
     /** main: init (tag v1.0.0) → merge of feature/one (two commits by another author). */
     private Path buildWorkspace(String name) throws Exception {
         Path ws = harness.root().resolve(name);
@@ -171,6 +217,15 @@ class ProjectRepoViewApiTest {
         }
         git.must(ws, Map.of(), "add", "-A");
         git.must(ws, Map.of(), "commit", "-m", message);
+    }
+
+    /** 落一个带 body 的提交，返回完整 sha（当前工作区 git 身份是 li，见 buildWorkspace）。 */
+    private String commitMultiLine(Path ws, String subject, String body) throws Exception {
+        var git = harness.components().git();
+        Files.writeString(ws.resolve("notes.md"), "# notes\n");
+        git.must(ws, Map.of(), "add", "-A");
+        git.must(ws, Map.of(), "commit", "-m", subject, "-m", body);
+        return git.line(gate.domain.git.RepoRef.of(ws), "rev-parse", "HEAD").trim();
     }
 
     private String registerProject(String name, Path ws) throws Exception {
