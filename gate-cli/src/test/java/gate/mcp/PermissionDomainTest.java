@@ -46,7 +46,7 @@ class PermissionDomainTest {
                 harness.service(), harness.credentials(),
                 harness.presubmits(), harness.reviewResults(),
                 harness.blobStore(), harness.providerRepository(), harness.config(),
-                harness.tickets());
+                harness.tickets(), harness.sessionRepository());
     }
 
     @AfterEach
@@ -211,6 +211,8 @@ class PermissionDomainTest {
     private static Map<String, Object> defaultArgsFor(String tool) {
         return switch (tool) {
             case "ticket_create" -> Map.of("title", "agent spawned follow-up");
+            case "ticket_edit" -> Map.of("title", "renamed by the permission test");
+            case "session_read" -> Map.of("session_id", "s-1");
             case "presubmit_create" -> Map.of("ticket_no", "T-1");
             case "presubmit_get_diff" -> Map.of("ticket_no", "T-1");
             case "review_result_get" -> Map.of("ticket_no", "T-1");

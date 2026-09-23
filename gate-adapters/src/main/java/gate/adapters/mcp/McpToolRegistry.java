@@ -13,12 +13,17 @@ import java.util.Set;
  * <ul>
  *   <li><b>agent domain</b> (low privilege, bound to one ticket,下发 with the worktree):
  *       {@code presubmit_create}, {@code presubmit_get_diff}, {@code review_result_get},
- *       {@code sync_base} — plus
+ *       {@code sync_base}, {@code session_read} — plus
  *       {@code ticket_create}, which is agent-callable but not ticket-bound (its whole point is
  *       creating NEW tickets, e.g. follow-ups discovered mid-work). It is however
  *       <b>project-bound</b>: the new ticket must live in the bound ticket's project
  *       (McpToolDispatcher#projectScope — a cross-project or unprojected creation once sent one
- *       project's dispatch to the gate-level repo, surfacing it under every project board).</li>
+ *       project's dispatch to the gate-level repo, surfacing it under every project board).
+ *       {@code ticket_edit} is <b>ticket-bound</b>: it edits the agent's own ticket only (a
+ *       different {@code ticket_no} is denied by the dispatch-level binding check, exactly like
+ *       the presubmit tools) and accepts editable work-item metadata (title / priority /
+ *       description / note / labels) <b>only</b> — no stage key exists in its schema or in its
+ *       parser, so an agent has no entry point to a state transition.</li>
  *   <li><b>human/orchestrator domain</b> (high privilege):
  *       {@code review_run}, {@code commit_and_publish}, {@code config_show}, {@code provider_list}.</li>
  * </ul>
@@ -75,6 +80,43 @@ public final class McpToolRegistry {
                         "required", List.of("title")))));
 
         register(new ToolDef(
+                "ticket_edit",
+                AGENT_DOMAIN,
+                "Edit a ticket's work-item metadata: title, priority, description, note and labels. "
+                + "Only the fields you pass are touched — omit one to leave it as it is; pass an "
+                + "empty string (or [] for labels) to clear an optional field. Sending a field as "
+                + "JSON null counts as omitting it. "
+                + "The gate flow owns the ticket's stage: there is deliberately NO stage parameter "
+                + "here, so an agent can never move a ticket through the board — presubmit_create "
+                + "remains the only transition an agent may trigger, and review/publish/restart/"
+                + "cancel stay in the human domain. "
+                + "Scope: an agent may edit only the ticket its credential is bound to — "
+                + "ticket_no may be omitted (recommended: it then means your own ticket) but "
+                + "naming any other ticket is denied. Human tokens may edit any ticket. "
+                + "Returns the updated ticket.",
+                schema(Map.of(
+                        "type", "object",
+                        "properties", Map.of(
+                                "ticket_no", Map.of("type", "string", "description",
+                                        "Ticket to edit; defaults to the ticket your credential "
+                                                + "is bound to"),
+                                "title", Map.of("type", "string", "description",
+                                        "New title (must not be blank)"),
+                                "priority", Map.of("type", "string", "description",
+                                        "New priority: P0, P1, P2 or P3; empty string clears it"),
+                                "description", Map.of("type", "string", "description",
+                                        "New requirement description; empty string clears it"),
+                                "note", Map.of("type", "string", "description",
+                                        "New free-form note for the human reviewer; empty string "
+                                                + "clears it"),
+                                "labels", Map.of("type", "array",
+                                        "items", Map.of("type", "string"),
+                                        "description",
+                                        "Replaces the whole label list (max 20, each max 32 "
+                                                + "chars); [] clears them")),
+                        "required", List.of()))));
+
+        register(new ToolDef(
                 "presubmit_create",
                 AGENT_DOMAIN,
                 "Freeze the agent's worktree into an immutable tree and start a review round. " +
@@ -128,6 +170,32 @@ public final class McpToolRegistry {
                                         "Stash and replay uncommitted changes (default true); "
                                                 + "false skips a dirty clone untouched")),
                         "required", List.of("ticket_no")))));
+
+        register(new ToolDef(
+                "session_read",
+                AGENT_DOMAIN,
+                "Read a session's transcript, read-only: session metadata plus its messages in "
+                + "chronological order (role, text, thinking, tool calls and their results). "
+                + "Messages carry their absolute index in the full transcript; the response returns "
+                + "the newest ones by default (limit 20, max 100) and pages backwards — pass the "
+                + "returned next_before_index back as before_index to walk towards older messages. "
+                + "Long fields are clipped with an explicit truncation marker and the whole response "
+                + "is size-capped, so page for more. Scope: an agent may read sessions whose ticket "
+                + "belongs to the project of the agent's OWN ticket (a session of another project is "
+                + "denied); human tokens may read any session.",
+                schema(Map.of(
+                        "type", "object",
+                        "properties", Map.of(
+                                "session_id", Map.of("type", "string", "description",
+                                        "Session id to read"),
+                                "limit", Map.of("type", "integer", "description",
+                                        "How many messages to return, counted from the newest "
+                                                + "(default 20, max 100)"),
+                                "before_index", Map.of("type", "integer", "description",
+                                        "Only return messages with index < before_index — pass the "
+                                                + "previous response's next_before_index to page "
+                                                + "towards older messages")),
+                        "required", List.of("session_id")))));
 
         // --- human/orchestrator domain (high privilege) ---
         register(new ToolDef(

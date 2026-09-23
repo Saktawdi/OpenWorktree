@@ -68,6 +68,12 @@ export function ModelEditor({
       setJsonError(t("ocm.numInvalid", { bad: bad.join("、") }));
       return;
     }
+    // opencode 要求 limit 的上下文与输出成对出现：只写一个，opencode 启动时会拒绝整份配置
+    // （serve 直接退出、本机所有会话一起失效），而报错只提端口，排查方向会被带偏。
+    if ((ctx == null) !== (outNum == null)) {
+      setJsonError(t("ocm.limitPairRequired"));
+      return;
+    }
     setJsonError(null);
     const cfg: Record<string, unknown> = { ...parsedExtra };
     if (name.trim()) cfg.name = name.trim();

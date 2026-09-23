@@ -81,7 +81,7 @@ public final class McpServeApp {
                 runtime.gateService(), runtime.credentials(),
                 runtime.presubmitRepository(), runtime.reviewResultRepository(),
                 runtime.blobStore(), runtime.providerRepository(), runtime.config(),
-                runtime.ticketRepository());
+                runtime.ticketRepository(), runtime.sessionRepository());
         // Failed MCP calls land in the same adapters.log the backend writes (component gate-mcp),
         // so agent-side failures are auditable in the gate's own first-party trail (T-108).
         AdapterLog callLog = AdapterLog.at(config.gateHome().resolve("adapters.log"));

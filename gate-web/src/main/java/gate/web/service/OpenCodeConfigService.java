@@ -104,6 +104,7 @@ public final class OpenCodeConfigService {
                 ? asLinked(prev)
                 : new LinkedHashMap<>();
         mergeProvider(merged, provider);
+        validateModels(key, merged);
         providers.put(key, merged);
         root.put("provider", providers);
         writeRoot(loc, root);
@@ -227,6 +228,54 @@ public final class OpenCodeConfigService {
                 target.put("models", models);
             }
         }
+    }
+
+    /**
+     * 落盘前的模型节点体检：opencode 的 schema 要求 {@code limit} 一旦出现，{@code context}
+     * 与 {@code output} 就必须同时是正数。缺一个的代价不是「这个模型不好使」，而是 opencode
+     * 启动时拒绝整份配置——serve 直接退出，本机所有会话一起失效，而错误文案只指向端口，排查
+     * 方向被带偏（真实案例：模型编辑器只填上下文，值 1000000 写了出去，全部会话报
+     * {@code serve exited before becoming healthy (exit 1)}）。坏配置宁可不写。
+     *
+     * <p>只体检本次写入的 provider 节点，不做全文件校验：既有坏节点（手改的、旧版本写的）必须
+     * 还能被改写或删除救回来，否则用户只能自己去手改文件。
+     */
+    private static void validateModels(String key, Map<String, Object> provider) {
+        if (!(provider.get("models") instanceof Map<?, ?> models)) {
+            return;
+        }
+        for (Map.Entry<?, ?> e : models.entrySet()) {
+            if (e.getValue() instanceof Map<?, ?> model) {
+                validateLimit(key, String.valueOf(e.getKey()), model.get("limit"));
+            }
+        }
+    }
+
+    private static void validateLimit(String key, String modelId, Object limit) {
+        if (limit == null) {
+            return; // 不写 limit 合法：opencode 用它自己那份默认
+        }
+        if (!(limit instanceof Map<?, ?> lim)) {
+            throw limitRejected(key, modelId, "limit must be an object");
+        }
+        requirePositiveLimit(key, modelId, lim, "context");
+        requirePositiveLimit(key, modelId, lim, "output");
+    }
+
+    private static void requirePositiveLimit(String key, String modelId, Map<?, ?> limit, String field) {
+        Object raw = limit.get(field);
+        if (raw == null) {
+            throw limitRejected(key, modelId, "limit." + field + " is required whenever limit is set"
+                    + " (opencode rejects the whole config, so no session can start)");
+        }
+        if (!(raw instanceof Number n) || n.doubleValue() <= 0
+                || n.doubleValue() != Math.floor(n.doubleValue())) {
+            throw limitRejected(key, modelId, "limit." + field + " must be a positive integer, got " + raw);
+        }
+    }
+
+    private static GateException limitRejected(String key, String modelId, String why) {
+        return new GateException(GateErrorCode.USAGE, "provider " + key + " model " + modelId + ": " + why);
     }
 
     private static Map<String, Object> readRoot(Path path) {

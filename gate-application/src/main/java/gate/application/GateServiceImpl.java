@@ -63,6 +63,7 @@ public final class GateServiceImpl implements GateService {
     private final gate.application.publish.PublishHandler publishHandler;
     private final gate.application.basesync.BaseSyncHandler baseSyncHandler;
     private final gate.application.ticket.TicketCreationHandler ticketCreationHandler;
+    private final gate.application.ticket.TicketEditHandler ticketEditHandler;
     private final gate.application.project.ProjectAuthResolver authResolver;
 
     public GateServiceImpl(GateConfig config, SnapshotCapture snapshotCapture, CommitPublisher commitPublisher,
@@ -181,6 +182,7 @@ public final class GateServiceImpl implements GateService {
         this.ticketCreationHandler = topologyInitializer == null ? null
                 : new gate.application.ticket.TicketCreationHandler(
                         tickets, projects, config, topologyInitializer, clock, cloneBaseSyncer, auditLog);
+        this.ticketEditHandler = new gate.application.ticket.TicketEditHandler(tickets, clock);
     }
 
     @Override
@@ -219,6 +221,12 @@ public final class GateServiceImpl implements GateService {
                     "ticket creation is not wired into this GateService instance");
         }
         return ticketCreationHandler.handle(command);
+    }
+
+    @Override
+    public gate.domain.ticket.Ticket editTicket(gate.application.ticket.TicketRequestParser.TicketEdit edit,
+                                                String ticketNo) {
+        return ticketEditHandler.handle(edit, ticketNo);
     }
 
     @Override

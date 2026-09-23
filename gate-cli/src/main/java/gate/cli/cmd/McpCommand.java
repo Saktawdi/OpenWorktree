@@ -54,7 +54,7 @@ public final class McpCommand implements Runnable {
                     c.gateService(), c.credentials(),
                     c.presubmitRepository(), c.reviewResultRepository(),
                     c.blobStore(), c.providerRepository(), c.config(),
-                    c.ticketRepository());
+                    c.ticketRepository(), c.sessionRepository());
             // Failed MCP calls land in adapters.log (component gate-mcp) — same trail the backend
             // writes, so agent-side failures stay auditable (T-108).
             gate.adapters.io.AdapterLog callLog = gate.adapters.io.AdapterLog.at(

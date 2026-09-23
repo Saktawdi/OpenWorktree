@@ -9,7 +9,8 @@ import java.time.Instant;
  * credentials:
  * <ul>
  *   <li><b>agent domain</b> (low privilege, bound to one ticket): {@code presubmit_create},
- *       {@code presubmit_get_diff}, {@code review_result_get}.</li>
+ *       {@code presubmit_get_diff}, {@code review_result_get}, {@code sync_base},
+ *       {@code session_read}.</li>
  *   <li><b>human/orchestrator domain</b> (high privilege): {@code review_run},
  *       {@code commit_and_publish}, {@code config_*}, {@code provider_*}.</li>
  * </ul>

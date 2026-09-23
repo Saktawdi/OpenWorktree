@@ -62,7 +62,42 @@ class McpServeAppTest {
         assertTrue(names.contains("presubmit_create"), "agent tool must be listed: " + names);
         assertTrue(names.contains("presubmit_get_diff"), names.toString());
         assertTrue(names.contains("review_result_get"), names.toString());
+        assertTrue(names.contains("session_read"), "session_read must be listed: " + names);
+        assertTrue(names.contains("ticket_edit"), "ticket_edit must be listed: " + names);
         assertTrue(names.contains("commit_and_publish"), "human tools ride the same registry: " + names);
+    }
+
+    /**
+     * {@code session_read} through the bootstrap entrypoint: with a real credential the call must
+     * reach the session store — this DB has no session rows, so the structured "no such session"
+     * domain error is the proof the repository is wired (a missing wiring would surface as an
+     * internal error instead). The domain check runs first and is covered by the handshake test.
+     */
+    @Test
+    void session_read_is_wired_to_the_session_store() throws Exception {
+        Path toml = writeToml();
+        // Seed a credential into the same gate-home the child will resolve from this toml.
+        String token;
+        GateRuntime runtime = new GateRuntime(
+                new gate.adapters.config.TomlGateConfigLoader().load(toml), "git");
+        token = runtime.credentials().issueHumanToken(java.time.Instant.now());
+
+        String stdin = """
+                {"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"session_read","arguments":{"session_id":"s-missing"}}}
+                """;
+        ByteArrayOutputStream stdout = new ByteArrayOutputStream();
+        int code = McpServeApp.run(List.of("--config", toml.toString()), token,
+                new ByteArrayInputStream(stdin.getBytes(StandardCharsets.UTF_8)),
+                new PrintStream(stdout, true, StandardCharsets.UTF_8),
+                new PrintStream(OutputStream.nullOutputStream(), true, StandardCharsets.UTF_8));
+        assertEquals(0, code);
+
+        Map<?, ?> resp = cast(MiniJson.parse(stdout.toString(StandardCharsets.UTF_8)));
+        Map<?, ?> error = cast(resp.get("error"));
+        assertEquals("no such session: s-missing", error.get("message"));
+        Map<?, ?> data = cast(error.get("data"));
+        assertEquals("domain", data.get("layer"));
+        assertEquals("session_read", data.get("tool"));
     }
 
     @Test

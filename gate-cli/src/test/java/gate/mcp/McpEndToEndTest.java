@@ -167,7 +167,7 @@ class McpEndToEndTest {
                 harness.service(), harness.credentials(),
                 harness.presubmits(), harness.reviewResults(),
                 harness.blobStore(), harness.providerRepository(), harness.config(),
-                harness.tickets());
+                harness.tickets(), harness.sessionRepository());
         return new McpServer(dispatcher, token);
     }
 

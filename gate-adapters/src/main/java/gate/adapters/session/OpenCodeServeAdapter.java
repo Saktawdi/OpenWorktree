@@ -2809,9 +2809,10 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
     }
 
     /**
-     * 端口择位：从分配器取一个端口并确保它真的可用。被占时先尝试孤儿自愈（收割占着该端口
-     * 的 opencode serve，上次运行被强杀时必然发生）；收割失败（外来进程占用）返回 null，
-     * 调用方释放并按 2^n 跨步换下一个候选。
+     * 端口择位：从分配器取一个端口并确保它真的可用。两道闸——① 有人应答 /health 说明被占，
+     * 先尝试孤儿自愈（收割占着该端口的 opencode serve，上次运行被强杀时必然发生）；② 无人
+     * 应答也不等于能用，还要真去 bind 一次（见 {@link #bindable}）。两道都没过就释放该端口，
+     * 按 2^n 跨步换下一个候选。
      */
     private int acquireUsablePort() {
         int skip = 1;
@@ -2821,22 +2822,63 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
             if (opencodeExecutable == null || opencodeExecutable.isBlank()) {
                 return port; // 无 CLI 可执行体：不 spawn，端口仅作占位
             }
-            if (!probePortOccupied(port)) {
+            String refusal = null;
+            if (probePortOccupied(port)) {
+                healStaleServe(port);
+                if (probePortOccupied(port)) {
+                    refusal = "start.port-busy-skip"; // 外来进程占用
+                }
+            }
+            if (refusal == null && !bindableWithRetry(port)) {
+                refusal = "start.port-unbindable-skip";
+            }
+            if (refusal == null) {
                 return port;
             }
-            healStaleServe(port);
-            if (!probePortOccupied(port)) {
-                return port; // 孤儿已收割，端口已释放（socket 关闭略有延迟，waitHealthy 会重试）
-            }
-            // 外来进程占用：释放并按 1,2,4,8… 跨步跳过当前游标邻域的坏端口。
-            // allocate 本身已消耗当前格，跨 n 格只需再推 n-1 格。
+            // 坏端口：释放并按 1,2,4,8… 跨步跳过当前游标邻域。allocate 本身已消耗当前格，
+            // 跨 n 格只需再推 n-1 格。
+            log.warn("opencode", refusal, "port", port, "skip", skip);
             ports.release(port);
-            log.warn("opencode", "start.port-busy-skip", "port", port, "skip", skip);
             ports.skip(skip - 1);
             skip = Math.min(skip * 2, 4096);
             if (++attempts >= 32) {
                 throw portBusy(port, "port range exhausted after " + attempts + " skipping attempts");
             }
+        }
+    }
+
+    /**
+     * 孤儿收割后 socket 关闭到可重新 bind 有毫秒级延迟，连试几拍再判死，免得把刚腾出来的
+     * 好端口当坏端口跳过。
+     */
+    private boolean bindableWithRetry(int port) {
+        for (int i = 0; i < 5; i++) {
+            if (bindable(port)) {
+                return true;
+            }
+            try {
+                Thread.sleep(120);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return false;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * 真去 bind 一次再立刻放开：这是唯一能识别「内核排除段」的手段。winnat/Hyper-V 开机自动
+     * 划走一段端口（netsh 删不掉），段内端口无人监听、netstat 看不见、{@code /health} 探活
+     * 一无所获，但任何进程 bind 都被内核拒（Windows WSAEACCES/10013）——serve 于是启动即退出
+     * （"exited before becoming healthy (exit 1)"），表象酷似端口被别人占用。
+     */
+    static boolean bindable(int port) {
+        try (java.net.ServerSocket probe = new java.net.ServerSocket()) {
+            probe.setReuseAddress(false); // 严格探法：连地址复用都不许，能 listen 才算真可用
+            probe.bind(new java.net.InetSocketAddress("127.0.0.1", port));
+            return true;
+        } catch (IOException e) {
+            return false;
         }
     }
 
@@ -2975,7 +3017,7 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
             if (proc != null && !proc.isAlive()) {
                 throw new GateException(GateErrorCode.GATE_ERROR_IO,
                         "opencode serve exited before becoming healthy on port " + port
-                                + " (exit " + proc.exitValue() + ")");
+                                + " (exit " + proc.exitValue() + ")" + serveDeathTail(port));
             }
             try {
                 HttpResponse<String> resp = http.send(
@@ -2998,6 +3040,67 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
         throw new GateException(GateErrorCode.GATE_ERROR_IO,
                 "opencode serve did not become healthy on port " + port
                         + " within " + startTimeout.toSeconds() + "s");
+    }
+
+    /** serve 遗言最多回看多少字节、取几行、拼多长——错误帧是单行文本，够指认死因即可。 */
+    private static final int SERVE_LOG_TAIL_BYTES = 8192;
+    private static final int SERVE_LOG_TAIL_LINES = 3;
+    private static final int SERVE_LOG_TAIL_CHARS = 400;
+    private static final java.util.regex.Pattern ANSI_ESCAPE =
+            java.util.regex.Pattern.compile("\u001B\\[[0-9;]*[A-Za-z]");
+
+    /**
+     * 死因尾注：进程没起来就退出时，把 serve 遗言文件的最后几行附在异常里。此前错误只有
+     * 「exited before becoming healthy on port N (exit 1)」——端口二字把排查方向带向端口占用，
+     * 而真实原因（配置校验失败、Node OOM、崩溃栈）全躺在遗言文件里无人看见。
+     */
+    private String serveDeathTail(int port) {
+        String tail = tailOfServeLog(serveLogPath(port));
+        return tail.isEmpty() ? "" : " — serve said: " + tail;
+    }
+
+    /**
+     * 读遗言文件末尾若干 KB，剥掉 ANSI 色码，取最后几行非空内容单行拼接（错误帧是单行文本，
+     * 换行会在 UI 里散开）。文件缺失/读不动一律返回空串——诊断信息永远不该盖过原始错误。
+     */
+    static String tailOfServeLog(Path log) {
+        String body;
+        try {
+            if (!Files.exists(log)) {
+                return "";
+            }
+            try (java.io.RandomAccessFile raf = new java.io.RandomAccessFile(log.toFile(), "r")) {
+                long size = raf.length();
+                int len = (int) Math.min(size, SERVE_LOG_TAIL_BYTES);
+                byte[] buf = new byte[len];
+                raf.seek(size - len);
+                raf.readFully(buf);
+                String text = new String(buf, StandardCharsets.UTF_8);
+                // 截断窗口时首行是半行（还可能带半个多字节字符），整行丢弃
+                if (len < size) {
+                    int nl = text.indexOf('\n');
+                    text = nl >= 0 ? text.substring(nl + 1) : "";
+                }
+                body = text;
+            }
+        } catch (Exception e) {
+            return "";
+        }
+        List<String> kept = new ArrayList<>();
+        for (String raw : ANSI_ESCAPE.matcher(body).replaceAll("").split("\\R")) {
+            String line = raw.trim();
+            if (!line.isEmpty()) {
+                kept.add(line);
+            }
+        }
+        if (kept.isEmpty()) {
+            return "";
+        }
+        String joined = String.join(" | ",
+                kept.subList(Math.max(0, kept.size() - SERVE_LOG_TAIL_LINES), kept.size()));
+        return joined.length() <= SERVE_LOG_TAIL_CHARS
+                ? joined
+                : joined.substring(0, SERVE_LOG_TAIL_CHARS) + "…";
     }
 
     private String createSession(int port) {

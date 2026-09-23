@@ -41,7 +41,7 @@ class SyncBaseToolTest {
                 harness.service(), harness.credentials(),
                 harness.presubmits(), harness.reviewResults(),
                 harness.blobStore(), harness.providerRepository(), harness.config(),
-                harness.tickets());
+                harness.tickets(), harness.sessionRepository());
     }
 
     @AfterEach

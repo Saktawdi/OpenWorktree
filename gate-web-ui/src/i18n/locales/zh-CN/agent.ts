@@ -114,6 +114,7 @@ export const zhAgent = {
   "ocm.ctxInvalid": "上下文限制",
   "ocm.outInvalid": "输出限制",
   "ocm.numInvalid": "{bad}需为数字或 16K / 1M 这类简写",
+  "ocm.limitPairRequired": "上下文与输出限制要么都填、要么都留空：只填一个会被 opencode 拒绝，导致所有会话都无法启动",
   "ocm.title": "编辑模型",
   "ocm.cancelTip": "取消编辑模型",
   "ocm.nameLabel": "模型名称",

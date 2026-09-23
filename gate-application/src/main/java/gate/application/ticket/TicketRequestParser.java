@@ -6,6 +6,7 @@ import gate.domain.error.GateValidationException;
 import gate.domain.ticket.Ticket;
 import gate.domain.ticket.TicketStage;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -32,6 +33,9 @@ import java.util.regex.Pattern;
  * <p>{@link #normalize(CreateTicketCommand)} re-applies the same field rules to a typed command,
  * so {@link TicketCreationHandler} stays safe even when a caller builds a command without going
  * through {@link #parse} — both entry points and the handler share one rule implementation.
+ *
+ * <p>{@link #parseEdit} serves the MCP {@code ticket_edit} tool with the same field rules in
+ * "only what the caller sent" form (see {@link TicketEdit}).
  */
 public final class TicketRequestParser {
 
@@ -45,9 +49,91 @@ public final class TicketRequestParser {
             "title", "ticket_no", "project_id", "target_branch",
             "priority", "description", "note", "labels");
 
+    /**
+     * Keys the MCP {@code ticket_edit} tool accepts (kept in sync with McpToolRegistry): the
+     * editable work-item metadata only. {@code stage} is deliberately absent — an agent must have
+     * no entry point to a stage transition (the gate flow owns those), and it is likewise absent
+     * from the tool schema, so a request carrying it is reported as an unknown field. The web-only
+     * {@code agent_config_id} binding and the immutable coordinates ({@code project_id},
+     * {@code target_ref}) are absent for the same reason.
+     */
+    public static final Set<String> MCP_EDIT_KEYS = Set.of(
+            "ticket_no", "title", "priority", "description", "note", "labels");
+
     private static final Pattern SEGMENT = Pattern.compile("[A-Za-z0-9._-]+");
 
     private TicketRequestParser() {
+    }
+
+    /**
+     * The normalized editable metadata of a {@code ticket_edit} request.
+     *
+     * <p>{@link #provided()} names the fields the request actually carried a value for, so an
+     * omitted (or JSON-{@code null}) field leaves the stored value alone while a present one
+     * replaces it — an empty string clears an optional text field and {@code []} clears the
+     * labels. For the fields inside {@code provided}, {@code null} therefore means "clear".
+     */
+    public record TicketEdit(String title, String priority, String description, String note,
+                             List<String> labels, Set<String> provided) {
+
+        public boolean provides(String field) {
+            return provided.contains(field);
+        }
+    }
+
+    /**
+     * Validates the raw {@code ticket_edit} request (JSON types + the same field rules
+     * {@code ticket_create} uses) and returns the normalized editable metadata.
+     *
+     * <p>Only fields the request carries are validated: an absent field stays unchanged, so it is
+     * never reported as "missing" — but a present one is held to the create-time rules (non-blank
+     * title, {@code Ticket.PRIORITIES} range, label count/length caps). JSON {@code null} counts
+     * as absent, matching the {@link #parse} convention (models routinely fill optional schema
+     * properties with null; reading those as "clear" would silently wipe stored values).
+     *
+     * @param raw         parsed JSON object from the MCP arguments
+     * @param allowedKeys accepted field names; unknown keys are reported
+     * @throws GateValidationException listing every broken field when validation fails
+     */
+    public static TicketEdit parseEdit(Map<String, Object> raw, Set<String> allowedKeys) {
+        List<FieldError> problems = new ArrayList<>();
+        for (String key : new TreeSet<>(raw.keySet())) {
+            if (allowedKeys != null && !allowedKeys.contains(key)) {
+                problems.add(new FieldError(key, "unknown field",
+                        "one of: " + sorted(allowedKeys), null));
+            }
+        }
+
+        // Title is checked here rather than through stringValue(): an absent title is legal in an
+        // edit, and a present non-string must report the type once — not the type plus a bogus
+        // "missing required parameter" (the create path's titleShapeChecked flag exists for this).
+        String title = null;
+        Object rawTitle = raw.get("title");
+        if (rawTitle instanceof String s) {
+            title = titleField(s, problems);
+        } else if (rawTitle != null) {
+            problems.add(new FieldError("title", "wrong JSON type", "string", jsonType(rawTitle)));
+        }
+
+        String priority = priorityField(stringValue(raw, "priority", problems), problems);
+        String description = normalize(stringValue(raw, "description", problems));
+        String note = normalize(stringValue(raw, "note", problems));
+        List<String> labels = labelsField(labelsValue(raw, problems), problems);
+
+        if (!problems.isEmpty()) {
+            throw new GateValidationException(GateErrorCode.USAGE,
+                    "invalid ticket_edit request", problems);
+        }
+
+        // "Provided" is read off the request itself: a field counts only when the caller sent a
+        // non-null value, and ticket_no is addressing rather than editable metadata.
+        Set<String> provided = new LinkedHashSet<>();
+        for (Map.Entry<String, Object> entry : raw.entrySet()) {
+            if (entry.getValue() != null && !"ticket_no".equals(entry.getKey())) {
+                provided.add(entry.getKey());
+            }
+        }
+        return new TicketEdit(title, priority, description, note, labels, provided);
     }
 
     /**

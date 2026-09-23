@@ -560,14 +560,12 @@ public final class ModelCatalogService {
             if (name != null && !name.isBlank()) {
                 cfg.put("name", name);
             }
-            Map<String, Object> limits = new LinkedHashMap<>();
-            if (context != null && context > 0) {
+            // limit 要么不写、要么上下文与输出齐全：opencode 见到缺一个的 limit 会拒绝整份
+            // 配置（serve 起不来、所有会话失效），所以宁可整块不写，交给 opencode 的默认。
+            if (context != null && context > 0 && output != null && output > 0) {
+                Map<String, Object> limits = new LinkedHashMap<>();
                 limits.put("context", context);
-            }
-            if (output != null && output > 0) {
                 limits.put("output", output);
-            }
-            if (!limits.isEmpty()) {
                 cfg.put("limit", limits);
             }
             Map<String, Object> modals = new LinkedHashMap<>();

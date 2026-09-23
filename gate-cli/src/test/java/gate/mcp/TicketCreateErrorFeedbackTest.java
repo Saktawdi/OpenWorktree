@@ -65,7 +65,7 @@ class TicketCreateErrorFeedbackTest {
                 harness.service(), harness.credentials(),
                 harness.presubmits(), harness.reviewResults(),
                 harness.blobStore(), harness.providerRepository(), harness.config(),
-                harness.tickets());
+                harness.tickets(), harness.sessionRepository());
         log = AdapterLog.at(harness.config().gateHome().resolve("adapters.log"));
         server = new McpServer(dispatcher, humanToken, log);
     }

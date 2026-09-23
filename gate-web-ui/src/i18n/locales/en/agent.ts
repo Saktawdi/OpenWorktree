@@ -114,6 +114,7 @@ export const enAgent = {
   "ocm.ctxInvalid": "Context limit",
   "ocm.outInvalid": "Output limit",
   "ocm.numInvalid": "{bad} must be a number or a shorthand like 16K / 1M",
+  "ocm.limitPairRequired": "Set the context and output limits together, or leave both empty: a lone one is rejected by opencode and blocks every session",
   "ocm.title": "Edit model",
   "ocm.cancelTip": "Cancel editing model",
   "ocm.nameLabel": "Model name",

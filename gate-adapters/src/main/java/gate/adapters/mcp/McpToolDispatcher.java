@@ -20,6 +20,7 @@ import gate.ports.store.CredentialRepository.Domain;
 import gate.ports.store.PresubmitRepository;
 import gate.ports.store.ProviderRepository;
 import gate.ports.store.ReviewResultRepository;
+import gate.ports.store.SessionRepository;
 import gate.application.GateService;
 import gate.domain.blob.BlobRef;
 import gate.ports.store.TicketRepository;
@@ -51,11 +52,12 @@ public final class McpToolDispatcher {
     private final ProviderRepository providers;
     private final GateConfig config;
     private final TicketRepository tickets;
+    private final SessionRepository sessions;
 
     public McpToolDispatcher(GateService gateService, CredentialRepository credentials,
                              PresubmitRepository presubmits, ReviewResultRepository reviewResults,
                              BlobStore blobStore, ProviderRepository providers, GateConfig config,
-                             TicketRepository tickets) {
+                             TicketRepository tickets, SessionRepository sessions) {
         this.gateService = gateService;
         this.credentials = credentials;
         this.presubmits = presubmits;
@@ -64,6 +66,7 @@ public final class McpToolDispatcher {
         this.providers = providers;
         this.config = config;
         this.tickets = tickets;
+        this.sessions = sessions;
     }
 
     /**
@@ -101,10 +104,12 @@ public final class McpToolDispatcher {
 
         return switch (tool.name()) {
             case "ticket_create" -> ticketCreate(arguments, domain);
+            case "ticket_edit" -> ticketEdit(arguments, domain);
             case "presubmit_create" -> presubmitCreate(arguments);
             case "presubmit_get_diff" -> presubmitGetDiff(arguments);
             case "review_result_get" -> reviewResultGet(arguments);
             case "sync_base" -> syncBase(arguments);
+            case "session_read" -> sessionRead(arguments, domain);
             case "review_run" -> reviewRun(arguments);
             case "commit_and_publish" -> commitAndPublish(arguments);
             case "config_show" -> configShow();
@@ -133,7 +138,8 @@ public final class McpToolDispatcher {
         return "presubmit_create".equals(tool.name())
                 || "presubmit_get_diff".equals(tool.name())
                 || "review_result_get".equals(tool.name())
-                || "sync_base".equals(tool.name());
+                || "sync_base".equals(tool.name())
+                || "ticket_edit".equals(tool.name());
     }
 
     // --- tool implementations ---
@@ -170,6 +176,45 @@ public final class McpToolDispatcher {
     }
 
     /**
+     * 工单元信息编辑: title / priority / description / note / labels for the ticket the calling
+     * agent works on.
+     *
+     * <p><b>There is no stage here, by construction.</b> The tool schema declares no {@code stage}
+     * property, {@link TicketRequestParser#MCP_EDIT_KEYS} does not accept the key (a request that
+     * carries it is reported as an unknown field), and the use case behind it writes only the
+     * editable columns — so an agent has no entry point to a state transition. The gate flow
+     * (presubmit → review → publish) and the human restart/cancel remain the only ways a ticket
+     * moves.
+     *
+     * <p><b>Scope:</b> the ticket-bound tools' dispatch check applies here too, so an agent may
+     * edit only the ticket its credential is bound to (omitting {@code ticket_no} means that
+     * ticket; naming any other one is denied). Human tokens carry no binding and must name the
+     * ticket explicitly.
+     */
+    private Map<String, Object> ticketEdit(Map<String, Object> args, Domain domain) {
+        String tool = "ticket_edit";
+        String ticketNo = domain.isAgent()
+                ? domain.ticketNo()
+                : requiredStringArg(tool, args, "ticket_no");
+        // Same field rules the web console applies (one parser, one rule set — T-108); the key set
+        // is the metadata-only one, so stage/project/target/agent-config cannot even be expressed.
+        TicketRequestParser.TicketEdit edit =
+                TicketRequestParser.parseEdit(args, TicketRequestParser.MCP_EDIT_KEYS);
+        gate.domain.ticket.Ticket t = gateService.editTicket(edit, ticketNo);
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("ticket_no", t.ticketNo());
+        result.put("title", t.title());
+        result.put("stage", t.stage().name());
+        result.put("project_id", t.projectId());
+        result.put("priority", t.priority());
+        result.put("description", t.description());
+        result.put("note", t.note());
+        result.put("labels", t.labels());
+        result.put("updated_at", t.updatedAt().toString());
+        return result;
+    }
+
+    /**
      * The project a {@code ticket_create} call may bind its new ticket to.
      *
      * <p>Agent-domain tokens are bound to one ticket (the session's ticket). The new ticket must
@@ -192,32 +237,49 @@ public final class McpToolDispatcher {
         if (!domain.isAgent()) {
             return requested;
         }
-        String boundTicketNo = domain.ticketNo();
-        if (boundTicketNo == null || boundTicketNo.isBlank()) {
-            throw new PermissionDeniedException("ticket_create", "agent project scope",
-                    "agent domain token carries no ticket binding; the allowed project for "
-                            + "ticket_create cannot be determined");
-        }
-        gate.domain.ticket.Ticket bound = tickets.find(boundTicketNo).orElse(null);
-        if (bound == null) {
-            // Fail closed: without the bound ticket the project scope is unresolvable.
-            throw new PermissionDeniedException("ticket_create", "agent project scope",
-                    "agent domain token is bound to ticket " + boundTicketNo
-                            + " which no longer exists; the allowed project for ticket_create "
-                            + "cannot be determined");
-        }
-        String scoped = bound.projectId();
+        String scoped = agentProjectScope("ticket_create", domain);
         if (requested != null && !requested.equals(scoped)) {
             throw new PermissionDeniedException("ticket_create", "agent project scope",
-                    "agent domain token bound to ticket " + boundTicketNo + " (project "
-                            + (scoped == null ? "<none>" : scoped) + ") cannot create a ticket "
+                    "agent domain token bound to ticket " + domain.ticketNo() + " (project "
+                            + renderProject(scoped) + ") cannot create a ticket "
                             + "in project " + requested);
         }
         return scoped;
     }
 
+    /**
+     * The project an agent-domain token is confined to: the project of the ticket it is bound to
+     * (null = an unaffiliated ticket, which confines the token to unaffiliated tickets). Shared by
+     * every project-scoped agent tool — {@code ticket_create} (the new ticket must live in it) and
+     * {@code session_read} (only sessions of that project are readable).
+     *
+     * <p>Fail-closed: an agent token without a ticket binding, or bound to a ticket that no longer
+     * exists, cannot have its scope determined and is therefore denied outright.
+     */
+    private String agentProjectScope(String tool, Domain domain) {
+        String boundTicketNo = domain.ticketNo();
+        if (boundTicketNo == null || boundTicketNo.isBlank()) {
+            throw new PermissionDeniedException(tool, "agent project scope",
+                    "agent domain token carries no ticket binding; the allowed project for "
+                            + tool + " cannot be determined");
+        }
+        gate.domain.ticket.Ticket bound = tickets.find(boundTicketNo).orElse(null);
+        if (bound == null) {
+            // Fail closed: without the bound ticket the project scope is unresolvable.
+            throw new PermissionDeniedException(tool, "agent project scope",
+                    "agent domain token is bound to ticket " + boundTicketNo
+                            + " which no longer exists; the allowed project for " + tool
+                            + " cannot be determined");
+        }
+        return bound.projectId();
+    }
+
+    private static String renderProject(String projectId) {
+        return projectId == null || projectId.isBlank() ? "<none>" : projectId;
+    }
+
     private Map<String, Object> presubmitCreate(Map<String, Object> args) {
-        String ticketNo = ticketNoArg("presubmit_create", args);
+        String ticketNo = requiredStringArg("presubmit_create", args, "ticket_no");
         PresubmitResult r = gateService.presubmit(new PresubmitCommand(ticketNo));
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("ticket_no", r.ticketNo());
@@ -234,8 +296,8 @@ public final class McpToolDispatcher {
 
     private Map<String, Object> presubmitGetDiff(Map<String, Object> args) {
         String tool = "presubmit_get_diff";
-        String ticketNo = ticketNoArg(tool, args);
-        Integer round = roundArg(tool, args);
+        String ticketNo = requiredStringArg(tool, args, "ticket_no");
+        Integer round = integerArg(tool, args, "round");
         var row = (round == null ? presubmits.findLatest(ticketNo) : presubmits.find(ticketNo, round))
                 .orElseThrow(() -> new ToolException(McpJsonRpc.INVALID_PARAMS,
                         "no presubmit round for " + ticketNo
@@ -255,8 +317,8 @@ public final class McpToolDispatcher {
 
     private Map<String, Object> reviewResultGet(Map<String, Object> args) {
         String tool = "review_result_get";
-        String ticketNo = ticketNoArg(tool, args);
-        Integer round = roundArg(tool, args);
+        String ticketNo = requiredStringArg(tool, args, "ticket_no");
+        Integer round = integerArg(tool, args, "round");
         var presubmitRow = (round == null
                 ? presubmits.findLatest(ticketNo) : presubmits.find(ticketNo, round))
                 .orElseThrow(() -> new ToolException(McpJsonRpc.INVALID_PARAMS,
@@ -294,7 +356,7 @@ public final class McpToolDispatcher {
      */
     private Map<String, Object> syncBase(Map<String, Object> args) {
         String tool = "sync_base";
-        String ticketNo = ticketNoArg(tool, args);
+        String ticketNo = requiredStringArg(tool, args, "ticket_no");
         boolean allowDirty = Boolean.TRUE.equals(boolArg(tool, args, "allow_dirty", true));
         var r = gateService.syncBase(
                 new gate.application.basesync.SyncBaseCommand(ticketNo, allowDirty, "agent"));
@@ -319,10 +381,45 @@ public final class McpToolDispatcher {
         return result;
     }
 
+    /**
+     * 只读会话查阅: returns a window of a session's transcript (see {@link SessionTranscript} for
+     * the windowing/truncation contract). Nothing here writes — no message row, no status change,
+     * no lazy backfill — so an agent can read history without perturbing the session it inspects.
+     *
+     * <p>Scope: an agent token may read any session belonging to its own project — the same
+     * boundary {@code ticket_create} enforces (an agent may already create tickets there, and the
+     * project's code is in its worktree anyway); a session of another project is denied. Human
+     * tokens read anything.
+     */
+    private Map<String, Object> sessionRead(Map<String, Object> args, Domain domain) {
+        String tool = "session_read";
+        String sessionId = requiredStringArg(tool, args, "session_id");
+        int limit = SessionTranscript.clampLimit(positiveIntArg(tool, args, "limit",
+                SessionTranscript.DEFAULT_LIMIT));
+        Integer beforeIndex = nonNegativeIntArg(tool, args, "before_index");
+        var session = sessions.find(sessionId).orElseThrow(() -> new ToolException(
+                McpJsonRpc.INVALID_PARAMS, "no such session: " + sessionId,
+                domainData(tool, "no such session: " + sessionId)));
+        gate.domain.ticket.Ticket owner = tickets.find(session.ticketNo()).orElse(null);
+        String projectId = owner == null ? null : owner.projectId();
+        if (domain.isAgent()) {
+            String scoped = agentProjectScope(tool, domain);
+            if (!java.util.Objects.equals(scoped, projectId)) {
+                throw new PermissionDeniedException(tool, "agent project scope",
+                        "agent domain token bound to ticket " + domain.ticketNo() + " (project "
+                                + renderProject(scoped) + ") cannot read session " + sessionId
+                                + " of ticket " + session.ticketNo() + " (project "
+                                + renderProject(projectId) + ")");
+            }
+        }
+        return SessionTranscript.render(session, projectId, sessions.findMessages(sessionId),
+                limit, beforeIndex);
+    }
+
     private Map<String, Object> reviewRun(Map<String, Object> args) {
         String tool = "review_run";
-        String ticketNo = ticketNoArg(tool, args);
-        Integer round = roundArg(tool, args);
+        String ticketNo = requiredStringArg(tool, args, "ticket_no");
+        Integer round = integerArg(tool, args, "round");
         ReviewResult r = gateService.review(ReviewCommand.forEngine(ticketNo, round));
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("ticket_no", r.ticketNo());
@@ -337,8 +434,8 @@ public final class McpToolDispatcher {
 
     private Map<String, Object> commitAndPublish(Map<String, Object> args) {
         String tool = "commit_and_publish";
-        String ticketNo = ticketNoArg(tool, args);
-        Integer round = roundArg(tool, args);
+        String ticketNo = requiredStringArg(tool, args, "ticket_no");
+        Integer round = integerArg(tool, args, "round");
         PublishResult r = gateService.publish(new PublishCommand(ticketNo, round));
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("ticket_no", r.ticketNo());
@@ -382,18 +479,19 @@ public final class McpToolDispatcher {
     // --- helpers ---
 
     /**
-     * Required {@code ticket_no} for the ticket-bound tools. Reports missing / blank / wrong-type
-     * as a structured {@link ToolException} naming the field and the accepted shape (T-108).
+     * Required non-blank string argument (ticket-bound tools: {@code ticket_no}; {@code
+     * session_read}: {@code session_id}). Reports missing / blank / wrong-type as a structured
+     * {@link ToolException} naming the field and the accepted shape (T-108).
      */
-    private static String ticketNoArg(String tool, Map<String, Object> args) {
+    private static String requiredStringArg(String tool, Map<String, Object> args, String key) {
         List<FieldError> problems = new ArrayList<>();
-        Object v = args.get("ticket_no");
+        Object v = args.get(key);
         if (v == null) {
-            problems.add(new FieldError("ticket_no", "missing required parameter", "non-blank string", null));
+            problems.add(new FieldError(key, "missing required parameter", "non-blank string", null));
         } else if (!(v instanceof String s)) {
-            problems.add(new FieldError("ticket_no", "wrong JSON type", "string", jsonType(v)));
+            problems.add(new FieldError(key, "wrong JSON type", "string", jsonType(v)));
         } else if (s.isBlank()) {
-            problems.add(new FieldError("ticket_no", "must not be blank", "non-blank string", null));
+            problems.add(new FieldError(key, "must not be blank", "non-blank string", null));
         }
         if (!problems.isEmpty()) {
             throw validation(tool, problems);
@@ -401,9 +499,9 @@ public final class McpToolDispatcher {
         return ((String) v).trim();
     }
 
-    /** Optional {@code round}: must be an integral JSON number or a decimal-string integer. */
-    private static Integer roundArg(String tool, Map<String, Object> args) {
-        Object v = args.get("round");
+    /** Optional integral argument ({@code round}, {@code before_index}, …): integral number or decimal-string integer. */
+    private static Integer integerArg(String tool, Map<String, Object> args, String key) {
+        Object v = args.get(key);
         if (v == null) {
             return null;
         }
@@ -411,7 +509,7 @@ public final class McpToolDispatcher {
             try {
                 return Integer.parseInt(s.trim());
             } catch (NumberFormatException e) {
-                throw validation(tool, List.of(new FieldError("round",
+                throw validation(tool, List.of(new FieldError(key,
                         "must be an integer", "integer", s)));
             }
         }
@@ -423,11 +521,34 @@ public final class McpToolDispatcher {
             if (d == Math.rint(d) && !Double.isInfinite(d)) {
                 return (int) d;
             }
-            throw validation(tool, List.of(new FieldError("round",
+            throw validation(tool, List.of(new FieldError(key,
                     "must be an integer", "integer", String.valueOf(v))));
         }
-        throw validation(tool, List.of(new FieldError("round",
+        throw validation(tool, List.of(new FieldError(key,
                 "wrong JSON type", "integer", jsonType(v))));
+    }
+
+    /** Optional non-negative integral argument ({@code before_index}: a transcript position). */
+    private static Integer nonNegativeIntArg(String tool, Map<String, Object> args, String key) {
+        Integer v = integerArg(tool, args, key);
+        if (v != null && v < 0) {
+            throw validation(tool, List.of(new FieldError(key,
+                    "must be >= 0", "non-negative integer", String.valueOf(v))));
+        }
+        return v;
+    }
+
+    /** Optional positive integral argument with a default when absent ({@code limit}). */
+    private static int positiveIntArg(String tool, Map<String, Object> args, String key, int dflt) {
+        Integer v = integerArg(tool, args, key);
+        if (v == null) {
+            return dflt;
+        }
+        if (v < 1) {
+            throw validation(tool, List.of(new FieldError(key,
+                    "must be >= 1", "positive integer", String.valueOf(v))));
+        }
+        return v;
     }
 
     /**

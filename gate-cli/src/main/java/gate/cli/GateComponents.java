@@ -44,6 +44,7 @@ public final class GateComponents {
     public TicketRepository ticketRepository() { return runtime.ticketRepository(); }
     public PresubmitRepository presubmitRepository() { return runtime.presubmitRepository(); }
     public ReviewResultRepository reviewResultRepository() { return runtime.reviewResultRepository(); }
+    public gate.ports.store.SessionRepository sessionRepository() { return runtime.sessionRepository(); }
     public BlobStore blobStore() { return runtime.blobStore(); }
     public CredentialRepository credentials() { return runtime.credentials(); }
     public Clock clock() { return runtime.clock(); }

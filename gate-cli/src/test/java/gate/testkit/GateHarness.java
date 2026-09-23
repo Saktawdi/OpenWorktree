@@ -100,6 +100,8 @@ public final class GateHarness implements AutoCloseable {
     private final JdbcCredentialRepository credentials;
     private final ProviderRepository providers;
     private final gate.adapters.store.JdbcProjectRepository projects;
+    private final gate.adapters.store.JdbcSessionRepository sessions;
+    private final gate.adapters.store.JdbcAgentConfigRepository agentConfigRepository;
 
     public GateHarness() {
         this("git");
@@ -179,6 +181,9 @@ public final class GateHarness implements AutoCloseable {
         this.clock = new SystemClock();
         this.credentials = new JdbcCredentialRepository(jdbc);
         this.projects = new gate.adapters.store.JdbcProjectRepository(jdbc);
+        this.sessions = new gate.adapters.store.JdbcSessionRepository(jdbc, blobStore,
+                config.clonesRoot());
+        this.agentConfigRepository = new gate.adapters.store.JdbcAgentConfigRepository(jdbc);
 
         // Seed the manual provider so review_result.provider_id (NOT NULL) is satisfied.
         providers.upsert(new ProviderRepository.ProviderRow(
@@ -331,6 +336,47 @@ public final class GateHarness implements AutoCloseable {
 
     public ProviderRepository providerRepository() {
         return providers;
+    }
+
+    public gate.adapters.store.JdbcSessionRepository sessionRepository() {
+        return sessions;
+    }
+
+    /** Agent-config repository over the harness database (session rows carry a NOT NULL FK to it). */
+    public gate.adapters.store.JdbcAgentConfigRepository agentConfigs() {
+        return agentConfigRepository;
+    }
+
+    /**
+     * Inserts a session row bound to a ticket, creating the referenced agent config on demand.
+     * Returns the inserted session.
+     */
+    public gate.domain.session.Session createSession(String sessionId, String ticketNo,
+                                                     String agentConfigId) {
+        Instant now = clock.now();
+        if (agentConfigRepository.find(agentConfigId).isEmpty()) {
+            agentConfigRepository.insert(new gate.domain.session.AgentConfig(
+                    agentConfigId, agentConfigId, gate.domain.session.AgentCli.OPENCODE,
+                    "manual", "m", null, List.of(), null, false), now);
+        }
+        gate.domain.session.Session session = new gate.domain.session.Session(
+                sessionId, ticketNo, agentConfigId, gate.domain.session.AgentCli.OPENCODE,
+                gate.domain.session.SessionStatus.ACTIVE, "cli-" + sessionId,
+                tickets.find(ticketNo).orElseThrow().clonePath(), 0, now, null,
+                gate.domain.session.SessionUsage.EMPTY, null, false);
+        sessions.insert(session);
+        return session;
+    }
+
+    /** Appends one message to a session (blob-backed content, like the adapters persist it). */
+    public gate.domain.session.SessionMessage appendMessage(String sessionId,
+                                                            gate.domain.session.Role role,
+                                                            String content) {
+        gate.domain.session.SessionMessage message = new gate.domain.session.SessionMessage(
+                java.util.UUID.randomUUID().toString(), sessionId, role, content,
+                List.of(), null, false, clock.now());
+        sessions.insertMessage(message);
+        return message;
     }
 
     public HashChainAuditLog auditLog() {
