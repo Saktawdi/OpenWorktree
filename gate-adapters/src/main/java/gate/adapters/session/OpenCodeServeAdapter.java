@@ -55,6 +55,8 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -115,7 +117,15 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
     private final HttpClient http = HttpClient.newBuilder()
             .version(HttpClient.Version.HTTP_1_1)
             .build();
-    private final ExecutorService executor;
+    /**
+     * 会话派发器：每会话一条 FIFO 队列、任一时刻至多一个 worker 消费——同会话发送
+     * 严格保序（语义与旧全局单线程一致），不同会话由共享 worker 池并行执行（替换旧
+     * 全局单线程 executor：一个慢会话的锁等待/serve 复活会把其余所有会话的发送与
+     * 权限自动答复全部堵在队列里，表现为后台会话"失活"）。worker 数即并发壁。
+     */
+    private final SessionDispatcher sendDispatcher;
+    /** autoAllow 的短超时 HTTP 应答走独立小池：权限自动允许绝不能占住发送 worker。 */
+    private final ExecutorService autoAllowExecutor;
     private final ScheduledExecutorService watchdog;
     private final Map<Integer, Process> serveProcesses = new ConcurrentHashMap<>();
     private final Map<String, Integer> sessionPorts = new ConcurrentHashMap<>();
@@ -273,8 +283,10 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
         this.baseSynchronizer = baseSynchronizer;
         this.pidRegistry.sweepOrphans();
         sweepRangeOrphans();
-        this.executor = Executors.newSingleThreadExecutor(r -> {
-            Thread t = new Thread(r, "opencode-session");
+        this.sendDispatcher = new SessionDispatcher(Math.max(2, Math.min(
+                Runtime.getRuntime().availableProcessors(), 8)));
+        this.autoAllowExecutor = Executors.newFixedThreadPool(2, r -> {
+            Thread t = new Thread(r, "opencode-autoallow");
             t.setDaemon(true);
             return t;
         });
@@ -950,7 +962,7 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
         if (!steer) {
             incrementInFlight(session.id());
         }
-        executor.submit(() -> runSend(task, session, request.message(), request.attachments(),
+        sendDispatcher.submit(session.id(), () -> runSend(task, session, request.message(), request.attachments(),
                 firstTurn, steer ? "steer" : null, userMessageId));
         return task.id();
     }
@@ -1032,6 +1044,62 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
         });
     }
 
+    /**
+     * 每会话 FIFO 派发：submit 入队后仅当该会话无活跃 consumer 时才向 worker 池
+     * 提交一个 drain 任务；drain 把队列取空后在 finally 里重置 consumer 标记并复查
+     * 队列（闭合"最后一取与标记重置之间入队"的竞态）。
+     */
+    private final class SessionDispatcher {
+        private final ExecutorService workers;
+        private final Map<String, ConcurrentLinkedQueue<Runnable>> queues = new ConcurrentHashMap<>();
+        private final Map<String, AtomicBoolean> consuming = new ConcurrentHashMap<>();
+
+        SessionDispatcher(int workerCount) {
+            this.workers = Executors.newFixedThreadPool(workerCount, r -> {
+                Thread t = new Thread(r, "opencode-session");
+                t.setDaemon(true);
+                return t;
+            });
+        }
+
+        void submit(String sessionId, Runnable task) {
+            ConcurrentLinkedQueue<Runnable> q =
+                    queues.computeIfAbsent(sessionId, k -> new ConcurrentLinkedQueue<>());
+            q.add(task);
+            AtomicBoolean flag = consuming.computeIfAbsent(sessionId, k -> new AtomicBoolean());
+            if (flag.compareAndSet(false, true)) {
+                workers.submit(() -> drain(sessionId));
+            }
+        }
+
+        private void drain(String sessionId) {
+            ConcurrentLinkedQueue<Runnable> q = queues.get(sessionId);
+            AtomicBoolean flag = consuming.get(sessionId);
+            try {
+                Runnable task;
+                while ((task = q.poll()) != null) {
+                    try {
+                        task.run();
+                    } catch (Throwable ignored) {
+                        // runSend 自带全量兜底（ERROR 落库 + busy 释放），此处不得中断队列消费。
+                    }
+                }
+            } finally {
+                flag.set(false);
+                // 复查：消费期间可能有新任务入队（其 submit 因标记仍置位而未起新 drain）。
+                if (!q.isEmpty() && flag.compareAndSet(false, true)) {
+                    workers.submit(() -> drain(sessionId));
+                }
+            }
+        }
+
+        void close() {
+            workers.shutdown();
+            queues.clear();
+            consuming.clear();
+        }
+    }
+
     private void decrementInFlight(String sessionId) {
         inFlightCounts.computeIfPresent(sessionId, (k, v) -> v.decrementAndGet() <= 0 ? null : v);
     }
@@ -1085,7 +1153,8 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
         pendingPermissions.clear();
         pendingQuestions.clear();
         recentErrors.clear();
-        executor.shutdown();
+        sendDispatcher.close();
+        autoAllowExecutor.shutdown();
     }
 
     // -------------------------------------------------------------------------------------------
@@ -1548,6 +1617,63 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
             return !stopped && System.currentTimeMillis() - lastEventAt > UPSTREAM_STALL_TIMEOUT_MS;
         }
 
+        /**
+         * 重连对账（P1-4）：opencode 的 /event 不回放历史，断线窗口内完成的回合其
+         * idle 终点帧永久丢失——不处理则 busy 常驻、浏览器转圈，只能"再发一句继续"触发
+         * ensureServe 才恢复。对账以上游消息存储为准：先回填 gate 缺失的已完结回合，
+         * 若回填结果显示上游存在晚于 gate 水位线的已完结回合，判定断线窗口内有回合
+         * 结束：丢弃内存缓冲（其内容 ⊆ 刚回填的完整回合，再 flush 会重复落库）、
+         * 补发 done、释放 busy。上游最新 assistant 仍未完结时说明回合还在跑，不动。
+         */
+        void reconcileMissedTurnEnd() {
+            if (stopped || !acceptedSinceRelease.contains(sessionId)) {
+                return;
+            }
+            try {
+                BackfillResult r = backfillFromServe(sessionId, port, cliSessionId);
+                if (!r.endedTurnBeyondCutoff()) {
+                    return;
+                }
+                log.warn("opencode", "turn.reconciled-after-reconnect", "sessionId", sessionId,
+                        "rows", r.rows());
+                // 终点帧丢失的回合：缓冲是已回填完整回合的子集，丢弃避免重复落库。
+                discardBufferedTurn();
+                long nowMs = System.currentTimeMillis();
+                if (nowMs - lastDoneAt > 300) {
+                    lastDoneAt = nowMs;
+                    emitChunk(sessionId, new SessionStreamChunk.DoneChunk(sessionId, cliSessionId, clock.now()));
+                }
+                // 终点即释放（releaseBusyOnTurnEnd 幂等：无受理记录/重复调用均安全）。
+                releaseBusyOnTurnEnd(sessionId);
+            } catch (Exception e) {
+                // 对账失败不阻断事件流——保持现状，等下一次重连再对。
+                log.warn("opencode", "turn.reconcile-failed", "sessionId", sessionId,
+                        "error", e.getClass().getSimpleName());
+            }
+        }
+
+        /**
+         * 丢弃当前回合的内存缓冲（对账收口用）：与自然终点 flushTurn 重置同一组字段，
+         * 但不落库——完整内容刚由 backfillFromServe 从上游存储回填。
+         */
+        private void discardBufferedTurn() {
+            synchronized (turnLock) {
+                turnText.setLength(0);
+                synchronized (turnTools) {
+                    turnTools.clear();
+                }
+                turnParts.clear();
+                turnUsage = null;
+                turnModelProvider = null;
+                turnModelId = null;
+                turnVariant = null;
+                turnHasNewContent = false;
+                turnHasAssistantActivity = false;
+                pendingSteers.clear();
+                assistantPersistedSinceSend = true;
+            }
+        }
+
         @Override
         public void run() {
             while (!stopped) {
@@ -1558,7 +1684,9 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                             .timeout(Duration.ofSeconds(30))
                             .GET();
                     if (lastEventId != null && !lastEventId.isBlank()) {
-                        // Resume where we left off; opencode replays everything after this id.
+                        // Best-effort resume cursor. 实测当前 opencode /event 是每连接新建
+                        // 内存队列 + 实时推送，并不按 Last-Event-ID 回放历史；带上它不碍事
+                        // （未来版本若实现回放可直接生效），真正的丢失兜底靠重连对账。
                         req.header("Last-Event-ID", lastEventId);
                     }
                     HttpResponse<InputStream> resp =
@@ -1568,6 +1696,8 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                     failedConnects.set(0);
                     log.info("opencode", "upstream.connected", "sessionId", sessionId,
                             "port", port, "lastEventId", lastEventId);
+                    // 重连即对账：断线窗口内完成的回合（终点帧丢失）在此收口。
+                    reconcileMissedTurnEnd();
                     try (BufferedReader reader = new BufferedReader(
                             new InputStreamReader(resp.body(), StandardCharsets.UTF_8))) {
                         String line;
@@ -2202,8 +2332,9 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
             emitChunk(sessionId, new SessionStreamChunk.PermissionAskedChunk(sessionId, request, clock.now()));
             Session latest = sessions.find(sessionId).orElse(null);
             if (latest != null && latest.permissionAutoAccept()) {
-                // Defer the HTTP call off the reader thread so it cannot stall SSE reads.
-                executor.submit(() -> autoAllow(sessionId, permissionId, port));
+                // Defer the HTTP call off the reader thread so it cannot stall SSE reads,
+                // and off the send stripes so a slow reply never blocks message dispatch.
+                autoAllowExecutor.submit(() -> autoAllow(sessionId, permissionId, port));
             }
         }
 
@@ -2402,7 +2533,7 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
      * <p>任何异常只降级告警、不阻断复活。
      */
     @SuppressWarnings("unchecked")
-    private void backfillFromServe(String sessionId, int port, String cliSessionId) {
+    private BackfillResult backfillFromServe(String sessionId, int port, String cliSessionId) {
         try {
             HttpRequest req = HttpRequest.newBuilder(
                             URI.create("http://127.0.0.1:" + port + "/session/" + cliSessionId + "/message"))
@@ -2411,11 +2542,11 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
             if (resp.statusCode() / 100 != 2) {
                 log.warn("opencode", "backfill.unavailable", "sessionId", sessionId,
                         "status", resp.statusCode());
-                return;
+                return BackfillResult.NONE;
             }
             Object parsed = MiniJson.parse(resp.body().trim());
             if (!(parsed instanceof List<?> list)) {
-                return;
+                return BackfillResult.NONE;
             }
             long assistantCutoffMs = 0L;
             long anyCutoffMs = 0L;
@@ -2433,6 +2564,9 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
             BackfillTurn turn = new BackfillTurn();
             SessionUsage totalUsage = null;
             int rows = 0;
+            // 对账信号：上游最新 assistant 消息（按创建时间）及其是否已完结。
+            long newestAssistantCreated = 0L;
+            boolean newestAssistantComplete = false;
             for (Object item : list) {
                 if (!(item instanceof Map<?, ?> rawEntry)) {
                     continue;
@@ -2465,21 +2599,26 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
                                 sessionId, Role.USER, content, List.of(), null, false, clock.now()));
                         rows++;
                     }
-                } else if ("assistant".equals(role)
-                        && time.get("completed") != null
-                        && created > assistantCutoffMs) {
-                    accumulateBackfillParts(turn, parts);
-                    // V22：上游 info 的实际模型（权威来源）；缺字段时保留 turn 里已有的值。
-                    String provider = str(info.get("providerID"));
-                    String model = str(info.get("modelID"));
-                    if (model != null && !model.isBlank()) {
-                        turn.modelProvider = provider;
-                        turn.modelId = model;
+                } else if ("assistant".equals(role)) {
+                    boolean complete = time.get("completed") != null;
+                    if (created > newestAssistantCreated) {
+                        newestAssistantCreated = created;
+                        newestAssistantComplete = complete;
                     }
-                    SessionUsage u = usageFromTokens(info.get("tokens"));
-                    if (u != null) {
-                        turn.usage = (turn.usage == null ? SessionUsage.EMPTY : turn.usage).add(u);
-                        totalUsage = (totalUsage == null ? SessionUsage.EMPTY : totalUsage).add(u);
+                    if (complete && created > assistantCutoffMs) {
+                        accumulateBackfillParts(turn, parts);
+                        // V22：上游 info 的实际模型（权威来源）；缺字段时保留 turn 里已有的值。
+                        String provider = str(info.get("providerID"));
+                        String model = str(info.get("modelID"));
+                        if (model != null && !model.isBlank()) {
+                            turn.modelProvider = provider;
+                            turn.modelId = model;
+                        }
+                        SessionUsage u = usageFromTokens(info.get("tokens"));
+                        if (u != null) {
+                            turn.usage = (turn.usage == null ? SessionUsage.EMPTY : turn.usage).add(u);
+                            totalUsage = (totalUsage == null ? SessionUsage.EMPTY : totalUsage).add(u);
+                        }
                     }
                 }
             }
@@ -2494,10 +2633,21 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
             }
             log.info("opencode", "backfill.done", "sessionId", sessionId, "rows", rows,
                     "assistantCutoffMs", assistantCutoffMs, "userCutoffMs", userCutoffMs);
+            // 上游尾部是"晚于 gate 水位线的已完结回合" ⟺ 断线窗口内有回合静默结束（P1-4）。
+            boolean endedTurnBeyondCutoff = newestAssistantComplete
+                    && newestAssistantCreated > assistantCutoffMs;
+            return new BackfillResult(rows, endedTurnBeyondCutoff);
         } catch (Exception e) {
             log.warn("opencode", "backfill.failed", "sessionId", sessionId,
                     "error", e.getClass().getSimpleName());
+            return BackfillResult.NONE;
         }
+    }
+
+    /** backfillFromServe 的返回：回填行数 + 上游是否存在"晚于 gate 水位线的已完结回合"
+     * （重连对账据此判定断线窗口内是否有回合静默结束）。 */
+    private record BackfillResult(int rows, boolean endedTurnBeyondCutoff) {
+        static final BackfillResult NONE = new BackfillResult(0, false);
     }
 
     /** gate 落 USER 行早于 opencode 落用户消息的最大预期延迟；宽限内的上游 user 消息视为已收录。 */

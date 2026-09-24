@@ -334,6 +334,8 @@ export type ChatItem =
       request: PermissionRequestView;
       status: PermissionStatus;
       ts: number;
+      /** 该卡片所属会话：渲染层按此过滤，只显示当前查看会话的卡片。 */
+      sessionId: string;
     }
   | {
       kind: "question";
@@ -341,6 +343,8 @@ export type ChatItem =
       request: QuestionRequestView;
       status: QuestionStatus;
       ts: number;
+      /** 该卡片所属会话：渲染层按此过滤，只显示当前查看会话的卡片。 */
+      sessionId: string;
     };
 
 export interface ChatSession {

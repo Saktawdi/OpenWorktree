@@ -100,7 +100,8 @@ public final class SessionSseHandler {
                     if (client.terminated() || doneLatch.getCount() == 0) {
                         break;
                     }
-                    client.sendComment("ping");
+                    // 具名心跳帧：EventSource 前端可按 event 类型监听，与 OpenChamber 的 global-ws-bridge 同款。
+                    client.sendEvent("heartbeat", "{\"ts\":" + System.currentTimeMillis() + "}");
                 }
             } catch (Exception ignored) {
             }

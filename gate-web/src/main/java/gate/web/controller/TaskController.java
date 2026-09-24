@@ -93,7 +93,7 @@ public final class TaskController implements WebController {
         ctx.res().setStatus(200);
         ctx.res().setCharacterEncoding("UTF-8");
         ctx.res().setContentType("text/event-stream");
-        ctx.res().addHeader("Connection", "close");
+        // 同 SessionController.startSse：禁加 Connection: close（否则 Jetty 立即关连接）。
         ctx.res().addHeader("Cache-Control", "no-cache");
         ctx.res().addHeader("X-Accel-Buffering", "no");
         try {

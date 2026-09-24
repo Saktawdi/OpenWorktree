@@ -818,21 +818,25 @@ export function ChatStream({ ticketNo }: { ticketNo: string }) {
             ) : item.kind === "assistant" ? (
               <AssistantMessage key={item.id} item={item} ticketNo={ticketNo} />
             ) : item.kind === "permission" ? (
-              <PermissionCard
-                key={item.id}
-                ticketNo={ticketNo}
-                sessionId={sessionId}
-                item={item}
-                locked={cancelled}
-              />
+              item.sessionId === sessionId ? (
+                <PermissionCard
+                  key={item.id}
+                  ticketNo={ticketNo}
+                  sessionId={sessionId}
+                  item={item}
+                  locked={cancelled}
+                />
+              ) : null
             ) : item.kind === "question" ? (
-              <QuestionCard
-                key={item.id}
-                ticketNo={ticketNo}
-                sessionId={sessionId}
-                item={item}
-                locked={cancelled}
-              />
+              item.sessionId === sessionId ? (
+                <QuestionCard
+                  key={item.id}
+                  ticketNo={ticketNo}
+                  sessionId={sessionId}
+                  item={item}
+                  locked={cancelled}
+                />
+              ) : null
             ) : (
               <SystemMessage key={item.id} item={item} />
             ),

@@ -44,7 +44,7 @@ export async function loadSessionPermissions(no: string, sessionId: string) {
     );
     for (const p of data.permissions ?? []) {
       if (p.permission_id) notePendingPermission(p.permission_id, no, sessionId);
-      pushPermissionRequest(no, mapPermissionAsk(p));
+      pushPermissionRequest(no, mapPermissionAsk(p), sessionId);
     }
   } catch {
     /* 权限恢复失败不阻断会话打开 */
@@ -92,7 +92,7 @@ export async function loadSessionQuestions(no: string, sessionId: string) {
     for (const q of data.questions ?? []) {
       if (q.request_id) {
         notePendingQuestion(q.request_id, no, sessionId);
-        pushQuestionRequest(no, mapQuestionAsk(q));
+        pushQuestionRequest(no, mapQuestionAsk(q), sessionId);
       }
     }
   } catch {

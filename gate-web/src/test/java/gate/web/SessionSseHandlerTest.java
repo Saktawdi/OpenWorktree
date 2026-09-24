@@ -35,7 +35,7 @@ import org.junit.jupiter.api.Tag;
 
 /**
  * Session SSE keep-alive tests (执行文档-后端-web §9.3): the stream must stay open beyond the old
- * 5s cap, emit `: ping` heartbeat frames while idle, and close promptly once done arrives.
+ * 5s cap, emit `event: heartbeat` frames while idle, and close promptly once done arrives.
  */
 @Tag("slow")
 class SessionSseHandlerTest {
@@ -104,10 +104,10 @@ class SessionSseHandlerTest {
             Thread.sleep(100);
         }
         String idle = received.toString();
-        assertTrue(idle.contains(": ping"), idle);
-        assertTrue(countPings(idle) >= 10,
+        assertTrue(idle.contains("event: heartbeat"), idle);
+        assertTrue(countHeartbeats(idle) >= 10,
                 "expected >=10 heartbeats in 5.5s at " + TEST_HEARTBEAT_MILLIS + "ms, got "
-                        + countPings(idle) + ": " + idle);
+                        + countHeartbeats(idle) + ": " + idle);
         assertFalse(idle.contains("event: done"), idle);
         assertFalse(handlerReturned.get(), "handler must still be waiting for done");
 
@@ -134,12 +134,12 @@ class SessionSseHandlerTest {
         assertTrue(full.contains("event: done"), full);
     }
 
-    private static int countPings(String s) {
+    private static int countHeartbeats(String s) {
         int count = 0;
         int idx = 0;
-        while ((idx = s.indexOf(": ping", idx)) >= 0) {
+        while ((idx = s.indexOf("event: heartbeat", idx)) >= 0) {
             count++;
-            idx += ": ping".length();
+            idx += "event: heartbeat".length();
         }
         return count;
     }

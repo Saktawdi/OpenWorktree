@@ -7,7 +7,14 @@ import { appStore } from "@/store";
 import { loadTickets } from "@/features/ticket/api";
 import { loadSessionPermissions, loadSessionQuestions } from "@/features/session/permissions";
 import { syncSessionTasks, syncSessionTodos } from "@/features/session/api";
-import { isSessionStreamingLocally } from "@/features/session";
+import {
+  isSessionStreamingLocally,
+  consumeBackgroundObserver,
+  isBackgroundObserving,
+  stopBackgroundObserver,
+  backgroundObserverIds,
+  stopAllBackgroundObservers,
+} from "@/features/session";
 
 interface RawBusyAgent {
   session_id: string;
@@ -37,6 +44,24 @@ function syncSessionProjectionsOnRunEnd() {
   void syncSessionTodos(sid);
   // claude 任务链同口径兜底（opencode 会话恒为空数组，无谓但无害的一次轻查询）。
   void syncSessionTasks(sid);
+}
+
+/**
+ * 后台观察流（P1-5）生命周期：运行集中「本页未挂全量流、也未在观察」的会话补挂
+ * 观察流（只收事件/状态/待决登记，不建气泡）；已退出运行集的观察流拆流——
+ * 后端 done 帧丢失时，挂在死连接上的观察流自己等不到终点，靠这里主动拆流收敛
+ * （consumeSessionEvents settle network → 查 busy → 拆）。仍在跑的会话永不进拆流分支。
+ */
+function syncBackgroundObservers(rawSessions: Array<{ session_id: string; ticket_no: string | null }>) {
+  const runningIds = new Set(rawSessions.map((r) => r.session_id));
+  for (const r of rawSessions) {
+    if (!r.ticket_no) continue;
+    if (isSessionStreamingLocally(r.session_id) || isBackgroundObserving(r.session_id)) continue;
+    consumeBackgroundObserver(r.ticket_no, r.session_id);
+  }
+  for (const sid of backgroundObserverIds()) {
+    if (!runningIds.has(sid)) stopBackgroundObserver(sid);
+  }
 }
 
 export async function fetchBusyAgents(): Promise<void> {
@@ -118,6 +143,8 @@ export async function fetchBusyAgents(): Promise<void> {
     // 当前查看会话刚结束一次后台运行（上一拍还在跑、这一拍已空闲）→ 收敛任务清单
     syncSessionProjectionsOnRunEnd();
     prevRunningSessionIds = new Set(appStore.getState().runningAgents.sessions.map((r) => r.session_id));
+    // 后台观察流随运行集增减挂/拆（P1-5）。
+    syncBackgroundObservers(rawSessions);
   } catch {
     // 请求失败按现有 fetch 封装行为处理：静默，不改状态
   }
@@ -135,11 +162,18 @@ let lastTicketsFetch = 0;
  * 只有点击工单 item 才会经 REST 恢复成卡片（用户看着"待授权"徽标却没有可点的
  * 卡片）。运行集合拍时对所有 busy 会话补拉一次；pushPermissionRequest 内部按
  * id 去重，重复拉取无副作用。
+ *
+ * 归属守卫：REST 灌卡只灌「当前正在查看的会话」——避免后台会话 B 的卡片
+ * 出现在工单 N 的聊天里（用户正看会话 A 时，B 的卡片照常渲染即是跨会话卡片）。
+ * 其他会话的待决只记徽标登记（notePendingPermission/Question），等用户切回该
+ * 会话时由 loadSessionPermissions/Questions 按需拉取。
  */
 function hydratePendingAsks(sessions: Array<{ session_id: string; ticket_no: string | null }>) {
   for (const r of sessions) {
     const no = r.ticket_no;
     if (!no) continue;
+    const st = appStore.getState();
+    if (st.activeSessionId[no] !== r.session_id) continue;
     void loadSessionPermissions(no, r.session_id).catch(() => {});
     void loadSessionQuestions(no, r.session_id).catch(() => {});
   }
@@ -202,6 +236,8 @@ export function stopAgentBusyPolling() {
     clearInterval(busyPollTimer);
     busyPollTimer = null;
   }
+  // 观察流由轮询续命：轮询停止即全量拆流（重开轮询时按新运行集重新挂）。
+  stopAllBackgroundObservers();
   if (busyPollVisibilityAttached) {
     document.removeEventListener("visibilitychange", handleBusyVisibility);
     busyPollVisibilityAttached = false;

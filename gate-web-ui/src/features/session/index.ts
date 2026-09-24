@@ -23,7 +23,17 @@ export {
   loadSessionQuestions,
   rejectSessionQuestion,
 } from "./permissions";
-export { liveSendPrompt, abortLive, liveSendToSession, isSessionStreamingLocally } from "./stream";
+export {
+  liveSendPrompt,
+  abortLive,
+  liveSendToSession,
+  isSessionStreamingLocally,
+  consumeBackgroundObserver,
+  isBackgroundObserving,
+  stopBackgroundObserver,
+  backgroundObserverIds,
+  stopAllBackgroundObservers,
+} from "./stream";
 export { draftCatalogFromOc, splitModelRef } from "./model";
 export type { PermissionResponse } from "./model";
 export { focusComposer, insertIntoComposer, registerComposerBridge } from "./composerBridge";

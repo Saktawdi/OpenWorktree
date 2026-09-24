@@ -172,7 +172,7 @@ export function QuestionCard({
     const ok = await answerSessionQuestion(sessionId, request.requestId, payload);
     if (!ok) {
       revertQuestion(ticketNo, request.requestId);
-      pushQuestionRequest(ticketNo, request);
+      pushQuestionRequest(ticketNo, request, sessionId);
       pushSystemMessage(ticketNo, t("question.submitFailed"), "warn");
     }
     setBusy(null);
@@ -185,7 +185,7 @@ export function QuestionCard({
     const ok = await rejectSessionQuestion(sessionId, request.requestId);
     if (!ok) {
       revertQuestion(ticketNo, request.requestId);
-      pushQuestionRequest(ticketNo, request);
+      pushQuestionRequest(ticketNo, request, sessionId);
       pushSystemMessage(ticketNo, t("question.skipFailed"), "warn");
     }
     setBusy(null);

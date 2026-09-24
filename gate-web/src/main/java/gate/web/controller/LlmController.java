@@ -139,7 +139,7 @@ public final class LlmController implements WebController {
         ctx.res().setStatus(200);
         ctx.res().setCharacterEncoding("UTF-8");
         ctx.res().setContentType("text/event-stream");
-        ctx.res().addHeader("Connection", "close");
+        // 禁加 Connection: close：LLM 流式回包与 Session SSE 同一机理，close 会让 Jetty 立即关连接。
         ctx.res().addHeader("Cache-Control", "no-cache");
         ctx.res().addHeader("X-Accel-Buffering", "no");
 

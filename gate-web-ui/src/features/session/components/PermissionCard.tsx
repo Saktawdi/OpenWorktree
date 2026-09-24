@@ -137,7 +137,7 @@ export function PermissionCard({
     if (!ok) {
       // 失败恢复：清墓碑并重新入队待决卡片。
       revertPermission(ticketNo, request.permissionId);
-      pushPermissionRequest(ticketNo, request);
+      pushPermissionRequest(ticketNo, request, sessionId);
       pushSystemMessage(
         ticketNo,
         t("perm.failToast", {

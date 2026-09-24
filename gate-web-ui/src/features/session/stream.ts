@@ -430,11 +430,72 @@ function resolveToolIcon(name: string): ToolIconKind {
 /** 本地正在进行 SSE 消费的会话集合（供 busy 轮询做精准的空值/状态保护） */
 const activeStreamingSessions = new Set<string>();
 
+/** 正在跑 EventSource 的会话 → 当前连接（后台观察流拆流用；消费结束时自动移除）。 */
+const liveEventSources = new Map<string, EventSource>();
+
 export function isSessionStreamingLocally(sessionId: string): boolean {
   return activeStreamingSessions.has(sessionId);
 }
 
+/* ─── 后台观察流（P1-5） ───
+ * 正在运行但本页未实时查看的会话：保持一条轻量 EventSource 只收事件、更新
+ * 状态/待决登记/任务清单投影——不创建乐观气泡、不驱动 live 回合。用户切到该
+ * 会话时由主流程启动全量 consumeSessionStream（启动前先停掉观察流，双通道会
+ * 重复结算同一批事件）。 */
+
+const backgroundObservers = new Set<string>();
+
+export function isBackgroundObserving(sessionId: string): boolean {
+  return backgroundObservers.has(sessionId);
+}
+
+/** 观察中会话的 id 快照（busy 轮询据此拆流：会话退出运行集 → 主动拆观察流）。 */
+export function backgroundObserverIds(): string[] {
+  return Array.from(backgroundObservers);
+}
+
+/** 全量流启动前调用：停掉同会话的后台观察流（幂等）。 */
+export function stopBackgroundObserver(sessionId: string) {
+  backgroundObservers.delete(sessionId);
+  liveEventSources.get(sessionId)?.close();
+}
+
+/** 连接断开/退出 live 模式时全量拆除（轮询停止后无人再为观察流续命）。 */
+export function stopAllBackgroundObservers() {
+  for (const sid of Array.from(backgroundObservers)) {
+    stopBackgroundObserver(sid);
+  }
+}
+
+/** 挂一条后台观察流：会话退出 busy（done/断流后查询确认）即自行拆除。 */
+export function consumeBackgroundObserver(no: string, sessionId: string) {
+  if (backgroundObservers.has(sessionId) || isSessionStreamingLocally(sessionId)) return;
+  backgroundObservers.add(sessionId);
+  void (async () => {
+    const argsBuf = new Map<string, { name: string; args: string }>();
+    let networkFailures = 0;
+    try {
+      for (;;) {
+        const r = await consumeSessionEvents(no, sessionId, argsBuf, { silent: true });
+        if (r.outcome !== "network") break;
+        networkFailures++;
+        if (r.sawEvents) networkFailures = 0;
+        const stillRunning = await isSessionBusy(sessionId);
+        if (!stillRunning || networkFailures >= 5) break;
+        await sleep(2000);
+        // 断流窗口内到达的权限/提问不丢：重连后补拉（带 P0-1 的当前查看守卫）。
+        void loadSessionPermissions(no, sessionId);
+        void loadSessionQuestions(no, sessionId);
+      }
+    } finally {
+      backgroundObservers.delete(sessionId);
+    }
+  })();
+}
+
 async function consumeSessionStream(no: string, sessionId: string) {
+  // 接管优先：同一会话绝不同时存在全量流与观察流（双通道会重复结算事件）。
+  stopBackgroundObserver(sessionId);
   activeStreamingSessions.add(sessionId);
   try {
     startLiveTurn(no, sessionId);
@@ -522,27 +583,37 @@ async function consumeSessionEvents(
   no: string,
   sessionId: string,
   argsBuf: Map<string, { name: string; args: string }>,
+  opts?: { silent?: boolean },
 ): Promise<{ outcome: "done" | "terminal" | "network"; sawEvents: boolean }> {
   const token = appStore.getState().token;
   const url = `/api/sessions/${sessionId}/events${token ? `?token=${encodeURIComponent(token)}` : ""}`;
   const es = new EventSource(url);
+  // 连接登记：后台观察流的 stopBackgroundObserver 据此拆流（消费结束时自动移除）。
+  liveEventSources.set(sessionId, es);
   let sawEvents = false;
 
   const outcome = await new Promise<"done" | "terminal" | "network">((resolve) => {
-    // 看门狗只在 30 分钟无任何事件时判流悬挂（原固定 5 分钟截断会误杀长工具回合）。
+    // 判活看门狗：30s 无任何帧（含具名心跳）即判流悬挂并主动重连——多会话后台失活
+    // 场景下，后台 EventSource 可能被中间件静默断开却永远不触发 error 事件，
+    // 只有靠「持续收帧」才能确认链路还活着。
     let watchdog: ReturnType<typeof setTimeout> | null = null;
     const settle = (reason: "done" | "terminal" | "network") => {
       if (watchdog) clearTimeout(watchdog);
       if (reason !== "network") abortingSessions.delete(sessionId);
+      if (liveEventSources.get(sessionId) === es) liveEventSources.delete(sessionId);
       es.close();
       resolve(reason);
     };
     const arm = () => {
       sawEvents = true;
       if (watchdog) clearTimeout(watchdog);
-      watchdog = setTimeout(() => settle("network"), 1_800_000);
+      watchdog = setTimeout(() => settle("network"), 30_000);
     };
     arm();
+    // 具名心跳帧（后端 SessionSseHandler 发出）：仅用于判活，重置看门狗。
+    es.addEventListener("heartbeat", () => {
+      arm();
+    });
     es.addEventListener("message", (ev) => {
       // History replay (event: message) must not touch the live placeholder: the chat is
       // already rendered from GET /messages when the session opens, and replaying past
@@ -684,7 +755,7 @@ async function consumeSessionEvents(
       // loadSessionPermissions 会重新拉取 pending 卡片。
       if (d.permission_id) notePendingPermission(d.permission_id, no, sessionId);
       if (appStore.getState().activeSessionId[no] === sessionId) {
-        pushPermissionRequest(no, mapPermissionAsk(d));
+        pushPermissionRequest(no, mapPermissionAsk(d), sessionId);
       }
     });
     es.addEventListener("permission_replied", (ev) => {
@@ -698,7 +769,7 @@ async function consumeSessionEvents(
       // 待决登记与视图无关（工单列表"待回答"徽标的数据源）；卡片挂载策略与权限相同。
       if (d.request_id) notePendingQuestion(d.request_id, no, sessionId);
       if (d.request_id && appStore.getState().activeSessionId[no] === sessionId) {
-        pushQuestionRequest(no, mapQuestionAsk(d));
+        pushQuestionRequest(no, mapQuestionAsk(d), sessionId);
       }
     });
     es.addEventListener("question_replied", (ev) => {
@@ -792,7 +863,11 @@ async function consumeSessionEvents(
       // 失败帧同样要先把攒着的增量落掉，再翻掉流式标记（否则尾部正文丢在半路）。
       flushDeltas(sessionId);
       updateLiveTurn(sessionId, (a) => ({ ...a, streaming: false }));
-      pushSystemMessage(no, msg, "warn");
+      // 后台观察流不写聊天条目：错误行只落库，切回该会话经历史重载可见，
+      // 避免污染用户正在查看的其他会话视图（chats 按工单共享）。
+      if (!opts?.silent) {
+        pushSystemMessage(no, msg, "warn");
+      }
       // 断流≠回合结束：agent 可能仍在服务端运行，立即按（尚未落库的）空历史重建
       // 只会清掉已显示的清单，故不即时收敛。延迟一拍主动核对一次运行集：
       // - 会话已空闲 → 回合确已终结且已落库，此时收敛一次（覆盖极短回合从未进入

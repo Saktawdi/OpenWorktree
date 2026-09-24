@@ -94,16 +94,17 @@ export function patchAssistant(
 const resolvedPermissions = new Set<string>();
 
 /** 入队一个权限请求卡片；按 permissionId 去重（id 恒为 perm-<permission_id>）。 */
-export function pushPermissionRequest(no: string, request: PermissionRequestView) {
+export function pushPermissionRequest(no: string, request: PermissionRequestView, sessionId?: string) {
   if (resolvedPermissions.has(request.permissionId)) return;
   const id = `perm-${request.permissionId}`;
+  const sid = sessionId ?? s().activeSessionId[no] ?? "";
   set((st) => {
     const list = st.chats[no] ?? [];
     if (list.some((m) => m.kind === "permission" && m.id === id)) return st;
     return {
       chats: {
         ...st.chats,
-        [no]: [...list, { kind: "permission" as const, id, request, status: "pending" as const, ts: Date.now() }],
+        [no]: [...list, { kind: "permission" as const, id, request, status: "pending" as const, ts: Date.now(), sessionId: sid }],
       },
     };
   });
@@ -150,16 +151,17 @@ export function revertPermission(no: string, permissionId: string) {
 const resolvedQuestions = new Set<string>();
 
 /** 入队一个 question 请求卡片；按 requestId 去重（id 恒为 ques-<request_id>）。 */
-export function pushQuestionRequest(no: string, request: QuestionRequestView) {
+export function pushQuestionRequest(no: string, request: QuestionRequestView, sessionId?: string) {
   if (resolvedQuestions.has(request.requestId)) return;
   const id = `ques-${request.requestId}`;
+  const sid = sessionId ?? s().activeSessionId[no] ?? "";
   set((st) => {
     const list = st.chats[no] ?? [];
     if (list.some((m) => m.kind === "question" && m.id === id)) return st;
     return {
       chats: {
         ...st.chats,
-        [no]: [...list, { kind: "question" as const, id, request, status: "pending" as const, ts: Date.now() }],
+        [no]: [...list, { kind: "question" as const, id, request, status: "pending" as const, ts: Date.now(), sessionId: sid }],
       },
     };
   });
