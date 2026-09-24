@@ -6,6 +6,7 @@ import gate.domain.error.GateErrorCode;
 import gate.domain.error.GateException;
 import gate.ports.infra.KmsService;
 import gate.ports.store.ProviderRepository;
+import gate.web.sse.SseResponseHeaders;
 import gate.web.util.Json;
 import io.javalin.Javalin;
 import io.javalin.http.Context;
@@ -136,12 +137,7 @@ public final class LlmController implements WebController {
             return;
         }
 
-        ctx.res().setStatus(200);
-        ctx.res().setCharacterEncoding("UTF-8");
-        ctx.res().setContentType("text/event-stream");
-        // 禁加 Connection: close：LLM 流式回包与 Session SSE 同一机理，close 会让 Jetty 立即关连接。
-        ctx.res().addHeader("Cache-Control", "no-cache");
-        ctx.res().addHeader("X-Accel-Buffering", "no");
+        SseResponseHeaders.configure(ctx.res());
 
         try (InputStream in = resp.body();
              OutputStream out = ctx.res().getOutputStream()) {

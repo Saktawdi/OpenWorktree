@@ -17,6 +17,7 @@ import gate.ports.store.TicketRepository;
 import gate.web.security.AuthFilter;
 import gate.web.service.SessionModelCatalog;
 import gate.web.sse.SessionSseHandler;
+import gate.web.sse.SseResponseHeaders;
 import gate.web.util.Json;
 import io.javalin.Javalin;
 import io.javalin.http.Context;
@@ -919,13 +920,7 @@ public final class SessionController implements WebController {
     }
 
     private static void startSse(Context ctx, java.util.function.Consumer<SseClient> consumer) {
-        ctx.res().setStatus(200);
-        ctx.res().setCharacterEncoding("UTF-8");
-        ctx.res().setContentType("text/event-stream");
-        // 禁加 Connection: close——Jetty 会按 Connection 响应头立刻关连接，
-        // EventSource 的断流重连永远追不上已经 closed 的连接（多会话失活的直接诱因）。
-        ctx.res().addHeader("Cache-Control", "no-cache");
-        ctx.res().addHeader("X-Accel-Buffering", "no");
+        SseResponseHeaders.configure(ctx.res());
         try {
             ctx.res().flushBuffer();
         } catch (IOException ignored) {

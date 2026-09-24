@@ -6,6 +6,7 @@ import gate.domain.task.GateTask;
 import gate.ports.task.TaskRegistry;
 import gate.web.service.TaskRunner;
 import gate.web.sse.SseHandler;
+import gate.web.sse.SseResponseHeaders;
 import gate.web.util.Json;
 import io.javalin.Javalin;
 import io.javalin.http.Context;
@@ -90,12 +91,7 @@ public final class TaskController implements WebController {
     }
 
     private static void startSse(Context ctx, java.util.function.Consumer<SseClient> consumer) {
-        ctx.res().setStatus(200);
-        ctx.res().setCharacterEncoding("UTF-8");
-        ctx.res().setContentType("text/event-stream");
-        // 同 SessionController.startSse：禁加 Connection: close（否则 Jetty 立即关连接）。
-        ctx.res().addHeader("Cache-Control", "no-cache");
-        ctx.res().addHeader("X-Accel-Buffering", "no");
+        SseResponseHeaders.configure(ctx.res());
         try {
             ctx.res().flushBuffer();
         } catch (IOException ignored) {

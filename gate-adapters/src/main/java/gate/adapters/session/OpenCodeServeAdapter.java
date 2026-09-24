@@ -90,6 +90,11 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
 
     /** Force-reconnect an upstream whose stream has been silent longer than this. */
     static final long UPSTREAM_STALL_TIMEOUT_MS = 90_000L;
+    /**
+     * 停滞判定阈值的实例副本：生产恒等于 {@link #UPSTREAM_STALL_TIMEOUT_MS}；仅供故障
+     * 注入测试调短（watchdog 首扫要等 90s，测试直接驱动 sweep、等不起）。
+     */
+    volatile long stallTimeoutMs = UPSTREAM_STALL_TIMEOUT_MS;
     /** Delay between upstream reconnect attempts after a drop. */
     static final long UPSTREAM_RECONNECT_DELAY_MS = 2_000L;
     /** Serve 死亡判定：上游连续重连失败达到该次数即触发会话自愈（healDeadServe）。 */
@@ -1614,7 +1619,7 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
         }
 
         boolean stale() {
-            return !stopped && System.currentTimeMillis() - lastEventAt > UPSTREAM_STALL_TIMEOUT_MS;
+            return !stopped && System.currentTimeMillis() - lastEventAt > stallTimeoutMs;
         }
 
         /**
@@ -2499,9 +2504,21 @@ public final class OpenCodeServeAdapter implements AgentSessionPort {
         return up;
     }
 
-    private void checkStalledUpstreams() {
+    /** package-private：故障注入测试直接驱动 sweep，不等 watchdog 的 90s 首扫。 */
+    void checkStalledUpstreams() {
         for (Upstream up : upstreams.values()) {
             if (up.stale()) {
+                // 无事件 ≠ serve 死亡：opencode 约每 10s 有一条 server.heartbeat 流过 /event，
+                // 90s 静默说明这条 SSE 连接已经废了，但 serve 进程可能活得好好的。先探活分型：
+                // 存活 → 仅强制重连（reader 重连成功后的 reconcile 对账兜住断线窗口内的终点帧）；
+                // 不可达 → 直接自愈（healDeadServe 内部还有一道探活守卫，双保险），不等 reader
+                // 攒满重连失败阈值，断死会话的落库收口/busy 释放提前数个重连周期。
+                if (!serveHealthy(up.port)) {
+                    log.warn("opencode", "upstream.stall-serve-unreachable", "sessionId", up.sessionId,
+                            "port", up.port, "silentMs", System.currentTimeMillis() - up.lastEventAt);
+                    healDeadServe(up.sessionId, up.port);
+                    continue;
+                }
                 // Closing the body unblocks readLine(); the reader loop reconnects with
                 // Last-Event-ID.
                 log.warn("opencode", "upstream.stall-force-reconnect", "sessionId", up.sessionId,

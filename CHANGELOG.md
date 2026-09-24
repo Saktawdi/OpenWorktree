@@ -16,6 +16,11 @@
 - **SSE 心跳对 JS 不可见，断流检测只能靠 30 分钟静态看门狗**：服务端 keep-alive 是 `: ping` 注释帧，EventSource 的 JS API 根本收不到注释帧——中间件把连接静默掐断后前端毫无察觉，僵尸连接上的会话全部「失活」。现心跳改为具名事件帧 `event: heartbeat`（带 ts，15s 一拍），前端为每条流维护「30s 无任何帧（心跳计入）即主动 close 触发重连」的判活看门狗，重连后的对账与卡片补拉兜住断口
 - **权限/问答卡片弹到别的会话的聊天视图**：卡片条目不携带 sessionId，渲染层按工单的聊天列表整表渲染——「工单 N 的后台会话 B」触发的卡片会进 `chats[N]`，用户回到工单 N 却正看会话 A 时，B 的卡片照常渲染；REST 灌卡路径（busy 轮询对所有 busy 会话补拉）无当前会话守卫，SSE 灌卡守卫在切走后又失效。现卡片条目带 `sessionId`：REST 灌卡只灌「当前正在查看的会话」，其余会话的待决只记徽标登记（工单列表红黄点不丢），切回该会话时按需拉取还原；SSE 灌卡把 sessionId 一并传入；渲染层再按「条目会话 = 当前查看会话」兜底过滤——卡片只出现在它所属、且用户正在看的会话里
 
+### 优化
+
+- **上游停滞看门狗：无事件 ≠ 死亡，先探活再处理**：opencode 约每 10s 有一条 `server.heartbeat` 流过 /event，90s 静默说明这条 SSE 连接已经废了，但 serve 进程可能活得好好的。看门狗 sweep 现在先探活分型：存活 → 仅强制重连（重连成功后的状态对账兜住断线窗口，不杀进程、不清端口、不动 busy）；不可达 → 直接走自愈（healDeadServe 内部还有一道探活守卫，双保险）——不再等 reader 攒满 3 次重连失败（约 6s+），断死会话的落库收口与 busy 释放提前数个重连周期。停滞阈值留有实例注入口，故障注入测试直接驱动 sweep、不必等 90s 首扫
+- **多会话可靠性方案验收测试补齐（slow 层）**：断线窗口内回合静默结束 → 重连对账回填落库 + 补发 done + 释放 busy（故障注入，`OpenCodeServeUpstreamReliabilityTest`）；停滞 sweep 探活分型——serve 存活只重连不误杀、serve 不可达直达自愈（同上）；三会话并发派发不串行（假 serve 延迟应答下 prompt_async 到达时刻重叠，`OpenCodeServeDispatchConcurrencyTest`）；SSE 响应头统一收口 `SseResponseHeaders` 并以快速单测钉死「不得携带 Connection 头」（Jetty 会按该头立即断流，P0-2 回归钉）
+
 ## 0.3.14-beta
 
 ### 新增
