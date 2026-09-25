@@ -481,6 +481,8 @@ export interface Finding {
   ruleId?: string;
   message: string;
   suggestion?: string;
+  /** 引擎报告的问题代码逐字摘录（行号由后端确定性回锚，摘录是锚点本身）。 */
+  existingCode?: string;
 }
 
 export interface Snapshot {

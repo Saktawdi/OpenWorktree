@@ -37,6 +37,12 @@ function FindingCard({ finding, index }: { finding: Finding; index: number }) {
           </button>
         </div>
       )}
+      {/* 引擎回锚用的逐字摘录：原样等宽呈现，行号可复核（确定性回锚的证据本体） */}
+      {finding.existingCode && (
+        <pre className="mt-2.5 overflow-x-auto rounded-lg bg-sunken border border-edge px-3 py-2 font-mono text-[12px] leading-relaxed text-dim">
+          {finding.existingCode}
+        </pre>
+      )}
       {finding.suggestion && (
         <div className="mt-2.5 rounded-lg bg-sunken border border-edge px-3 py-2 text-[12.5px] leading-relaxed text-dim">
           <span className="text-faint">{t("findings.suggestion")} </span>

@@ -38,9 +38,16 @@ public final class EvidenceCodec {
                 String findings = report.findings().stream()
                         .map(EvidenceCodec::findingJson)
                         .collect(Collectors.joining(","));
+                String filtered = report.filteredFindings().stream()
+                        .map(EvidenceCodec::findingJson)
+                        .collect(Collectors.joining(","));
                 String covered = report.coveredPaths().stream()
                         .sorted()
                         .map(EvidenceCodec::quote)
+                        .collect(Collectors.joining(","));
+                String skipped = report.skippedPaths().stream()
+                        .sorted(java.util.Comparator.comparing(gate.domain.review.SkippedPath::path))
+                        .map(sp -> "{\"path\":" + quote(sp.path()) + ",\"reason\":" + quote(sp.reason()) + "}")
                         .collect(Collectors.joining(","));
                 return "{\"kind\":\"report\""
                         + ",\"engine_id\":" + quote(report.engine().engineId())
@@ -54,7 +61,9 @@ public final class EvidenceCodec {
                         + ",\"completion_tokens\":" + nullableLong(report.completionTokens())
                         + ",\"total_tokens\":" + nullableLong(report.totalTokens())
                         + ",\"covered_paths\":[" + covered + "]"
-                        + ",\"findings\":[" + findings + "]}";
+                        + ",\"skipped_paths\":[" + skipped + "]"
+                        + ",\"findings\":[" + findings + "]"
+                        + ",\"filtered_findings\":[" + filtered + "]}";
             }
 
             @Override
@@ -76,7 +85,8 @@ public final class EvidenceCodec {
                 + ",\"line_end\":" + (f.lineEnd() == null ? "null" : f.lineEnd())
                 + ",\"rule_id\":" + quote(f.ruleId())
                 + ",\"message\":" + quote(f.message())
-                + ",\"suggestion\":" + quote(f.suggestion()) + "}";
+                + ",\"suggestion\":" + quote(f.suggestion())
+                + ",\"existing_code\":" + quote(f.existingCode()) + "}";
     }
 
     static Severity worstSeverity(List<Finding> findings) {
@@ -117,23 +127,46 @@ public final class EvidenceCodec {
         for (Object p : listOf(root.get("covered_paths"))) {
             covered.add((String) p);
         }
+        List<gate.domain.review.SkippedPath> skipped = new ArrayList<>();
+        for (Object s : listOf(root.get("skipped_paths"))) {
+            if (s instanceof Map<?, ?>) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> sm = (Map<String, Object>) s;
+                skipped.add(new gate.domain.review.SkippedPath(
+                        strOr(sm, "path", "."), strOr(sm, "reason", "unknown")));
+            }
+        }
         List<Finding> findings = new ArrayList<>();
         for (Object f : listOf(root.get("findings"))) {
-            @SuppressWarnings("unchecked")
-            Map<String, Object> fm = (Map<String, Object>) f;
-            findings.add(new Finding(
-                    Severity.valueOf(str(fm, "severity")),
-                    strOr(fm, "raw_severity", ""),
-                    str(fm, "path"),
-                    intOrNull(fm, "line_start"),
-                    intOrNull(fm, "line_end"),
-                    strOrNull(fm, "rule_id"),
-                    strOr(fm, "message", ""),
-                    strOrNull(fm, "suggestion")));
+            if (f instanceof Map<?, ?>) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> fm = (Map<String, Object>) f;
+                findings.add(findingFrom(fm));
+            }
+        }
+        List<Finding> filtered = new ArrayList<>();
+        for (Object f : listOf(root.get("filtered_findings"))) {
+            if (f instanceof Map<?, ?>) {
+                filtered.add(findingFrom((Map<String, Object>) f));
+            }
         }
         return new EngineReport(engine, str(root, "tree_hash"), findings, covered,
-                Boolean.TRUE.equals(root.get("degraded")), rawOutput,
-                (int) longVal(root, "exit_code"), Duration.ZERO);
+                skipped, Boolean.TRUE.equals(root.get("degraded")), rawOutput,
+                (int) longVal(root, "exit_code"), Duration.ZERO, null, null, null, filtered);
+    }
+
+    /** One finding object → {@link Finding}; tolerant of blobs written before existing_code existed. */
+    private static Finding findingFrom(Map<String, Object> fm) {
+        return new Finding(
+                Severity.valueOf(str(fm, "severity")),
+                strOr(fm, "raw_severity", ""),
+                str(fm, "path"),
+                intOrNull(fm, "line_start"),
+                intOrNull(fm, "line_end"),
+                strOrNull(fm, "rule_id"),
+                strOr(fm, "message", ""),
+                strOrNull(fm, "suggestion"),
+                strOrNull(fm, "existing_code"));
     }
 
     @SuppressWarnings("unchecked")

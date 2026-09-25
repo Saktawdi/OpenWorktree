@@ -215,15 +215,18 @@ final class PrismJson {
         final String message;
         final String suggestion;
         final List<PrismLocation> locations;
+        /** 问题代码的逐字摘录（模型产出）；行号由 FindingAnchor 确定性回锚，摘录是锚点本身。 */
+        final String existingCode;
 
         PrismFinding(String id, String severity, String title, String message, String suggestion,
-                     List<PrismLocation> locations) {
+                     List<PrismLocation> locations, String existingCode) {
             this.id = id;
             this.severity = severity;
             this.title = title;
             this.message = message;
             this.suggestion = suggestion;
             this.locations = locations;
+            this.existingCode = existingCode;
         }
     }
 
@@ -320,7 +323,8 @@ final class PrismJson {
                 locations.add(parseLocation((Map<String, Object>) loc));
             }
         }
-        return new PrismFinding(id, severity, title, message, suggestion, locations);
+        return new PrismFinding(id, severity, title, message, suggestion, locations,
+                stringOrNull(m.get("existing_code")));
     }
 
     @SuppressWarnings("unchecked")

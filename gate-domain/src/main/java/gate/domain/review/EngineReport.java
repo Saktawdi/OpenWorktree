@@ -16,6 +16,10 @@ import java.util.Set;
  *                     {@code coveredPaths ⊇ changedPaths}, otherwise an engine that silently
  *                     skips binary/oversized/failed chunks would let unreviewed content through
  *                     with no exception anywhere
+ * @param skippedPaths changed paths the engine deliberately did not review, each with its reason
+ *                     (binary / secret path / project rule / deleted / per-file token gate). The
+ *                     policy subtracts the authorised reasons from the coverage denominator and
+ *                     routes {@code too_large} to REQUIRES_HUMAN — see {@link SkippedPath}.
  * @param degraded     the adapter could not fully normalise something; forces reject
  * @param promptTokens LLM prompt tokens when the engine exposed usage; null otherwise
  * @param completionTokens LLM completion tokens when exposed; null otherwise
@@ -26,23 +30,31 @@ public record EngineReport(
         String treeHash,
         List<Finding> findings,
         Set<String> coveredPaths,
+        List<SkippedPath> skippedPaths,
         boolean degraded,
         BlobRef rawOutput,
         int exitCode,
         Duration duration,
         Long promptTokens,
         Long completionTokens,
-        Long totalTokens) implements ReviewEvidence {
+        Long totalTokens,
+        List<Finding> filteredFindings) implements ReviewEvidence {
 
-    /**
-     * 不带 token 遥测的兼容构造器：供无 usage 来源的证据使用（人工判定等），
-     * token 字段落 null，成本遥测按 tokenSource=unavailable 记录。
-     */
+    /** Back-compatible constructor for engines that neither skip paths nor run a filter pass. */
     public EngineReport(EngineDescriptor engine, String treeHash, List<Finding> findings,
                         Set<String> coveredPaths, boolean degraded, BlobRef rawOutput,
                         int exitCode, Duration duration) {
-        this(engine, treeHash, findings, coveredPaths, degraded, rawOutput, exitCode, duration,
-                null, null, null);
+        this(engine, treeHash, findings, coveredPaths, List.of(), degraded, rawOutput, exitCode,
+                duration, null, null, null, List.of());
+    }
+
+    /** Back-compatible constructor carrying token telemetry but no skip/filter detail. */
+    public EngineReport(EngineDescriptor engine, String treeHash, List<Finding> findings,
+                        Set<String> coveredPaths, boolean degraded, BlobRef rawOutput,
+                        int exitCode, Duration duration,
+                        Long promptTokens, Long completionTokens, Long totalTokens) {
+        this(engine, treeHash, findings, coveredPaths, List.of(), degraded, rawOutput, exitCode,
+                duration, promptTokens, completionTokens, totalTokens, List.of());
     }
 
     public EngineReport {
@@ -57,6 +69,8 @@ public record EngineReport(
         }
         findings = List.copyOf(findings);
         coveredPaths = Set.copyOf(coveredPaths);
+        skippedPaths = List.copyOf(skippedPaths);
+        filteredFindings = List.copyOf(filteredFindings);
     }
 
     @Override

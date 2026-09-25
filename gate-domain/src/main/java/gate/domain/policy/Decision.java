@@ -46,6 +46,21 @@ public record Decision(
         return new Decision(Verdict.REQUIRES_HUMAN, reason, detail, null);
     }
 
+    /**
+     * Audit decoration: prepends extra detail lines (e.g. the skipped-path ledger) to an existing
+     * decision without touching its verdict, reason or authorization. The verdict stays exactly
+     * what {@link GatePolicy} minted — decoration is bookkeeping for the evidence chain, never a
+     * channel that could flip a decision.
+     */
+    public Decision withExtraDetail(List<String> extra) {
+        if (extra == null || extra.isEmpty()) {
+            return this;
+        }
+        List<String> merged = new java.util.ArrayList<>(extra);
+        merged.addAll(detail);
+        return new Decision(verdict, reason, merged, authorization);
+    }
+
     public boolean isPass() {
         return verdict == Verdict.PASS;
     }

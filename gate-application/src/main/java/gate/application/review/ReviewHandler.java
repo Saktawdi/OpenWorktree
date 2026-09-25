@@ -138,8 +138,9 @@ public final class ReviewHandler {
                     "engine is configured but no built-in engine could be built (check engine.provider_id / provider credential)");
         }
         // Contract: review() never throws. Any failure is already an EngineFailure value.
+        // 工单标题/描述作为审查上下文注入——门禁天然持有工单语义，"对照需求审"在这里零成本达成。
         ReviewEvidence evidence = engine.review(new ReviewEngine.ReviewRequest(
-                clone, ticket.ticketNo(), row.reviewRound(), snapshot, dangling));
+                clone, ticket.ticketNo(), row.reviewRound(), snapshot, dangling, ticketContext(ticket)));
 
         Decision decision = gatePolicy.decide(ticket.ticketNo(), row.reviewRound(), evidence, snapshot, config.policy());
 
@@ -258,6 +259,28 @@ public final class ReviewHandler {
         return authResolver != null
                 ? authResolver.forTicket(ticket).authRepo()
                 : RepoRef.of(config.authRepo());
+    }
+
+    /**
+     * 审查上下文 = 工单标题 + 描述 + 标签，封顶 2000 字符（防超长描述反噬审查 prompt 预算）。
+     * 三者皆空时返回 null——prompt 里就不出现背景段，保持旧形态。
+     */
+    private static String ticketContext(Ticket ticket) {
+        StringBuilder sb = new StringBuilder();
+        if (ticket.title() != null && !ticket.title().isBlank()) {
+            sb.append("标题：").append(ticket.title().trim()).append('\n');
+        }
+        if (ticket.description() != null && !ticket.description().isBlank()) {
+            sb.append("描述：").append(ticket.description().trim()).append('\n');
+        }
+        if (ticket.labels() != null && !ticket.labels().isEmpty()) {
+            sb.append("标签：").append(String.join("、", ticket.labels())).append('\n');
+        }
+        if (sb.length() == 0) {
+            return null;
+        }
+        String context = sb.toString();
+        return context.length() <= 2000 ? context : context.substring(0, 2000) + "…（截断）";
     }
 
     private static String commitMessage(Ticket ticket, PresubmitRepository.PresubmitRow row) {

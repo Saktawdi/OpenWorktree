@@ -75,7 +75,8 @@ public final class GateReviewEngineFactory implements ReviewEngineFactory {
                 Duration.ofSeconds(engine.timeoutSeconds()),
                 Duration.ofSeconds(engine.idleTimeoutSeconds()),
                 engine.providerId(), engine.model(),
-                provider.baseUrl(), apiKey, engine.maxTokens());
+                provider.baseUrl(), apiKey, engine.maxTokens(),
+                engine.filterEnabled(), engine.rounds(), engine.concurrency(), engine.fileTokenGate());
     }
 
     /**

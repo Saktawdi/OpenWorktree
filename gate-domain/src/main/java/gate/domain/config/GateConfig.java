@@ -126,15 +126,37 @@ public record GateConfig(
      * @param idleTimeoutSeconds 流式读帧的空闲失效窗口（秒）；null 归一为
      *                           {@link #DEFAULT_IDLE_TIMEOUT_SECONDS}
      * @param maxTokens          可选：注入请求体的输出上限；null 表示不注入（交上游默认）
+     * @param reviewFilter       可选：过滤 pass（宁留勿删的事实核查）；null 归一为 true。
+     *                           过滤器是精度优化，失败 fail-open 保留全部发现，绝不阻塞审查
+     * @param reviewRounds       可选：组内审查轮次（1-8）；null 归一为 1（单轮，成本不涨）。
+     *                           第 2 轮起回注已确认发现、只找新问题，一轮无新发现即停
+     * @param reviewConcurrency  可选：分组审查并发度（1-8）；null 归一为 2
+     * @param maxFileTokens      可选：单文件 diff 的 token 闸门（chars/4 估算，≥1000）；
+     *                           超限文件确定性跳审并记入证据，策略据此转人工
      */
     public record EngineConfig(String cmd, List<String> args, long timeoutSeconds, String providerId,
-                               String model, String kind, Long idleTimeoutSeconds, Long maxTokens) {
+                               String model, String kind, Long idleTimeoutSeconds, Long maxTokens,
+                               Boolean reviewFilter, Integer reviewRounds, Integer reviewConcurrency,
+                               Long maxFileTokens) {
 
         /** {@code kind} 的唯一合法值：gate 内建审查引擎。 */
         public static final String KIND_GATE_ENGINE = "gate-engine";
 
         /** 流式读帧的默认空闲失效窗口（秒）；窗口内无任何数据帧即判停流。 */
         public static final long DEFAULT_IDLE_TIMEOUT_SECONDS = 90;
+
+        /** review_filter / review_rounds / review_concurrency / max_file_tokens 的默认值。 */
+        public static final boolean DEFAULT_REVIEW_FILTER = true;
+        public static final int DEFAULT_REVIEW_ROUNDS = 1;
+        public static final int DEFAULT_REVIEW_CONCURRENCY = 2;
+        public static final long DEFAULT_MAX_FILE_TOKENS = 24_000L;
+
+        /** Back-compatible 8-arg constructor（新键出现前的配置面）。 */
+        public EngineConfig(String cmd, List<String> args, long timeoutSeconds, String providerId,
+                            String model, String kind, Long idleTimeoutSeconds, Long maxTokens) {
+            this(cmd, args, timeoutSeconds, providerId, model, kind, idleTimeoutSeconds, maxTokens,
+                    null, null, null, null);
+        }
 
         public EngineConfig {
             if (kind == null || kind.isBlank()) {
@@ -159,6 +181,32 @@ public record GateConfig(
             if (maxTokens != null && maxTokens <= 0) {
                 throw new IllegalArgumentException("engine.max_tokens must be positive");
             }
+            if (reviewRounds != null && (reviewRounds < 1 || reviewRounds > 8)) {
+                throw new IllegalArgumentException("engine.review_rounds must be within 1..8");
+            }
+            if (reviewConcurrency != null && (reviewConcurrency < 1 || reviewConcurrency > 8)) {
+                throw new IllegalArgumentException("engine.review_concurrency must be within 1..8");
+            }
+            if (maxFileTokens != null && maxFileTokens < 1_000) {
+                throw new IllegalArgumentException("engine.max_file_tokens must be >= 1000");
+            }
+        }
+
+        /** 过滤 pass 开关（null 已在构造期归一前的原始值；运行期统一走此视图）。 */
+        public boolean filterEnabled() {
+            return reviewFilter == null ? DEFAULT_REVIEW_FILTER : reviewFilter;
+        }
+
+        public int rounds() {
+            return reviewRounds == null ? DEFAULT_REVIEW_ROUNDS : reviewRounds;
+        }
+
+        public int concurrency() {
+            return reviewConcurrency == null ? DEFAULT_REVIEW_CONCURRENCY : reviewConcurrency;
+        }
+
+        public long fileTokenGate() {
+            return maxFileTokens == null ? DEFAULT_MAX_FILE_TOKENS : maxFileTokens;
         }
     }
 

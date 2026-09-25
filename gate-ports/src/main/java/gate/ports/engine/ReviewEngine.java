@@ -46,12 +46,23 @@ public interface ReviewEngine {
      * @param danglingCommit the commit built from the snapshot tree, pinned by a gate ref. Engines
      *                       shell out to live git, so they need a real reachable commit rather than
      *                       a free-floating tree (ADR-6).
+     * @param ticketContext  nullable — the ticket's title/description so the review can check the
+     *                       change against what was actually asked for. Gate 天然持有工单语义，
+     *                       注入审查上下文是零成本获得"对照需求审"的通道； Engines treat it as
+     *                       advisory background, never as review scope.
      */
     record ReviewRequest(
             RepoRef cloneRepo,
             String ticketNo,
             int reviewRound,
             Snapshot snapshot,
-            ObjectId danglingCommit) {
+            ObjectId danglingCommit,
+            String ticketContext) {
+
+        /** Back-compatible 5-arg constructor for call sites without ticket context. */
+        public ReviewRequest(RepoRef cloneRepo, String ticketNo, int reviewRound,
+                             Snapshot snapshot, ObjectId danglingCommit) {
+            this(cloneRepo, ticketNo, reviewRound, snapshot, danglingCommit, null);
+        }
     }
 }

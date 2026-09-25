@@ -40,6 +40,8 @@ public final class TomlGateConfigLoader {
             "engine.cmd", "engine.args", "engine.timeout_seconds", "engine.provider_id", "engine.model",
             // 单引擎化：kind 唯一合法值 gate-engine；idle/max_tokens 为流式引擎参数；cmd/args 为 deprecated 兼容键（读取但忽略）。
             "engine.kind", "engine.idle_timeout_seconds", "engine.max_tokens",
+            // 审查编排（反哺 open-code-review）：过滤 pass / 组内轮次 / 分组并发 / 单文件 token 闸门。
+            "engine.review_filter", "engine.review_rounds", "engine.review_concurrency", "engine.max_file_tokens",
             // 执行文档-后端-web §8.1: web operations console + agent session orchestration.
             "web.bind", "web.port", "web.allowed_origins", "web.human_token_file",
             "session.port_range_min", "session.port_range_max", "session.default_cli",
@@ -246,6 +248,18 @@ public final class TomlGateConfigLoader {
                             : null,
                     scalars.containsKey("engine.max_tokens")
                             ? (Long) longValueOr(scalars, "engine.max_tokens", 0L)
+                            : null,
+                    scalars.containsKey("engine.review_filter")
+                            ? Boolean.parseBoolean(scalars.get("engine.review_filter"))
+                            : null,
+                    scalars.containsKey("engine.review_rounds")
+                            ? (int) longValueOr(scalars, "engine.review_rounds", 0L)
+                            : null,
+                    scalars.containsKey("engine.review_concurrency")
+                            ? (int) longValueOr(scalars, "engine.review_concurrency", 0L)
+                            : null,
+                    scalars.containsKey("engine.max_file_tokens")
+                            ? (Long) longValueOr(scalars, "engine.max_file_tokens", 0L)
                             : null);
         }
 

@@ -138,6 +138,7 @@ function mapFinding(f: unknown): Finding | null {
     ruleId: ruleId ? String(ruleId) : undefined,
     message: String(o.message ?? ""),
     suggestion: o.suggestion ? String(o.suggestion) : undefined,
+    existingCode: o.existing_code ? String(o.existing_code) : undefined,
   };
 }
 
