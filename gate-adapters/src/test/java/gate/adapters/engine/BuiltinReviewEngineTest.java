@@ -307,6 +307,35 @@ class BuiltinReviewEngineTest {
                 + "\"locations\":[{\"path\":\"" + path + "\",\"lines\":{\"start\":1,\"end\":1}}]}]}";
     }
 
+    /**
+     * 复用链必须跨「连续两次失败」存活：尝试 1 的 g0 成功、g1 失败；尝试 2 g0 复用、g1 仍失败；
+     * 尝试 3 只应重派 g1（一次调用）。此前日志被逐次覆写，尝试 2 的写入抹掉尝试 1 的 g0 记录，
+     * 尝试 3 退化为全量重审——这个测试钉住修复。
+     */
+    @Test
+    void resumeReuseSurvivesSecondFailure() throws Exception {
+        String diff = cat(DIFF_ANCHOR, smallSection("app/D.java", "+DDD;"));
+        List<String> changed = List.of("src/A.java", "app/D.java");
+        startScripted(
+                resp(delta(findingsFor("src/A.java", "ga")), "[DONE]"),   // 尝试1 g0：成功
+                resp(garbage()), resp(garbage()),                          // 尝试1 g1：坏 + 宽限仍坏 → 失败
+                resp(garbage()), resp(garbage()),                          // 尝试2 g1：仍坏 → 再次失败
+                resp(delta(findingsFor("app/D.java", "gd3")), "[DONE]"));  // 尝试3 g1：成功
+        var eng = engine(Duration.ofSeconds(10), Duration.ofSeconds(5), null, false, null, 1, null);
+
+        assertInstanceOf(EngineFailure.class, eng.review(req(diff, changed, null)));
+        assertInstanceOf(EngineFailure.class, eng.review(req(diff, changed, null)));
+
+        int before = requestBodies.size();
+        EngineReport third = assertInstanceOf(EngineReport.class, eng.review(req(diff, changed, null)));
+        assertEquals(1, requestBodies.size() - before, "尝试3 只重派失败的 g1，g0 复用不重审");
+        assertEquals(2, third.findings().size(), "g0 的旧发现 + g1 的新发现都在");
+        assertTrue(third.findings().stream().anyMatch(f -> "ga".equals(f.ruleId())), "g0 发现来自尝试1");
+        assertTrue(third.findings().stream().anyMatch(f -> "gd3".equals(f.ruleId())), "g1 发现来自尝试3");
+        String log = new String(blobs.store.get("sessions/T-9000/3.jsonl"), StandardCharsets.UTF_8);
+        assertTrue(log.contains("\"kind\":\"group_reused\""), "跨多次尝试的复用仍留痕");
+    }
+
     @Test
     void inlineErrorFrameInsideHttp200IsCrashWithUpstreamMessage() throws Exception {
         start(ex -> {

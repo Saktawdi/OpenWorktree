@@ -25,6 +25,12 @@ import java.util.Map;
  * 仅当上一次以<b>失败</b>告终且模型一致——把指纹相同且 status=completed 的组的发现原样
  * 复用，只重新派发失败/缺失的组。成功的审查不产生复用：显式重审同一轮就是要求全新审查。
  *
+ * <p><b>跨尝试追加，不覆写</b>：同一轮可能被尝试多次，每次 {@link #write} 把本次尝试的
+ * 记录<b>追加</b>在既有内容之后、以 {@code attempt} 行标记新尝试起点——此前逐次覆写会抹掉
+ * 上一次已成功组的发现，让复用链在连续失败后断裂（且丢掉上一次尝试的 prompt 原文，断掉
+ * 排查能力）。读取侧相应只认<b>最后一条</b> terminal 行判断上次成败，并把
+ * {@code group_reused} 行也计入可复用来源——复用链因此可以跨任意多次尝试延续。
+ *
  * <p>留痕是诊断数据不是安全控制：写失败 best-effort 吞掉（P4 bypass 同款），绝不影响判决；
  * blob 落盘的内容与既有 raw blob 同级（密钥文件本就在审前闸门被排除，prompt 不含其内容）。
  */
@@ -32,7 +38,9 @@ final class ReviewSessionLog {
 
     static final String LOG_REL_PATH_FMT = "sessions/%s/%d.jsonl";
 
-    private final List<String> lines = new ArrayList<>();
+    /** 追加写入的并发保护：llmCall 从多个审查组的线程并发进入（synchronizedList 管 add，
+     *  读取/拼接处显式同步——write 与 append 可能在测试或多实例场景下并发）。 */
+    private final List<String> lines = java.util.Collections.synchronizedList(new ArrayList<>());
 
     // ────────────────────────────── 写侧 ──────────────────────────────
 
@@ -120,46 +128,78 @@ final class ReviewSessionLog {
         add(m);
     }
 
-    /** best-effort：落盘失败只吞掉——诊断留痕绝不能让审查本身失败。 */
+    /**
+     * best-effort 落盘（P4 bypass 同款语义：失败只吞掉，绝不让审查本身失败）。
+     *
+     * <p><b>追加而非覆写</b>：既有日志内容原样保留在前，本次尝试的记录（header 起）追加其后。
+     * 同轮多次尝试的历史共存于一个文件——上一次已成功组的发现必须跨尝试存活（复用链），
+     * 上一次的 prompt 原文也必须留存（排查能力）。与既有内容之间的竞态由「读-拼-写」整体
+     * 串行化兜住：引擎内 write 只发生在全部审查组 join 之后的单线程路径。
+     */
     void write(BlobStore blobStore, String ticketNo, int round) {
         if (blobStore == null || lines.isEmpty()) {
             return;
         }
         try {
-            byte[] data = String.join("\n", lines).concat("\n").getBytes(StandardCharsets.UTF_8);
-            blobStore.put(data, String.format(LOG_REL_PATH_FMT, ticketNo, round));
+            String relPath = String.format(LOG_REL_PATH_FMT, ticketNo, round);
+            StringBuilder sb = new StringBuilder();
+            String prior = readRaw(blobStore, relPath);
+            if (!prior.isEmpty()) {
+                sb.append(prior);
+                if (!prior.endsWith("\n")) {
+                    sb.append('\n');
+                }
+            }
+            synchronized (lines) {
+                for (String line : lines) {
+                    sb.append(line).append('\n');
+                }
+            }
+            blobStore.put(sb.toString().getBytes(StandardCharsets.UTF_8), relPath);
         } catch (RuntimeException ignored) {
-            // 留痕失败不影响审查结果（P4 bypass 同款语义）
+            // 留痕失败不影响审查结果
         }
     }
 
     // ────────────────────────────── 读侧（resume 索引） ──────────────────────────────
 
-    /** 上一次尝试是否以失败告终——只有失败的尝试才允许被续审复用。 */
+    /**
+     * 上一次尝试是否以失败告终——只有失败的尝试才允许被续审复用。文件是跨尝试追加的，
+     * 所以只认<b>最后一条</b> terminal 行：中间历史的成败不影响本次准入判断。
+     */
     boolean wasFailedAttempt() {
+        Boolean lastFailed = null;
         for (Map<String, Object> line : parseAll()) {
-            if ("terminal".equals(line.get("kind")) && "failure".equals(line.get("outcome"))) {
-                return true;
+            if ("terminal".equals(line.get("kind"))) {
+                lastFailed = "failure".equals(line.get("outcome"));
             }
         }
-        return false;
+        return Boolean.TRUE.equals(lastFailed);
     }
 
     String modelName() {
+        // 跨尝试追加后同文件有多条 header（每次尝试一条）；模型一致性判断关心最近一次尝试。
+        String model = null;
         for (Map<String, Object> line : parseAll()) {
-            if ("header".equals(line.get("kind"))) {
-                Object m = line.get("model");
-                return m == null ? null : String.valueOf(m);
+            if ("header".equals(line.get("kind")) && line.get("model") != null) {
+                model = String.valueOf(line.get("model"));
             }
         }
-        return null;
+        return model;
     }
 
-    /** 指纹 → status=completed 组的发现（按组号去重，首次为准）。 */
+    /**
+     * 指纹 → status=completed 组的发现（同指纹首次为准）。{@code group_reused} 行也计入：
+     * 复用链可以跨任意多次尝试延续——尝试 1 成功的组，在尝试 2、3 中以 reused 行的形式
+     * 同样构成有效的复用来源。
+     */
     Map<String, List<Finding>> completedGroupsByFingerprint() {
         Map<String, List<Finding>> out = new LinkedHashMap<>();
         for (Map<String, Object> line : parseAll()) {
-            if (!"group_result".equals(line.get("kind")) || !"completed".equals(line.get("status"))) {
+            boolean completed = "group_result".equals(line.get("kind"))
+                    && "completed".equals(line.get("status"));
+            boolean reused = "group_reused".equals(line.get("kind"));
+            if (!completed && !reused) {
                 continue;
             }
             Object fpObj = line.get("group_fingerprint");
@@ -192,24 +232,29 @@ final class ReviewSessionLog {
         return out;
     }
 
-    /** 从 blob 读取上一次尝试的日志；不存在或解析失败得到空日志（无可复用内容）。 */
+    /** 从 blob 读取历史日志（跨尝试的完整追加内容）；不存在或解析失败得到空日志。 */
     static ReviewSessionLog read(BlobStore blobStore, String ticketNo, int round) {
         ReviewSessionLog log = new ReviewSessionLog();
         if (blobStore == null) {
             return log;
         }
-        try {
-            byte[] data = blobStore.get(new BlobRef(
-                    String.format(LOG_REL_PATH_FMT, ticketNo, round), 0, "0".repeat(64)));
-            for (String line : new String(data, StandardCharsets.UTF_8).split("\n", -1)) {
-                if (!line.isBlank()) {
-                    log.lines.add(line);
-                }
+        String raw = readRaw(blobStore, String.format(LOG_REL_PATH_FMT, ticketNo, round));
+        for (String line : raw.split("\n", -1)) {
+            if (!line.isBlank()) {
+                log.lines.add(line);
             }
-        } catch (RuntimeException ignored) {
-            // 首次审查（无历史日志）或读取失败：等价于无可复用内容
         }
         return log;
+    }
+
+    /** 读原始日志文本；不存在/读失败返回空串——首次审查与坏存储等价于无可复用内容。 */
+    private static String readRaw(BlobStore blobStore, String relPath) {
+        try {
+            byte[] data = blobStore.get(new BlobRef(relPath, 0, "0".repeat(64)));
+            return new String(data, StandardCharsets.UTF_8);
+        } catch (RuntimeException ignored) {
+            return "";
+        }
     }
 
     private void add(Map<String, Object> m) {
