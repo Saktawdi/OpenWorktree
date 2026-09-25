@@ -4,6 +4,12 @@
 >
 > 版本号规则（x.y.z）：每次改动自行判断更新类型——大更新 y+1，bug 修复/优化等小更新 z+1；同一未发行小节内多条改动逐次累加（距上次升版提交的每个改动各进一格）。
 
+## 0.3.16-alpha
+
+### 新增
+
+- **审查引擎架构升级：确定性工程 × LLM 混合编排（反哺自 alibaba/open-code-review 深度拜读）**：内置引擎过去是「整包 diff 一次性塞给 LLM」的单调用——大工单打爆上下文窗口、行号漂移、二进制/密钥文件白烧 token、误报直接怼到开发者脸上。现把「不允许出错」的步骤全部从 LLM 手里拿回来用代码保证，LLM 只做动态判断：① **审前闸门**（`DiffSections`）：unified diff 按文件切片，删除/二进制/密钥路径（内建名单）/项目规则跳过/单文件超限（`engine.max_file_tokens`，chars/4 量级估算）确定性排除并作为 `SkippedPath` 记入证据，策略层把授权排除从覆盖分母扣除、`too_large` 路由 REQUIRES_HUMAN——静默跳审在结构上不可能；② **确定性分组并发**：按顶层目录聚簇、路径序贪心切块（每组 ≤10 文件、≤组 token 预算），每组独立上下文并发审查（`engine.review_concurrency`，默认 2），大变更不再被单 prompt 挤压；③ **确定性回锚**（`FindingAnchor`）：发现必须带 `existing_code` 逐字摘录，行号由代码从 diff hunk 滑窗匹配推导（新侧 context+added → 旧侧 context+deleted，忽略空行与 ± 前缀），锚不上保留模型行号不猜——LLM 报行号的「位置漂移」在源头消灭；④ **过滤 pass（宁留勿删）**：独立事实核查调用只删「diff 能证明错误」的发现，可疑/无法验证/价值低一律放行（不对称原则写进 prompt），被删发现进 `filtered_findings` 留痕不静默；过滤器任何失败 fail-open 保留全部候选——它优化精度，绝不丢发现、绝不阻塞审查（`engine.review_filter`，默认开）；⑤ **多轮累积 + 提前停**（`engine.review_rounds`，默认 1 成本不涨）：第 2 轮起回注已确认发现、只找新问题，一轮零新发现或到达 40 条确认上限即停；⑥ **宽限轮 + 失败连击**：输出无法解析时给一次「只输出 JSON」的最后机会（原始输出独立落 blob `*.grace.json`），连续第二次解析失败才判 UNPARSEABLE——模型换措辞无限重发同一坏输出的循环被硬性截断。证据链同步升级：`EngineReport` 新增 `skipped_paths`/`filtered_findings`/发现级 `existing_code` 并确定性往返 EvidenceCodec（publish 进程重跑策略不丢 skip 台账）；各调用（审查/宽限/过滤）usage 求和进报告，「上游没回报 usage」与「用了 0 token」严格可分；项目规则面 `.gate/rules.json`（glob → 规则文本/skip 声明，`**` 跨目录、`*` 不跨、坏文件 fail-open 静默退回——它是加固项而非安全控制，解析失败拒绝审查会让任何能写它的人拒绝服务门禁），规则按「规则集相同」聚块以 `<rules for="a, b">` 标注归属进 prompt；工单标题/描述/标签作为审查上下文注入（门禁天然持有工单语义，「对照需求审」零成本达成，封顶 2000 字符）。审查发现卡片展示 `existing_code` 逐字摘录（等宽原样块，行号可复核）。任何一组硬失败即整轮失败（部分覆盖的静默放行比失败更危险），工单停留 PRESUBMITTED 可原地重试
+
 ## 0.3.15-alpha
 
 ### 新增
