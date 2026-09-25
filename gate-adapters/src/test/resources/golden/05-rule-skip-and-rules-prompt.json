@@ -1,0 +1,37 @@
+{
+  "name": "rules.json injects rule text and honors skip",
+  "diff": "diff --git a/migrations/V1.sql b/migrations/V1.sql\nindex 1111111..2222222 100644\n--- a/migrations/V1.sql\n+++ b/migrations/V1.sql\n@@ -1,1 +1,2 @@\n existing\n+CREATE TABLE t(id int);\ndiff --git a/src/generated/Gen.java b/src/generated/Gen.java\nindex 1111111..2222222 100644\n--- a/src/generated/Gen.java\n+++ b/src/generated/Gen.java\n@@ -1,1 +1,2 @@\n existing\n+AUTO GENERATED CODE\ndiff --git a/src/A.java b/src/A.java\nindex 1111111..2222222 100644\n--- a/src/A.java\n+++ b/src/A.java\n@@ -10,4 +10,5 @@\n     void q(String name) throws Exception {\n-        Statement st = conn.createStatement();\n+        PreparedStatement ps = conn.prepareStatement(sql);\n         ps.execute();\n     }",
+  "changed_paths": [
+    "migrations/V1.sql",
+    "src/generated/Gen.java",
+    "src/A.java"
+  ],
+  "responses": [
+    "{\"findings\": []}"
+  ],
+  "rules": {
+    "rules": [
+      {
+        "glob": "**/*.sql",
+        "rule": "检查 SQL 注入与迁移可回滚"
+      },
+      {
+        "glob": "src/generated/**",
+        "skip": true
+      }
+    ]
+  },
+  "expected": {
+    "outcome": "report",
+    "verdict": "PASS",
+    "skipped": [
+      {
+        "path": "src/generated/Gen.java",
+        "reason": "rule_skip"
+      }
+    ],
+    "prompt_contains": [
+      "检查 SQL 注入与迁移可回滚"
+    ]
+  }
+}

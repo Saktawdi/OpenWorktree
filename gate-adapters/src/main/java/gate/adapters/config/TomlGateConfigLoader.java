@@ -42,6 +42,7 @@ public final class TomlGateConfigLoader {
             "engine.kind", "engine.idle_timeout_seconds", "engine.max_tokens",
             // 审查编排（反哺 open-code-review）：过滤 pass / 组内轮次 / 分组并发 / 单文件 token 闸门。
             "engine.review_filter", "engine.review_rounds", "engine.review_concurrency", "engine.max_file_tokens",
+            "engine.resume",
             // 执行文档-后端-web §8.1: web operations console + agent session orchestration.
             "web.bind", "web.port", "web.allowed_origins", "web.human_token_file",
             "session.port_range_min", "session.port_range_max", "session.default_cli",
@@ -260,6 +261,9 @@ public final class TomlGateConfigLoader {
                             : null,
                     scalars.containsKey("engine.max_file_tokens")
                             ? (Long) longValueOr(scalars, "engine.max_file_tokens", 0L)
+                            : null,
+                    scalars.containsKey("engine.resume")
+                            ? Boolean.parseBoolean(scalars.get("engine.resume"))
                             : null);
         }
 

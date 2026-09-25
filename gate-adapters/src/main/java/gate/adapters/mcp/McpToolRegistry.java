@@ -12,7 +12,7 @@ import java.util.Set;
  * <p><b>Two domains, two credential sets:</b>
  * <ul>
  *   <li><b>agent domain</b> (low privilege, bound to one ticket,下发 with the worktree):
- *       {@code presubmit_create}, {@code presubmit_get_diff}, {@code review_result_get},
+ *       {@code presubmit_create}, {@code presubmit_get_diff}, {@code gate_review_spec}, {@code review_result_get},
  *       {@code sync_base}, {@code session_read} — plus
  *       {@code ticket_create}, which is agent-callable but not ticket-bound (its whole point is
  *       creating NEW tickets, e.g. follow-ups discovered mid-work). It is however
@@ -132,6 +132,21 @@ public final class McpToolRegistry {
                 AGENT_DOMAIN,
                 "Retrieve the diff text captured for a presubmit round, so the agent can see what " +
                 "was submitted for review.",
+                schema(Map.of(
+                        "type", "object",
+                        "properties", Map.of(
+                                "ticket_no", Map.of("type", "string"),
+                                "round", Map.of("type", "integer", "description", "Round number (default: latest)")),
+                        "required", List.of("ticket_no")))));
+
+        register(new ToolDef(
+                "gate_review_spec",
+                AGENT_DOMAIN,
+                "Generate a deterministic review spec (delegate mode): the gate has already split the "
+                + "presubmitted diff per file, estimated per-file tokens, excluded binary/secret/deleted "
+                + "files and resolved per-file rules. Review the remaining files with YOUR OWN model and "
+                + "fix issues BEFORE calling presubmit/gate_review. The spec is advisory: it never "
+                + "becomes gate evidence and never influences the verdict.",
                 schema(Map.of(
                         "type", "object",
                         "properties", Map.of(

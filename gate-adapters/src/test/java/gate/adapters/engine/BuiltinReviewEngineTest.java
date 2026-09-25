@@ -234,6 +234,80 @@ class BuiltinReviewEngineTest {
     }
 
     @Test
+    void sessionLogRecordsEveryCallAndTerminal() throws Exception {
+        startScripted(
+                resp(delta(findingsJson()), "[DONE]"),
+                resp(delta("{\"analysis\":[],\"remove_ids\":[]}"), "[DONE]"));   // 过滤器：全放行
+        EngineReport report = assertInstanceOf(EngineReport.class,
+                engine(Duration.ofSeconds(10), Duration.ofSeconds(5), null, true, null, null, null).review(req()));
+
+        assertTrue(blobs.store.containsKey("sessions/T-9000/3.jsonl"), "会话日志落盘 sessions/{ticket}/{round}.jsonl");
+        List<Map<String, Object>> lines = new ArrayList<>();
+        for (String line : new String(blobs.store.get("sessions/T-9000/3.jsonl"), StandardCharsets.UTF_8).split("\n")) {
+            if (!line.isBlank()) {
+                lines.add(PrismJson.parseObjectMap(line));
+            }
+        }
+        assertEquals("header", lines.get(0).get("kind"));
+        assertEquals("llm_call", lines.get(1).get("kind"));
+        assertEquals("main", lines.get(1).get("phase"));
+        assertTrue(String.valueOf(lines.get(1).get("user_prompt")).contains("unified diff"), "prompt 原文入账");
+        assertTrue(String.valueOf(lines.get(1).get("response")).contains("findings"), "响应原文入账");
+        assertEquals("filter", lines.get(2).get("phase"), "过滤调用独立入账");
+        assertEquals("group_result", lines.get(3).get("kind"));
+        assertEquals("completed", lines.get(3).get("status"));
+        assertEquals("terminal", lines.get(4).get("kind"));
+        assertEquals("report", lines.get(4).get("outcome"));
+        assertEquals(1, report.findings().size());
+    }
+
+    @Test
+    void resumeReusesCompletedGroupsFromFailedAttempt() throws Exception {
+        String diff = cat(DIFF_ANCHOR, smallSection("app/D.java", "+DDD;"));
+        List<String> changed = List.of("src/A.java", "app/D.java");
+        startScripted(
+                resp(delta(findingsFor("src/A.java", "ga")), "[DONE]"),   // 尝试1 组0：成功
+                resp(garbage()),                                          // 尝试1 组1：坏输出
+                resp(garbage()),                                          // 尝试1 组1 宽限：仍坏 → 整轮失败
+                resp(delta(findingsFor("app/D.java", "gd2")), "[DONE]")); // 尝试2 组1：成功
+        var eng = engine(Duration.ofSeconds(10), Duration.ofSeconds(5), null, false, null, 1, null);
+
+        EngineFailure attempt1 = assertInstanceOf(EngineFailure.class, eng.review(req(diff, changed, null)));
+        assertEquals(EngineFailure.FailureKind.UNPARSEABLE, attempt1.kind());
+
+        EngineReport attempt2 = assertInstanceOf(EngineReport.class, eng.review(req(diff, changed, null)));
+        assertEquals(2, attempt2.findings().size(), "组0 复用 + 组1 重审 = 全覆盖");
+        assertTrue(attempt2.findings().stream().anyMatch(f -> "ga".equals(f.ruleId())),
+                "组0 的发现来自上次成功尝试（复用）");
+        assertTrue(attempt2.findings().stream().anyMatch(f -> "gd2".equals(f.ruleId())),
+                "组1 的发现是本次新审出的");
+        String log = new String(blobs.store.get("sessions/T-9000/3.jsonl"), StandardCharsets.UTF_8);
+        assertTrue(log.contains("\"kind\":\"group_reused\""), "续审在日志中留痕");
+        assertTrue(log.contains("\"outcome\":\"report\""), "本次尝试以成功收尾");
+    }
+
+    @Test
+    void noReuseAfterSuccessfulAttempt() throws Exception {
+        String diff = cat(DIFF_ANCHOR, smallSection("app/D.java", "+DDD;"));
+        List<String> changed = List.of("src/A.java", "app/D.java");
+        startScripted(
+                resp(delta(findingsFor("src/A.java", "ga")), "[DONE]"),
+                resp(delta(findingsFor("app/D.java", "gd")), "[DONE]"),   // 尝试1 完整成功
+                resp(garbage()));                                         // 尝试2：坏输出（重复）
+        var eng = engine(Duration.ofSeconds(10), Duration.ofSeconds(5), null, false, null, 1, null);
+
+        assertInstanceOf(EngineReport.class, eng.review(req(diff, changed, null)));
+        // 尝试1 成功 → 尝试2 不允许复用（显式重审 = 全新审查）→ 坏输出照常失败
+        EngineFailure attempt2 = assertInstanceOf(EngineFailure.class, eng.review(req(diff, changed, null)));
+        assertEquals(EngineFailure.FailureKind.UNPARSEABLE, attempt2.kind());
+    }
+
+    private static String findingsFor(String path, String id) {
+        return "{\"findings\":[{\"id\":\"" + id + "\",\"severity\":\"low\",\"title\":\"t\",\"message\":\"m\","
+                + "\"locations\":[{\"path\":\"" + path + "\",\"lines\":{\"start\":1,\"end\":1}}]}]}";
+    }
+
+    @Test
     void inlineErrorFrameInsideHttp200IsCrashWithUpstreamMessage() throws Exception {
         start(ex -> {
             try {
@@ -609,7 +683,7 @@ class BuiltinReviewEngineTest {
         }
         return new BuiltinReviewEngine(blobs, total, idle, "temp", "test-model",
                 "http://127.0.0.1:" + port() + "/v1", "sk-test", maxTokens,
-                filter, rounds, concurrency, maxFileTokens);
+                filter, rounds, concurrency, maxFileTokens, null);
     }
 
     private int port() {

@@ -59,6 +59,11 @@ import java.util.concurrent.atomic.AtomicReference;
  *       行号由代码从 diff 滑窗匹配推导，不信 LLM 报的行号——位置漂移在源头被消灭；</li>
  *   <li><b>过滤 pass</b>（可选，宁留勿删）：独立的事实核查调用只删除"diff 能证明错误"的发现，
  *       证据不足一律放行；过滤器失败 fail-open 保持全部发现——它优化精度，绝不阻塞审查。</li>
+ *   <li><b>会话逐请求留痕 + 续审</b>（{@link ReviewSessionLog}）：每次 LLM 调用的 prompt/响应/
+ *       usage/耗时逐行落 {@code sessions/{ticket}/{round}.jsonl}——过程可回放；同一轮的上一次
+ *       尝试失败时，按组指纹复用已完成组的发现，只重派失败组（成功尝试永不复用）。</li>
+ *   <li><b>delegate 规格书</b>（{@link ReviewSpecBuilder}）：同一套确定性工程打包成 MCP 工具
+ *       {@code gate_review_spec} 交给编码 Agent 自查——咨询性材料，绝不成为门禁证据。</li>
  * </ol>
  *
  * <p><b>看门狗是本类存在的前提。</b>{@code HttpRequest.timeout} 只覆盖到响应头到达，管不住 body
@@ -121,8 +126,9 @@ public final class BuiltinReviewEngine implements ReviewEngine {
     /** 分组预算 = 单文件预算 × 2：组内通常 1-2 个大文件或一批小文件。 */
     private static final long GROUP_TOKEN_FACTOR = 2;
 
-    /** 内建密钥路径名单：这类文件的内容不进 prompt，跳审并留痕（OCR secret_path 同款）。 */
-    private static final List<String> SECRET_PATH_GLOBS = List.of(
+    /** 内建密钥路径名单：这类文件的内容不进 prompt，跳审并留痕（OCR secret_path 同款）。
+     *  package 可见——delegate 规格书（ReviewSpecBuilder）使用同一份名单，口径永远一致。 */
+    static final List<String> SECRET_PATH_GLOBS = List.of(
             "**/.env", "**/.env.*", "**/*.pem", "**/*.key", "**/*.p12", "**/*.pfx",
             "**/*.jks", "**/*.keystore", "**/id_rsa*", "**/id_dsa*", "**/id_ecdsa*",
             "**/id_ed25519*", "**/credentials*.json", "**/*_credentials.json", "**/.npmrc");
@@ -152,19 +158,20 @@ public final class BuiltinReviewEngine implements ReviewEngine {
     private final int reviewRounds;
     private final int reviewConcurrency;
     private final long maxFileTokens;
+    private final boolean resume;
 
     public BuiltinReviewEngine(BlobStore blobStore, Duration totalTimeout, Duration idleTimeout,
                                String providerId, String modelName, String baseUrl, String apiKey,
                                Long maxTokens) {
         this(blobStore, totalTimeout, idleTimeout, providerId, modelName, baseUrl, apiKey,
-                maxTokens, null, null, null, null);
+                maxTokens, null, null, null, null, null);
     }
 
-    /** 完整构造器：filter/轮次/并发/单文件预算为 null 时取各自默认（见 EngineConfig 归一）。 */
+    /** 完整构造器：filter/轮次/并发/单文件预算/续审为 null 时取各自默认（见 EngineConfig 归一）。 */
     public BuiltinReviewEngine(BlobStore blobStore, Duration totalTimeout, Duration idleTimeout,
                                String providerId, String modelName, String baseUrl, String apiKey,
                                Long maxTokens, Boolean reviewFilter, Integer reviewRounds,
-                               Integer reviewConcurrency, Long maxFileTokens) {
+                               Integer reviewConcurrency, Long maxFileTokens, Boolean resume) {
         this.blobStore = blobStore;
         this.totalTimeout = totalTimeout;
         this.idleTimeout = idleTimeout;
@@ -177,6 +184,7 @@ public final class BuiltinReviewEngine implements ReviewEngine {
         this.reviewRounds = reviewRounds == null ? 1 : Math.max(1, Math.min(8, reviewRounds));
         this.reviewConcurrency = reviewConcurrency == null ? 2 : Math.max(1, Math.min(8, reviewConcurrency));
         this.maxFileTokens = maxFileTokens == null ? 24_000L : Math.max(1_000L, maxFileTokens);
+        this.resume = resume == null || resume;
     }
 
     @Override
@@ -192,19 +200,28 @@ public final class BuiltinReviewEngine implements ReviewEngine {
             return new EngineFailure(descriptor, EngineFailure.FailureKind.CRASH,
                     "aborted by task cancellation (before connect)", -1);
         }
+        ReviewSessionLog log = new ReviewSessionLog();
         try {
-            return orchestrate(request, descriptor);
+            ReviewEvidence evidence = orchestrate(request, descriptor, log);
+            log.write(blobStore, request.ticketNo(), request.reviewRound());
+            return evidence;
         } catch (TurnException e) {
+            log.terminalFailure(e.failure.kind(), e.failure.detail());
+            log.write(blobStore, request.ticketNo(), request.reviewRound());
             return e.failure;
         } catch (Throwable t) {
-            return new EngineFailure(descriptor, EngineFailure.FailureKind.CRASH,
+            EngineFailure failure = new EngineFailure(descriptor, EngineFailure.FailureKind.CRASH,
                     "gate-engine failed: " + t, -1);
+            log.terminalFailure(failure.kind(), failure.detail());
+            log.write(blobStore, request.ticketNo(), request.reviewRound());
+            return failure;
         }
     }
 
-    // ────────────────────────────── 编排：闸门 → 分组 → 多轮 → 过滤 ──────────────────────────────
+    // ────────────────────────────── 编排：闸门 → 分组 → 续审 → 多轮 → 过滤 ──────────────────────────────
 
-    private ReviewEvidence orchestrate(ReviewRequest request, EngineDescriptor descriptor) {
+    private ReviewEvidence orchestrate(ReviewRequest request, EngineDescriptor descriptor,
+                                       ReviewSessionLog log) {
         Instant started = Instant.now();
         ReviewRules rules = ReviewRules.load(request.cloneRepo() == null ? null : request.cloneRepo().path());
         List<DiffSections.Section> sections = DiffSections.split(request.snapshot().diff());
@@ -234,56 +251,96 @@ public final class BuiltinReviewEngine implements ReviewEngine {
             // 全部路径被授权跳过：无调用可发，报告如实记录（无发现的空报告不是 pass——判决仍由策略推导）。
             BlobRef rawRef = blobStore.put(noReviewableRaw(request, skipped).getBytes(StandardCharsets.UTF_8),
                     rawName(request, "builtin.json"));
+            log.header(request.ticketNo(), request.reviewRound(), request.snapshot().treeHash().hex(),
+                    providerId, modelName);
+            log.terminalReport(0, 0, 0);
             return new EngineReport(descriptor, request.snapshot().treeHash().hex(),
                     List.of(), covered, skipped, false, rawRef, 0,
                     Duration.between(started, Instant.now()), null, null, null, List.of());
         }
 
         List<List<DiffSections.Section>> groups = group(reviewable, maxFileTokens * GROUP_TOKEN_FACTOR);
-        int concurrency = Math.min(reviewConcurrency, groups.size());
+        log.header(request.ticketNo(), request.reviewRound(), request.snapshot().treeHash().hex(),
+                providerId, modelName);
+
+        // 续审（P2-2）：上一次尝试以失败告终且模型一致时，按组指纹复用已完成组的发现，
+        // 只重新派发失败/缺失的组。成功尝试永不复用——显式重审同一轮就是要求全新审查。
+        Map<String, List<Finding>> reusable = Map.of();
+        String priorModel = null;
+        if (resume) {
+            ReviewSessionLog prior = ReviewSessionLog.read(blobStore, request.ticketNo(), request.reviewRound());
+            if (prior.wasFailedAttempt() && modelName.equals(prior.modelName())) {
+                reusable = prior.completedGroupsByFingerprint();
+                priorModel = prior.modelName();
+            }
+        }
 
         Usage usage = new Usage();
         List<Finding> findings = new ArrayList<>();
         List<Finding> filteredOut = new ArrayList<>();
         boolean degraded = false;
         BlobRef firstRaw = null;
+        int reusedCount = 0;
+        List<Integer> dispatchIndices = new ArrayList<>();
+        for (int gi = 0; gi < groups.size(); gi++) {
+            String fingerprint = ReviewSessionLog.sha256Hex(concatBodies(groups.get(gi)));
+            List<Finding> priorFindings = reusable.get(fingerprint);
+            if (priorFindings != null) {
+                findings.addAll(priorFindings);
+                log.groupReused(gi, fingerprint, priorFindings, priorModel);
+                reusedCount++;
+            } else {
+                dispatchIndices.add(gi);
+            }
+        }
+        int dispatchedCount = dispatchIndices.size();
 
         java.util.concurrent.ExecutorService pool =
-                Executors.newFixedThreadPool(concurrency, r -> {
-                    Thread t = new Thread(r, "gate-engine-review-" + request.ticketNo());
-                    t.setDaemon(true);
-                    return t;
-                });
+                Executors.newFixedThreadPool(Math.max(1, Math.min(reviewConcurrency, dispatchedCount)),
+                        r -> {
+                            Thread t = new Thread(r, "gate-engine-review-" + request.ticketNo());
+                            t.setDaemon(true);
+                            return t;
+                        });
         try {
             List<java.util.concurrent.Future<GroupResult>> futures = new ArrayList<>();
-            for (int gi = 0; gi < groups.size(); gi++) {
-                final int index = gi;
+            for (int di = 0; di < dispatchIndices.size(); di++) {
+                final int gi = dispatchIndices.get(di);
+                final String fingerprint = ReviewSessionLog.sha256Hex(concatBodies(groups.get(gi)));
                 final List<DiffSections.Section> group = groups.get(gi);
-                futures.add(pool.submit(() -> reviewGroup(request, descriptor, rules, index,
-                        group, sections, groups.size())));
+                futures.add(pool.submit(() -> reviewGroup(request, descriptor, rules, log, gi,
+                        group, sections, groups.size(), fingerprint)));
             }
-            for (java.util.concurrent.Future<GroupResult> f : futures) {
+            for (int di = 0; di < dispatchIndices.size(); di++) {
+                int gi = dispatchIndices.get(di);
+                String fingerprint = ReviewSessionLog.sha256Hex(concatBodies(groups.get(gi)));
                 GroupResult result;
                 try {
-                    result = f.get();
+                    result = futures.get(di).get();
                 } catch (java.util.concurrent.CancellationException e) {
+                    log.groupResult(gi, fingerprint, "failed", null, "CRASH");
                     throw new TurnException(new EngineFailure(descriptor, EngineFailure.FailureKind.CRASH,
                             "aborted by task cancellation", -1));
                 } catch (java.util.concurrent.ExecutionException e) {
                     Throwable cause = e.getCause() == null ? e : e.getCause();
                     if (cause instanceof TurnException te) {
+                        log.groupResult(gi, fingerprint, "failed", null, te.failure.kind().name());
                         throw te;
                     }
+                    log.groupResult(gi, fingerprint, "failed", null, "CRASH");
                     throw new TurnException(new EngineFailure(descriptor, EngineFailure.FailureKind.CRASH,
                             "group review failed: " + cause.getMessage(), -1));
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
+                    log.groupResult(gi, fingerprint, "failed", null, "CRASH");
                     throw new TurnException(new EngineFailure(descriptor, EngineFailure.FailureKind.CRASH,
                             "aborted by task cancellation", -1));
                 }
                 if (result.failure != null) {
+                    log.groupResult(gi, fingerprint, "failed", null, result.failure.kind().name());
                     throw new TurnException(result.failure);
                 }
+                log.groupResult(gi, fingerprint, "completed", result.findings, null);
                 findings.addAll(result.findings);
                 filteredOut.addAll(result.filteredOut);
                 usage.add(result);
@@ -299,6 +356,7 @@ public final class BuiltinReviewEngine implements ReviewEngine {
         for (DiffSections.Section s : reviewable) {
             covered.add(s.path());
         }
+        log.terminalReport(reusedCount, dispatchedCount, findings.size());
         return new EngineReport(descriptor, request.snapshot().treeHash().hex(),
                 findings, covered, skipped, degraded, firstRaw, 0,
                 Duration.between(started, Instant.now()),
@@ -381,8 +439,8 @@ public final class BuiltinReviewEngine implements ReviewEngine {
     }
 
     private GroupResult reviewGroup(ReviewRequest request, EngineDescriptor descriptor, ReviewRules rules,
-                                    int groupIndex, List<DiffSections.Section> group,
-                                    List<DiffSections.Section> allSections, int groupCount) {
+                                    ReviewSessionLog log, int groupIndex, List<DiffSections.Section> group,
+                                    List<DiffSections.Section> allSections, int groupCount, String fingerprint) {
         String groupDiff = concatBodies(group);
         String otherFiles = otherFileNames(group, allSections);
         String rulesText = rules.renderFor(new LinkedHashSet<>(pathsOf(group)));
@@ -398,14 +456,14 @@ public final class BuiltinReviewEngine implements ReviewEngine {
             String userPrompt = buildUserPrompt(request, groupIndex, groupCount, group,
                     otherFiles, rulesText, round, confirmed);
             String blobName = groupIndex == 0 && round == 1 ? "builtin.json" : "g" + groupIndex + "-r" + round + ".json";
-            LlmTurn turn = callLlm(request, descriptor, SYSTEM_PROMPT, userPrompt,
-                    rawName(request, blobName));
+            LlmTurn turn = callLlm(log, "main", groupIndex, round, request, descriptor,
+                    SYSTEM_PROMPT, userPrompt, rawName(request, blobName));
             usage.add(turn);
             if (firstRaw == null) {
                 firstRaw = turn.rawRef;
             }
 
-            PrismOutput out = tryParseFindings(turn.content);
+            PrismOutput out = tryParseFindings(turn.content());
             if (out == null) {
                 // 失败连击：连续第二次解析失败直接判 UNPARSEABLE，不再给重试空间（OCR 工程数据：
                 // 无上限的换措辞重试曾把同一发现重发 6 次）。第一次失败给一次宽限轮。
@@ -413,20 +471,20 @@ public final class BuiltinReviewEngine implements ReviewEngine {
                     return GroupResult.fail(new EngineFailure(descriptor,
                             EngineFailure.FailureKind.UNPARSEABLE,
                             "engine JSON unparseable two rounds in a row; raw persisted at "
-                                    + turn.rawRef.relPath() + " (bytes=" + turn.content.length() + ")", -1));
+                                    + turn.rawRef().relPath() + " (bytes=" + turn.content().length() + ")", -1));
                 }
                 consecutiveUnparseable++;
                 String graceName = (groupIndex == 0 && round == 1 ? "builtin" : "g" + groupIndex + "-r" + round)
                         + ".grace.json";
-                LlmTurn grace = callLlm(request, descriptor, SYSTEM_PROMPT,
-                        userPrompt + GRACE_INSTRUCTION, rawName(request, graceName));
+                LlmTurn grace = callLlm(log, "grace", groupIndex, round, request, descriptor,
+                        SYSTEM_PROMPT, userPrompt + GRACE_INSTRUCTION, rawName(request, graceName));
                 usage.add(grace);
-                out = tryParseFindings(grace.content);
+                out = tryParseFindings(grace.content());
                 if (out == null) {
                     return GroupResult.fail(new EngineFailure(descriptor,
                             EngineFailure.FailureKind.UNPARSEABLE,
                             "engine JSON unparseable after grace round; raw persisted at "
-                                    + grace.rawRef.relPath() + " (bytes=" + grace.content.length() + ")", -1));
+                                    + grace.rawRef().relPath() + " (bytes=" + grace.content().length() + ")", -1));
                 }
                 turn = grace;
             }
@@ -438,7 +496,7 @@ public final class BuiltinReviewEngine implements ReviewEngine {
 
             // 每轮过滤只裁剪本轮新增（per-round isolation）：确认过的发现不再反复送审。
             if (reviewFilter && !roundFindings.isEmpty()) {
-                FilterOutcome fo = runFilter(request, descriptor, groupIndex, round,
+                FilterOutcome fo = runFilter(request, descriptor, log, groupIndex, round,
                         roundFindings, groupDiff, usage);
                 roundFindings = fo.kept();
                 filteredOut.addAll(fo.removed());
@@ -459,16 +517,16 @@ public final class BuiltinReviewEngine implements ReviewEngine {
      * fail-open 保留全部候选——过滤器绝不能成为丢发现的黑洞，更不能阻塞审查。
      */
     private FilterOutcome runFilter(ReviewRequest request, EngineDescriptor descriptor,
-                                    int groupIndex, int round, List<Finding> candidates,
-                                    String groupDiff, Usage usage) {
+                                    ReviewSessionLog log, int groupIndex, int round,
+                                    List<Finding> candidates, String groupDiff, Usage usage) {
         try {
             String findingsJson = filterCandidatesJson(candidates);
             String userPrompt = "以下发现由审查引擎产出，请核查。\n\n### 候选发现\n" + findingsJson
                     + "\n\n### 被审查的 diff\n" + groupDiff;
             String blobName = (groupIndex == 0 && round == 1 ? "builtin" : "g" + groupIndex + "-r" + round)
                     + ".filter.json";
-            LlmTurn turn = callLlm(request, descriptor, FILTER_SYSTEM_PROMPT, userPrompt,
-                    rawName(request, blobName));
+            LlmTurn turn = callLlm(log, "filter", groupIndex, round, request, descriptor,
+                    FILTER_SYSTEM_PROMPT, userPrompt, rawName(request, blobName));
             usage.add(turn);
             List<String> removeIds = parseRemoveIds(turn.content);
             if (removeIds == null || removeIds.isEmpty()) {
@@ -539,7 +597,8 @@ public final class BuiltinReviewEngine implements ReviewEngine {
         }
     }
 
-    private LlmTurn callLlm(ReviewRequest request, EngineDescriptor descriptor,
+    private LlmTurn callLlm(ReviewSessionLog log, String phase, int groupIndex, int round,
+                            ReviewRequest request, EngineDescriptor descriptor,
                             String systemPrompt, String userPrompt, String blobName) {
         Instant started = Instant.now();
         String url = baseUrl.replaceAll("/+$", "") + "/chat/completions";
@@ -585,6 +644,10 @@ public final class BuiltinReviewEngine implements ReviewEngine {
         SseResult result = consumeSse(request, descriptor, upstream, started);
         // 原样保存（不做任何清洗/截断），后续无论成功或失败都可核对原始应答。
         BlobRef rawRef = blobStore.put(result.content().getBytes(StandardCharsets.UTF_8), blobName);
+        // 逐请求留痕（P2-1）：prompt 原文 + 响应 + usage + 耗时 + 阶段，过程可回放。
+        log.llmCall(phase, groupIndex, round, systemPrompt, userPrompt, result.content(),
+                result.promptTokens(), result.completionTokens(), result.totalTokens(),
+                Duration.between(started, Instant.now()).toMillis(), rawRef);
         return new LlmTurn(result.content(), result.promptTokens(), result.completionTokens(),
                 result.totalTokens(), rawRef);
     }

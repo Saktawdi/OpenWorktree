@@ -14,6 +14,7 @@ import gate.domain.error.GateException;
 import gate.domain.git.ObjectId;
 import gate.domain.git.RepoRef;
 import gate.domain.policy.Decision;
+import gate.adapters.engine.ReviewSpecBuilder;
 import gate.ports.store.BlobStore;
 import gate.ports.store.CredentialRepository;
 import gate.ports.store.CredentialRepository.Domain;
@@ -107,6 +108,7 @@ public final class McpToolDispatcher {
             case "ticket_edit" -> ticketEdit(arguments, domain);
             case "presubmit_create" -> presubmitCreate(arguments);
             case "presubmit_get_diff" -> presubmitGetDiff(arguments);
+            case "gate_review_spec" -> gateReviewSpec(arguments);
             case "review_result_get" -> reviewResultGet(arguments);
             case "sync_base" -> syncBase(arguments);
             case "session_read" -> sessionRead(arguments, domain);
@@ -137,6 +139,7 @@ public final class McpToolDispatcher {
     private static boolean hasTicketParam(McpToolRegistry.ToolDef tool) {
         return "presubmit_create".equals(tool.name())
                 || "presubmit_get_diff".equals(tool.name())
+                || "gate_review_spec".equals(tool.name())
                 || "review_result_get".equals(tool.name())
                 || "sync_base".equals(tool.name())
                 || "ticket_edit".equals(tool.name());
@@ -313,6 +316,32 @@ public final class McpToolDispatcher {
         result.put("base_commit", row.baseCommit().hex());
         result.put("diff", diffText);
         return result;
+    }
+
+    /**
+     * Delegate 模式（P2-3）：确定性审查规格书。切片/估算/排除/规则解析全部复用引擎同款
+     * 确定性工程（ReviewSpecBuilder 复用 DiffSections/ReviewRules/同一份密钥名单）；
+     * 产物是咨询性自查材料——绝不成为门禁证据，绝不影响判决。
+     */
+    private Map<String, Object> gateReviewSpec(Map<String, Object> args) {
+        String tool = "gate_review_spec";
+        String ticketNo = requiredStringArg(tool, args, "ticket_no");
+        Integer round = integerArg(tool, args, "round");
+        var row = (round == null ? presubmits.findLatest(ticketNo) : presubmits.find(ticketNo, round))
+                .orElseThrow(() -> new ToolException(McpJsonRpc.INVALID_PARAMS,
+                        "no presubmit round for " + ticketNo
+                                + (round == null ? "" : "/" + round),
+                        domainData(tool, "no presubmit round for " + ticketNo
+                                + (round == null ? "" : "/" + round))));
+        byte[] diff = blobStore.get(new BlobRef(row.diffBlobPath(), row.diffBytes(), row.diffSha256()));
+        String diffText = new String(diff, StandardCharsets.UTF_8);
+        var ticket = tickets.find(ticketNo).orElse(null);
+        java.nio.file.Path repoDir = ticket == null ? null : java.nio.file.Path.of(ticket.clonePath());
+        long maxFileTokens = config.engineConfigured()
+                ? config.engine().fileTokenGate()
+                : gate.domain.config.GateConfig.EngineConfig.DEFAULT_MAX_FILE_TOKENS;
+        return ReviewSpecBuilder.build(ticketNo, row.reviewRound(), row.treeHash().hex(),
+                row.baseCommit().hex(), diffText, List.of(), repoDir, maxFileTokens);
     }
 
     private Map<String, Object> reviewResultGet(Map<String, Object> args) {

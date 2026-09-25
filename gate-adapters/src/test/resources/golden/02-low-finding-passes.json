@@ -1,0 +1,19 @@
+{
+  "name": "low finding passes under BLOCKER_ONLY",
+  "diff": "diff --git a/src/A.java b/src/A.java\nindex 1111111..2222222 100644\n--- a/src/A.java\n+++ b/src/A.java\n@@ -10,4 +10,5 @@\n     void q(String name) throws Exception {\n-        Statement st = conn.createStatement();\n+        PreparedStatement ps = conn.prepareStatement(sql);\n         ps.execute();\n     }",
+  "changed_paths": [
+    "src/A.java"
+  ],
+  "responses": [
+    "{\"findings\": [{\"id\": \"f1\", \"severity\": \"low\", \"title\": \"t\", \"message\": \"m\", \"locations\": [{\"path\": \"src/A.java\", \"lines\": {\"start\": 11, \"end\": 11}}]}]}"
+  ],
+  "filter_enabled": false,
+  "expected": {
+    "outcome": "report",
+    "verdict": "PASS",
+    "finding_count": 1,
+    "finding_severities": [
+      "INFO"
+    ]
+  }
+}

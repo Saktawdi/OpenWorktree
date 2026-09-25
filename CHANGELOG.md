@@ -8,6 +8,14 @@
 
 ### 新增
 
+- **审查会话逐请求留痕（JSONL）——排查误判能看到每一轮 prompt 原文**：hash-chain 审计记录的是「判决与依据」，缺的是「过程本身」。现一次审查的每一次 LLM 调用——system/user prompt 原文、原始响应、usage、耗时、阶段（main/grace/filter）、组号与轮次——逐行落 `sessions/{ticket}/{round}.jsonl` blob（header/llm_call/group_result/terminal 四类行）。留痕是诊断数据不是安全控制：写失败 best-effort 吞掉（P4 bypass 同款），绝不影响判决；密钥文件本就在审前闸门被排除，prompt 不含其内容
+
+- **审查续审（resume）——基础设施失败重试只重审失败组**：同一轮的上一次尝试以失败告终（超时/崩溃/解析失败）且模型一致时，引擎按组指纹（组 diff 全文 sha256——diff 变即指纹变，绝不复用过期发现）从会话日志复用已完成组的发现，只重新派发失败/缺失的组，`group_reused` 行在日志留痕；成功尝试永不复用——显式重审同一轮就是要求全新审查。`engine.resume` 可关，默认开
+
+- **delegate 模式：`gate_review_spec` MCP 工具——零 LLM 配置的预审路径**：门禁的确定性工程（按文件切片、token 估算、密钥/二进制/删除排除、`.gate/rules.json` 规则解析）打包成一份审查规格书交给编码 Agent，用 Agent 自己的模型在提审前自查、先修再提审——门禁侧不消耗任何 LLM 配置。边界说死：规格书是咨询性材料，绝不进入门禁证据、绝不影响 GatePolicy 判决，否则 Agent 就能自己给自己写 pass。与引擎共用同一份 DiffSections/ReviewRules/密钥名单，口径永远一致
+
+- **审查质量基准集回归（golden fixtures）**：`gate-adapters/src/test/resources/golden/` 下每个 JSON fixture 是一个端到端场景——diff + 脚本化 LLM 响应 + 配置 → 期望的判决/发现/severity 序列/跳过台账/被过滤数/prompt 内容/调用次数，跑真实 BuiltinReviewEngine + GatePolicy 全链路（JUnit 动态测试逐场景上报）。首批 7 个场景：blocker 拒绝、low 放行、解析失败 fail-closed、超限转人工、规则注入与跳过、过滤器删错、多轮提前停。改 prompt/规则/策略后跑这套，防止「优化一个误报、劣化三个漏报」的静默回归；扩充基准集 = 丢一个新 fixture，无需写代码
+
 - **审查引擎编排升级：确定性工程 × LLM 混合——审前闸门（DiffSections）**：内置引擎过去是「整包 diff 一次性塞给 LLM」的单调用，大工单打爆上下文窗口、二进制/密钥文件白烧 token。现 unified diff 先按文件切片，删除/二进制/密钥路径（内建名单 `*.pem`/`*.key`/`id_rsa*`/`.env` 等）/项目规则跳过/单文件超限（`engine.max_file_tokens`，chars/4 量级估算，默认 24000）确定性排除，并以 `SkippedPath`（path+reason 封闭集合：deleted/binary/secret_path/rule_skip/too_large）记入证据——静默跳审在结构上不可能。`GatePolicy` 覆盖检查同步升级：授权排除从覆盖分母中扣除，`too_large` 是真实代码未审、路由 REQUIRES_HUMAN，每条 skip 都进判决 detail 供证据链审计；任何一组硬失败仍整轮失败（部分覆盖的静默放行比失败更危险），工单停留 PRESUBMITTED 可原地重试
 
 - **确定性分组并发审查**：按顶层目录聚簇、路径序贪心切块（每组 ≤10 文件、≤组 token 预算，无 LLM 参与——分组必须可复现），每组独立上下文并发审查（`engine.review_concurrency`，默认 2、上限 8），大变更不再被单 prompt 挤压，边缘文件不再被模型遗忘；prompt 内标注组号与本组外其余变更文件名单（仅供交叉参考，不扩审查职责）

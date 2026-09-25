@@ -133,11 +133,14 @@ public record GateConfig(
      * @param reviewConcurrency  可选：分组审查并发度（1-8）；null 归一为 2
      * @param maxFileTokens      可选：单文件 diff 的 token 闸门（chars/4 估算，≥1000）；
      *                           超限文件确定性跳审并记入证据，策略据此转人工
+     * @param resume             可选：续审开关；null 归一为 true。同一轮的上一次尝试以失败告终
+     *                           且模型一致时，按组指纹复用已完成组的发现，只重派失败组；
+     *                           成功尝试永不复用——显式重审同一轮就是要求全新审查
      */
     public record EngineConfig(String cmd, List<String> args, long timeoutSeconds, String providerId,
                                String model, String kind, Long idleTimeoutSeconds, Long maxTokens,
                                Boolean reviewFilter, Integer reviewRounds, Integer reviewConcurrency,
-                               Long maxFileTokens) {
+                               Long maxFileTokens, Boolean resume) {
 
         /** {@code kind} 的唯一合法值：gate 内建审查引擎。 */
         public static final String KIND_GATE_ENGINE = "gate-engine";
@@ -155,7 +158,7 @@ public record GateConfig(
         public EngineConfig(String cmd, List<String> args, long timeoutSeconds, String providerId,
                             String model, String kind, Long idleTimeoutSeconds, Long maxTokens) {
             this(cmd, args, timeoutSeconds, providerId, model, kind, idleTimeoutSeconds, maxTokens,
-                    null, null, null, null);
+                    null, null, null, null, null);
         }
 
         public EngineConfig {
@@ -190,6 +193,11 @@ public record GateConfig(
             if (maxFileTokens != null && maxFileTokens < 1_000) {
                 throw new IllegalArgumentException("engine.max_file_tokens must be >= 1000");
             }
+        }
+
+        /** 续审开关视图（null 归一前的原始值；运行期统一走此视图）。 */
+        public boolean resumeEnabled() {
+            return resume == null || resume;
         }
 
         /** 过滤 pass 开关（null 已在构造期归一前的原始值；运行期统一走此视图）。 */

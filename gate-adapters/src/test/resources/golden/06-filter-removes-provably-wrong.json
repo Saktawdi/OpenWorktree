@@ -1,0 +1,19 @@
+{
+  "name": "filter pass removes provably wrong finding (warning would reject)",
+  "diff": "diff --git a/src/A.java b/src/A.java\nindex 1111111..2222222 100644\n--- a/src/A.java\n+++ b/src/A.java\n@@ -10,4 +10,5 @@\n     void q(String name) throws Exception {\n-        Statement st = conn.createStatement();\n+        PreparedStatement ps = conn.prepareStatement(sql);\n         ps.execute();\n     }",
+  "changed_paths": [
+    "src/A.java"
+  ],
+  "responses": [
+    "{\"findings\": [{\"id\": \"f1\", \"severity\": \"low\", \"title\": \"t\", \"message\": \"m\", \"locations\": [{\"path\": \"src/A.java\", \"lines\": {\"start\": 11, \"end\": 11}}], \"existing_code\": \"PreparedStatement ps = conn.prepareStatement(sql);\"}, {\"id\": \"f2\", \"severity\": \"medium\", \"title\": \"t\", \"message\": \"m\", \"locations\": [{\"path\": \"src/A.java\", \"lines\": {\"start\": 42, \"end\": 42}}], \"existing_code\": \"GHOST_CODE_THAT_IS_NOT_IN_DIFF = true;\"}]}",
+    "{\"analysis\": [{\"id\": \"f1\", \"verdict\": \"keep\", \"reason\": \"code in diff\"}, {\"id\": \"f2\", \"verdict\": \"remove\", \"reason\": \"code absent\"}], \"remove_ids\": [\"f2\"]}"
+  ],
+  "filter_enabled": true,
+  "expected": {
+    "outcome": "report",
+    "verdict": "PASS",
+    "finding_count": 1,
+    "filtered_count": 1,
+    "request_count": 2
+  }
+}
