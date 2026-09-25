@@ -70,6 +70,8 @@ export {
   clearSessionEnded,
   markSessionInterrupted,
   clearSessionInterrupted,
+  markSessionUnread,
+  clearSessionUnread,
   notePendingPermission,
   notePendingQuestion,
   dropSessionPendings,

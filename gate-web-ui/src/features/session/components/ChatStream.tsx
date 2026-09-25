@@ -6,6 +6,7 @@ import {
   Brain,
   CaretDown,
   CaretRight,
+  CaretUp,
   Check,
   CircleNotch,
   Code,
@@ -141,7 +142,9 @@ function ImageLightbox({ src, onClose }: { src: string; onClose: () => void }) {
   );
 }
 
-/** 用户消息正文：引用标记（⟦引用⟧…⟦/引用⟧）还原为胶囊；图片缩略图置顶；其余文本照旧走 Markdown。 */
+/** 用户消息正文：引用标记（⟦引用⟧…⟦/引用⟧）还原为胶囊；图片缩略图置顶；其余文本照旧走 Markdown。
+ *  换行保真（T-未读/换行增强）：用户正文启用 breaks 插件（软换行→<br>）+ pre-wrap（保留
+ *  连续空白），按 Composer 输入原样呈现——单段与「图片+文字」多内容消息同一口径。 */
 function UserMessageBody({
   ticketNo,
   text,
@@ -175,13 +178,17 @@ function UserMessageBody({
               </div>
             ) : (
               seg.text.trim() && (
-                <Markdown key={i} className="md-body">
+                <Markdown key={i} className="md-body whitespace-pre-wrap" breaks>
                   {seg.text}
                 </Markdown>
               )
             ),
           )
-        : display && <Markdown className="md-body">{display}</Markdown>}
+        : display && (
+            <Markdown className="md-body whitespace-pre-wrap" breaks>
+              {display}
+            </Markdown>
+          )}
       {zoom && <ImageLightbox src={zoom} onClose={() => setZoom(null)} />}
     </div>
   );
@@ -581,12 +588,16 @@ const RAIL_MIN_MESSAGES = 3; // 用户消息达到该数量才出现导航刻度
 const RAIL_MIN_OVERFLOW = 120; // 内容超出视口该像素才需要跳转
 const RAIL_HOVER_DELAY_MS = 180; // 悬浮该时长后才弹预览，避免扫过刻度时闪现
 const RAIL_HIDE_GRACE_MS = 150; // 移出刻度后的宽限期：在刻度间移动时预览不闪烁
+const RAIL_JUMP_EDGE_PX = 1; // 距顶/底不足该像素即视为已到边（跳转按钮禁用阈）
+const RAIL_JUMP_H = 16; // 顶/底跳转按钮占高：刻度区高度之外上下各让一档
 
 /**
  * 会话流右缘的消息刻度导航：
  * 每条用户消息一根横杠，贴着消息列（max-w-760）右缘垂直居中；
  * 当前视口所在的消息横杠加宽提亮；悬浮片刻弹出消息预览，点击平滑跳转到该消息。
- * 会话不够长（消息少或内容不溢出）时整条隐藏。
+ * 刻度区上下各一枚「跳到顶/底」按钮（与刻度同族的窄条 hover 区 + 细箭头，
+ * ink 透明度同一语言），已在顶/底时对应按钮禁用；会话不够长（消息少或内容
+ * 不溢出）时整条隐藏。
  */
 function ChatRail({
   chat,
@@ -607,6 +618,8 @@ function ChatRail({
   const [containerW, setContainerW] = useState(0);
   const [activeIdx, setActiveIdx] = useState(-1);
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
+  const [atTop, setAtTop] = useState(true);
+  const [atBottom, setAtBottom] = useState(false);
   const showTimer = useRef<number | null>(null);
   const hideTimer = useRef<number | null>(null);
   const mountedRef = useRef(false);
@@ -621,6 +634,12 @@ function ChatRail({
   }, []);
 
   const show = userMsgs.length >= RAIL_MIN_MESSAGES && overflowPx > RAIL_MIN_OVERFLOW;
+
+  /** 滚动位置 → 顶/底可达性（跳转按钮禁用态的数据源；原语 setState，值不变时 React 自动 bail）。 */
+  const syncEdges = useCallback((el: HTMLDivElement) => {
+    setAtTop(el.scrollTop <= RAIL_JUMP_EDGE_PX);
+    setAtBottom(el.scrollTop + el.clientHeight >= el.scrollHeight - RAIL_JUMP_EDGE_PX);
+  }, []);
 
   // 测量每条用户消息在滚动内容中的文档偏移：基准取内容原点（容器可视顶 − scrollTop），
   // 消息视口位置减基准即得内容坐标，与当前滚动位置无关——跳转 scrollTo 与刻度高亮
@@ -642,7 +661,9 @@ function ChatRail({
     setOverflowPx(el.scrollHeight - el.clientHeight);
     setViewportH(el.clientHeight);
     setContainerW(el.clientWidth);
-  }, [scrollRef]);
+    // 内容尺寸变化（图片加载/流式增高）不触发 scroll 事件：顶/底可达性在这里一并校准
+    syncEdges(el);
+  }, [scrollRef, syncEdges]);
 
   // T-119：流式期间 chat 每个增量都换引用，这里若直接 measure()，等于每个 token 都做一次
   // querySelectorAll + 逐行 getBoundingClientRect——而这些读操作会强制同步布局（上一条
@@ -677,6 +698,7 @@ function ChatRail({
           else break;
         }
         setActiveIdx(idx);
+        syncEdges(el);
       });
     };
     el.addEventListener("scroll", onScroll, { passive: true });
@@ -685,7 +707,7 @@ function ChatRail({
       cancelAnimationFrame(raf);
       el.removeEventListener("scroll", onScroll);
     };
-  }, [tops, scrollRef]);
+  }, [tops, scrollRef, syncEdges]);
 
   const onTickEnter = (i: number) => {
     if (hideTimer.current) {
@@ -711,6 +733,13 @@ function ChatRail({
     el.scrollTo({ top: Math.max(0, tops[i] - 16), behavior: "smooth" });
   };
 
+  // 顶/底一键跳转：平滑滚动；已在边界的方向按钮禁用（syncEdges 驱动）
+  const jumpToEdge = (edge: "top" | "bottom") => {
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTo({ top: edge === "top" ? 0 : el.scrollHeight, behavior: "smooth" });
+  };
+
   // 刻度条锚定滚动区右缘（滚动条内侧）；消息列已预留右内边距，气泡不再被压住
   const railLeft = Math.max(6, containerW - 34);
   const bubbleW = Math.max(180, Math.min(300, railLeft - 12));
@@ -726,7 +755,7 @@ function ChatRail({
           exit={{ opacity: 0, x: 10, y: "-50%" }}
           transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
           className="absolute top-1/2 z-20"
-          style={{ left: railLeft, height: railHeight }}
+          style={{ left: railLeft, height: railHeight + RAIL_JUMP_H * 2 }}
           onWheel={(e) => {
             // 刻度条悬在滚动容器外侧（absolute 兄弟节点），滚轮落在其上不会驱动聊天滚动；
             // 手动转发给滚动容器，避免“光标停在刻度条上滚轮失灵”的观感
@@ -735,8 +764,15 @@ function ChatRail({
             el.scrollTop += e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
           }}
         >
-          <div className="flex h-full flex-col">
-            {userMsgs.map((m, i) => {
+          <div className="flex h-full flex-col items-center">
+            <RailJumpButton
+              edge="top"
+              disabled={atTop}
+              label={t("chat.jumpTop")}
+              onClick={() => jumpToEdge("top")}
+            />
+            <div className="flex flex-1 min-h-0 flex-col">
+              {userMsgs.map((m, i) => {
               const active = i === activeIdx;
               return (
                 <motion.button
@@ -788,10 +824,47 @@ function ChatRail({
                 </motion.button>
               );
             })}
+            </div>
+            <RailJumpButton
+              edge="bottom"
+              disabled={atBottom}
+              label={t("chat.jumpBottom")}
+              onClick={() => jumpToEdge("bottom")}
+            />
           </div>
         </motion.div>
       )}
     </AnimatePresence>
+  );
+}
+
+/** 刻度区顶/底的一键跳转按钮：与刻度同族的窄条 hover 区 + 细箭头（ink 透明度同一语言），
+ *  已在顶/底时对应方向禁用（视觉降至最低存在感，无点击反馈）。 */
+function RailJumpButton({
+  edge,
+  disabled,
+  label,
+  onClick,
+}: {
+  edge: "top" | "bottom";
+  disabled: boolean;
+  label: string;
+  onClick: () => void;
+}) {
+  const Icon = edge === "top" ? CaretUp : CaretDown;
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      disabled={disabled}
+      onClick={onClick}
+      className={`w-7 h-4 grid place-items-center shrink-0 transition-colors duration-150 ${
+        disabled ? "text-ink/15 cursor-default" : "text-ink/25 hover:text-ink/55 cursor-pointer"
+      }`}
+    >
+      <Icon size={11} weight="bold" />
+    </button>
   );
 }
 

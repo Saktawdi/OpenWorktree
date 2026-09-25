@@ -165,6 +165,8 @@ export const enSession = {
   "sess.restore": "Restore",
   "sess.pin": "Pin",
   "sess.unpin": "Unpin",
+  "sess.markUnread": "Mark as unread",
+  "sess.unreadTip": "Unread · cleared automatically once you open the session",
   "sess.moveToGroup": "Move to group",
 
   /* ─── 会话弹窗 ─── */
@@ -208,6 +210,8 @@ export const enSession = {
   "chat.copyOutput": "Copy output",
   "chat.runningNoOutput": "Running, no output yet…",
   "chat.jumpToMsg": "Jump to message {n}",
+  "chat.jumpTop": "Jump to top of conversation",
+  "chat.jumpBottom": "Jump to bottom of conversation",
 
   /* ─── 权限卡 ─── */
   "perm.title": "Permission required",

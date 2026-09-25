@@ -71,6 +71,7 @@ import {
   loadQueuedMessages,
   loadSessionGroups,
   loadSessionPinned,
+  loadSessionUnread,
   loadTheme,
   loadVisibleStages,
 } from "./prefs";
@@ -199,6 +200,9 @@ export interface AppState {
   sessionGroupMembers: Record<string, string>;
   /** 置顶会话（key = 工单号；有序 sessionId 数组，列表内置顶段优先展示）。 */
   sessionPinned: Record<string, string[]>;
+  /** 会话未读标记（key = 会话 id → 标记时间戳；端侧软数据，localStorage 持久化）。
+   *  右键菜单手动标记，进入该会话（switchSession）自动清除。 */
+  sessionUnread: Record<string, number>;
   /** Live model catalog per session (from the session's opencode serve). */
   sessionModels: Record<string, CatalogProvider[]>;
   /** Per-session live model / reasoning-effort selection (会话内实时切换). */
@@ -331,6 +335,7 @@ export const appStore = create<AppState>(() => ({
   sessionGroups: persistedGroups.groups,
   sessionGroupMembers: persistedGroups.members,
   sessionPinned: loadSessionPinned(),
+  sessionUnread: loadSessionUnread(),
   draftModelSel: {},
   draftGroupId: {},
   composerDrafts: loadComposerDrafts(),

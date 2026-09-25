@@ -41,6 +41,7 @@ import {
   archiveSession as archiveSessionLocal,
   clearDraftModelSel,
   clearSessionInterrupted,
+  markSessionUnread as markSessionUnreadLocal,
   createSessionGroup as createSessionGroupLocal,
   deleteSession as deleteSessionLocal,
   deleteSessionGroup as deleteSessionGroupLocal,
@@ -575,6 +576,10 @@ export const actions = {
     // 被泵自动投递到该工单的其它/新建会话。
     clearSessionQueue(id);
     deleteSessionLocal(no, id);
+  },
+  /** 标记会话未读：右键菜单入口，进入该会话时自动清除（端侧软数据，localStorage 持久化）。 */
+  markSessionUnread(id: string) {
+    markSessionUnreadLocal(id);
   },
   switchSession(no: string, id: string) {
     // 与运行监控「前往处理」同语义：点开待回答/中断的会话即视为已关注——

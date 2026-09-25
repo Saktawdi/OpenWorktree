@@ -2,13 +2,17 @@ import React from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { openExternal } from "@/shared/externalLinks";
+import { remarkBreaks } from "@/shared/remarkBreaks";
 
 // T-119：这两样必须模块级常量，不能写在 Markdown 里。react-markdown 把
 // components[tag] 直接当作元素的 type（hast-util-to-jsx-runtime 的 findComponentFromName
 // → state.create），每次渲染新建一个内联箭头函数就是换了一个组件类型——React 会按
 // "类型不同" 卸载整棵子树再重建，流式期间每个增量都把整段正文的 DOM 拆了重建。
-// 常量身份不变，同样内容只做常规 diff 更新。
+// 常量身份不变，同样内容只做常规 diff 更新。插件表同理：换新数组 = 换 parse 管道。
 const REMARK_PLUGINS = [remarkGfm];
+// 用户消息渲染用的插件表：在 GFM 之上追加「软换行 → 硬换行」（用户输入原样换行，
+// 与 Composer 所见一致）。仅用户气泡启用（breaks prop），助手正文保持标准 Markdown 语义。
+const REMARK_PLUGINS_BREAKS = [...REMARK_PLUGINS, remarkBreaks];
 
 const COMPONENTS: Components = {
   a: ({ href, children }) => (
@@ -79,13 +83,16 @@ const COMPONENTS: Components = {
 export const Markdown = React.memo(function Markdown({
   children,
   className,
+  breaks,
 }: {
   children: string;
   className?: string;
+  /** true 时把正文里的单个换行渲染为 <br>（用户消息按输入原样换行）。 */
+  breaks?: boolean;
 }) {
   return (
     <div className={className}>
-      <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={COMPONENTS}>
+      <ReactMarkdown remarkPlugins={breaks ? REMARK_PLUGINS_BREAKS : REMARK_PLUGINS} components={COMPONENTS}>
         {children}
       </ReactMarkdown>
     </div>

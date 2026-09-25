@@ -24,6 +24,7 @@ const PENDING_QUOTES_KEY = "gate-pending-quotes";
 const TERMINAL_CLOSE_ALL_KEY = "gate-terminal-close-all-confirm";
 const SESSION_GROUPS_KEY = "gate-session-groups";
 const SESSION_PINNED_KEY = "gate-session-pinned";
+const SESSION_UNREAD_KEY = "gate-session-unread";
 const FOLLOW_UP_BEHAVIOR_KEY = "gate-follow-up-behavior";
 const QUEUED_MESSAGES_KEY = "gate-queued-messages";
 const LAST_TICKET_KEY = "gate-last-ticket-by-project";
@@ -312,6 +313,34 @@ export function loadSessionPinned(): Record<string, string[]> {
 export function saveSessionPinned(pinned: Record<string, string[]>) {
   try {
     localStorage.setItem(SESSION_PINNED_KEY, JSON.stringify(pinned));
+  } catch {
+    /* 存储不可用时降级为仅本窗口内保留 */
+  }
+}
+
+/* ─── 会话未读标记：端侧软数据（右键菜单手动标记，进入会话自动清除） ─── */
+
+/** 读取落盘的未读会话表（key = 会话 id → 标记时间戳）；非法/损坏条目直接丢弃。 */
+export function loadSessionUnread(): Record<string, number> {
+  try {
+    const raw = typeof window !== "undefined" ? localStorage.getItem(SESSION_UNREAD_KEY) : null;
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const out: Record<string, number> = {};
+    for (const [sid, v] of Object.entries(parsed)) {
+      if (typeof sid === "string" && sid !== "" && typeof v === "number" && Number.isFinite(v) && v > 0) {
+        out[sid] = v;
+      }
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+export function saveSessionUnread(unread: Record<string, number>) {
+  try {
+    localStorage.setItem(SESSION_UNREAD_KEY, JSON.stringify(unread));
   } catch {
     /* 存储不可用时降级为仅本窗口内保留 */
   }

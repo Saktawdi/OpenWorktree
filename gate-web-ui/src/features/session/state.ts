@@ -4,7 +4,7 @@
  */
 import { getLocale, t as i18nT } from "@/i18n";
 import { appStore } from "@/store";
-import { saveComposerDrafts, savePendingQuotes, saveSessionGroups, saveSessionPinned } from "@/store/prefs";
+import { saveComposerDrafts, savePendingQuotes, saveSessionGroups, saveSessionPinned, saveSessionUnread } from "@/store/prefs";
 import type { CatalogProvider, ChatSession, QuoteChip, SessionModelSel } from "@/shared/types";
 import { QUOTE_MAX_CHARS } from "@/shared/quotes";
 import { uid } from "@/shared/format";
@@ -468,6 +468,40 @@ export function setSessionPinnedOrder(ticketNo: string, orderedIds: string[]) {
   scheduleSessionPinnedPersist();
 }
 
+/* ─── 会话未读标记（端侧软数据，与分组/置顶同族） ───
+ * 右键菜单手动标记 → 会话行呈现未读态（标题提亮加重 + 尾部未读点）；进入该会话
+ * （switchSession，含点击当前会话）即自动清除。localStorage 持久化，写操作经
+ * 250ms 防抖合并落盘（同 sessionPinned 口径），刷新后保持。 */
+
+let sessionUnreadPersistTimer: ReturnType<typeof setTimeout> | null = null;
+
+function scheduleSessionUnreadPersist() {
+  if (sessionUnreadPersistTimer) clearTimeout(sessionUnreadPersistTimer);
+  sessionUnreadPersistTimer = setTimeout(() => {
+    sessionUnreadPersistTimer = null;
+    saveSessionUnread(appStore.getState().sessionUnread);
+  }, 250);
+}
+
+/** 标记会话未读（重复标记只刷新时间戳；当前正在查看的会话也允许标记——
+ *  与聊天软件「稍后回看」同语义，离开后再次进入才清除）。 */
+export function markSessionUnread(sessionId: string) {
+  if (!sessionId) return;
+  set((st) => ({ sessionUnread: { ...st.sessionUnread, [sessionId]: Date.now() } }));
+  scheduleSessionUnreadPersist();
+}
+
+/** 清除会话未读标记（进入会话时调用；无标记时 no-op，不触发落盘）。 */
+export function clearSessionUnread(sessionId: string) {
+  if (!appStore.getState().sessionUnread[sessionId]) return;
+  set((st) => {
+    const sessionUnread = { ...st.sessionUnread };
+    delete sessionUnread[sessionId];
+    return { sessionUnread };
+  });
+  scheduleSessionUnreadPersist();
+}
+
 /** 重命名会话标题 */
 export function renameSession(ticketNo: string, sessionId: string, newTitle: string) {
   const title = newTitle.trim();
@@ -646,6 +680,8 @@ export function restoreSession(ticketNo: string, sessionId: string) {
 }
 
 export function switchSession(ticketNo: string, sessionId: string) {
+  // 进入会话即视为已读：手动标记的未读态在此自动清除（含点击当前会话行——点击即查看）
+  clearSessionUnread(sessionId);
   set((st) => {
     // 草稿随切换丢弃：草稿归属分组暂存一并清除，防残留误归组
     const draftGroupId = { ...st.draftGroupId };
@@ -697,8 +733,19 @@ export function dropSessionExtras(sessionIds: string[]) {
         interruptedTouched = true;
       }
     }
-    return memberTouched || pinnedTouched || interruptedTouched
-      ? { sessionPinned, sessionGroupMembers, sessionInterrupted }
+    // 未读标记同属按 sessionId 键控的会话软数据，随会话消亡一并抹除（残留会让
+    // 重建/重放的同 id 新会话直接顶着未读点出现）
+    const sessionUnread = { ...st.sessionUnread };
+    let unreadTouched = false;
+    for (const sid of kill) {
+      if (sid in sessionUnread) {
+        delete sessionUnread[sid];
+        unreadTouched = true;
+      }
+    }
+    if (unreadTouched) scheduleSessionUnreadPersist();
+    return memberTouched || pinnedTouched || interruptedTouched || unreadTouched
+      ? { sessionPinned, sessionGroupMembers, sessionInterrupted, sessionUnread }
       : st;
   });
   dropSessionTodos(sessionIds);

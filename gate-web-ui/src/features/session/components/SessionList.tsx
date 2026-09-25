@@ -6,6 +6,7 @@ import {
   ArrowsInSimple,
   ArrowsOutSimple,
   CaretDown,
+  ChatCircleDots,
   Chats,
   CircleNotch,
   Copy,
@@ -57,6 +58,9 @@ import { getLocale, useT, type Translate } from "@/i18n";
  * · 收展箭头统一 SVG（CaretDown 随收展旋转）；tab 栏新增「全部收叠/展开」按钮（仅分组模式）；
  * · 分组头（含未分组段）hover 出「+」：进入新建会话草稿并暂存归属分组（draftGroupId），
  *   首条消息建会话时自动归入该分组（demo/live 建会话路径共用 applyDraftGroup 落地）。
+ * 会话未读标记（端侧软数据）：右键菜单「标记未读」→ 行内未读态（标题提亮加重 +
+ * 行尾未读点，与列表既有小圆点语言同族）；进入该会话（switchSession）自动清除；
+ * localStorage 持久化，刷新后保持。
  */
 
 const FLAT_ID = "flat";
@@ -896,6 +900,8 @@ function SessionItem({
   // 会话绑定的协作 Agent（创建时固化）：claude 紫 / opencode 蓝色点，与 Composer 选择器一致。
   const agent = useApp((s) => s.agents.find((a) => a.id === session.agentConfigId));
   const pinned = useApp((s) => (s.sessionPinned[session.ticketNo] ?? []).includes(session.id));
+  // 未读标记（右键菜单手动标记，进入会话自动清除）：布尔原语选择器，无引用抖动
+  const unread = useApp((s) => s.sessionUnread[session.id] !== undefined);
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: session.id,
     disabled: locked,
@@ -952,7 +958,8 @@ function SessionItem({
         {/* 前置状态小圆点（T-105 第 6 轮）：蓝呼吸=运行中、红=中断、黄呼吸=待问答/待授权 */}
         <RunDot session={session} />
         <div className="flex-1 min-w-0">
-          <div className="text-[12px] text-dim truncate flex items-center gap-1">
+          {/* 未读态（T-未读增强）：标题提亮加重（对话软件「未读加粗」口径），行尾缀未读点 */}
+          <div className={`text-[12px] truncate flex items-center gap-1 ${unread ? "text-ink font-medium" : "text-dim"}`}>
             {pinned && (
               <span title={t("sess.pinned")} className="shrink-0">
                 <PushPin size={9} weight="fill" className="text-faint rotate-45" />
@@ -978,6 +985,13 @@ function SessionItem({
             </span>
           </div>
         </div>
+        {unread && (
+          <span
+            className="w-1.5 h-1.5 rounded-full bg-accent shrink-0"
+            title={t("sess.unreadTip")}
+            aria-label={t("sess.unreadTip")}
+          />
+        )}
         {showActions && !locked && (
           <div className="flex items-center gap-0.5 shrink-0">
             <span className="[&>.icon-btn]:!w-5 [&>.icon-btn]:!h-5" onClick={(e) => e.stopPropagation()}>
@@ -1095,10 +1109,10 @@ function ContextMenu({
   onOpenDialog: (d: SessionDialogState) => void;
 }) {
   const t = useT();
-  // 边缘防溢出：右钳 200（菜单宽约 188），下钳 300（六项菜单估高）
+  // 边缘防溢出：右钳 200（菜单宽约 188），下钳 330（七项菜单估高）
   const pos = {
     left: Math.min(position.x, window.innerWidth - 200),
-    top: Math.min(position.y, window.innerHeight - 300),
+    top: Math.min(position.y, window.innerHeight - 330),
   };
   const runThen = (fn: () => void) => {
     onClose();
@@ -1137,6 +1151,11 @@ function ContextMenu({
             onClick={() => runThen(() => void actions.setSessionPinned(session.ticketNo, session.id, !pinned))}
           />
         )}
+        <MenuItem
+          icon={<ChatCircleDots size={12} className="text-faint" />}
+          label={t("sess.markUnread")}
+          onClick={() => runThen(() => actions.markSessionUnread(session.id))}
+        />
         <MenuItem
           icon={<Copy size={12} className="text-faint" />}
           label={t("sess.copyId")}

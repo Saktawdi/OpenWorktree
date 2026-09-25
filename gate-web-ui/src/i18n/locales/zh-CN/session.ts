@@ -165,6 +165,8 @@ export const zhSession = {
   "sess.restore": "恢复",
   "sess.pin": "置顶",
   "sess.unpin": "取消置顶",
+  "sess.markUnread": "标记未读",
+  "sess.unreadTip": "未读 · 进入该会话后自动清除",
   "sess.moveToGroup": "移入分组",
 
   /* ─── 会话弹窗 ─── */
@@ -208,6 +210,8 @@ export const zhSession = {
   "chat.copyOutput": "复制输出结果",
   "chat.runningNoOutput": "执行中，暂无输出…",
   "chat.jumpToMsg": "跳转到第 {n} 条消息",
+  "chat.jumpTop": "跳到会话顶部",
+  "chat.jumpBottom": "跳到会话底部",
 
   /* ─── 权限卡 ─── */
   "perm.title": "需要权限确认",
